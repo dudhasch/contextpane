@@ -5,12 +5,18 @@
 
 .DESCRIPTION
     Removes, in this order and only by exact name:
-      1. Conditional Access policy "[ContextPane-Demo] Block AVD - Contoso Finance Legacy"
-      2. Security groups SG-Contoso-Finance-AVD and SG-Contoso-Finance-Legacy
-      3. The five demo users (lynne.robins.contoso@..., alex.wilber.contoso@..., miriam.graham.contoso@...,
-         diego.siciliani.contoso@..., patti.fernandez.contoso@...)
-      4. Azure resource group rg-contoso-avd-prod (and everything inside it)
-      5. Resets liveSeeded=false in ./demo-iac/demo-lab-manifest.json
+      1. Conditional Access policies "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+         "[ContextPane-Demo] CA-001-Require-PhishingResistant-MFA-Admins" and
+         "[ContextPane-Demo] CA-004-Block-Legacy-Auth"
+      2. Intune Settings Catalog policies and device configurations named "[ContextPane-Demo] ..."
+         by the seed script (Intune-Win11-ASR-Baseline, EndpointSecurity-Firewall-Prod,
+         Fabrikam-EndpointSecurity-DiskEncryption, Win11-Firewall-MDM, Fabrikam-Legacy-BitLocker-DeviceConfig)
+      3. Security groups SG-Contoso-Finance-AVD, SG-Contoso-Finance-Legacy, SG-Contoso-M365-E5,
+         SG-BreakGlass-Accounts, SG-ContextPane-Demo-Admins, SG-All-Workstations, SG-Fabrikam-Win11-Devices
+      4. The demo users (lynne.robins.contoso@..., alex.wilber.contoso@..., miriam.graham.contoso@...,
+         diego.siciliani.contoso@..., patti.fernandez.contoso@..., the ANOM-LIC-101 users and bg-admin-01@...)
+      5. Azure resource group rg-contoso-avd-prod (and everything inside it)
+      6. Resets liveSeeded=false in ./demo-iac/demo-lab-manifest.json
 
     Nothing else in the tenant or subscription is touched. Supports -WhatIf. Prompts once
     unless -Force is given.
@@ -36,9 +42,18 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $ManifestPath) { $ManifestPath = Join-Path $repoRoot 'demo-iac' 'demo-lab-manifest.json' }
 
-$PolicyName = '[ContextPane-Demo] Block AVD - Contoso Finance Legacy'
-$GroupNames = @('SG-Contoso-Finance-AVD', 'SG-Contoso-Finance-Legacy')
-$UserMails = @('lynne.robins.contoso', 'alex.wilber.contoso', 'miriam.graham.contoso', 'diego.siciliani.contoso', 'patti.fernandez.contoso')
+$PolicyNames = @(
+    '[ContextPane-Demo] Block AVD - Contoso Finance Legacy'
+    '[ContextPane-Demo] CA-001-Require-PhishingResistant-MFA-Admins'
+    '[ContextPane-Demo] CA-004-Block-Legacy-Auth'
+)
+$IntuneSettingsCatalog = @('Intune-Win11-ASR-Baseline', 'EndpointSecurity-Firewall-Prod', 'Fabrikam-EndpointSecurity-DiskEncryption') | ForEach-Object { "[ContextPane-Demo] $_" }
+$IntuneDeviceConfigs = @('Win11-Firewall-MDM', 'Fabrikam-Legacy-BitLocker-DeviceConfig') | ForEach-Object { "[ContextPane-Demo] $_" }
+$GroupNames = @('SG-Contoso-Finance-AVD', 'SG-Contoso-Finance-Legacy', 'SG-Contoso-M365-E5', 'SG-BreakGlass-Accounts', 'SG-ContextPane-Demo-Admins', 'SG-All-Workstations', 'SG-Fabrikam-Win11-Devices')
+$UserMails = @(
+    'lynne.robins.contoso', 'alex.wilber.contoso', 'miriam.graham.contoso', 'diego.siciliani.contoso', 'patti.fernandez.contoso'
+    'henrietta.mueller.contoso', 'pradeep.gupta.contoso', 'christie.cline.contoso', 'adele.vance.contoso', 'joni.sherman.contoso', 'bg-admin-01'
+)
 $ResourceGroupName = 'rg-contoso-avd-prod'
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
@@ -63,14 +78,37 @@ if (-not $SkipGraph) {
     if ($mg.TenantId -ne $TenantId) { throw "Graph context is tenant $($mg.TenantId); expected $TenantId." }
 
     Write-Step 'Conditional Access'
-    $policy = Get-MgIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $PolicyName }
+    $policy = Get-MgIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue | Where-Object { $PolicyNames -contains $_.DisplayName }
     foreach ($p in $policy) {
         if ($PSCmdlet.ShouldProcess($p.DisplayName, 'Remove-MgIdentityConditionalAccessPolicy')) {
             Remove-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $p.Id
-            Write-Ok "removed policy $($p.Id)"
+            Write-Ok "removed $($p.DisplayName) ($($p.Id))"
         }
     }
-    if (-not $policy) { Write-Keep 'policy not present' }
+    if (-not $policy) { Write-Keep 'policies not present' }
+
+    Write-Step 'Intune'
+    try {
+        $beta = 'https://graph.microsoft.com/beta/deviceManagement'
+        $v1 = 'https://graph.microsoft.com/v1.0/deviceManagement'
+        $catalog = @((Invoke-MgGraphRequest -Method GET -Uri "$beta/configurationPolicies?`$select=id,name&`$top=100").value) | Where-Object { $IntuneSettingsCatalog -contains $_.name }
+        foreach ($c in $catalog) {
+            if ($PSCmdlet.ShouldProcess($c.name, 'DELETE configurationPolicies')) {
+                Invoke-MgGraphRequest -Method DELETE -Uri "$beta/configurationPolicies/$($c.id)"
+                Write-Ok "removed $($c.name)"
+            }
+        }
+        $configs = @((Invoke-MgGraphRequest -Method GET -Uri "$v1/deviceConfigurations?`$select=id,displayName").value) | Where-Object { $IntuneDeviceConfigs -contains $_.displayName }
+        foreach ($c in $configs) {
+            if ($PSCmdlet.ShouldProcess($c.displayName, 'DELETE deviceConfigurations')) {
+                Invoke-MgGraphRequest -Method DELETE -Uri "$v1/deviceConfigurations/$($c.id)"
+                Write-Ok "removed $($c.displayName)"
+            }
+        }
+        if (-not $catalog -and -not $configs) { Write-Keep 'Intune objects not present' }
+    } catch {
+        Write-Warning "Intune teardown skipped: $($_.Exception.Message) (needs DeviceManagementConfiguration.ReadWrite.All)"
+    }
 
     Write-Step 'Groups'
     foreach ($name in $GroupNames) {

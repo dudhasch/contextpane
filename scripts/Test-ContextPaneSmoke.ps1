@@ -4,17 +4,20 @@
     Smoke-tests the ContextPane orchestrator: every tier endpoint, latency, and catalog schema shape.
 
 .DESCRIPTION
-    Calls GET /api/health, GET /api/recipe/default/hydrate, POST /api/hover, POST /api/correlate,
-    POST /api/voice-steer, POST /api/vision-extract (only with a Meta key), POST /api/remediate,
-    POST /api/remediate/approve, POST /api/lab/reset-drift, GET /api/audit and GET /api/telemetry/stats,
-    then prints a formatted table with status, latency, router tier/provider and a schema verdict.
+    Calls GET /api/health, GET /api/scenarios, GET /api/scenarios/:id/brief, GET /api/recipe/default/hydrate,
+    POST /api/hover, POST /api/correlate, POST /api/voice-steer, POST /api/vision-extract (INC-4092 with a
+    Meta key only), POST /api/remediate, POST /api/remediate/approve, POST /api/lab/reset-drift,
+    GET /api/audit and GET /api/telemetry/stats for one scenario, then prints a formatted table with
+    status, latency, router tier/provider and a schema verdict.
 
-    With LIVE_CLOUD_MODE=true the approval writes the lab users' license extension (SPE_E5); the
-    reset-drift check right after it puts them back to SPE_E3, so a run leaves the lab drifted.
+    With LIVE_CLOUD_MODE=true the approval writes the scenario's lab objects (license extension,
+    Conditional Access or Intune); the reset-drift check right after it puts them back, so a run
+    leaves the lab drifted.
 
     Schema checks mirror packages/catalog: component types must be inside the allow-list, every
-    component carries an id + props, hover popovers carry headline/facts/quickActions/providerTelemetry,
-    the remediation drawer carries powershellScript/terraformDiff/verificationStatus/approval.
+    component carries an id + props, the scenario's cards are all present, hover popovers carry
+    headline/facts/quickActions/providerTelemetry, the remediation drawer carries
+    powershellScript/terraformDiff/graphPatch/verificationStatus/approval and passes the -WhatIf proof.
     The orchestrator itself validates with Zod; `provenance.validated` is surfaced in the table.
 
     Exit code 0 when every check passes, 1 otherwise.
@@ -22,21 +25,30 @@
 .EXAMPLE
     pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 .EXAMPLE
-    pwsh ./scripts/Test-ContextPaneSmoke.ps1 -TenantId tenant-fabrikam-02 -SkipRemediate
+    pwsh ./scripts/Test-ContextPaneSmoke.ps1 -ScenarioId ANOM-CA-204 -SkipRemediate
 #>
 [CmdletBinding()]
 param(
     # 127.0.0.1 on purpose: Windows resolves "localhost" to ::1 first and burns ~2 s per request on the IPv6 fallback.
     [string]$BaseUrl = $(if ($env:CTX_ORCHESTRATOR_URL) { $env:CTX_ORCHESTRATOR_URL } else { 'http://127.0.0.1:4000' }),
-    [ValidateSet('tenant-contoso-01', 'tenant-fabrikam-02')]
-    [string]$TenantId = 'tenant-contoso-01',
+    [ValidateSet('INC-4092', 'INC-4099', 'ANOM-LIC-101', 'ANOM-CA-204', 'ANOM-INT-309')]
+    [string]$ScenarioId = 'INC-4092',
     [switch]$SkipRemediate,
     [int]$TimeoutSec = 180
 )
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
-$AllowedComponents = @('TenantSummaryHeader', 'LicenseDriftCard', 'EntraSignInTimeline', 'IaCDriftBanner', 'HoverDiagnosticPopover', 'ActionApprovalDrawer')
+$AllowedComponents = @('LicenseDriftCard', 'EntraSignInTimeline', 'IntuneDriftCard', 'IaCDriftBanner', 'HoverDiagnosticPopover', 'ActionApprovalDrawer')
+# Mirrors SCENARIO_REGISTRY in packages/catalog/src/scenarios.ts.
+$ScenarioCards = @{
+    'INC-4092'     = @('LicenseDriftCard', 'EntraSignInTimeline', 'IaCDriftBanner')
+    'INC-4099'     = @('IntuneDriftCard', 'EntraSignInTimeline')
+    'ANOM-LIC-101' = @('LicenseDriftCard')
+    'ANOM-CA-204'  = @('EntraSignInTimeline')
+    'ANOM-INT-309' = @('IntuneDriftCard')
+}
+$TenantId = $(if ($ScenarioId -eq 'INC-4099') { 'tenant-fabrikam-02' } else { 'tenant-contoso-01' })
 $results = [System.Collections.Generic.List[object]]::new()
 
 function Invoke-Check {
@@ -89,13 +101,13 @@ function Test-Layout($layout) {
         if (-not $c.props) { $issues += "component without props ($($c.type))" }
     }
     $lic = $layout.components | Where-Object type -eq 'LicenseDriftCard' | Select-Object -First 1
-    if ($lic -and ($lic.props.driftedCount -ne [Math]::Max(0, $lic.props.erpBilledCount - $lic.props.entraAssignedCount))) { $issues += 'LicenseDriftCard.driftedCount inconsistent' }
+    if ($lic -and @($lic.props.users).Count -lt 1) { $issues += 'LicenseDriftCard.users empty' }
     $iac = $layout.components | Where-Object type -eq 'IaCDriftBanner' | Select-Object -First 1
     if ($iac -and -not $iac.props.hclDiff) { $issues += 'IaCDriftBanner.hclDiff empty' }
     return $issues
 }
 
-Write-Host "`nContextPane smoke test -> $BaseUrl  (tenant $TenantId)" -ForegroundColor Cyan
+Write-Host "`nContextPane smoke test -> $BaseUrl  (scenario $ScenarioId, $TenantId)" -ForegroundColor Cyan
 
 $health = Invoke-Check -Name health -Method GET -Path '/api/health' -Schema {
     param($r)
@@ -110,7 +122,31 @@ if ($health) {
     Write-Host "  live cloud: $($health.liveCloudMode)  providers with keys: $(if ($keyed) { $keyed -join ', ' } else { 'none (deterministic)' })  MCP: $($health.mcp.transport)" -ForegroundColor DarkGray
 }
 
-$null = Invoke-Check -Name hydrate -Method GET -Path "/api/recipe/default/hydrate?tenantId=$TenantId" -BudgetMs 150 -Schema {
+$null = Invoke-Check -Name scenarios -Method GET -Path '/api/scenarios' -Schema {
+    param($r)
+    $i = @()
+    if (@($r.scenarios).Count -ne 5) { $i += "expected 5 scenarios, got $(@($r.scenarios).Count)" }
+    if (@($r.scenarios | Where-Object kind -eq 'ticket').Count -ne 2) { $i += 'expected 2 tickets' }
+    if (@($r.scenarios | Where-Object kind -eq 'anomaly').Count -ne 3) { $i += 'expected 3 anomalies' }
+    $i
+}
+
+$briefResponse = Invoke-Check -Name brief -Method GET -Path "/api/scenarios/$ScenarioId/brief" -Schema {
+    param($r)
+    $b = $r.brief
+    $i = @()
+    if (-not $b) { return @('brief missing') }
+    if (-not $b.summary) { $i += 'summary missing' }
+    if (@($b.steps).Count -lt 1) { $i += 'no resolution steps' }
+    if (@($b.entities).Count -lt 1) { $i += 'no enriched entities' }
+    foreach ($e in $b.entities) {
+        if ($e.category -notin @('licensing', 'identity', 'intune', 'azure')) { $i += "entity $($e.id) has category '$($e.category)'" }
+        if ($ScenarioCards[$ScenarioId] -notcontains $e.target) { $i += "entity $($e.id) targets $($e.target), not a card of $ScenarioId" }
+    }
+    $i
+}
+
+$null = Invoke-Check -Name hydrate -Method GET -Path "/api/recipe/default/hydrate?scenarioId=$ScenarioId" -BudgetMs 150 -Schema {
     param($r)
     $i = Test-Layout $r.layout
     if ($r.telemetry.tier -ne 'Tier 0') { $i += "tier $($r.telemetry.tier) != Tier 0" }
@@ -119,8 +155,10 @@ $null = Invoke-Check -Name hydrate -Method GET -Path "/api/recipe/default/hydrat
     $i
 }
 
-$hoverEntity = if ($TenantId -eq 'tenant-contoso-01') { 'lynne.robins.contoso@c4a8shili.onmicrosoft.com' } else { 'grady.archie.legal@fabrikamlegal.onmicrosoft.com' }
-$null = Invoke-Check -Name hover -Method POST -Path '/api/hover' -Body @{ tenantId = $TenantId; entityId = $hoverEntity } -BudgetMs 350 -Schema {
+$entities = @($briefResponse.brief.entities | Where-Object hoverable)
+$hoverEntity = $entities | Where-Object type -eq 'upn' | Select-Object -First 1
+if (-not $hoverEntity) { $hoverEntity = $entities | Select-Object -First 1 }
+$null = Invoke-Check -Name hover -Method POST -Path '/api/hover' -Body @{ scenarioId = $ScenarioId; entityId = $hoverEntity.id; entityType = $hoverEntity.type } -BudgetMs 350 -Schema {
     param($r)
     $p = $r.popover
     $i = @()
@@ -130,19 +168,25 @@ $null = Invoke-Check -Name hover -Method POST -Path '/api/hover' -Body @{ tenant
     if ($r.telemetry.tier -ne 'Tier 1A') { $i += "tier $($r.telemetry.tier) != Tier 1A" }
     $i
 }
-$null = Invoke-Check -Name hover-code -Method POST -Path '/api/hover' -Body @{ tenantId = $TenantId; entityId = 'AADSTS53003'; entityType = 'errorCode' } -BudgetMs 350 -Schema {
-    param($r)
-    $i = @()
-    if ($r.popover.errorCodeTranslation.code -ne 'AADSTS53003') { $i += 'errorCodeTranslation missing' }
-    $i
+$errorCode = $entities | Where-Object type -eq 'errorCode' | Select-Object -First 1
+if ($errorCode) {
+    $null = Invoke-Check -Name hover-code -Method POST -Path '/api/hover' -Body @{ scenarioId = $ScenarioId; entityId = $errorCode.id; entityType = 'errorCode' } -BudgetMs 350 -Schema {
+        param($r)
+        $i = @()
+        if ($r.popover.errorCodeTranslation.code -ne $errorCode.id) { $i += "errorCodeTranslation for $($errorCode.id) missing" }
+        $i
+    }
 }
 
-$null = Invoke-Check -Name correlate -Method POST -Path '/api/correlate' -Body @{ tenantId = $TenantId } -Schema {
+$null = Invoke-Check -Name correlate -Method POST -Path '/api/correlate' -Body @{ scenarioId = $ScenarioId } -Schema {
     param($r)
     $i = Test-Layout $r.layout
     if ($r.telemetry.tier -notin @('Tier 1B', 'Tier 2')) { $i += "tier $($r.telemetry.tier) not 1B/2" }
     $types = @($r.layout.components | ForEach-Object type)
-    foreach ($t in 'TenantSummaryHeader', 'LicenseDriftCard', 'EntraSignInTimeline', 'IaCDriftBanner') { if ($types -notcontains $t) { $i += "missing $t" } }
+    foreach ($t in $ScenarioCards[$ScenarioId]) { if ($types -notcontains $t) { $i += "missing $t" } }
+    foreach ($c in $r.layout.components | Where-Object { $ScenarioCards[$ScenarioId] -contains $_.type }) {
+        if (@($c.triggeredBy).Count -lt 1) { $i += "$($c.type) has no triggeredBy" }
+    }
     if (-not $r.layout.provenance.validated -and $r.layout.provenance.repaired.Count -eq 0) { $i += 'provenance.validated false without repair' }
     $i
 }
@@ -158,7 +202,7 @@ $null = Invoke-Check -Name voice -Method POST -Path '/api/voice-steer' -Body @{ 
 
 $metaKey = [bool]($health.providers | Where-Object { $_.id -eq 'meta' -and $_.hasKey })
 $attachment = Join-Path $PSScriptRoot '..' 'apps' 'web' 'public' 'attachments' 'contoso-avd-error-screenshot.png'
-if ($metaKey -and $TenantId -eq 'tenant-contoso-01' -and (Test-Path $attachment)) {
+if ($metaKey -and $ScenarioId -eq 'INC-4092' -and (Test-Path $attachment)) {
     $png = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($attachment))
     $null = Invoke-Check -Name vision -Method POST -Path '/api/vision-extract' -Body @{ tenantId = $TenantId; ticketId = 'INC-4092'; fileName = 'contoso-avd-error-screenshot.png'; imageDataUri = "data:image/png;base64,$png" } -Schema {
         param($r)
@@ -172,14 +216,19 @@ if ($metaKey -and $TenantId -eq 'tenant-contoso-01' -and (Test-Path $attachment)
 }
 
 if (-not $SkipRemediate) {
-    $rem = Invoke-Check -Name remediate -Method POST -Path '/api/remediate' -Body @{ tenantId = $TenantId } -Schema {
+    $rem = Invoke-Check -Name remediate -Method POST -Path '/api/remediate' -Body @{ scenarioId = $ScenarioId } -Schema {
         param($r)
         $d = $r.drawer
         $i = @()
         if (-not $d) { return @('drawer missing') }
-        foreach ($k in 'remediationId', 'ticketId', 'powershellScript', 'terraformDiff', 'verificationStatus', 'approval', 'affectedEntities', 'synthesizedBy') { if ($null -eq $d.$k) { $i += "drawer.$k missing" } }
-        if ($d.powershellScript -notmatch 'Set-MgUserLicense') { $i += 'script lacks Set-MgUserLicense' }
-        if ($d.terraformDiff -notmatch '^@@' -and $d.terraformDiff -notmatch '\n@@') { $i += 'terraformDiff is not unified' }
+        foreach ($k in 'remediationId', 'ticketId', 'powershellScript', 'terraformDiff', 'graphPatch', 'verificationStatus', 'approval', 'affectedEntities', 'synthesizedBy') { if ($null -eq $d.$k) { $i += "drawer.$k missing" } }
+        if ($ScenarioId -in @('INC-4092', 'ANOM-LIC-101') -and $d.powershellScript -notmatch 'Set-MgUserLicense') { $i += 'script lacks Set-MgUserLicense' }
+        if ($d.powershellScript -notmatch 'ShouldProcess') { $i += 'script has no ShouldProcess guard' }
+        if ($d.verificationStatus.whatIfSafe -eq $false) { $i += 'a mutating cmdlet sits outside ShouldProcess' }
+        if ($ScenarioId -eq 'INC-4092') {
+            if ($d.terraformDiff -notmatch '^@@' -and $d.terraformDiff -notmatch '\n@@') { $i += 'terraformDiff is not unified' }
+        } elseif ($d.terraformDiff) { $i += 'terraformDiff should be empty (no IaC in this scenario)' }
+        if ($ScenarioId -ne 'INC-4092' -and -not $d.graphPatch) { $i += 'graphPatch empty' }
         if ($d.verificationStatus.verdict -eq 'Verification Failed') { $i += "verdict: $($d.verificationStatus.verdict) ($($d.verificationStatus.findings -join '; '))" }
         if ($d.approval.state -ne 'pending') { $i += "approval.state $($d.approval.state) != pending" }
         if ($r.telemetry.tier -notlike 'Tier 3*') { $i += "tier $($r.telemetry.tier) not Tier 3" }
@@ -187,19 +236,20 @@ if (-not $SkipRemediate) {
     }
     if ($rem) {
         $v = $rem.drawer.verificationStatus
-        Write-Host "  pre-flight: $($v.verdict)  ast=$($v.astCheckPassed) fmt=$($v.terraformFmtPassed) validate=$($v.terraformValidatePassed) sandbox=$($v.sandboxProvider) $($v.validationLatencyMs)ms  branch=$($rem.drawer.staging.branchName)" -ForegroundColor DarkGray
+        Write-Host "  pre-flight: $($v.verdict)  ast=$($v.astCheckPassed) whatIf=$($v.whatIfSafe) fmt=$($v.terraformFmtPassed) validate=$($v.terraformValidatePassed) sandbox=$($v.sandboxProvider) $($v.validationLatencyMs)ms  branch=$($rem.drawer.staging.branchName)" -ForegroundColor DarkGray
         $null = Invoke-Check -Name approve -Method POST -Path '/api/remediate/approve' -Body @{ remediationId = $rem.drawer.remediationId } -Schema {
             param($r)
             $i = @()
             if ($r.drawer.approval.state -notin @('approved', 'simulated', 'executed')) { $i += "approval.state $($r.drawer.approval.state)" }
             if (-not $r.convergence) { $i += 'no convergence pushed' }
-            elseif (@($r.convergence.remediatedUpns).Count -lt 1) { $i += 'convergence lists no users' }
+            elseif ($r.convergence.scenarioId -ne $ScenarioId) { $i += "convergence for $($r.convergence.scenarioId)" }
+            elseif ($ScenarioId -eq 'INC-4092' -and @($r.convergence.remediatedUpns).Count -lt 1) { $i += 'convergence lists no users' }
             $i
         }
-        $null = Invoke-Check -Name reset -Method POST -Path '/api/lab/reset-drift' -Body @{ tenantId = $TenantId } -Schema {
+        $null = Invoke-Check -Name reset -Method POST -Path '/api/lab/reset-drift' -Body @{ scenarioId = $ScenarioId } -Schema {
             param($r)
             $i = @()
-            if (-not $r.ok) { $i += "reset failed: $(($r.results.failed | ForEach-Object { $_.upn }) -join ', ')" }
+            if (-not $r.ok) { $i += "reset failed: $(($r.results.failed | ForEach-Object { $_.id }) -join ', ')" }
             $i
         }
         $null = Invoke-Check -Name audit -Method GET -Path '/api/audit?limit=5' -Schema {

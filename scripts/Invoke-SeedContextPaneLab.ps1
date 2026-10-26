@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Idempotently seeds the ContextPane demo lab (Contoso Finance) into a real Entra tenant and Azure subscription.
+    Idempotently seeds the ContextPane demo lab (Contoso Finance tickets and tenant anomalies) into a real
+    Entra tenant, Intune and Azure subscription.
 
 .DESCRIPTION
     Creates or updates, in this order:
@@ -10,15 +11,28 @@
       2. Security groups SG-Contoso-Finance-AVD (all 5) and SG-Contoso-Finance-Legacy (3 drifted).
       3. Conditional Access policy "[ContextPane-Demo] Block AVD - Contoso Finance Legacy":
          include SG-Contoso-Finance-Legacy, app Azure Virtual Desktop, grant = Block.
-         Then scripts/Enable-ContextPaneTapPolicy.ps1 enables the Temporary Access Pass policy and
-         persists a Connect-MgGraph sign-in the [Issue TAP] action reuses (-SkipTapPolicy to skip).
+      3b. Tenant anomalies (-SkipAnomalies to skip):
+          ANOM-LIC-101: three disabled offboarded users still holding SPE_E5 (+ Copilot) and two new hires in
+          CountViolation, all in SG-Contoso-M365-E5, modelled in the same license extension.
+          ANOM-CA-204: SG-BreakGlass-Accounts (bg-admin-01), SG-ContextPane-Demo-Admins and the policies
+          "[ContextPane-Demo] CA-001-Require-PhishingResistant-MFA-Admins" (enabled, demo admin group only,
+          break-glass exclusion missing) and "[ContextPane-Demo] CA-004-Block-Legacy-Auth" (report-only,
+          Finance demo users only). Neither policy can reach a real admin.
+      3c. Intune (-SkipIntune to skip; needs DeviceManagementConfiguration.ReadWrite.All and an Intune license):
+          ANOM-INT-309: Settings Catalog Intune-Win11-ASR-Baseline (LSASS rule drifted to Audit) and
+          EndpointSecurity-Firewall-Prod plus the duplicate legacy Win11-Firewall-MDM profile, all assigned to
+          SG-All-Workstations. INC-4099: Fabrikam-EndpointSecurity-DiskEncryption plus the conflicting
+          Fabrikam-Legacy-BitLocker-DeviceConfig, assigned to SG-Fabrikam-Win11-Devices.
       4. Resource group rg-contoso-avd-prod and the deliberately drifted NSG nsg-contoso-avd-hostpool-01
          (rogue Allow-Temp-RDP-Diagnostic-Drift on TCP 3389 from *, tag Environment = Prod-Hotfix-Manual).
       5. Rewrites ./demo-iac/main.tf (clean baseline) and ./demo-iac/demo-lab-manifest.json with the real object ids.
 
     Requires an existing delegated Connect-MgGraph context with
-      User.ReadWrite.All, Group.ReadWrite.All, Policy.ReadWrite.ConditionalAccess, Directory.ReadWrite.All
-    and a Connect-AzAccount context on the target subscription. Supports -WhatIf.
+      User.ReadWrite.All, Group.ReadWrite.All, Policy.Read.All, Policy.ReadWrite.ConditionalAccess,
+      Directory.ReadWrite.All, DeviceManagementConfiguration.ReadWrite.All
+    (scripts/Connect-ContextPaneGraph.ps1 creates one and persists it for the orchestrator's Conditional
+    Access and Intune writes) and a Connect-AzAccount context on the target subscription. Supports -WhatIf.
+    Re-running it re-asserts every drift, like the workbench's Reset Drift.
     Missing Az / Microsoft.Graph submodules are reported with the ModuleFast one-liner
     (scripts/Install-ContextPaneModules.ps1); pass -InstallMissingModules to have them installed on the spot.
 
@@ -39,8 +53,10 @@ param(
     [string]$PolicyState = 'enabled',
     [switch]$SkipGraph,
     [switch]$SkipAzure,
-    # Leave the tenant's Temporary Access Pass policy alone (scripts/Enable-ContextPaneTapPolicy.ps1 is skipped).
-    [switch]$SkipTapPolicy,
+    # Leave out the ANOM-LIC-101 / ANOM-CA-204 users, groups and Conditional Access policies.
+    [switch]$SkipAnomalies,
+    # Leave out the ANOM-INT-309 / INC-4099 Intune policies and profiles.
+    [switch]$SkipIntune,
     [string]$ManifestPath,
     [string]$TerraformPath,
     # Install any missing Az / Microsoft.Graph submodule via scripts/Install-ContextPaneModules.ps1 (ModuleFast) before running.
@@ -67,6 +83,80 @@ $DemoUsers = @(
     @{ Mail = 'diego.siciliani.contoso'; DisplayName = 'Diego Siciliani'; Given = 'Diego';  Surname = 'Siciliani'; JobTitle = 'Accounts Payable Specialist';  Current = 'SPE_E3'; Drift = 'drifted';   Legacy = $true }
     @{ Mail = 'patti.fernandez.contoso'; DisplayName = 'Patti Fernandez'; Given = 'Patti';  Surname = 'Fernandez'; JobTitle = 'Treasury Analyst';             Current = 'SPE_E3'; Drift = 'drifted';   Legacy = $true }
 )
+
+# Tenant-anomaly demo objects. Every display name carries the [ContextPane-Demo] prefix or a demo-only group
+# name, so the seed never touches a real policy, group or user. Licenses are modelled in the open extension.
+$DemoPrefix = '[ContextPane-Demo]'
+$Ca001Name = "$DemoPrefix CA-001-Require-PhishingResistant-MFA-Admins"
+$Ca004Name = "$DemoPrefix CA-004-Block-Legacy-Auth"
+$AnomalyUsers = @(
+    @{ Mail = 'henrietta.mueller.contoso'; DisplayName = 'Henrietta Mueller'; JobTitle = 'Former Finance Analyst';         Department = 'Finance'; Enabled = $false
+       Extension = @{ currentSku = 'SPE_E5, Microsoft_365_Copilot'; expectedSku = 'NONE'; assignmentState = 'Orphaned'; assignmentPath = 'Direct + Group'; driftStatus = 'drifted' } }
+    @{ Mail = 'pradeep.gupta.contoso';     DisplayName = 'Pradeep Gupta';     JobTitle = 'Former FP&A Lead';               Department = 'Finance'; Enabled = $false
+       Extension = @{ currentSku = 'SPE_E5, Microsoft_365_Copilot'; expectedSku = 'NONE'; assignmentState = 'Orphaned'; assignmentPath = 'Direct + Group'; driftStatus = 'drifted' } }
+    @{ Mail = 'christie.cline.contoso';    DisplayName = 'Christie Cline';    JobTitle = 'Former Procurement Specialist';  Department = 'Finance'; Enabled = $false
+       Extension = @{ currentSku = 'SPE_E5'; expectedSku = 'NONE'; assignmentState = 'Orphaned'; assignmentPath = 'Group'; driftStatus = 'drifted' } }
+    @{ Mail = 'adele.vance.contoso';       DisplayName = 'Adele Vance';       JobTitle = 'Financial Analyst (joined 2026-10-19)'; Department = 'Finance'; Enabled = $true
+       Extension = @{ currentSku = 'NONE'; expectedSku = 'SPE_E5'; assignmentState = 'Error: CountViolation'; assignmentPath = 'Group'; driftStatus = 'unassigned' } }
+    @{ Mail = 'joni.sherman.contoso';      DisplayName = 'Joni Sherman';      JobTitle = 'Treasury Analyst (joined 2026-10-20)';  Department = 'Finance'; Enabled = $true
+       Extension = @{ currentSku = 'NONE'; expectedSku = 'SPE_E5'; assignmentState = 'Error: CountViolation'; assignmentPath = 'Group'; driftStatus = 'unassigned' } }
+    @{ Mail = 'bg-admin-01';               DisplayName = 'Break Glass 01';    JobTitle = 'Emergency access (ContextPane demo)';   Department = 'IT';      Enabled = $true; Extension = $null }
+)
+
+$AsrSetting = 'device_vendor_msft_policy_config_defender_attacksurfacereductionrules'
+$AsrLsassRule = 'blockcredentialstealingfromwindowslocalsecurityauthoritysubsystem'
+function New-ChoiceSetting([string]$Id, [string]$Value) {
+    @{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSetting'
+       settingInstance = @{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance'; settingDefinitionId = $Id; choiceSettingValue = @{ value = "${Id}_$Value"; children = @() } } }
+}
+$SettingsCatalogSpecs = @(
+    @{ Name = 'Intune-Win11-ASR-Baseline'; Group = 'SG-All-Workstations'; AsrRule = $AsrLsassRule
+       Description = 'ContextPane demo (ANOM-INT-309): golden baseline is Block; seeded drifted to Audit'
+       Settings = @(@{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSetting'
+                       settingInstance = @{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationGroupSettingCollectionInstance'; settingDefinitionId = $AsrSetting
+                                            groupSettingCollectionValue = @(@{ children = @(@{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance'
+                                                                                                settingDefinitionId = "${AsrSetting}_$AsrLsassRule"
+                                                                                                choiceSettingValue = @{ value = "${AsrSetting}_${AsrLsassRule}_audit"; children = @() } }) }) } }) }
+    @{ Name = 'EndpointSecurity-Firewall-Prod'; Group = 'SG-All-Workstations'
+       Description = 'ContextPane demo (ANOM-INT-309): golden firewall policy, EnableFirewall = True'
+       Settings = @((New-ChoiceSetting 'vendor_msft_firewall_mdmstore_domainprofile_enablefirewall' 'true'), (New-ChoiceSetting 'vendor_msft_firewall_mdmstore_privateprofile_enablefirewall' 'true')) }
+    @{ Name = 'Fabrikam-EndpointSecurity-DiskEncryption'; Group = 'SG-Fabrikam-Win11-Devices'
+       Description = 'ContextPane demo (INC-4099): golden disk encryption baseline, silent BitLocker'
+       Settings = @((New-ChoiceSetting 'device_vendor_msft_bitlocker_requiredeviceencryption' '1'), (New-ChoiceSetting 'device_vendor_msft_bitlocker_allowwarningforotherdiskencryption' '0')) }
+)
+$LegacyProfileSpecs = @(
+    @{ Name = 'Win11-Firewall-MDM'; Group = 'SG-All-Workstations'
+       Description = 'ContextPane demo (ANOM-INT-309): duplicate legacy firewall profile with a conflicting EnableFirewall value'
+       Settings = @{ firewallProfileDomain = @{ firewallEnabled = 'blocked' }; firewallProfilePrivate = @{ firewallEnabled = 'blocked' } } }
+    @{ Name = 'Fabrikam-Legacy-BitLocker-DeviceConfig'; Group = 'SG-Fabrikam-Win11-Devices'
+       Description = 'ContextPane demo (INC-4099): 2024 BitLocker profile that conflicts with the disk encryption baseline'
+       Settings = @{ bitLockerEncryptDevice = $true; bitLockerDisableWarningForOtherDiskEncryption = $false; bitLockerSystemDrivePolicy = @{ encryptionMethod = 'xtsAes128' } } }
+)
+
+function Get-ContextPaneGroup([string]$Name, [string]$Nick, [string]$Desc, [string[]]$MemberIds) {
+    $group = Get-MgGroup -Filter "displayName eq '$Name'" -Property Id,DisplayName -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $group) {
+        if (-not $PSCmdlet.ShouldProcess($Name, 'New-MgGroup')) { return $null }
+        $group = New-MgGroup -DisplayName $Name -MailNickname $Nick -MailEnabled:$false -SecurityEnabled:$true -Description $Desc
+        Write-Ok "created $Name ($($group.Id))"
+    }
+    $current = @(Get-MgGroupMember -GroupId $group.Id -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    foreach ($id in $MemberIds) {
+        if ($current -notcontains $id -and $PSCmdlet.ShouldProcess("$id -> $Name", 'New-MgGroupMember')) { New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $id }
+    }
+    return $group
+}
+
+<# Flips one ASR rule in a Settings Catalog policy (no per-setting PATCH exists: GET + PUT). #>
+function Set-ContextPaneAsrRule([string]$PolicyId, [string]$Rule, [string]$Value) {
+    $uri = "https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/$PolicyId"
+    $policy = Invoke-MgGraphRequest -Method GET -Uri $uri
+    $settings = (Invoke-MgGraphRequest -Method GET -Uri "$uri/settings").value
+    $json = ConvertTo-Json @($settings | ForEach-Object { @{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSetting'; settingInstance = $_.settingInstance } }) -Depth 30
+    $patched = $json -replace "($Rule)_(block|audit|warn|off)`"", "`$1_$Value`""
+    $body = @{ name = $policy.name; description = $policy.description; platforms = $policy.platforms; technologies = $policy.technologies; roleScopeTagIds = $policy.roleScopeTagIds; settings = ($patched | ConvertFrom-Json -Depth 30) }
+    Invoke-MgGraphRequest -Method PUT -Uri $uri -Body ($body | ConvertTo-Json -Depth 30) -ContentType 'application/json'
+}
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 function Write-Ok([string]$Message)   { Write-Host "    [OK] $Message" -ForegroundColor Green }
@@ -103,7 +193,7 @@ if (-not $SkipGraph) {
     $mg = Get-MgContext
     if (-not $mg) { throw 'No Microsoft Graph context. Run: Connect-MgGraph -TenantId <id> -Scopes User.ReadWrite.All,Group.ReadWrite.All,Policy.ReadWrite.ConditionalAccess,Directory.ReadWrite.All' }
     if ($mg.TenantId -ne $TenantId) { throw "Graph context is tenant $($mg.TenantId); expected $TenantId. Re-run Connect-MgGraph -TenantId $TenantId." }
-    $missing = @('User.ReadWrite.All', 'Group.ReadWrite.All', 'Policy.ReadWrite.ConditionalAccess') | Where-Object { $mg.Scopes -notcontains $_ }
+    $missing = @('User.ReadWrite.All', 'Group.ReadWrite.All', 'Policy.ReadWrite.ConditionalAccess') + $(if ($SkipIntune) { @() } else { @('DeviceManagementConfiguration.ReadWrite.All') }) | Where-Object { $mg.Scopes -notcontains $_ }
     if ($missing) { Write-Warning "Graph context is missing scopes: $($missing -join ', '). Creation calls may fail." }
     Write-Ok "Graph: $($mg.Account) @ $($mg.TenantId)"
 }
@@ -242,10 +332,138 @@ if (-not $SkipGraph) {
     }
 
     # -----------------------------------------------------------------------
-    # Temporary Access Pass policy + a Graph sign-in the [Issue TAP] action can reuse
+    # 3b. Tenant anomalies: ANOM-LIC-101 (orphaned seats, CountViolation) and
+    #     ANOM-CA-204 (missing break-glass exclusion, report-only drift)
     # -----------------------------------------------------------------------
-    if (-not $SkipTapPolicy) {
-        & (Join-Path $PSScriptRoot 'Enable-ContextPaneTapPolicy.ps1') -TenantId $TenantId -WhatIf:$WhatIfPreference
+    if (-not $SkipAnomalies) {
+        Write-Step 'Tenant anomalies (ANOM-LIC-101, ANOM-CA-204)'
+        $anomalyIds = @{}
+        foreach ($u in $AnomalyUsers) {
+            $upn = "$($u.Mail)@$Domain"
+            $existing = Get-MgUser -Filter "userPrincipalName eq '$upn'" -Property Id,AccountEnabled -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $existing) {
+                if ($PSCmdlet.ShouldProcess($upn, 'New-MgUser')) {
+                    $existing = New-MgUser -AccountEnabled:$u.Enabled -DisplayName $u.DisplayName -UserPrincipalName $upn -MailNickname $u.Mail `
+                        -JobTitle $u.JobTitle -Department $u.Department -UsageLocation 'CH' -CompanyName 'Contoso Finance' `
+                        -PasswordProfile @{ Password = (New-RandomPassword); ForceChangePasswordNextSignIn = $true } -PasswordPolicies 'DisablePasswordExpiration'
+                    Write-Ok "created $upn (accountEnabled=$($u.Enabled))"
+                }
+            } elseif ($existing.AccountEnabled -ne $u.Enabled -and $PSCmdlet.ShouldProcess($upn, "Update-MgUser -AccountEnabled:$($u.Enabled)")) {
+                Update-MgUser -UserId $existing.Id -AccountEnabled:$u.Enabled
+                Write-Ok "$upn accountEnabled=$($u.Enabled)"
+            } else { Write-Keep "$upn exists ($($existing.Id))" }
+            if (-not $existing) { continue }
+            $anomalyIds[$u.Mail] = $existing.Id
+            if (-not $u.Extension) { continue }
+            # The drifted license state lives in the open extension, like the INC-4092 users: no real seat is consumed.
+            $extBody = @{ '@odata.type' = '#microsoft.graph.openTypeExtension'; extensionName = $ExtensionName; contractId = $ContractId; lastSyncedAt = $Now } + $u.Extension
+            $ext = Get-MgUserExtension -UserId $existing.Id -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq $ExtensionName } | Select-Object -First 1
+            if ($ext) {
+                if ($PSCmdlet.ShouldProcess($upn, "Update-MgUserExtension $ExtensionName (drifted)")) { Update-MgUserExtension -UserId $existing.Id -ExtensionId $ExtensionName -BodyParameter $extBody }
+            } elseif ($PSCmdlet.ShouldProcess($upn, "New-MgUserExtension $ExtensionName")) {
+                $null = New-MgUserExtension -UserId $existing.Id -BodyParameter $extBody
+            }
+        }
+
+        $licensingMembers = @($AnomalyUsers | Where-Object { $_.Extension } | ForEach-Object { $anomalyIds[$_.Mail] } | Where-Object { $_ })
+        $breakGlassId = $anomalyIds['bg-admin-01']
+        $licensingGroup = Get-ContextPaneGroup -Name 'SG-Contoso-M365-E5' -Nick 'sg-contoso-m365-e5' -Desc 'ContextPane demo: group-based licensing for Microsoft 365 E5 (ANOM-LIC-101)' -MemberIds $licensingMembers
+        $breakGlass = Get-ContextPaneGroup -Name 'SG-BreakGlass-Accounts' -Nick 'sg-breakglass-accounts' -Desc 'ContextPane demo: emergency access accounts, excluded from every Conditional Access policy' -MemberIds @($breakGlassId | Where-Object { $_ })
+        $demoAdmins = Get-ContextPaneGroup -Name 'SG-ContextPane-Demo-Admins' -Nick 'sg-contextpane-demo-admins' -Desc 'ContextPane demo: admin accounts in scope of CA-001 (demo accounts only, never real admins)' -MemberIds @($breakGlassId | Where-Object { $_ })
+        $financeId = $seeded.groups['SG-Contoso-Finance-AVD'].objectId
+
+        # CA-001 is enabled but scoped to the demo admin group only; the drift is the missing break-glass exclusion.
+        # CA-004 targets the Finance demo users only and is left in report-only; the fix enforces it.
+        if ($breakGlass -and $demoAdmins -and $financeId) {
+            $caSpecs = @(
+                @{
+                    displayName   = $Ca001Name
+                    state         = 'enabled'
+                    conditions    = @{ users = @{ includeGroups = @($demoAdmins.Id); excludeGroups = @() }; applications = @{ includeApplications = @('All') }; clientAppTypes = @('all') }
+                    grantControls = @{ operator = 'OR'; authenticationStrength = @{ id = '00000000-0000-0000-0000-000000000004' } }
+                }
+                @{
+                    displayName   = $Ca004Name
+                    state         = 'enabledForReportingButNotEnforced'
+                    conditions    = @{ users = @{ includeGroups = @($financeId); excludeGroups = @($breakGlass.Id) }; applications = @{ includeApplications = @('All') }; clientAppTypes = @('exchangeActiveSync', 'other') }
+                    grantControls = @{ operator = 'OR'; builtInControls = @('block') }
+                }
+            )
+            $allPolicies = @(Get-MgIdentityConditionalAccessPolicy -All -ErrorAction SilentlyContinue)
+            foreach ($spec in $caSpecs) {
+                $existingPolicy = $allPolicies | Where-Object { $_.DisplayName -eq $spec.displayName } | Select-Object -First 1
+                if (-not $existingPolicy) {
+                    if ($PSCmdlet.ShouldProcess($spec.displayName, "New-MgIdentityConditionalAccessPolicy (state=$($spec.state))")) {
+                        $created = New-MgIdentityConditionalAccessPolicy -BodyParameter $spec
+                        Write-Ok "created $($spec.displayName) ($($created.Id))"
+                    }
+                } elseif ($PSCmdlet.ShouldProcess($spec.displayName, 'Update-MgIdentityConditionalAccessPolicy (re-assert drift)')) {
+                    Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $existingPolicy.Id -BodyParameter $spec
+                    Write-Ok "re-asserted drift on $($spec.displayName)"
+                }
+            }
+        } else {
+            Write-Warning 'Skipped CA-001 / CA-004: a demo group could not be created.'
+        }
+        if ($licensingGroup) { Write-Keep "SG-Contoso-M365-E5 ($($licensingGroup.Id)): CountViolation is modelled in the license extension" }
+    }
+
+    # -----------------------------------------------------------------------
+    # 3c. Intune: ANOM-INT-309 (ASR + firewall drift) and INC-4099 (BitLocker conflict)
+    #     Needs DeviceManagementConfiguration.ReadWrite.All and an Intune license; skipped with a
+    #     warning otherwise. Devices stay fixtures (the lab has no enrolled devices).
+    # -----------------------------------------------------------------------
+    if (-not $SkipIntune) {
+        Write-Step 'Intune (ANOM-INT-309, INC-4099)'
+        try {
+            $workstations = Get-ContextPaneGroup -Name 'SG-All-Workstations' -Nick 'sg-all-workstations' -Desc 'ContextPane demo: Intune assignment target for every managed workstation (ANOM-INT-309)' -MemberIds @()
+            $fabrikamDevices = Get-ContextPaneGroup -Name 'SG-Fabrikam-Win11-Devices' -Nick 'sg-fabrikam-win11-devices' -Desc 'ContextPane demo: Fabrikam Legal Windows 11 devices (INC-4099)' -MemberIds @()
+            $beta = 'https://graph.microsoft.com/beta/deviceManagement'
+            $v1 = 'https://graph.microsoft.com/v1.0/deviceManagement'
+            $existingPolicies = @((Invoke-MgGraphRequest -Method GET -Uri "$beta/configurationPolicies?`$select=id,name&`$top=100").value)
+            $existingConfigs = @((Invoke-MgGraphRequest -Method GET -Uri "$v1/deviceConfigurations?`$select=id,displayName").value)
+
+            foreach ($spec in $SettingsCatalogSpecs) {
+                $name = "$DemoPrefix $($spec.Name)"
+                $groupId = $(if ($spec.Group -eq 'SG-All-Workstations') { $workstations.Id } else { $fabrikamDevices.Id })
+                $policy = $existingPolicies | Where-Object { $_.name -eq $name } | Select-Object -First 1
+                if (-not $policy) {
+                    if ($PSCmdlet.ShouldProcess($name, 'POST configurationPolicies (Settings Catalog)')) {
+                        $body = @{ name = $name; description = $spec.Description; platforms = 'windows10'; technologies = 'mdm,microsoftSense'; roleScopeTagIds = @('0'); settings = $spec.Settings }
+                        $policy = Invoke-MgGraphRequest -Method POST -Uri "$beta/configurationPolicies" -Body ($body | ConvertTo-Json -Depth 30) -ContentType 'application/json'
+                        Write-Ok "created $name ($($policy.id))"
+                    }
+                } elseif ($spec.AsrRule -and $PSCmdlet.ShouldProcess($name, 'Re-assert the ASR drift (Block -> Audit)')) {
+                    Set-ContextPaneAsrRule -PolicyId $policy.id -Rule $spec.AsrRule -Value 'audit'
+                    Write-Ok "re-asserted drift on $name (ASR rule = Audit)"
+                } else { Write-Keep "$name exists ($($policy.id))" }
+                if ($policy -and $groupId -and $PSCmdlet.ShouldProcess($name, "assign to $($spec.Group)")) {
+                    $assign = @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = $groupId } }) }
+                    $null = Invoke-MgGraphRequest -Method POST -Uri "$beta/configurationPolicies/$($policy.id)/assign" -Body ($assign | ConvertTo-Json -Depth 10) -ContentType 'application/json'
+                }
+            }
+
+            foreach ($spec in $LegacyProfileSpecs) {
+                $name = "$DemoPrefix $($spec.Name)"
+                $groupId = $(if ($spec.Group -eq 'SG-All-Workstations') { $workstations.Id } else { $fabrikamDevices.Id })
+                $legacyProfile = $existingConfigs | Where-Object { $_.displayName -eq $name } | Select-Object -First 1
+                if (-not $legacyProfile) {
+                    if ($PSCmdlet.ShouldProcess($name, 'POST deviceConfigurations (legacy profile)')) {
+                        $body = @{ '@odata.type' = '#microsoft.graph.windows10EndpointProtectionConfiguration'; displayName = $name; description = $spec.Description } + $spec.Settings
+                        $legacyProfile = Invoke-MgGraphRequest -Method POST -Uri "$v1/deviceConfigurations" -Body ($body | ConvertTo-Json -Depth 10) -ContentType 'application/json'
+                        Write-Ok "created $name ($($legacyProfile.id))"
+                    }
+                } else { Write-Keep "$name exists ($($legacyProfile.id))" }
+                # The conflict is the assignment: (re-)assign the legacy profile to the same group as the golden policy.
+                if ($legacyProfile -and $groupId -and $PSCmdlet.ShouldProcess($name, "assign to $($spec.Group) (drifted)")) {
+                    $assign = @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = $groupId } }) }
+                    $null = Invoke-MgGraphRequest -Method POST -Uri "$v1/deviceConfigurations/$($legacyProfile.id)/assign" -Body ($assign | ConvertTo-Json -Depth 10) -ContentType 'application/json'
+                    Write-Ok "$name assigned to $($spec.Group)"
+                }
+            }
+        } catch {
+            Write-Warning "Intune seeding skipped: $($_.Exception.Message). ANOM-INT-309 and INC-4099 keep their fixtures; needs DeviceManagementConfiguration.ReadWrite.All and an Intune license."
+        }
     }
 }
 
@@ -437,6 +655,8 @@ Write-Host "`nLab seeded. Start the orchestrator with LIVE_CLOUD_MODE=true to qu
     Users    = $seeded.users.Count
     Groups   = $seeded.groups.Count
     Policy   = $(if ($seeded.policy) { $seeded.policy.id } else { '(skipped)' })
+    Anomalies = $(if ($SkipGraph -or $SkipAnomalies) { '(skipped)' } else { 'ANOM-LIC-101, ANOM-CA-204' })
+    Intune   = $(if ($SkipGraph -or $SkipIntune) { '(skipped)' } else { 'ANOM-INT-309, INC-4099 (see warnings above)' })
     NsgId    = $(if ($seeded.nsg) { $seeded.nsg.id } else { '(skipped)' })
     Manifest = $ManifestPath
 } | Format-List
