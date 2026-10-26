@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   HoverDiagnosticArgsSchema,
@@ -64,15 +64,28 @@ interface CachedHover {
  * Model answers per (tenant, entity), persisted to data/hover-cache.json so a restart
  * serves every pill from disk instead of waking the scale-to-zero GPU again. An entry is
  * reused while it comes from the preferred (first configured) provider; ?refresh=true
- * regenerates it.
+ * regenerates it. A fresh clone has no cache file yet and starts from the tracked
+ * data/hover-cache.seed.json: genuine Muse Glimmer 30B answers from the Modal L40S.
  */
 const HOVER_CACHE_FILE = join(config.dataDir, "hover-cache.json");
+const HOVER_SEED_FILE = join(config.dataDir, "hover-cache.seed.json");
 const hoverKey = (tenantId: string, entityId: string) => `${tenantId}|${entityId.toLowerCase()}`;
+/** Set when data/hover-cache.json was created from the seed at this start-up. */
+export let hoverCacheSeeded = false;
 const hoverCache = loadHoverCache();
 /** Entries read from data/hover-cache.json at start-up. */
 export const persistedHoverCount = hoverCache.size;
 
 function loadHoverCache(): Map<string, CachedHover> {
+  if (!existsSync(HOVER_CACHE_FILE) && existsSync(HOVER_SEED_FILE)) {
+    try {
+      mkdirSync(config.dataDir, { recursive: true });
+      copyFileSync(HOVER_SEED_FILE, HOVER_CACHE_FILE);
+      hoverCacheSeeded = true;
+    } catch (error) {
+      console.warn(`  [hover] could not seed ${HOVER_CACHE_FILE}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (!existsSync(HOVER_CACHE_FILE)) return new Map();
   try {
     const file = JSON.parse(readFileSync(HOVER_CACHE_FILE, "utf8")) as { entries?: Record<string, CachedHover> };
@@ -113,9 +126,13 @@ function preferredProvider(): RouterTelemetry["provider"] | undefined {
   return config.forceLocal ? undefined : chainSteps().find((s) => s.hasKey)?.provider;
 }
 
+/** Muse Glimmer answers rank first in the Tier 1A chain, so they are served even without a GPU endpoint configured. */
+const OPEN_WEIGHT_PROVIDERS = new Set<string>(["modal-open-weights", "runpod", "local-glimmer-30b"]);
+
 function cachedHover(tenantId: string, entityId: string): CachedHover | undefined {
+  if (config.forceLocal) return undefined;
   const cached = hoverCache.get(hoverKey(tenantId, entityId));
-  return cached && cached.provider === preferredProvider() ? cached : undefined;
+  return cached && (cached.provider === preferredProvider() || OPEN_WEIGHT_PROVIDERS.has(cached.provider)) ? cached : undefined;
 }
 
 /** Only what this entity's popover can use: the deterministic diagnostic already carries the rest. */

@@ -1,0 +1,1363 @@
+{
+  "version": 1,
+  "entries": {
+    "tenant-contoso-01|aadsts53003": {
+      "generatedAt": "2026-10-26T19:23:19.469Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 24649,
+      "tokensUsed": {
+        "prompt": 1851,
+        "completion": 1097,
+        "total": 2948
+      },
+      "args": {
+        "entityId": "AADSTS53003",
+        "entityType": "errorCode",
+        "status": "critical",
+        "headline": "Blocked by [ContextPane-Demo] Block AVD - Contoso Finance Legacy; 3 users still on SPE_E3 after E5 upgrade",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by a Conditional Access policy. The policy's grant control is Block, so no token is issued.",
+          "likelyCause": "The user is in scope of a policy targeting this app with a Block grant. Check the policy's included users/groups and the app assignment; a stale legacy group membership after a license migration is the usual culprit.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Occurrences",
+            "value": "3 in current window",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Affected",
+            "value": "lynne.robins.contoso@c4a8shili.onmicrosoft.com, diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Policy",
+            "value": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Policy state",
+            "value": "enabledForReportingButNotEnforced",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Include group",
+            "value": "SG-Contoso-Finance-Legacy",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "License drift",
+            "value": "3 users on SPE_E3, expected SPE_E5",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Ticket",
+            "value": "INC-4092 Finance department cannot access new AVD Host Pool after Microsoft 365 E5 upgrade",
+            "mono": false,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA Policy",
+            "kind": "inspect-policy",
+            "description": "Open [ContextPane-Demo] Block AVD - Contoso Finance Legacy to review included users/groups and grant controls",
+            "targetEntityId": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+            "destructive": false
+          },
+          {
+            "id": "open-sign-in-logs",
+            "label": "Open sign-in logs",
+            "kind": "open-sign-in-logs",
+            "description": "View recent AVD failures for affected users",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign SPE_E5",
+            "kind": "assign-license",
+            "description": "Remediate license drift for users still on SPE_E3",
+            "targetEntityId": "INC-4092",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|alex.wilber.contoso@c4a8shili.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:14:30.288Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 15203,
+      "tokensUsed": {
+        "prompt": 1583,
+        "completion": 567,
+        "total": 2150
+      },
+      "args": {
+        "entityId": "alex.wilber.contoso@c4a8shili.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "healthy",
+        "headline": "Alex Wilber · SPE_E5 assigned, no recent failures",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Finance Manager",
+            "mono": false
+          },
+          {
+            "label": "Group",
+            "value": "SG-Contoso-Finance-AVD",
+            "mono": true
+          },
+          {
+            "label": "License",
+            "value": "SPE_E5 → expected SPE_E5",
+            "mono": true,
+            "tone": "healthy"
+          },
+          {
+            "label": "Last sign-in",
+            "value": "Azure Virtual Desktop · success",
+            "mono": false,
+            "tone": "healthy"
+          }
+        ],
+        "quickActions": []
+      }
+    },
+    "tenant-contoso-01|diego.siciliani.contoso@c4a8shili.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:14:15.083Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 23302,
+      "tokensUsed": {
+        "prompt": 1943,
+        "completion": 872,
+        "total": 2815
+      },
+      "args": {
+        "entityId": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "critical",
+        "headline": "Blocked by [ContextPane-Demo] Block AVD - Contoso Finance Legacy; license SPE_E3 vs required SPE_E5",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by a Conditional Access policy. The policy's grant control is Block, so no token is issued.",
+          "likelyCause": "The user is in scope of a policy targeting this app with a Block grant. Check the policy's included users/groups and the app assignment; a stale legacy group membership after a license migration is the usual culprit.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Accounts Payable Specialist",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Contoso-Finance-AVD",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected SPE_E5",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Last failure",
+            "value": "Azure Virtual Desktop · 08:07:02 UTC",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Error",
+            "value": "AADSTS53003",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Blocked by",
+            "value": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Device",
+            "value": "CONTOSO-LT-0519 · compliant",
+            "mono": true,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "issue-tap",
+            "label": "Issue TAP",
+            "kind": "issue-tap",
+            "description": "Create temporary access pass for immediate AVD access",
+            "targetEntityId": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+            "destructive": false
+          },
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA Policy",
+            "kind": "inspect-policy",
+            "description": "Open Conditional Access policy d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign SPE_E5",
+            "kind": "assign-license",
+            "description": "Upgrade user from SPE_E3 to SPE_E5 as per M365 upgrade",
+            "targetEntityId": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|lynne.robins.contoso@c4a8shili.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:13:44.110Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 22828,
+      "tokensUsed": {
+        "prompt": 2059,
+        "completion": 835,
+        "total": 2894
+      },
+      "args": {
+        "entityId": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "critical",
+        "headline": "Lynne Robins blocked from Azure Virtual Desktop (AADSTS53003) · SPE_E3 ≠ SPE_E5",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by a Conditional Access policy. The policy's grant control is Block, so no token is issued.",
+          "likelyCause": "The user is in scope of a policy targeting this app with a Block grant. Check the policy's included users/groups and the app assignment; a stale legacy group membership after a license migration is the usual culprit.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Senior Financial Analyst",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Contoso-Finance-AVD",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected SPE_E5",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Last failure",
+            "value": "Azure Virtual Desktop · 08:04:10 UTC",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Error",
+            "value": "AADSTS53003",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Blocked by",
+            "value": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Device",
+            "value": "CONTOSO-LT-0471 · compliant",
+            "mono": true,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "issue-tap",
+            "label": "Issue TAP",
+            "kind": "issue-tap",
+            "description": "Create temporary access pass for immediate AVD access",
+            "targetEntityId": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+            "destructive": false
+          },
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA Policy",
+            "kind": "inspect-policy",
+            "description": "Open [ContextPane-Demo] Block AVD - Contoso Finance Legacy details",
+            "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign SPE_E5",
+            "kind": "assign-license",
+            "description": "Upgrade license from SPE_E3 to expected SPE_E5",
+            "targetEntityId": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|miriam.graham.contoso@c4a8shili.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:14:46.274Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 19272,
+      "tokensUsed": {
+        "prompt": 1590,
+        "completion": 569,
+        "total": 2159
+      },
+      "args": {
+        "entityId": "miriam.graham.contoso@c4a8shili.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "healthy",
+        "headline": "Miriam Graham · SPE_E5 assigned, no recent failures",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Financial Controller",
+            "mono": false
+          },
+          {
+            "label": "Group",
+            "value": "SG-Contoso-Finance-AVD",
+            "mono": true
+          },
+          {
+            "label": "License",
+            "value": "SPE_E5 → expected SPE_E5",
+            "mono": true,
+            "tone": "healthy"
+          },
+          {
+            "label": "Last sign-in",
+            "value": "Azure Virtual Desktop · success",
+            "mono": false,
+            "tone": "healthy"
+          }
+        ],
+        "quickActions": []
+      }
+    },
+    "tenant-contoso-01|nsg-contoso-avd-hostpool-01": {
+      "generatedAt": "2026-10-26T19:14:13.723Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 27582,
+      "tokensUsed": {
+        "prompt": 1960,
+        "completion": 1045,
+        "total": 3005
+      },
+      "args": {
+        "entityId": "nsg-contoso-avd-hostpool-01",
+        "entityType": "resource",
+        "status": "critical",
+        "headline": "nsg-contoso-avd-hostpool-01: DRIFT DETECTED (1 Rogue NSG Rule on TCP 3389 + Tag Drift)",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Resource group",
+            "value": "rg-contoso-avd-prod",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "Baseline",
+            "value": "demo-iac/main.tf @ main",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "Rogue rule",
+            "value": "Allow-Temp-RDP-Diagnostic-Drift · TCP 3389 from * (p150)",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Tag ChangeTicket",
+            "value": "manual-hotfix-2026-10-24 → ∅",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Tag Environment",
+            "value": "Prod-Hotfix-Manual → Production",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Compared against",
+            "value": "live Azure",
+            "mono": false,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "view-diff",
+            "label": "View Diff",
+            "kind": "view-diff",
+            "description": "",
+            "targetEntityId": "nsg-contoso-avd-hostpool-01",
+            "destructive": false
+          },
+          {
+            "id": "generate-fix",
+            "label": "Generate Fix & Stage PR",
+            "kind": "generate-fix",
+            "description": "",
+            "targetEntityId": "nsg-contoso-avd-hostpool-01",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|patti.fernandez.contoso@c4a8shili.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:14:32.329Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 18603,
+      "tokensUsed": {
+        "prompt": 1793,
+        "completion": 684,
+        "total": 2477
+      },
+      "args": {
+        "entityId": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "warning",
+        "headline": "Patti Fernandez · license drift (SPE_E3 vs SPE_E5)",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Treasury Analyst",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Contoso-Finance-AVD",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected SPE_E5",
+            "mono": true,
+            "tone": "warning"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "assign-license",
+            "label": "Assign SPE_E5",
+            "kind": "assign-license",
+            "description": "Assign SPE_E5 to patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+            "targetEntityId": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|sg-contoso-finance-avd": {
+      "generatedAt": "2026-10-26T19:13:46.139Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 24856,
+      "tokensUsed": {
+        "prompt": 1712,
+        "completion": 899,
+        "total": 2611
+      },
+      "args": {
+        "entityId": "SG-Contoso-Finance-AVD",
+        "entityType": "group",
+        "status": "warning",
+        "headline": "AVD blocked by [ContextPane-Demo] Block AVD - Contoso Finance Legacy and 3 members missing SPE_E5",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by Conditional Access policy",
+          "likelyCause": "User is in a group targeted by an enabled Conditional Access policy that blocks access to Azure Virtual Desktop",
+          "docsUrl": ""
+        },
+        "facts": [
+          {
+            "label": "Members",
+            "value": "5",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "Contract",
+            "value": "15x Microsoft 365 E5 (CNT-2026-884)",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Assigned",
+            "value": "12/15",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Drifted",
+            "value": "Lynne Robins, Diego Siciliani, Patti Fernandez",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Policy state",
+            "value": "enabledForReportingButNotEnforced",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Blocked by",
+            "value": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+            "mono": false,
+            "tone": "critical"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "assign-license",
+            "label": "Assign SPE_E5 ×3",
+            "kind": "assign-license",
+            "description": "Assign missing Microsoft 365 E5 licenses to drifted members",
+            "targetEntityId": "SG-Contoso-Finance-AVD",
+            "destructive": false
+          },
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA policy",
+            "kind": "inspect-policy",
+            "description": "Review [ContextPane-Demo] Block AVD - Contoso Finance Legacy targeting",
+            "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|vdpool-contoso-fin-01": {
+      "generatedAt": "2026-10-26T19:20:55.015Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 41554,
+      "tokensUsed": {
+        "prompt": 1784,
+        "completion": 1849,
+        "total": 3633
+      },
+      "args": {
+        "entityId": "vdpool-contoso-fin-01",
+        "entityType": "resource",
+        "status": "critical",
+        "headline": "Blocked by [ContextPane-Demo] Block AVD - Contoso Finance Legacy; 3 users still on SPE_E3 not SPE_E5",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by Conditional Access policy",
+          "likelyCause": "User is in a group targeted by a Conditional Access policy that blocks access to Azure Virtual Desktop",
+          "docsUrl": "https://learn.microsoft.com/entra/identity/conditional-access/concept-conditional-access-policy"
+        },
+        "facts": [
+          {
+            "label": "Resource group",
+            "value": "rg-contoso-avd-prod",
+            "mono": true,
+            "tone": "healthy"
+          },
+          {
+            "label": "Spec",
+            "value": "Host Pool: vdpool-contoso-fin-01 (Pooled, BreadthFirst, 2x D4s_v5)",
+            "mono": false,
+            "tone": "healthy"
+          },
+          {
+            "label": "Ticket",
+            "value": "INC-4092 Finance department cannot access new AVD Host Pool after Microsoft 365 E5 upgrade",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Blocking policy",
+            "value": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Policy state",
+            "value": "enabledForReportingButNotEnforced",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Included group",
+            "value": "SG-Contoso-Finance-Legacy",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "SKU drift",
+            "value": "Expected SPE_E5, legacy SPE_E3, drifted 3",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "NSG drift",
+            "value": "DRIFT DETECTED (1 Rogue NSG Rule on TCP 3389 + Tag Drift)",
+            "mono": false,
+            "tone": "critical"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "inspect-policy-block-avd-finance-legacy",
+            "label": "Inspect CA policy",
+            "kind": "inspect-policy",
+            "description": "Open [ContextPane-Demo] Block AVD - Contoso Finance Legacy d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "destructive": false
+          },
+          {
+            "id": "assign-license-spe-e5",
+            "label": "Assign SPE_E5 licenses",
+            "kind": "assign-license",
+            "description": "Remediate 3 users still on SPE_E3 to expected SPE_E5",
+            "targetEntityId": "INC-4092",
+            "destructive": false
+          },
+          {
+            "id": "view-sign-in-logs",
+            "label": "View sign-in logs",
+            "kind": "open-sign-in-logs",
+            "description": "Review AADSTS53003 failures for lynne.robins.contoso and diego.siciliani.contoso",
+            "targetEntityId": "vdpool-contoso-fin-01",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|aadsts50105": {
+      "generatedAt": "2026-10-26T19:15:14.346Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 27926,
+      "tokensUsed": {
+        "prompt": 1653,
+        "completion": 1010,
+        "total": 2663
+      },
+      "args": {
+        "entityId": "AADSTS50105",
+        "entityType": "errorCode",
+        "status": "critical",
+        "headline": "The signed-in user is not assigned to a role for this application.",
+        "errorCodeTranslation": {
+          "code": "AADSTS50105",
+          "meaning": "The signed-in user is not assigned to a role for this application.",
+          "likelyCause": "The enterprise app requires user assignment and the user (or their group) is missing, or the service plan/license that grants the app is not assigned.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Occurrences",
+            "value": "2 in current window",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Affected",
+            "value": "grady.archie.legal@fabrikamlegal.onmicrosoft.com, johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Category",
+            "value": "assignment",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Ticket",
+            "value": "INC-4099 M365 Copilot & Purview eDiscovery access failure for paralegal group",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "SKU expected",
+            "value": "INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "SKU legacy",
+            "value": "SPE_E3",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "SKU drift",
+            "value": "4",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Policy in scope",
+            "value": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "mono": false,
+            "tone": "warning"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "open-sign-in-logs",
+            "label": "Open sign-in logs",
+            "kind": "open-sign-in-logs",
+            "description": "Review AADSTS50105 failures for Copilot sign-ins",
+            "targetEntityId": "AADSTS50105",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign license",
+            "kind": "assign-license",
+            "description": "Assign INFORMATION_PROTECTION_COMPLIANCE to affected users",
+            "targetEntityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          },
+          {
+            "id": "inspect-policy",
+            "label": "Inspect policy",
+            "kind": "inspect-policy",
+            "description": "Review Require Compliant Device policy f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+            "targetEntityId": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|aadsts53003": {
+      "generatedAt": "2026-10-26T19:15:28.983Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 24371,
+      "tokensUsed": {
+        "prompt": 1702,
+        "completion": 890,
+        "total": 2592
+      },
+      "args": {
+        "entityId": "AADSTS53003",
+        "entityType": "errorCode",
+        "status": "critical",
+        "headline": "Access blocked by a Conditional Access policy. The policy's grant control is Block, so no token is issued.",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by a Conditional Access policy. The policy's grant control is Block, so no token is issued.",
+          "likelyCause": "The user is in scope of a policy targeting this app with a Block grant. Check the policy's included users/groups and the app assignment; a stale legacy group membership after a license migration is the usual culprit.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Occurrences",
+            "value": "1 in current window",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Affected",
+            "value": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "Policy",
+            "value": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Category",
+            "value": "conditional-access",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Expected SKU",
+            "value": "INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Legacy SKU",
+            "value": "SPE_E3",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Drifted users",
+            "value": "4",
+            "mono": true,
+            "tone": "critical"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA Policy",
+            "kind": "inspect-policy",
+            "description": "Open Conditional Access policy [ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "targetEntityId": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "destructive": false
+          },
+          {
+            "id": "open-sign-in-logs",
+            "label": "Open sign-in logs",
+            "kind": "open-sign-in-logs",
+            "description": "View sign-in failures for lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|grady.archie.legal@fabrikamlegal.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:15:07.608Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 21188,
+      "tokensUsed": {
+        "prompt": 1853,
+        "completion": 762,
+        "total": 2615
+      },
+      "args": {
+        "entityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "warning",
+        "headline": "Grady Archie blocked from Microsoft 365 Copilot (AADSTS50105) · SPE_E3 ≠ INFORMATION_PROTECTION_COMPLIANCE",
+        "errorCodeTranslation": {
+          "code": "AADSTS50105",
+          "meaning": "The signed-in user is not assigned to a role for this application.",
+          "likelyCause": "The enterprise app requires user assignment and the user (or their group) is missing, or the service plan/license that grants the app is not assigned.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Paralegal",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Fabrikam-Legal",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Last failure",
+            "value": "Microsoft 365 Copilot · 06:41:03 UTC",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Error",
+            "value": "AADSTS50105",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Device",
+            "value": "FABRIKAM-LT-1107 · compliant",
+            "mono": true,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "issue-tap",
+            "label": "Issue TAP",
+            "kind": "issue-tap",
+            "description": "Create a temporary access pass for immediate sign-in",
+            "targetEntityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
+            "kind": "assign-license",
+            "description": "Replace SPE_E3 with required service plan for Copilot/Purview",
+            "targetEntityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|isaiah.langer.legal@fabrikamlegal.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:15:38.351Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 24002,
+      "tokensUsed": {
+        "prompt": 1782,
+        "completion": 880,
+        "total": 2662
+      },
+      "args": {
+        "entityId": "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "warning",
+        "headline": "Isaiah Langer · license drift (SPE_E3 vs INFORMATION_PROTECTION_COMPLIANCE)",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Paralegal",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Fabrikam-Legal",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Department",
+            "value": "Litigation",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Drift status",
+            "value": "drifted",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Extension present",
+            "value": "true",
+            "mono": false,
+            "tone": "healthy"
+          },
+          {
+            "label": "Policy",
+            "value": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Policy state",
+            "value": "enabled",
+            "mono": false,
+            "tone": "warning"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "assign-license",
+            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
+            "kind": "assign-license",
+            "description": "Replace SPE_E3 with INFORMATION_PROTECTION_COMPLIANCE for isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
+            "targetEntityId": "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:15:57.001Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 22737,
+      "tokensUsed": {
+        "prompt": 1857,
+        "completion": 831,
+        "total": 2688
+      },
+      "args": {
+        "entityId": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "warning",
+        "headline": "Johanna Lorenz blocked from Microsoft 365 Copilot (AADSTS50105) · SPE_E3 ≠ INFORMATION_PROTECTION_COMPLIANCE",
+        "errorCodeTranslation": {
+          "code": "AADSTS50105",
+          "meaning": "The signed-in user is not assigned to a role for this application.",
+          "likelyCause": "The enterprise app requires user assignment and the user (or their group) is missing, or the service plan/license that grants the app is not assigned.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Paralegal",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Fabrikam-Legal",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Last failure",
+            "value": "Microsoft 365 Copilot · 07:03:44 UTC",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Error",
+            "value": "AADSTS50105",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Device",
+            "value": "FABRIKAM-LT-1133 · compliant",
+            "mono": true,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "issue-tap",
+            "label": "Issue TAP",
+            "kind": "issue-tap",
+            "description": "",
+            "targetEntityId": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
+            "kind": "assign-license",
+            "description": "",
+            "targetEntityId": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|lidia.holloway.legal@fabrikamlegal.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:15:54.942Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 25955,
+      "tokensUsed": {
+        "prompt": 1989,
+        "completion": 935,
+        "total": 2924
+      },
+      "args": {
+        "entityId": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "critical",
+        "headline": "Lidia Holloway blocked from Microsoft Purview (AADSTS53003) · SPE_E3 ≠ INFORMATION_PROTECTION_COMPLIANCE",
+        "errorCodeTranslation": {
+          "code": "AADSTS53003",
+          "meaning": "Access blocked by a Conditional Access policy. The policy's grant control is Block, so no token is issued.",
+          "likelyCause": "The user is in scope of a policy targeting this app with a Block grant. Check the policy's included users/groups and the app assignment; a stale legacy group membership after a license migration is the usual culprit.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Litigation Support Specialist",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Group",
+            "value": "SG-Fabrikam-Legal",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "License",
+            "value": "SPE_E3 → expected INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Last failure",
+            "value": "Microsoft Purview · 06:44:50 UTC",
+            "mono": false,
+            "tone": "critical"
+          },
+          {
+            "label": "Error",
+            "value": "AADSTS53003",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Blocked by",
+            "value": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Device",
+            "value": "FABRIKAM-MBP-0042 · non-compliant",
+            "mono": true,
+            "tone": "unknown"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "issue-tap",
+            "label": "Issue TAP",
+            "kind": "issue-tap",
+            "description": "Create a time-limited access pass for emergency Purview access",
+            "targetEntityId": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          },
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA Policy",
+            "kind": "inspect-policy",
+            "description": "Open Conditional Access policy f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02 to review scope and grant",
+            "targetEntityId": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+            "destructive": false
+          },
+          {
+            "id": "assign-license",
+            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
+            "kind": "assign-license",
+            "description": "Replace SPE_E3 with required INFORMATION_PROTECTION_COMPLIANCE SKU for Purview",
+            "targetEntityId": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|nestor.wilke.legal@fabrikamlegal.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:15:53.787Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 15436,
+      "tokensUsed": {
+        "prompt": 1632,
+        "completion": 583,
+        "total": 2215
+      },
+      "args": {
+        "entityId": "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "healthy",
+        "headline": "Nestor Wilke · INFORMATION_PROTECTION_COMPLIANCE assigned, no recent failures",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Role",
+            "value": "Lead Paralegal",
+            "mono": false
+          },
+          {
+            "label": "Group",
+            "value": "SG-Fabrikam-Legal",
+            "mono": true
+          },
+          {
+            "label": "License",
+            "value": "INFORMATION_PROTECTION_COMPLIANCE → expected INFORMATION_PROTECTION_COMPLIANCE",
+            "mono": true,
+            "tone": "healthy"
+          },
+          {
+            "label": "Last sign-in",
+            "value": "Microsoft Purview · success",
+            "mono": false,
+            "tone": "healthy"
+          }
+        ],
+        "quickActions": []
+      }
+    },
+    "tenant-fabrikam-02|nsg-fabrikam-slz-hub-01": {
+      "generatedAt": "2026-10-26T19:15:34.262Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 26653,
+      "tokensUsed": {
+        "prompt": 1923,
+        "completion": 980,
+        "total": 2903
+      },
+      "args": {
+        "entityId": "nsg-fabrikam-slz-hub-01",
+        "entityType": "resource",
+        "status": "critical",
+        "headline": "nsg-fabrikam-slz-hub-01: DRIFT DETECTED (1 Rogue NSG Rule on TCP 22 + Tag Drift)",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Resource group",
+            "value": "rg-fabrikam-slz-prod",
+            "mono": true
+          },
+          {
+            "label": "Baseline",
+            "value": "demo-iac/fabrikam.tf @ main",
+            "mono": true
+          },
+          {
+            "label": "Rogue rule",
+            "value": "Allow-Temp-SSH-Vendor · TCP 22 from * (p120)",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Tag Classification",
+            "value": "∅ → Confidential",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Tag DataResidency",
+            "value": "Global → CH",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Compared against",
+            "value": "seeded manifest",
+            "mono": false
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "view-diff",
+            "label": "View Diff",
+            "kind": "view-diff",
+            "description": "",
+            "targetEntityId": "nsg-fabrikam-slz-hub-01",
+            "destructive": false
+          },
+          {
+            "id": "generate-fix",
+            "label": "Generate Fix & Stage PR",
+            "kind": "generate-fix",
+            "description": "",
+            "targetEntityId": "nsg-fabrikam-slz-hub-01",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-fabrikam-02|sg-fabrikam-legal": {
+      "generatedAt": "2026-10-26T19:15:04.610Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 18190,
+      "tokensUsed": {
+        "prompt": 1787,
+        "completion": 662,
+        "total": 2449
+      },
+      "args": {
+        "entityId": "SG-Fabrikam-Legal",
+        "entityType": "group",
+        "status": "warning",
+        "headline": "SG-Fabrikam-Legal: 4 of 5 members missing INFORMATION_PROTECTION_COMPLIANCE",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "Members",
+            "value": "5",
+            "mono": true,
+            "tone": "unknown"
+          },
+          {
+            "label": "Contract",
+            "value": "25x Microsoft 365 E5 Compliance (CNT-2026-912)",
+            "mono": false,
+            "tone": "unknown"
+          },
+          {
+            "label": "Assigned",
+            "value": "21/25",
+            "mono": true,
+            "tone": "warning"
+          },
+          {
+            "label": "Drifted",
+            "value": "Grady Archie, Isaiah Langer, Lidia Holloway, Johanna Lorenz",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Targeted by",
+            "value": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+            "mono": true,
+            "tone": "warning"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "assign-license",
+            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
+            "kind": "assign-license",
+            "description": "Assign INFORMATION_PROTECTION_COMPLIANCE ×4",
+            "targetEntityId": "SG-Fabrikam-Legal",
+            "destructive": false
+          },
+          {
+            "id": "inspect-policy",
+            "label": "Inspect CA Policy",
+            "kind": "inspect-policy",
+            "description": "",
+            "targetEntityId": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+            "destructive": false
+          }
+        ]
+      }
+    }
+  }
+}

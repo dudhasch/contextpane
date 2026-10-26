@@ -92,7 +92,8 @@ Credit guardrails on the Modal target:
 - the orchestrator only sends hovers there (`CTX_OPEN_WEIGHT_TIERS=hover`; add `catalog` or `voice`
   to opt those tiers in) and persists every answer, with its provider, model, latency and tokens, to
   `data/hover-cache.json`. A restart serves every pill from that file and only calls the GPU for
-  entities it does not hold yet, or for `POST /api/hover?refresh=true`.
+  entities it does not hold yet, or for `POST /api/hover?refresh=true`. A fresh clone starts from
+  the tracked `data/hover-cache.seed.json` (the 18 answers this deployment generated).
 
 The local target needs about 17 GB of VRAM for full offload (`-GpuLayers` lowers it, at a large
 speed cost). Tier 1A hovers then try Glimmer first (`CTX_OPEN_WEIGHT_HOVER_TIMEOUT_MS`, default

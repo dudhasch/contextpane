@@ -8,7 +8,7 @@ import { gatherContext } from "./mcp/context.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
 import { telemetry } from "./telemetry.ts";
-import { persistedHoverCount, warmHoverCache } from "./tiers/tier1-hover.ts";
+import { hoverCacheSeeded, persistedHoverCount, warmHoverCache } from "./tiers/tier1-hover.ts";
 
 /**
  * Bun entrypoint: Hono HTTP app + WebSocket telemetry feed on /ws.
@@ -55,7 +55,7 @@ const keyed = Object.values(providers).filter((p) => p.hasKey).map((p) => p.id);
 console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
 console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
 console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
-if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json`);
+if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json${hoverCacheSeeded ? " (seeded from data/hover-cache.seed.json)" : ""}`);
 
 // Warm-up, all in the background: wake the Modal sandbox, mint the Graph/ARM tokens and
 // gather the context for every tenant, resolve the Meta model ids, then pre-fetch every hover

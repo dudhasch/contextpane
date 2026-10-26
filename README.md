@@ -44,24 +44,30 @@ Open http://localhost:5173 and press the hotkeys in order (no keys needed for ev
 
 Offline (no `.env.local`) every step runs on the deterministic engine and the approval is
 simulated; with `META_API_KEY` and `LIVE_CLOUD_MODE=true` (see [Live cloud mode](#live-cloud-mode)) it is all real.
+Hovers are genuine Muse Glimmer 30B answers either way: the 18 the Modal L40S generated ship in
+`data/hover-cache.seed.json`, which seeds `data/hover-cache.json` on first start, so `1` is served
+in 1–2 ms without a GPU, an endpoint or a key.
 
-## Live Benchmarks Measured on Oct 26, 2026
+## Measured Production Benchmarks (Oct 26, 2026)
 
 Reference machine in Switzerland, Meta Model API, Modal us-east, lab tenant
-`c4a8shili.onmicrosoft.com`, warm orchestrator.
+`c4a8shili.onmicrosoft.com`, warm orchestrator. Every number below was measured on that day;
+none of them needed the L40S, except the Glimmer row, which comes from the generation of the
+hover cache that now ships in the repo.
 
 | Path | Measured | LLM tokens |
 |---|---|---|
-| Tier 0 · View Recipe hydrate (server time) | 0–1 ms (2–6 ms wall) | 0 |
-| Tier 1A · cached Muse Glimmer 30B hover (wall) | 1–2 ms | 0 |
-| MCP gather · batched Graph + Azure, fresh | 0.16–0.65 s | 0 |
-| Tier 3 · warm Modal pre-flight (`TF_REATTACH_PROVIDERS`: AST + `fmt` + `validate`) | 638–871 ms | 0 |
-| Tier 2 · Vision · `muse-spark-1.3` reads the ticket screenshot | 3.4–5.3 s | ~2.9k |
-| HITL approve → 3 live Graph writes → canvas converged | 1.75 s end to end | 0 |
-| Reset demo drift (3 live Graph PATCHes; the canvas reverts at once) | 0.56–1.3 s | 0 |
-| Tier 1B · correlate (`muse-spark-1.3`, header painted from MCP data first) | 4–5.5 s (~1 s first paint) | ~10.5k |
-| Tier 3 · generate fix (`muse-wonder-1.0` plan + bundle, Modal, git stage) | 16.5–18 s | ~13k |
-| Muse Glimmer 30B on Modal L40S · cold boot from zero / one uncached hover | 17.7 s / ~25 s | ~1.1k |
+| **Tier 0** · View Recipe switch (server time) | 0–1 ms (2–6 ms wall) | 0 |
+| **Tier 1A** · Muse Glimmer 30B on a Modal L40S (open weights, llama.cpp) | 17.7 s cold boot from the Modal Volume → 29–44 tok/s per stream; 567–1,849 completion tokens per hover (reasoning + answer, median 880; the Contoso `AADSTS53003` hover is 1,097 tokens in 24.6 s), pre-computed on ticket ingest → served from the persistent cache in **1–2 ms** | 0 on hover |
+| **MCP gather** · live Microsoft Graph + Azure ARM, in-memory Bearer token cache + Graph `/$batch` | 0.16–0.65 s fresh | 0 |
+| **Tier 1B / 2** · cross-MCP layout correlation (`muse-spark-1.3`) | 0.67–0.86 s SSE `mcp_ready` first paint → 4–10 s full validated layout | ~10.5k |
+| **Voice** · `POST /v1/asr/transcribe` (16 kHz mono WAV) + intent routing | 1.6–2.6 s | 0 (deterministic intent) |
+| **Vision** · `muse-spark-1.3` reads the ticket screenshot | 3.4–5.3 s | ~2.9k |
+| **Tier 3B** · Modal pre-flight sandbox (`@modal.cls`, `TF_REATTACH_PROVIDERS`), in the container | 306–338 ms: pwsh AST 7–18 ms (persistent `pwsh`) · `terraform fmt` 38–47 ms · `terraform validate` 304–337 ms (warm `azurerm`), the last two in parallel | 0 |
+| **Tier 3B** · same pre-flight, round trip from Switzerland | 481–871 ms | 0 |
+| **Tier 3** · generate fix (`muse-wonder-1.0` plan + bundle, Modal pre-flight, git stage) | 16.5–18 s | ~13k |
+| **HITL approve** → 3 live Graph writes → zero-token canvas convergence | 1.3–1.75 s end to end | 0 |
+| **Reset demo drift** (3 live Graph PATCHes; the canvas reverts at once) | 0.56–1.3 s | 0 |
 
 ---
 
@@ -143,7 +149,7 @@ that fails is repaired by the deterministic hydrator, and every tier falls back 
 | Tier | Endpoint | What happens | Model / provider chain |
 |---|---|---|---|
 | **0** | `GET /api/recipe/:id/hydrate?tenantId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. Measured: 2–11 ms server time. | — |
-| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of both tenants is pre-generated and persisted to `data/hover-cache.json` |
+| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of both tenants is pre-generated and persisted to `data/hover-cache.json`, seeded on a fresh clone from the tracked `data/hover-cache.seed.json` |
 | **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Meta API `muse-spark-1.3` (`minimal`; open-weight Glimmer first only with `CTX_OPEN_WEIGHT_TIERS=hover,catalog`); the SSE stream paints `TenantSummaryHeader` from MCP data (`mcp_ready`) before the model answers |
 | **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
 | **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
@@ -449,7 +455,10 @@ on llama.cpp b11889, one L40S, weights in the `contextpane-glimmer-weights` Volu
 (container up in 3.6 s, the 16.8 GB GGUF loaded from the Volume in ~14 s). All 18 hoverable
 pills of Contoso Finance and Fabrikam Legal were generated by `modal-open-weights` and persisted to
 `data/hover-cache.json`; a restart loads them and generates nothing (both tenants ready 1.9 s after
-start, GPU untouched), and a cached hover is served in 0-2 ms. Glimmer always reasons (its template
+start, GPU untouched), and a cached hover is served in 0-2 ms. The same 18 answers are tracked as
+`data/hover-cache.seed.json` (lab UPNs and policy ids only, no secrets): a fresh clone copies it to
+`data/hover-cache.json` on first start, and Glimmer answers are served from it even when no
+open-weight endpoint is configured. Glimmer always reasons (its template
 cannot switch thinking off, and b11889 did not enforce `--reasoning-budget`), so one uncached hover
 takes ~25 s on a warm L40S (1,097 completion tokens at ~44 tok/s) and 15-42 s three at a time
 during the pre-warm. That is why interactive hovers keep an 8 s budget with Meta `muse-spark-1.3`
