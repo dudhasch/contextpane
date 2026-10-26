@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--filter", "@contextpane/web", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "orchestrator",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "apps/orchestrator/src/index.ts"],
+      "port": 4000
+    }
+  ]
+}

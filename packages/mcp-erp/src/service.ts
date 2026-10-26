@@ -1,5 +1,24 @@
 import { ERP_CONTRACTS, ERP_TENANTS, ERP_TICKETS, type ErpContract, type ErpTenant, type ErpTicket } from "./data.ts";
 
+/** SLA resolution window per severity (minutes). */
+const SLA_RESOLUTION_MIN: Record<ErpTicket["severity"], number> = { P1: 240, P2: 480, P3: 1440, P4: 2880 };
+
+/**
+ * Open tickets are re-timed relative to "now" so the SLA countdown is always
+ * live during a demo (opened 41 min ago, last update 12 min ago). Resolved
+ * tickets and timeline entries keep their recorded timestamps.
+ */
+function withLiveClock(ticket: ErpTicket, now = Date.now()): ErpTicket {
+  if (ticket.status === "Resolved") return ticket;
+  const openedAt = new Date(now - 41 * 60_000);
+  return {
+    ...ticket,
+    openedAt: openedAt.toISOString(),
+    updatedAt: new Date(now - 12 * 60_000).toISOString(),
+    slaBreachAt: new Date(openedAt.getTime() + SLA_RESOLUTION_MIN[ticket.severity] * 60_000).toISOString(),
+  };
+}
+
 export class ErpNotFoundError extends Error {
   constructor(kind: string, id: string) {
     super(`${kind} '${id}' not found in ERP`);
@@ -39,11 +58,13 @@ export const erpService = {
   getTicket(ticketId: string): ErpTicket {
     const ticket = ERP_TICKETS[ticketId.toUpperCase().replace(/^#/, "")];
     if (!ticket) throw new ErpNotFoundError("ticket", ticketId);
-    return ticket;
+    return withLiveClock(ticket);
   },
 
   listTickets(tenantId?: string): ErpTicket[] {
-    return Object.values(ERP_TICKETS).filter((t) => !tenantId || t.tenantId === tenantId);
+    return Object.values(ERP_TICKETS)
+      .filter((t) => !tenantId || t.tenantId === tenantId)
+      .map(withLiveClock);
   },
 
   getContract(contractId: string): ErpContract {

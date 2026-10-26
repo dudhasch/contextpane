@@ -1,0 +1,63 @@
+import type { HealthState, RouterTier } from "@contextpane/catalog";
+
+export function fmtTimeUtc(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.getUTCHours().toString().padStart(2, "0")}:${d.getUTCMinutes().toString().padStart(2, "0")}:${d.getUTCSeconds().toString().padStart(2, "0")}Z`;
+}
+
+export function fmtDateTimeUtc(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.toISOString().slice(0, 10)} ${fmtTimeUtc(iso)}`;
+}
+
+export function fmtMs(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
+}
+
+export function fmtTokens(n: number): string {
+  if (n === 0) return "0";
+  if (n < 1000) return String(n);
+  return `${(n / 1000).toFixed(1)}k`;
+}
+
+export function fmtUsd(n: number): string {
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
+export function shortSha(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, 7) : "—";
+}
+
+export function countdown(iso: string, now = Date.now()): string {
+  const ms = new Date(iso).getTime() - now;
+  if (!Number.isFinite(ms)) return "";
+  if (ms <= 0) return "BREACHED";
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return `${h}h ${m.toString().padStart(2, "0")}m`;
+}
+
+export const TIER_COLOR: Record<RouterTier, string> = {
+  "Tier 0": "primary",
+  "Tier 1A": "healthy",
+  "Tier 1B": "meta",
+  "Tier 2": "meta",
+  "Tier 3A": "warning",
+  "Tier 3B": "warning",
+  Voice: "meta",
+};
+
+export const PROVIDER_LABEL: Record<string, string> = {
+  local: "Deterministic (0 tokens)",
+  fireworks: "Fireworks",
+  baseten: "Baseten 2M TPM",
+  meta: "Meta API",
+  modal: "Modal",
+};
+
+export function healthTone(state: HealthState): "healthy" | "warning" | "critical" | "muted" {
+  return state === "unknown" ? "muted" : state;
+}

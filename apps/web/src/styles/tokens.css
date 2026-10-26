@@ -1,0 +1,48 @@
+/*
+ * ContextPane design tokens — source of truth is DESIGN.md.
+ * Tailwind v4 reads @theme into utilities (bg-canvas, text-primary, font-mono …);
+ * the --cp-* aliases exist for raw CSS and inline styles.
+ */
+@theme {
+  --color-canvas: #090d16;
+  --color-surface: #111827;
+  --color-elevated: #1e293b;
+  --color-border: #334155;
+  --color-border-subtle: #1f2937;
+
+  --color-primary: #38bdf8;
+  --color-healthy: #10b981;
+  --color-warning: #f59e0b;
+  --color-critical: #f43f5e;
+  --color-meta: #a855f7;
+
+  --color-text: #e5e7eb;
+  --color-muted: #94a3b8;
+  --color-faint: #64748b;
+
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --radius-card: 10px;
+  --radius-pill: 6px;
+  --shadow-popover: 0 12px 32px -8px rgba(0, 0, 0, 0.9), 0 0 0 1px #334155;
+
+  --ease-ops: cubic-bezier(0.2, 0, 0, 1);
+}
+
+:root {
+  --cp-canvas: #090d16;
+  --cp-surface: #111827;
+  --cp-elevated: #1e293b;
+  --cp-border: #334155;
+  --cp-border-subtle: #1f2937;
+  --cp-primary: #38bdf8;
+  --cp-healthy: #10b981;
+  --cp-warning: #f59e0b;
+  --cp-critical: #f43f5e;
+  --cp-meta: #a855f7;
+  --cp-text: #e5e7eb;
+  --cp-text-muted: #94a3b8;
+  --cp-text-faint: #64748b;
+  color-scheme: dark;
+}
