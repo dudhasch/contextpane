@@ -1,0 +1,29 @@
+{
+  "name": "@contextpane/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ContextPane orchestrator: Bun + Hono backend with the 4-Tier Meta Model Router, SSE progress streams and WebSocket telemetry.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@contextpane/catalog": "workspace:*",
+    "@contextpane/mcp-azure-iac": "workspace:*",
+    "@contextpane/mcp-erp": "workspace:*",
+    "@contextpane/mcp-msgraph": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "diff": "^9.0.0",
+    "hono": "^4.13.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}

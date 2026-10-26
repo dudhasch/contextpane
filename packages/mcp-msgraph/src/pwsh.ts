@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Minimal PowerShell 7 runner. The script is written to stdin (`-Command -`)
@@ -40,9 +43,14 @@ export async function isPwshAvailable(): Promise<boolean> {
 
 export function runPwshRaw(script: string, options: PwshRunOptions = {}): Promise<string> {
   const timeoutMs = options.timeoutMs ?? 30_000;
+  // pwsh silently drops multi-line blocks fed through `-Command -`; a temp runner file is reliable.
+  const dir = mkdtempSync(join(tmpdir(), "ctx-pwsh-"));
+  const runner = join(dir, "runner.ps1");
+  writeFileSync(runner, "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n" + script + "\n", "utf8");
+  const cleanup = () => rmSync(dir, { recursive: true, force: true });
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", "-"], {
-      stdio: ["pipe", "pipe", "pipe"],
+    const child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-File", runner], {
+      stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...options.env },
       windowsHide: true,
     });
@@ -64,20 +72,17 @@ export function runPwshRaw(script: string, options: PwshRunOptions = {}): Promis
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup();
       reject(new PwshError(`failed to start pwsh: ${err.message}`, null, stderr));
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup();
       if (code === 0) resolvePromise(stdout);
       else reject(new PwshError(`pwsh exited with code ${code}: ${stderr.trim().split("\n").slice(-3).join(" | ")}`, code, stderr));
     });
-
-    child.stdin.write("$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n");
-    child.stdin.write(script);
-    child.stdin.write("\n");
-    child.stdin.end();
   });
 }
 

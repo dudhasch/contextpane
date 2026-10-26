@@ -1,0 +1,52 @@
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ActionApprovalDrawerSchema, type ActionApprovalDrawer } from "@contextpane/catalog";
+import { config } from "../config.ts";
+
+/**
+ * Remediation bundles are kept in memory and mirrored to data/remediations/
+ * so an approval survives an orchestrator restart during the demo.
+ */
+class RemediationStore {
+  private dir = join(config.dataDir, "remediations");
+  private items = new Map<string, ActionApprovalDrawer>();
+  private loaded = false;
+
+  private load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    if (!existsSync(this.dir)) return;
+    for (const file of readdirSync(this.dir).filter((f) => f.endsWith(".json"))) {
+      try {
+        const parsed = ActionApprovalDrawerSchema.safeParse(JSON.parse(readFileSync(join(this.dir, file), "utf8")));
+        if (parsed.success) this.items.set(parsed.data.remediationId, parsed.data);
+      } catch {
+        /* ignore corrupt file */
+      }
+    }
+  }
+
+  save(drawer: ActionApprovalDrawer): ActionApprovalDrawer {
+    this.load();
+    this.items.set(drawer.remediationId, drawer);
+    try {
+      mkdirSync(this.dir, { recursive: true });
+      writeFileSync(join(this.dir, `${drawer.remediationId}.json`), JSON.stringify(drawer, null, 2) + "\n", "utf8");
+    } catch (error) {
+      console.warn(`[remediations] persist failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return drawer;
+  }
+
+  get(remediationId: string): ActionApprovalDrawer | null {
+    this.load();
+    return this.items.get(remediationId) ?? null;
+  }
+
+  list(tenantId?: string): ActionApprovalDrawer[] {
+    this.load();
+    return [...this.items.values()].filter((r) => !tenantId || r.tenantId === tenantId);
+  }
+}
+
+export const remediationStore = new RemediationStore();

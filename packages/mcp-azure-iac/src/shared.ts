@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 /* -------------------------------------------------------------------------- */
@@ -104,9 +105,14 @@ export async function isPwshAvailable(): Promise<boolean> {
 }
 
 export function runPwshRaw(script: string, timeoutMs = 30_000): Promise<string> {
+  // pwsh silently drops multi-line blocks fed through `-Command -`; a temp runner file is reliable.
+  const dir = mkdtempSync(join(tmpdir(), "ctx-pwsh-"));
+  const runner = join(dir, "runner.ps1");
+  writeFileSync(runner, "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n" + script + "\n", "utf8");
+  const cleanup = () => rmSync(dir, { recursive: true, force: true });
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", "-"], {
-      stdio: ["pipe", "pipe", "pipe"],
+    const child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-File", runner], {
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     let stdout = "";
@@ -116,6 +122,7 @@ export function runPwshRaw(script: string, timeoutMs = 30_000): Promise<string> 
       if (settled) return;
       settled = true;
       child.kill();
+      cleanup();
       reject(new Error(`pwsh timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     child.stdout.setEncoding("utf8");
@@ -126,19 +133,17 @@ export function runPwshRaw(script: string, timeoutMs = 30_000): Promise<string> 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup();
       reject(new Error(`failed to start pwsh: ${err.message}`));
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup();
       if (code === 0) resolvePromise(stdout);
       else reject(new Error(`pwsh exited with code ${code}: ${stderr.trim().split("\n").slice(-3).join(" | ")}`));
     });
-    child.stdin.write("$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n");
-    child.stdin.write(script);
-    child.stdin.write("\n");
-    child.stdin.end();
   });
 }
 

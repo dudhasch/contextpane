@@ -1,0 +1,155 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import type { ProviderId } from "@contextpane/catalog";
+
+/* -------------------------------------------------------------------------- */
+/* Repo root + dotenv                                                          */
+/* -------------------------------------------------------------------------- */
+
+export function findRepoRoot(): string {
+  for (const anchor of [process.cwd(), import.meta.dir]) {
+    let dir = resolve(anchor);
+    for (let i = 0; i < 8; i++) {
+      if (existsSync(join(dir, "demo-iac", "demo-lab-manifest.json")) && existsSync(join(dir, "package.json"))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return process.cwd();
+}
+
+export const REPO_ROOT = findRepoRoot();
+
+/** Load <root>/.env then <root>/.env.local without overriding already-set variables. */
+function loadDotEnv(): string[] {
+  const loaded: string[] = [];
+  for (const file of [".env", ".env.local"]) {
+    const path = join(REPO_ROOT, file);
+    if (!existsSync(path)) continue;
+    loaded.push(file);
+    for (const rawLine of readFileSync(path, "utf8").split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      let value = line.slice(eq + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+      if (file === ".env.local" || process.env[key] === undefined) {
+        if (process.env[key] === undefined || file === ".env.local") process.env[key] = value;
+      }
+    }
+  }
+  return loaded;
+}
+
+export const DOTENV_FILES_LOADED = loadDotEnv();
+
+const env = (key: string, fallback = ""): string => {
+  const v = process.env[key];
+  return v === undefined || v === "" ? fallback : v;
+};
+const envBool = (key: string, fallback = false): boolean => {
+  const v = process.env[key];
+  if (v === undefined || v === "") return fallback;
+  return /^(true|1|yes|on)$/i.test(v);
+};
+const envInt = (key: string, fallback: number): number => {
+  const n = Number.parseInt(env(key), 10);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+/* -------------------------------------------------------------------------- */
+/* Provider + model configuration                                              */
+/* -------------------------------------------------------------------------- */
+
+export interface ProviderConfig {
+  id: Exclude<ProviderId, "local" | "modal">;
+  label: string;
+  baseUrl: string;
+  apiKey: string;
+  hasKey: boolean;
+}
+
+export const providers: Record<"fireworks" | "baseten" | "meta", ProviderConfig> = {
+  fireworks: {
+    id: "fireworks",
+    label: "Fireworks",
+    baseUrl: env("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"),
+    apiKey: env("FIREWORKS_API_KEY"),
+    hasKey: env("FIREWORKS_API_KEY") !== "",
+  },
+  baseten: {
+    id: "baseten",
+    label: "Baseten 2M TPM",
+    baseUrl: env("BASETEN_BASE_URL", "https://inference.baseten.co/v1"),
+    apiKey: env("BASETEN_API_KEY"),
+    hasKey: env("BASETEN_API_KEY") !== "",
+  },
+  meta: {
+    id: "meta",
+    label: "Meta API",
+    baseUrl: env("META_API_BASE_URL", "https://api.meta.ai/v1"),
+    apiKey: env("META_API_KEY"),
+    hasKey: env("META_API_KEY") !== "",
+  },
+};
+
+export const models = {
+  fireworksGlimmer: env("CTX_MODEL_FIREWORKS_GLIMMER", "accounts/fireworks/models/muse-glimmer-30b"),
+  basetenSpark: env("CTX_MODEL_BASETEN_SPARK", "meta-models/muse-spark-open-1026"),
+  basetenGlimmer: env("CTX_MODEL_BASETEN_GLIMMER", "muse-glimmer-30b"),
+  metaSpark: env("CTX_MODEL_META_SPARK", "muse-spark-1.3"),
+  metaSparkContributor: env("CTX_MODEL_META_SPARK_CONTRIBUTOR", "muse-spark-1.3-contributor"),
+  metaWonder: env("CTX_MODEL_META_WONDER", "muse-wonder-1.0"),
+  metaCode: env("CTX_MODEL_META_CODE", "muse-code"),
+  metaGlimmer: env("CTX_MODEL_META_GLIMMER", "muse-glimmer-30b"),
+  metaVoice: env("CTX_MODEL_META_VOICE", "muse-voice-transcribe"),
+} as const;
+
+export const config = {
+  port: envInt("CTX_ORCHESTRATOR_PORT", 4000),
+  webOrigin: `http://localhost:${envInt("CTX_WEB_PORT", 5173)}`,
+  liveCloudMode: envBool("LIVE_CLOUD_MODE", false),
+  forceLocal: envBool("CTX_FORCE_LOCAL", false),
+  allowExecute: envBool("CTX_ALLOW_EXECUTE", false),
+  mcpTransport: (env("CTX_MCP_TRANSPORT", "in-process") === "stdio" ? "stdio" : "in-process") as "in-process" | "stdio",
+  timeouts: {
+    hoverMs: envInt("CTX_HOVER_TIMEOUT_MS", 2500),
+    correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
+    remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
+    voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
+  },
+  modal: {
+    enabled: envBool("CTX_MODAL_SANDBOX_ENABLED", false),
+    url: env("CTX_MODAL_SANDBOX_URL"),
+    token: env("CTX_MODAL_SANDBOX_TOKEN"),
+  },
+  stagingDir: resolve(REPO_ROOT, env("CTX_STAGING_DIR", ".contextpane/staging")),
+  dataDir: join(REPO_ROOT, "data"),
+  lab: {
+    tenantId: env("CTX_LAB_TENANT_ID", "4cc41c20-8b01-40a3-93c6-b4f1e846f6ea"),
+    subscriptionId: env("CTX_LAB_SUBSCRIPTION_ID", "20505597-043c-4742-a884-42dc3f621aef"),
+    domain: env("CTX_LAB_DOMAIN", "c4a8shili.onmicrosoft.com"),
+    delegatedIdentity: env("CTX_LAB_DELEGATED_IDENTITY", "cloudadmin@c4a8shili.onmicrosoft.com"),
+  },
+};
+
+export function anyProviderKey(): boolean {
+  return Object.values(providers).some((p) => p.hasKey);
+}
+
+export function describeConfig() {
+  return {
+    repoRoot: REPO_ROOT,
+    dotenvLoaded: DOTENV_FILES_LOADED,
+    liveCloudMode: config.liveCloudMode,
+    forceLocal: config.forceLocal,
+    mcpTransport: config.mcpTransport,
+    providers: Object.values(providers).map((p) => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, hasKey: p.hasKey })),
+    models,
+    modalSandbox: { enabled: config.modal.enabled, configured: config.modal.url !== "" },
+    timeouts: config.timeouts,
+  };
+}
