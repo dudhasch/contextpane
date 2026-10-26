@@ -1,0 +1,3 @@
+[install]
+# Hoisted layout keeps tsc, Vite and workspace symlinks predictable across packages.
+linker = "hoisted"

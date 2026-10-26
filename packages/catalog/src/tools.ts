@@ -1,0 +1,191 @@
+import { z } from "zod";
+import { HoverDiagnosticPopoverSchema } from "./schemas/components.ts";
+import { HydrateLayoutArgsSchema } from "./schemas/layout.ts";
+import { EntityTypeSchema } from "./schemas/primitives.ts";
+
+/**
+ * OpenAI-compatible function-calling tool definitions.
+ *
+ * Baseten's `meta-models/muse-spark-open-1026` supports `tools` + `tool_choice`
+ * but NOT `response_format: { type: "json_schema" }`. Forcing a single function
+ * tool is the portable way to get strict JSON out of every provider we route to
+ * (Baseten, Fireworks, Meta Model API) with one payload shape.
+ */
+
+export interface OpenAIFunctionTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    strict?: boolean;
+  };
+}
+
+export interface ForcedToolChoice {
+  type: "function";
+  function: { name: string };
+}
+
+export const HYDRATE_LAYOUT_TOOL_NAME = "hydrate_contextpane_layout";
+export const HOVER_DIAGNOSTIC_TOOL_NAME = "emit_hover_diagnostic";
+export const REMEDIATION_BUNDLE_TOOL_NAME = "emit_remediation_bundle";
+export const STEER_LAYOUT_TOOL_NAME = "steer_contextpane_layout";
+
+/**
+ * Convert a Zod schema to the JSON Schema dialect function-calling endpoints
+ * expect. Strips `$schema` (several OpenAI-compatible servers reject it) and
+ * keeps the schema self-contained (no $defs needed for our shapes).
+ */
+export function zodToToolParameters(schema: z.ZodType): Record<string, unknown> {
+  const json = z.toJSONSchema(schema, {
+    target: "draft-7",
+    unrepresentable: "any",
+    io: "input",
+    reused: "inline",
+  }) as Record<string, unknown>;
+  delete json.$schema;
+  return json;
+}
+
+export function forcedToolChoice(name: string): ForcedToolChoice {
+  return { type: "function", function: { name } };
+}
+
+/* ----------------------------- Tier 1B / Tier 2 ---------------------------- */
+
+export function getHydrateLayoutToolDefinition(): OpenAIFunctionTool {
+  return {
+    type: "function",
+    function: {
+      name: HYDRATE_LAYOUT_TOOL_NAME,
+      description:
+        "Hydrate the ContextPane generative UI canvas. Emit an ordered list of catalog components " +
+        "(TenantSummaryHeader, LicenseDriftCard, EntraSignInTimeline, IaCDriftBanner) whose props are " +
+        "filled exclusively from the supplied MCP context (ERP ticket + contract, Entra license state, " +
+        "sign-in events, Conditional Access policies, Azure NSG drift). Never emit prose, markdown or " +
+        "components outside the catalog. Never invent users, policies, rules or identifiers.",
+      parameters: zodToToolParameters(HydrateLayoutArgsSchema),
+    },
+  };
+}
+
+export function getHydrateLayoutToolChoice(): ForcedToolChoice {
+  return forcedToolChoice(HYDRATE_LAYOUT_TOOL_NAME);
+}
+
+/* --------------------------------- Tier 1A --------------------------------- */
+
+/** The hover tool omits providerTelemetry; the orchestrator stamps it. */
+export const HoverDiagnosticArgsSchema = HoverDiagnosticPopoverSchema.omit({
+  providerTelemetry: true,
+  latencyBudgetMs: true,
+});
+export type HoverDiagnosticArgs = z.infer<typeof HoverDiagnosticArgsSchema>;
+
+export function getHoverDiagnosticToolDefinition(): OpenAIFunctionTool {
+  return {
+    type: "function",
+    function: {
+      name: HOVER_DIAGNOSTIC_TOOL_NAME,
+      description:
+        "Produce a compact inline diagnostic for the hovered entity (UPN, group, device, Conditional Access policy, " +
+        "AADSTS error code, SKU or Azure resource). One headline, a verified error-code translation when applicable, " +
+        "up to 8 facts and up to 4 quick actions. Use only the supplied context and the AADSTS catalog.",
+      parameters: zodToToolParameters(HoverDiagnosticArgsSchema),
+    },
+  };
+}
+
+export function getHoverDiagnosticToolChoice(): ForcedToolChoice {
+  return forcedToolChoice(HOVER_DIAGNOSTIC_TOOL_NAME);
+}
+
+/* ------------------------------ Tier 3A / 3B ------------------------------- */
+
+export const RemediationBundleArgsSchema = z.object({
+  title: z.string().max(120),
+  summary: z.string().max(600),
+  powershellScript: z
+    .string()
+    .describe(
+      "Complete PowerShell 7 script. Must use Set-MgUserLicense for license changes and " +
+        "Update-MgIdentityConditionalAccessPolicy for Conditional Access changes. Must support -WhatIf.",
+    ),
+  terraformDiff: z
+    .string()
+    .describe("Unified diff (---/+++ headers, @@ hunks) that removes rogue rules and restores drifted tags in the Terraform baseline."),
+  affectedEntities: z
+    .array(
+      z.object({
+        type: EntityTypeSchema,
+        id: z.string(),
+        change: z.string().max(200),
+      }),
+    )
+    .max(20),
+  riskNotes: z.array(z.string().max(300)).max(6).default([]),
+});
+export type RemediationBundleArgs = z.infer<typeof RemediationBundleArgsSchema>;
+
+export function getRemediationBundleToolDefinition(): OpenAIFunctionTool {
+  return {
+    type: "function",
+    function: {
+      name: REMEDIATION_BUNDLE_TOOL_NAME,
+      description:
+        "Emit a Human-in-the-Loop remediation bundle: an exact PowerShell 7 Microsoft.Graph script plus a unified " +
+        "Terraform diff that together resolve the correlated license drift, Conditional Access block and NSG/tag drift. " +
+        "The bundle will be AST-parsed and terraform-validated before a human approves it. Do not execute anything.",
+      parameters: zodToToolParameters(RemediationBundleArgsSchema),
+    },
+  };
+}
+
+export function getRemediationBundleToolChoice(): ForcedToolChoice {
+  return forcedToolChoice(REMEDIATION_BUNDLE_TOOL_NAME);
+}
+
+/* ---------------------------------- Voice ---------------------------------- */
+
+export const SteerLayoutArgsSchema = z.object({
+  intent: z.enum(["filter", "pin", "unpin", "switch-tenant", "focus", "reset", "generate-fix", "unknown"]),
+  componentTypes: z
+    .array(z.enum(["TenantSummaryHeader", "LicenseDriftCard", "EntraSignInTimeline", "IaCDriftBanner"]))
+    .default([])
+    .describe("Components the command refers to, if any"),
+  tenantId: z.string().optional().describe("Target tenant id when intent is switch-tenant"),
+  recipeName: z.string().optional().describe("Recipe name when intent is pin"),
+  transcript: z.string().describe("What the user said, normalised"),
+  confidence: z.number().min(0).max(1),
+});
+export type SteerLayoutArgs = z.infer<typeof SteerLayoutArgsSchema>;
+
+export function getSteerLayoutToolDefinition(): OpenAIFunctionTool {
+  return {
+    type: "function",
+    function: {
+      name: STEER_LAYOUT_TOOL_NAME,
+      description:
+        "Interpret a spoken or typed operator command for the ContextPane canvas and map it to a layout intent: " +
+        "filter to specific components, pin the current view as a recipe, switch tenant, focus a component, reset, or generate a fix.",
+      parameters: zodToToolParameters(SteerLayoutArgsSchema),
+    },
+  };
+}
+
+export function getSteerLayoutToolChoice(): ForcedToolChoice {
+  return forcedToolChoice(STEER_LAYOUT_TOOL_NAME);
+}
+
+/* ------------------------------ Convenience -------------------------------- */
+
+export interface ForcedToolRequest {
+  tools: OpenAIFunctionTool[];
+  tool_choice: ForcedToolChoice;
+}
+
+/** Build the `tools` + `tool_choice` pair for a chat completion request. */
+export function buildForcedToolRequest(tool: OpenAIFunctionTool): ForcedToolRequest {
+  return { tools: [tool], tool_choice: forcedToolChoice(tool.function.name) };
+}
