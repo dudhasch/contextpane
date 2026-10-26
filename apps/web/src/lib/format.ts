@@ -48,6 +48,7 @@ export const TIER_COLOR: Record<RouterTier, string> = {
   "Tier 3A": "warning",
   "Tier 3B": "warning",
   Voice: "meta",
+  Vision: "meta",
 };
 
 /** How each tier routes on the Meta Model API + Modal stack (HUD tier pill and router savings panel). */
@@ -59,6 +60,7 @@ export const TIER_ROUTE: Record<RouterTier, { label: string; route: string }> = 
   "Tier 3A": { label: "Tier 3 · Remediate", route: "muse-wonder-1.0 · Meta · Modal Verified" },
   "Tier 3B": { label: "Tier 3 · Remediate", route: "muse-wonder-1.0 · Meta · Modal Verified" },
   Voice: { label: "Voice · Steer", route: "muse-voice-transcribe-1.0 → muse-spark-1.3 · Meta API" },
+  Vision: { label: "Tier 2 · Vision", route: "muse-spark-1.3 · image input · Meta API" },
 };
 
 export function tierRouteLabel(tier: RouterTier): string {

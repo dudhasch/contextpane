@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
@@ -11,19 +11,23 @@ import {
   type ComponentType,
   type RouterTelemetry,
 } from "@contextpane/catalog";
+import { getManifestTenant, msgraphService } from "@contextpane/mcp-msgraph";
 import { config, describeConfig, providers } from "./config.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext } from "./mcp/context.ts";
 import { metaModelsResolved } from "./router/meta-models.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
+import { auditLedger } from "./store/audit.ts";
+import { convergenceStore } from "./store/convergence.ts";
 import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
-import { telemetry } from "./telemetry.ts";
+import { ZERO_USAGE, telemetry } from "./telemetry.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
 import { approve, remediate } from "./tiers/tier3-remediate.ts";
+import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
 
@@ -246,13 +250,131 @@ const ApproveBodySchema = z.object({
   openPullRequest: z.boolean().optional(),
 });
 
-app.post("/api/approve", async (c) => {
+/** HITL approval: live Graph writes in LIVE_CLOUD_MODE, optional PR, then a zero-token canvas convergence push. */
+const approveHandler = async (c: Context) => {
   const body = ApproveBodySchema.parse(await c.req.json());
-  const drawer = await approve(body);
-  return c.json({ drawer });
-});
+  const { convergence, ...drawer } = await approve(body);
+  return c.json({ drawer, convergence });
+};
+app.post("/api/remediate/approve", approveHandler);
+app.post("/api/approve", approveHandler);
 
 app.get("/api/staging/branches", async (c) => c.json({ branches: await listStagedBranches() }));
+
+/* ------------------------------ demo lab state ----------------------------- */
+
+app.get("/api/lab/state", (c) => c.json({ convergence: convergenceStore.all() }));
+
+const ResetDriftBodySchema = z.object({ tenantId: TenantIdSchema.optional() });
+
+/**
+ * Restores the drifted demo state between video takes: the drifted users' open
+ * extensions go back to SPE_E3 / Drift_Missing_E5_SKU in one Graph $batch and the
+ * in-memory remediation state is cleared. No seed script, no model call.
+ */
+app.post("/api/lab/reset-drift", async (c) => {
+  const started = performance.now();
+  const body = ResetDriftBodySchema.parse(await c.req.json().catch(() => ({})));
+  const tenantIds = body.tenantId ? [body.tenantId] : Object.keys(TENANT_REGISTRY);
+  const results = [];
+  for (const tenantId of tenantIds) {
+    const upns = getManifestTenant(tenantId).users.filter((u) => u.driftStatus !== "compliant").map((u) => u.upn);
+    // The canvas reverts on this push at once; the Graph write (~1 s for an extension PATCH) lands behind it.
+    convergenceStore.clear(tenantId);
+    const write = await msgraphService.setLicenseExtensionState(tenantId, upns, "drifted");
+    invalidateContext(tenantId);
+    const failed = write.results.filter((r) => !r.ok);
+    results.push({ tenantId, source: write.source, fallbackReason: write.fallbackReason, latencyMs: write.latencyMs, users: upns, failed });
+    auditLedger.append({
+      tenantId,
+      ticketId: TENANT_REGISTRY[tenantId as keyof typeof TENANT_REGISTRY].ticketId,
+      actionType: "drift-reset",
+      delegatedIdentity: config.lab.delegatedIdentity,
+      modalSandboxVerified: false,
+      astPass: null,
+      tfValidatePass: null,
+      gitBranch: null,
+      prUrl: null,
+      latencyMs: write.latencyMs,
+      execution: write.source === "live-graph" && !failed.length ? "live-graph" : "simulated",
+      detail: `${upns.length} users → SPE_E3 / Drift_Missing_E5_SKU${write.fallbackReason ? ` (${write.fallbackReason})` : ""}`,
+    });
+  }
+  return c.json({ ok: results.every((r) => r.failed.length === 0), latencyMs: Math.round(performance.now() - started), results });
+});
+
+/* ------------------------------ hover actions ------------------------------ */
+
+const IssueTapBodySchema = z.object({
+  tenantId: TenantIdSchema.default("tenant-contoso-01"),
+  upn: z.string().min(3).max(200),
+});
+
+/** [Issue TAP] — only for the tenant's demo users, never an arbitrary account. */
+app.post("/api/actions/issue-tap", async (c) => {
+  const body = IssueTapBodySchema.parse(await c.req.json());
+  const user = getManifestTenant(body.tenantId).users.find((u) => u.upn.toLowerCase() === body.upn.toLowerCase());
+  if (!user) return c.json({ error: `${body.upn} is not a demo user of ${body.tenantId}` }, 400);
+  const tap = await msgraphService.issueTemporaryAccessPass(body.tenantId, user.upn);
+  const entry = auditLedger.append({
+    tenantId: body.tenantId,
+    ticketId: TENANT_REGISTRY[body.tenantId].ticketId,
+    actionType: "tap-issued",
+    delegatedIdentity: config.lab.delegatedIdentity,
+    modalSandboxVerified: false,
+    astPass: null,
+    tfValidatePass: null,
+    gitBranch: null,
+    prUrl: null,
+    latencyMs: tap.latencyMs,
+    execution: tap.source === "live-graph" ? "live-graph" : "simulated",
+    detail: `TAP for ${user.upn} · ${tap.lifetimeInMinutes} min · ${tap.isUsableOnce ? "one-time" : "multi-use"}${tap.fallbackReason ? ` · fallback: ${tap.fallbackReason.slice(0, 120)}` : ""}`,
+  });
+  telemetry.record({
+    requestId: telemetry.nextRequestId("t0"),
+    endpoint: "/api/actions/issue-tap",
+    tier: "Tier 0",
+    provider: "local",
+    modelId: "deterministic",
+    latencyMs: tap.latencyMs,
+    tokensUsed: { ...ZERO_USAGE },
+    fallbackChain: [],
+    tenantId: body.tenantId,
+  });
+  return c.json({ ...tap, auditId: entry.id });
+});
+
+/** [Inspect CA Policy] — the full policy as the MCP server reports it, plus the sign-ins it blocked. */
+app.get("/api/tenants/:tenantId/policies/:policyId", async (c) => {
+  const tenantId = TenantIdSchema.parse(c.req.param("tenantId"));
+  const result = await sources.msgraph.getPolicyDiagnostic(tenantId, c.req.param("policyId"));
+  if (!result.data.policy) return c.json({ error: "policy not found" }, 404);
+  return c.json({ source: result.source, policy: result.data.policy, blockedUpns: result.data.blockedUpns, blockedSignIns: result.data.blockedSignIns.length });
+});
+
+/* --------------------------------- vision ---------------------------------- */
+
+const VisionBodySchema = z.object({
+  tenantId: TenantIdSchema.default("tenant-contoso-01"),
+  ticketId: z.string().max(40).optional(),
+  fileName: z.string().max(200).optional(),
+  imageDataUri: z
+    .string()
+    .max(8_000_000)
+    .regex(/^data:image\/(png|jpeg|webp);base64,/, "imageDataUri must be a base64 PNG, JPEG or WebP data URI"),
+});
+
+app.post("/api/vision-extract", async (c) => {
+  const body = VisionBodySchema.parse(await c.req.json());
+  const result = await visionExtract(body);
+  return c.json(result, result.extraction ? 200 : 502);
+});
+
+/* ---------------------------------- audit ---------------------------------- */
+
+app.get("/api/audit", (c) =>
+  c.json({ entries: auditLedger.list(Number.parseInt(c.req.query("limit") ?? "50", 10), c.req.query("tenantId")), file: auditLedger.path() }),
+);
 
 /* ---------------------------------- Voice ---------------------------------- */
 
@@ -296,7 +418,11 @@ app.get("/", (c) =>
       "POST /api/hover",
       "POST /api/correlate  (Accept: text/event-stream for progress)",
       "POST /api/remediate  (Accept: text/event-stream for progress)",
-      "POST /api/approve",
+      "POST /api/remediate/approve  (alias POST /api/approve)",
+      "POST /api/lab/reset-drift · GET /api/lab/state",
+      "POST /api/actions/issue-tap · GET /api/tenants/:tenantId/policies/:policyId",
+      "POST /api/vision-extract",
+      "GET  /api/audit",
       "POST /api/voice-steer",
       "GET  /api/recipes · POST /api/recipes",
       "GET  /api/telemetry/stats · GET /api/telemetry/stream · WS /ws",

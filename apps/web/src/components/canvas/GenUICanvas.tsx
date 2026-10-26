@@ -1,6 +1,6 @@
 import { LayoutGrid, Pin, X } from "lucide-react";
 import type { LayoutComponent } from "@contextpane/catalog";
-import { useWorkbench, visibleComponents } from "@/store";
+import { selectCanvasLayout, useWorkbench, visibleComponents } from "@/store";
 import { Pill } from "../ui/Pill";
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
 import { IaCDriftBannerCard } from "./IaCDriftBanner";
@@ -13,7 +13,7 @@ import { TenantSummaryHeaderCard } from "./TenantSummaryHeader";
  * validated — there is no generic text/markdown renderer by design.
  */
 export function GenUICanvas() {
-  const layout = useWorkbench((s) => s.layout);
+  const layout = useWorkbench(selectCanvasLayout);
   const status = useWorkbench((s) => s.canvasStatus);
   const error = useWorkbench((s) => s.canvasError);
   const progress = useWorkbench((s) => s.progress);

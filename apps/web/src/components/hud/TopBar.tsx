@@ -1,4 +1,4 @@
-import { Building2, ChevronDown, HelpCircle, Mic, Pin, PinOff, PiggyBank, RefreshCw } from "lucide-react";
+import { Building2, ChevronDown, HelpCircle, Mic, Pin, PinOff, PiggyBank, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import { TENANT_IDS, TENANT_REGISTRY, type TenantId } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -20,6 +20,10 @@ export function TopBar() {
   const savingsOpen = useWorkbench((s) => s.savingsOpen);
   const setSavingsOpen = useWorkbench((s) => s.setSavingsOpen);
   const setHotkeysOpen = useWorkbench((s) => s.setHotkeysOpen);
+  const auditOpen = useWorkbench((s) => s.auditOpen);
+  const setAuditOpen = useWorkbench((s) => s.setAuditOpen);
+  const resetDrift = useWorkbench((s) => s.resetDrift);
+  const resetting = useWorkbench((s) => s.resetting);
 
   return (
     <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
@@ -84,6 +88,18 @@ export function TopBar() {
         <Button variant={savingsOpen ? "primary" : "ghost"} icon={<PiggyBank />} onClick={() => setSavingsOpen(!savingsOpen)} title="Router savings (t)">
           <span className="hidden xl:inline">Savings</span>
         </Button>
+        <Button variant={auditOpen ? "primary" : "ghost"} icon={<ShieldCheck />} onClick={() => setAuditOpen(!auditOpen)} title="Verifiable audit ledger (a)">
+          <span className="hidden xl:inline">Audit</span>
+        </Button>
+        <Button
+          variant="ghost"
+          icon={<RotateCcw />}
+          onClick={() => void resetDrift()}
+          loading={resetting}
+          title="Reset demo drift: Contoso lab users back to SPE_E3, remediation state cleared"
+          aria-label="Reset demo drift"
+          className="text-faint"
+        />
         <Button variant="ghost" icon={<RefreshCw />} onClick={() => void correlate({ fresh: true })} loading={canvasStatus === "loading"} title="Re-correlate (r)" />
         <Button variant="ghost" icon={<HelpCircle />} onClick={() => setHotkeysOpen(true)} title="Demo hotkeys (?)">
           <Kbd>?</Kbd>

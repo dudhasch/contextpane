@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { TENANT_REGISTRY, type RouterTelemetry } from "@contextpane/catalog";
 import { app } from "./app.ts";
 import { config, describeConfig, providers } from "./config.ts";
+import { workbenchEvents } from "./events.ts";
 import { gatherContext } from "./mcp/context.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
@@ -18,12 +19,15 @@ app.get(
   "/ws",
   upgradeWebSocket(() => {
     let unsubscribe: (() => void) | null = null;
+    let unsubscribeEvents: (() => void) | null = null;
     return {
       onOpen(_event, ws) {
         ws.send(JSON.stringify({ type: "hello", stats: telemetry.stats(), recent: telemetry.recent(10), config: describeConfig() }));
         unsubscribe = telemetry.subscribe((event: RouterTelemetry) => {
           ws.send(JSON.stringify({ type: "telemetry", event, stats: telemetry.stats() }));
         });
+        // Audit entries and notifications/resources/updated (canvas convergence) ride the same socket.
+        unsubscribeEvents = workbenchEvents.subscribe((event) => ws.send(JSON.stringify(event)));
       },
       onMessage(event, ws) {
         if (String(event.data) === "ping") ws.send(JSON.stringify({ type: "pong", at: Date.now() }));
@@ -32,6 +36,8 @@ app.get(
       onClose() {
         unsubscribe?.();
         unsubscribe = null;
+        unsubscribeEvents?.();
+        unsubscribeEvents = null;
       },
     };
   }),

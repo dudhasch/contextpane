@@ -1,14 +1,18 @@
 import { create } from "zustand";
 import {
   TENANT_REGISTRY,
+  convergeLayout,
   resolveTenantId,
   type ActionApprovalDrawer,
+  type AuditEntry,
   type ComponentType,
+  type Convergence,
   type EntityType,
   type HoverDiagnosticPopover,
   type Layout,
   type RouterTelemetry,
   type SteerLayoutArgs,
+  type TapIssueResult,
   type TenantId,
   type ViewRecipe,
 } from "@contextpane/catalog";
@@ -18,10 +22,12 @@ import {
   type ApproveResponse,
   type CorrelateResponse,
   type HealthResponse,
+  type PolicyDetailResponse,
   type ProgressEvent,
   type RemediateResponse,
   type TelemetryStats,
   type TenantContextResponse,
+  type VisionResponse,
   type VoiceResponse,
 } from "./lib/api";
 import { connectTelemetry } from "./lib/ws";
@@ -33,6 +39,25 @@ export interface Toast {
   tone: "info" | "healthy" | "warning" | "critical" | "meta";
   title: string;
   detail?: string;
+  /** Rendered as a link under the detail (e.g. the GitHub PR). */
+  href?: string;
+  hrefLabel?: string;
+}
+
+export type DrawerTab = "powershell" | "terraform" | "entities";
+
+export interface PolicyInspect {
+  policyId: string;
+  status: "loading" | "ready" | "error";
+  detail?: PolicyDetailResponse;
+  error?: string;
+}
+
+export interface VisionState {
+  status: "idle" | "loading" | "ready" | "error";
+  result?: VisionResponse;
+  error?: string;
+  latencyMs?: number;
 }
 
 export interface HoverEntry {
@@ -61,6 +86,19 @@ interface WorkbenchState {
   approveLog: string[];
   filter: ComponentType[] | null;
   lastVoice: VoiceResponse | null;
+  /** Remediated tenants (notifications/resources/updated); the canvas overlays this with 0 tokens. */
+  convergence: Partial<Record<TenantId, Convergence>>;
+  /** Emerald pulse on every card right after a convergence push. */
+  convergeFlash: boolean;
+  resetting: boolean;
+  audit: AuditEntry[];
+  auditOpen: boolean;
+  tap: (TapIssueResult & { status: "ready" }) | { status: "loading"; upn: string } | { status: "error"; upn: string; error: string } | null;
+  policyInspect: PolicyInspect | null;
+  vision: VisionState;
+  drawerTab: DrawerTab;
+  /** UPN the drawer was opened for from a hover [Assign SPE_E5]. */
+  drawerFocusUpn: string | null;
 
   /* telemetry */
   telemetry: RouterTelemetry | null;
@@ -105,6 +143,17 @@ interface WorkbenchState {
   /** Smooth-scroll a canvas card into view and pulse-highlight it. */
   revealComponent(type: ComponentType): void;
   setOpenPrOnApprove(value: boolean): void;
+  applyConvergence(tenantId: string, convergence: Convergence | null): void;
+  resetDrift(): Promise<void>;
+  setAuditOpen(open: boolean): void;
+  loadAudit(): Promise<void>;
+  issueTap(upn: string): Promise<void>;
+  closeTap(): void;
+  inspectPolicy(policyId: string): Promise<void>;
+  closePolicyInspect(): void;
+  openLicenseRemediation(upn?: string): void;
+  setDrawerTab(tab: DrawerTab): void;
+  extractVision(attachment: { url: string; fileName: string }): Promise<void>;
   toast(toast: Omit<Toast, "id">): void;
   dismissToast(id: number): void;
 }
@@ -130,6 +179,16 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   approveLog: [],
   filter: null,
   lastVoice: null,
+  convergence: {},
+  convergeFlash: false,
+  resetting: false,
+  audit: [],
+  auditOpen: false,
+  tap: null,
+  policyInspect: null,
+  vision: { status: "idle" },
+  drawerTab: "powershell",
+  drawerFocusUpn: null,
 
   telemetry: null,
   telemetryHistory: [],
@@ -152,7 +211,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       onStatus: (wsConnected) => set({ wsConnected }),
       onHello: (stats, recent) => set({ stats, telemetryHistory: recent, telemetry: recent.at(-1) ?? get().telemetry }),
       onEvent: (event, stats) => set((s) => ({ telemetry: event, stats, telemetryHistory: [...s.telemetryHistory.slice(-49), event] })),
+      onAudit: (entry) => set((s) => (s.audit.some((e) => e.id === entry.id) ? {} : { audit: [entry, ...s.audit].slice(0, 100) })),
+      onResourcesUpdated: (tenantId, convergence) => get().applyConvergence(tenantId, convergence),
     });
+    api
+      .labState()
+      .then(({ convergence }) => convergence.forEach((c) => get().applyConvergence(c.tenantId, c)))
+      .catch(() => undefined);
+    void get().loadAudit();
     api
       .health()
       .then((health) => set({ health, openPrOnApprove: Boolean(health.github?.prOnApprove && health.github.origin && health.github.ghAuthenticated) }))
@@ -163,7 +229,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async setTenant(tenantId) {
     if (tenantId === get().tenantId) return;
-    set({ tenantId, hovers: {}, toolbarLineId: null, drawerOpen: false, diffOpen: false, filter: null });
+    set({ tenantId, hovers: {}, toolbarLineId: null, drawerOpen: false, diffOpen: false, filter: null, policyInspect: null, vision: { status: "idle" } });
     const { activeRecipeId } = get();
     await get().loadContext(tenantId);
     if (activeRecipeId) await get().hydrateRecipe(activeRecipeId, tenantId);
@@ -258,7 +324,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async remediate() {
     const tenantId = get().tenantId;
     if (get().remediateStatus === "loading") return;
-    set({ remediateStatus: "loading", remediateProgress: [], drawerOpen: true, approveLog: [] });
+    set({ remediateStatus: "loading", remediateProgress: [], drawerOpen: true, approveLog: [], drawerTab: "powershell" });
     try {
       const result = await streamPost<RemediateResponse>("/api/remediate", { tenantId }, (event) =>
         set((s) => ({ remediateProgress: [...s.remediateProgress, event] })),
@@ -282,11 +348,20 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       });
       const { executionLog, ...updated } = result.drawer;
       set({ drawer: updated, approveLog: executionLog });
+      if (decision === "reject" || !result.convergence) {
+        get().toast({ tone: decision === "reject" ? "warning" : "healthy", title: decision === "reject" ? "Remediation rejected" : `Approved · ${updated.approval.state}`, detail: executionLog[0] });
+        return;
+      }
+      const c = result.convergence;
+      get().applyConvergence(c.tenantId, c);
       get().toast({
-        tone: decision === "reject" ? "warning" : "healthy",
-        title: decision === "reject" ? "Remediation rejected" : `Approved · ${updated.approval.state}`,
-        detail: updated.staging?.prUrl ?? executionLog[0],
+        tone: "healthy",
+        title: `${c.execution === "live-graph" ? "Executed live" : "Approved (simulated)"} · canvas converged in ${c.latencyMs} ms`,
+        detail: `${c.remediatedUpns.length} users → SPE_E5 · Tier 0 push · 0 LLM tokens${c.gitBranch ? ` · ${c.gitBranch}` : ""}`,
+        ...(c.prUrl ? { href: c.prUrl, hrefLabel: `GitHub PR #${c.prUrl.split("/pull/")[1] ?? ""}` } : {}),
       });
+      // Close the drawer so the emerald canvas is what the operator sees next.
+      window.setTimeout(() => set({ drawerOpen: false }), 900);
     } catch (error) {
       get().toast({ tone: "critical", title: "Approval failed", detail: error instanceof Error ? error.message : String(error) });
     }
@@ -334,7 +409,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   setFilter: (filter) => set({ filter }),
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
   setDiffOpen: (diffOpen) => set({ diffOpen }),
-  setSavingsOpen: (savingsOpen) => set({ savingsOpen }),
+  setSavingsOpen: (savingsOpen) => set(savingsOpen ? { savingsOpen, auditOpen: false } : { savingsOpen }),
   setHotkeysOpen: (hotkeysOpen) => set({ hotkeysOpen }),
   setVoiceOpen: (voiceOpen) => set({ voiceOpen }),
   setToolbarLine: (toolbarLineId) => set({ toolbarLineId }),
@@ -350,13 +425,147 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     });
   },
   setOpenPrOnApprove: (openPrOnApprove) => set({ openPrOnApprove }),
+
+  applyConvergence(tenantId, convergence) {
+    if (!(tenantId in TENANT_REGISTRY)) return;
+    const id = tenantId as TenantId;
+    const current = get().convergence[id];
+    if (convergence && current?.remediationId === convergence.remediationId) return;
+    if (!convergence && !current) return;
+    set((s) => {
+      const next = { ...s.convergence };
+      if (convergence) next[id] = convergence;
+      else delete next[id];
+      return { convergence: next, convergeFlash: Boolean(convergence) && s.tenantId === id };
+    });
+    if (convergence) window.setTimeout(() => set({ convergeFlash: false }), 1800);
+  },
+
+  async resetDrift() {
+    if (get().resetting) return;
+    const started = performance.now();
+    const tenantId = get().tenantId;
+    // Revert the canvas at once; the server clears its state and rewrites the lab users behind this.
+    set({ resetting: true, convergence: {}, drawer: null, drawerOpen: false, remediateStatus: "idle", remediateProgress: [], approveLog: [], tap: null, policyInspect: null, vision: { status: "idle" }, hovers: {} });
+    try {
+      const result = await api.resetDrift();
+      const graph = result.results.find((r) => r.tenantId === "tenant-contoso-01");
+      get().toast({
+        tone: result.ok ? "info" : "warning",
+        title: `Demo drift restored · canvas ${Math.round(performance.now() - started) < 50 ? "instant" : "reset"}`,
+        detail: `${graph?.users.length ?? 0} Contoso users → SPE_E3 (${graph?.source === "live-graph" ? `live Graph ${graph.latencyMs} ms` : (graph?.fallbackReason ?? "simulated")})`,
+      });
+      void get().loadContext(tenantId, true);
+      // A canvas correlated after the approval already carries the live (compliant) state: hydrate it again.
+      const card = get().layout?.components.find((c) => c.type === "LicenseDriftCard");
+      if (card && card.type === "LicenseDriftCard" && card.props.driftedCount === 0 && tenantId === "tenant-contoso-01") {
+        const recipe = get().activeRecipeId;
+        if (recipe) void get().hydrateRecipe(recipe);
+        else void get().correlate({ fresh: true });
+      }
+    } catch (error) {
+      get().toast({ tone: "critical", title: "Reset failed", detail: error instanceof Error ? error.message : String(error) });
+    } finally {
+      set({ resetting: false });
+    }
+  },
+
+  setAuditOpen(auditOpen) {
+    set(auditOpen ? { auditOpen, savingsOpen: false } : { auditOpen });
+    if (auditOpen) void get().loadAudit();
+  },
+
+  async loadAudit() {
+    try {
+      const { entries } = await api.audit(100);
+      set({ audit: entries });
+    } catch {
+      /* orchestrator down */
+    }
+  },
+
+  async issueTap(upn) {
+    set({ tap: { status: "loading", upn } });
+    try {
+      const result = await api.issueTap({ tenantId: get().tenantId, upn });
+      set({ tap: { ...result, status: "ready" } });
+    } catch (error) {
+      set({ tap: { status: "error", upn, error: error instanceof Error ? error.message : String(error) } });
+    }
+  },
+
+  closeTap: () => set({ tap: null }),
+
+  async inspectPolicy(policyId) {
+    set({ policyInspect: { policyId, status: "loading" } });
+    get().revealComponent("EntraSignInTimeline");
+    try {
+      const detail = await api.policy(get().tenantId, policyId);
+      if (get().policyInspect?.policyId === policyId) set({ policyInspect: { policyId, status: "ready", detail } });
+    } catch (error) {
+      set({ policyInspect: { policyId, status: "error", error: error instanceof Error ? error.message : String(error) } });
+    }
+  },
+
+  closePolicyInspect: () => set({ policyInspect: null }),
+
+  openLicenseRemediation(upn) {
+    set({ drawerTab: "powershell", drawerFocusUpn: upn ?? null });
+    const { drawer, tenantId } = get();
+    if (drawer && drawer.tenantId === tenantId && drawer.approval.state === "pending") set({ drawerOpen: true });
+    else void get().remediate();
+  },
+
+  setDrawerTab: (drawerTab) => set({ drawerTab }),
+
+  async extractVision(attachment) {
+    const tenantId = get().tenantId;
+    const ticketId = get().context?.ticket.ticketId ?? TENANT_REGISTRY[tenantId].ticketId;
+    set({ vision: { status: "loading" } });
+    const started = performance.now();
+    try {
+      const blob = await (await fetch(attachment.url)).blob();
+      const imageDataUri = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error ?? new Error("could not read the attachment"));
+        reader.readAsDataURL(blob);
+      });
+      const result = await api.visionExtract({ tenantId, ticketId, fileName: attachment.fileName, imageDataUri });
+      if (get().tenantId !== tenantId) return;
+      set({ vision: { status: "ready", result, latencyMs: Math.round(performance.now() - started) } });
+      if (result.match) get().revealComponent("EntraSignInTimeline");
+    } catch (error) {
+      set({ vision: { status: "error", error: error instanceof Error ? error.message : String(error) } });
+    }
+  },
+
   toast: (toast) => {
     const id = ++toastSeq;
     set((s) => ({ toasts: [...s.toasts.slice(-3), { ...toast, id }] }));
-    window.setTimeout(() => get().dismissToast(id), 5200);
+    window.setTimeout(() => get().dismissToast(id), toast.href ? 12_000 : 5200);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
+
+let convergedCache: { layout: Layout | null; convergence: Convergence | undefined; result: Layout | null } = { layout: null, convergence: undefined, result: null };
+
+/**
+ * The layout as the canvas shows it: the model's (or recipe's) layout with the
+ * tenant's convergence overlaid, memoised so zustand selectors stay stable.
+ */
+export function selectCanvasLayout(s: Pick<WorkbenchState, "layout" | "convergence" | "tenantId">): Layout | null {
+  const convergence = s.layout ? s.convergence[s.layout.tenantId as TenantId] : undefined;
+  if (convergedCache.layout === s.layout && convergedCache.convergence === convergence) return convergedCache.result;
+  const result = s.layout && convergence ? convergeLayout(s.layout, convergence) : s.layout;
+  convergedCache = { layout: s.layout, convergence, result };
+  return result;
+}
+
+/** Convergence of the tenant on screen, if it was remediated. */
+export function selectConvergence(s: Pick<WorkbenchState, "convergence" | "tenantId">): Convergence | undefined {
+  return s.convergence[s.tenantId];
+}
 
 /** Components the canvas should render right now (voice filter applied). */
 export function visibleComponents(layout: Layout | null, filter: ComponentType[] | null) {

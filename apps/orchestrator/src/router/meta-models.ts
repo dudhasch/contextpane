@@ -12,7 +12,7 @@ const STAND_INS: Record<string, string> = {
   "muse-code": "muse-wonder-1.0",
 };
 
-const META_MODEL_KEYS = ["metaSpark", "metaSparkContributor", "metaCatalog", "metaWonder", "metaCode", "metaHover", "metaVoice"] as const;
+const META_MODEL_KEYS = ["metaSpark", "metaSparkContributor", "metaCatalog", "metaWonder", "metaCode", "metaHover", "metaVoice", "metaVision"] as const;
 
 export interface MetaModelResolution {
   served: string[];

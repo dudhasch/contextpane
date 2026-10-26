@@ -1,7 +1,7 @@
 import { Cloud, GitBranch, GitCompareArrows, Wrench } from "lucide-react";
 import { useState } from "react";
 import type { IaCDriftBanner as Props, Provenance } from "@contextpane/catalog";
-import { useWorkbench } from "@/store";
+import { selectConvergence, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Mono, Pill, type Tone } from "../ui/Pill";
 import { CardShell } from "./CardShell";
@@ -13,6 +13,7 @@ export function IaCDriftBannerCard({ props, provenance, repaired }: { props: Pro
   const [showDiff, setShowDiff] = useState(false);
   const remediate = useWorkbench((s) => s.remediate);
   const remediateStatus = useWorkbench((s) => s.remediateStatus);
+  const converged = Boolean(useWorkbench(selectConvergence));
   const drift = props.driftState === "drift-detected";
   return (
     <CardShell
@@ -20,7 +21,7 @@ export function IaCDriftBannerCard({ props, provenance, repaired }: { props: Pro
       icon={<Cloud />}
       title={props.resourceName}
       state={props.state}
-      statePill={<Pill tone={drift ? (props.state === "critical" ? "critical" : "warning") : "healthy"} icon={<GitCompareArrows />}>{drift ? "DRIFT DETECTED" : "IN SYNC"}</Pill>}
+      statePill={<Pill tone={drift ? (props.state === "critical" ? "critical" : "warning") : "healthy"} icon={<GitCompareArrows />}>{drift ? "DRIFT DETECTED" : converged ? "REMEDIATED" : "IN SYNC"}</Pill>}
       provenance={provenance}
       repaired={repaired}
       right={

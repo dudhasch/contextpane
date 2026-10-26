@@ -1,10 +1,10 @@
-import { AlertOctagon, Clock3, FileCode2, FileText, GitCompareArrows, Sparkles, Ticket, UserRound, Wrench } from "lucide-react";
+import { AlertOctagon, Clock3, Eye, FileCode2, FileText, GitCompareArrows, ImageIcon, ScanEye, Sparkles, Ticket, UserRound, Wrench } from "lucide-react";
 import { Fragment, useEffect, useMemo, type ReactNode } from "react";
 import type { EntityType, IaCDriftBanner, LicenseDriftCard } from "@contextpane/catalog";
-import type { ErpContractLine, ErpTicket } from "@/lib/api";
+import type { ErpAttachment, ErpContractLine, ErpTicket } from "@/lib/api";
 import { onDemo } from "@/lib/demo";
-import { countdown, fmtDateTimeUtc, fmtUsd } from "@/lib/format";
-import { useWorkbench } from "@/store";
+import { countdown, fmtDateTimeUtc, fmtMs, fmtTokens, fmtUsd } from "@/lib/format";
+import { selectCanvasLayout, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Mono, Pill, TONE_TEXT, type Tone } from "../ui/Pill";
 import { EntityPill } from "./EntityPill";
@@ -71,6 +71,7 @@ export function TicketPane() {
             ))}
           </div>
         </div>
+        {ticket.attachments?.map((a) => <TicketAttachment key={a.fileName} attachment={a} />)}
       </section>
 
       <section className="card">
@@ -125,6 +126,72 @@ export function TicketPane() {
   );
 }
 
+/** Customer screenshot on the ticket; one click reads it with Muse Spark 1.3 (image input) and pins the matching sign-in. */
+function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
+  const vision = useWorkbench((s) => s.vision);
+  const extract = useWorkbench((s) => s.extractVision);
+  const result = vision.status === "ready" ? vision.result : undefined;
+  const x = result?.extraction;
+  return (
+    <div className="mt-3" data-testid="ticket-attachment">
+      <div className="section-label mb-1">Customer attachment</div>
+      <div className="flex gap-2.5 rounded-md border border-border-subtle bg-surface p-2">
+        <a href={attachment.url} target="_blank" rel="noreferrer" className="shrink-0" title="Open full size">
+          <img src={attachment.url} alt={`Customer screenshot ${attachment.fileName}`} className="h-[72px] w-[115px] rounded border border-border object-cover" />
+        </a>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[11.5px]">
+            <ImageIcon className="size-3 shrink-0 text-muted" />
+            <span className="truncate font-mono">{attachment.fileName}</span>
+          </div>
+          <div className="mt-0.5 text-[10.5px] text-faint">
+            {attachment.uploadedBy} · {fmtDateTimeUtc(attachment.uploadedAt)} · {Math.round(attachment.sizeBytes / 1024)} KB
+          </div>
+          <Button
+            size="xs"
+            variant="meta"
+            icon={<ScanEye />}
+            className="mt-1.5"
+            loading={vision.status === "loading"}
+            onClick={() => void extract(attachment)}
+            title="POST /api/vision-extract → muse-spark-1.3 with the image as a data URI (7)"
+          >
+            Extract Telemetry via Muse Vision
+          </Button>
+        </div>
+      </div>
+      {vision.status === "error" && <div className="mt-1 text-[11px] text-critical">Vision failed: {vision.error}</div>}
+      {result && !x && <div className="mt-1 text-[11px] text-critical">Vision failed: {result.error}</div>}
+      {result && x && (
+        <div className="mt-1.5 animate-fade-in rounded-md border border-meta/40 bg-meta/8 p-2 text-[11px]" data-testid="vision-result">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+            <dt className="text-faint">Error</dt>
+            <dd className="font-mono text-critical">{x.errorCode}</dd>
+            <dt className="text-faint">App ID</dt>
+            <dd className="truncate font-mono">{x.appId}</dd>
+            <dt className="text-faint">Correlation</dt>
+            <dd className="truncate font-mono">{x.correlationId}</dd>
+            <dt className="text-faint">Device</dt>
+            <dd className="truncate">{x.deviceState}</dd>
+          </dl>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {result.match ? (
+              <Pill tone="meta" icon={<Eye />} title={`${result.match.upn} · ${result.match.timestamp}`}>
+                matched {result.match.eventId} · Δ {result.match.deltaSeconds ?? "?"} s → {x.recommendedComponent}
+              </Pill>
+            ) : (
+              <Pill tone="warning">no matching sign-in</Pill>
+            )}
+            <span className="ml-auto font-mono text-[10px] text-faint">
+              Tier 2 · Vision ({result.telemetry.modelId}) · {fmtMs(result.telemetry.latencyMs)} · {fmtTokens(result.telemetry.tokensUsed.total)} tok
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SlaCountdown({ breachAt }: { breachAt: string }) {
   const left = countdown(breachAt);
   const breached = left === "BREACHED";
@@ -158,7 +225,7 @@ function EnrichedText({ text, ticket }: { text: string; ticket: ErpTicket }) {
 function ContractLine({ line }: { line: ErpContractLine }) {
   const toolbarLineId = useWorkbench((s) => s.toolbarLineId);
   const setToolbarLine = useWorkbench((s) => s.setToolbarLine);
-  const layout = useWorkbench((s) => s.layout);
+  const layout = useWorkbench(selectCanvasLayout);
   const context = useWorkbench((s) => s.context);
   const flash = useWorkbench((s) => s.flashComponent);
   const remediate = useWorkbench((s) => s.remediate);
@@ -229,7 +296,7 @@ function ContractLine({ line }: { line: ErpContractLine }) {
 
 /** UX Pattern 3 — Cloud/IaC CodeLens rendered above the infrastructure spec. */
 function IaCCodeLens() {
-  const layout = useWorkbench((s) => s.layout);
+  const layout = useWorkbench(selectCanvasLayout);
   const context = useWorkbench((s) => s.context);
   const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
   const remediate = useWorkbench((s) => s.remediate);

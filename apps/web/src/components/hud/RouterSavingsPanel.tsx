@@ -56,7 +56,15 @@ export function RouterSavingsPanel() {
     for (const s of parts) for (const [p, n] of Object.entries(s.byProvider)) byProvider[p] = (byProvider[p] ?? 0) + n;
     return { ...row, requests, avgMs: requests ? Math.round(totalLatency / requests) : 0, tokens, byProvider };
   });
-  const voice = stats?.tiers["Voice"];
+  const extras = (
+    [
+      ["Voice", "Voice steer"],
+      ["Vision", "Tier 2 · Vision"],
+    ] as const
+  ).flatMap(([tier, label]) => {
+    const s = stats?.tiers[tier];
+    return s ? [{ tier, label, s }] : [];
+  });
 
   return (
     <aside className="absolute top-14 right-3 z-30 w-[460px] animate-fade-in card shadow-popover">
@@ -87,9 +95,9 @@ export function RouterSavingsPanel() {
         <thead className="text-faint">
           <tr>
             <th className="py-1 text-left font-medium">Tier · route</th>
-            <th className="py-1 text-right font-medium">Req</th>
-            <th className="py-1 text-right font-medium">Avg ms</th>
-            <th className="py-1 text-right font-medium">Tokens</th>
+            <th className="py-1 pl-3 text-right font-medium whitespace-nowrap">Req</th>
+            <th className="py-1 pl-3 text-right font-medium whitespace-nowrap">Avg ms</th>
+            <th className="py-1 pl-3 text-right font-medium whitespace-nowrap">Tokens</th>
             <th className="py-1 pl-2 text-left font-medium">Served by</th>
           </tr>
         </thead>
@@ -103,9 +111,9 @@ export function RouterSavingsPanel() {
                 </span>
                 <span className="block pl-3.5 font-mono text-[10px] text-faint">{r.route}</span>
               </td>
-              <td className="py-1 text-right font-mono">{r.requests}</td>
-              <td className="py-1 text-right font-mono">{r.requests ? r.avgMs : "–"}</td>
-              <td className="py-1 text-right font-mono">{r.requests ? fmtTokens(r.tokens) : "–"}</td>
+              <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{r.requests}</td>
+              <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{r.requests ? r.avgMs : "–"}</td>
+              <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{r.requests ? fmtTokens(r.tokens) : "–"}</td>
               <td className="py-1 pl-2 font-mono text-muted">
                 {Object.entries(r.byProvider)
                   .map(([p, n]) => `${p}×${n}`)
@@ -113,25 +121,25 @@ export function RouterSavingsPanel() {
               </td>
             </tr>
           ))}
-          {voice && (
-            <tr className="border-t border-border-subtle">
+          {extras.map(({ tier, label, s }) => (
+            <tr key={tier} className="border-t border-border-subtle">
               <td className="py-1 pr-2">
                 <span className="flex items-center gap-1.5">
                   <Dot tone="meta" />
-                  <span className="font-medium text-text">Voice steer</span>
+                  <span className="font-medium text-text">{label}</span>
                 </span>
-                <span className="block pl-3.5 font-mono text-[10px] text-faint">{TIER_ROUTE.Voice.route}</span>
+                <span className="block pl-3.5 font-mono text-[10px] text-faint">{TIER_ROUTE[tier].route}</span>
               </td>
-              <td className="py-1 text-right font-mono">{voice.requests}</td>
-              <td className="py-1 text-right font-mono">{voice.avgLatencyMs}</td>
-              <td className="py-1 text-right font-mono">{fmtTokens(voice.totalTokens)}</td>
+              <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{s.requests}</td>
+              <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{s.avgLatencyMs}</td>
+              <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{fmtTokens(s.totalTokens)}</td>
               <td className="py-1 pl-2 font-mono text-muted">
-                {Object.entries(voice.byProvider)
+                {Object.entries(s.byProvider)
                   .map(([p, n]) => `${p}×${n}`)
                   .join(" ")}
               </td>
             </tr>
-          )}
+          ))}
         </tbody>
       </table>
 

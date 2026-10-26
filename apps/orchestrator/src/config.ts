@@ -158,6 +158,8 @@ export const models = {
   /** Tier 1A on the Meta API (muse-glimmer-30b is open-weight only, not served there). */
   metaHover: env("CTX_MODEL_META_HOVER", "muse-spark-1.3"),
   metaVoice: env("CTX_MODEL_META_VOICE", "muse-voice-transcribe-1.0"),
+  /** Ticket attachments (screenshots) read with image input on the Meta Model API. */
+  metaVision: env("CTX_MODEL_META_VISION", "muse-spark-1.3"),
 };
 
 export const config = {
@@ -178,6 +180,7 @@ export const config = {
     correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
+    visionMs: envInt("CTX_VISION_TIMEOUT_MS", 30000),
   },
   /** reasoning_effort per tier on the Meta Model API (minimal | low | medium | high). */
   reasoning: {

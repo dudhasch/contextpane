@@ -11,11 +11,14 @@ import {
   parseToolArguments,
   zodToToolParameters,
   type ActionApprovalDrawer,
+  type AuditEntry,
+  type Convergence,
   type OpenAIFunctionTool,
   type RemediationBundleArgs,
   type RouterTelemetry,
   type VerificationStatus,
 } from "@contextpane/catalog";
+import { msgraphService } from "@contextpane/mcp-msgraph";
 import { config, models, providers } from "../config.ts";
 import { buildRemediationBundle } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext } from "../mcp/context.ts";
@@ -24,6 +27,8 @@ import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from 
 import { openPullRequest, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { auditLedger } from "../store/audit.ts";
+import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
@@ -251,6 +256,13 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
   });
   remediationStore.save(drawer);
+  auditLedger.append({
+    ...verificationProof(drawer),
+    actionType: "remediation-verified",
+    delegatedIdentity: drawer.approval.requiredIdentity,
+    latencyMs: verification.validationLatencyMs,
+    detail: `${verification.verdict} · ${verification.sandboxProvider} · ${drawer.affectedEntities.length} entities`,
+  });
 
   const event = telemetry.record({
     requestId,
@@ -265,6 +277,20 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   });
   report("complete", `Remediation ${remediationId} ready for approval`, { remediationId, verdict: verification.verdict, branch: staging?.branchName ?? null });
   return { drawer, telemetry: event };
+}
+
+/** The verification fields every audit entry about a remediation carries. */
+function verificationProof(drawer: ActionApprovalDrawer): Pick<AuditEntry, "tenantId" | "ticketId" | "modalSandboxVerified" | "astPass" | "tfValidatePass" | "gitBranch" | "prUrl"> {
+  const v = drawer.verificationStatus;
+  return {
+    tenantId: drawer.tenantId,
+    ticketId: drawer.ticketId,
+    modalSandboxVerified: v.sandboxProvider === "modal-cloud-sandbox" && v.verdict !== "Verification Failed" && v.verdict !== "Pending",
+    astPass: v.astCheckPassed,
+    tfValidatePass: v.terraformValidatePassed,
+    gitBranch: drawer.staging?.branchName ?? null,
+    prUrl: drawer.staging?.prUrl ?? null,
+  };
 }
 
 function fmt(v: boolean | null): string {
@@ -314,7 +340,10 @@ function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log: strin
   ].join("\n");
 }
 
-export async function approve(input: ApproveInput): Promise<ActionApprovalDrawer & { executionLog: string[] }> {
+export type ApproveResult = ActionApprovalDrawer & { executionLog: string[]; convergence: Convergence | null };
+
+export async function approve(input: ApproveInput): Promise<ApproveResult> {
+  const started = performance.now();
   const drawer = remediationStore.get(input.remediationId);
   if (!drawer) throw new Error(`Remediation '${input.remediationId}' not found`);
   const log: string[] = [];
@@ -323,31 +352,41 @@ export async function approve(input: ApproveInput): Promise<ActionApprovalDrawer
   if (input.decision === "reject") {
     const updated = { ...drawer, approval: { ...drawer.approval, state: "rejected" as const, approvedBy: input.approvedBy ?? null, approvedAt: now } };
     remediationStore.save(updated);
-    return { ...updated, executionLog: ["Rejected by operator"] };
+    auditLedger.append({
+      ...verificationProof(updated),
+      actionType: "hitl-rejection",
+      delegatedIdentity: input.approvedBy ?? drawer.approval.requiredIdentity,
+      latencyMs: Math.round(performance.now() - started),
+      detail: "Rejected by operator; nothing executed",
+    });
+    return { ...updated, executionLog: ["Rejected by operator"], convergence: null };
   }
   if (drawer.verificationStatus.verdict === "Verification Failed") {
     throw new Error("Cannot approve a bundle whose pre-flight verification failed");
   }
 
+  const upns = drawer.affectedEntities.filter((e) => e.type === "upn").map((e) => e.id);
   let state: ActionApprovalDrawer["approval"]["state"] = "approved";
+  let execution: Convergence["execution"] = "simulated";
   if (config.liveCloudMode) {
-    const execute = config.allowExecute;
-    log.push(execute ? "LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → executing via delegated identity" : "LIVE_CLOUD_MODE → dry run with -WhatIf");
-    const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
-    const file = join(dir, `Invoke-Remediate-${drawer.ticketId}.ps1`);
-    writeFileSync(file, drawer.powershellScript, "utf8");
-    try {
-      const args = ["-NoProfile", "-NonInteractive", "-File", file, ...(execute ? [] : ["-WhatIf"])];
-      const result = await runProcess("pwsh", args, 120_000);
-      log.push(...result.stdout.split("\n").filter(Boolean).slice(-20));
-      if (result.code !== 0) {
-        log.push(`pwsh exited ${result.code}: ${result.stderr.split("\n").slice(-3).join(" | ")}`);
-        state = "approved";
-      } else {
-        state = execute ? "executed" : "simulated";
+    if (config.allowExecute) {
+      log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
+      const script = await runApprovedScript(drawer);
+      log.push(...script.log);
+    }
+    // The lab models each user's license in the com.contextpane.licenseState open extension; one Graph $batch flips it.
+    const write = await msgraphService.setLicenseExtensionState(drawer.tenantId, upns, "remediated");
+    const failed = write.results.filter((r) => !r.ok);
+    if (write.source === "live-graph") {
+      log.push(`Graph $batch: ${write.results.length - failed.length}/${write.results.length} users → SPE_E5 / Compliant in ${write.latencyMs} ms`);
+      for (const f of failed) log.push(`  ${f.upn}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
+      if (!failed.length) {
+        state = "executed";
+        execution = "live-graph";
       }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+    } else {
+      log.push(`Graph write simulated (${write.fallbackReason})`);
+      state = "simulated";
     }
     invalidateContext(drawer.tenantId);
   } else {
@@ -372,7 +411,55 @@ export async function approve(input: ApproveInput): Promise<ActionApprovalDrawer
   }
 
   remediationStore.save(updated);
-  return { ...updated, executionLog: log };
+  const latencyMs = Math.round(performance.now() - started);
+  const convergence: Convergence = {
+    tenantId: updated.tenantId,
+    remediationId: updated.remediationId,
+    ticketId: updated.ticketId,
+    convergedAt: new Date().toISOString(),
+    latencyMs,
+    prUrl: updated.staging?.prUrl ?? null,
+    gitBranch: updated.staging?.branchName ?? null,
+    execution,
+    remediatedUpns: upns,
+  };
+  convergenceStore.set(convergence);
+  log.push(`Canvas converged via notifications/resources/updated (Tier 0, 0 tokens) · ${latencyMs} ms end to end`);
+  auditLedger.append({
+    ...verificationProof(updated),
+    actionType: "hitl-approval",
+    delegatedIdentity: updated.approval.approvedBy ?? updated.approval.requiredIdentity,
+    latencyMs,
+    execution,
+    detail: `${state} · ${upns.length} users → SPE_E5${updated.staging?.prUrl ? " · PR opened" : ""}`,
+  });
+  telemetry.record({
+    requestId: telemetry.nextRequestId("t0"),
+    endpoint: "/api/remediate/approve",
+    tier: "Tier 0",
+    provider: "local",
+    modelId: "deterministic",
+    latencyMs,
+    tokensUsed: { ...ZERO_USAGE },
+    fallbackChain: [],
+    tenantId: updated.tenantId,
+  });
+  return { ...updated, executionLog: log, convergence };
+}
+
+/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the signed-in delegated identity. */
+async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: boolean; log: string[] }> {
+  const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
+  const file = join(dir, `Invoke-Remediate-${drawer.ticketId}.ps1`);
+  writeFileSync(file, drawer.powershellScript, "utf8");
+  try {
+    const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
+    const log = result.stdout.split("\n").filter(Boolean).slice(-20);
+    if (result.code !== 0) log.push(`pwsh exited ${result.code}: ${result.stderr.split("\n").slice(-3).join(" | ")}`);
+    return { ok: result.code === 0, log };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function runProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {

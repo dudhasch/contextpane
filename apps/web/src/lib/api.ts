@@ -1,12 +1,16 @@
 import type {
   ActionApprovalDrawer,
+  AuditEntry,
   ComponentType,
+  Convergence,
   EntityType,
   HoverDiagnosticPopover,
   Layout,
   RouterTelemetry,
   SteerLayoutArgs,
+  TapIssueResult,
   ViewRecipe,
+  VisionExtraction,
 } from "@contextpane/catalog";
 
 /* -------------------------------------------------------------------------- */
@@ -38,6 +42,16 @@ export interface ErpTicket {
   entities: ErpEntityRef[];
   infrastructureSpec: string;
   timeline: Array<{ at: string; actor: string; note: string }>;
+  attachments?: ErpAttachment[];
+}
+
+export interface ErpAttachment {
+  fileName: string;
+  mimeType: string;
+  url: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  sizeBytes: number;
 }
 
 export interface ErpContractLine {
@@ -119,6 +133,36 @@ export interface RemediateResponse {
 
 export interface ApproveResponse {
   drawer: ActionApprovalDrawer & { executionLog: string[] };
+  convergence: Convergence | null;
+}
+
+export interface ResetDriftResponse {
+  ok: boolean;
+  latencyMs: number;
+  results: Array<{ tenantId: string; source: "live-graph" | "simulated"; fallbackReason?: string; latencyMs: number; users: string[]; failed: Array<{ upn: string; status: number; error?: string }> }>;
+}
+
+export interface PolicyDetailResponse {
+  source: string;
+  policy: {
+    id: string;
+    displayName: string;
+    state: string;
+    includeGroupNames: string[];
+    excludeGroupNames: string[];
+    targetApps: Array<{ appId: string; displayName: string }>;
+    grant: { operator: string; builtInControls: string[] };
+    blocks: boolean;
+  } & Record<string, unknown>;
+  blockedUpns: string[];
+  blockedSignIns: number;
+}
+
+export interface VisionResponse {
+  extraction: VisionExtraction | null;
+  match: { eventId: string; upn: string; timestamp: string; deltaSeconds: number | null } | null;
+  error?: string;
+  telemetry: RouterTelemetry;
 }
 
 export interface VoiceResponse {
@@ -191,7 +235,14 @@ export const api = {
   correlate: (body: { tenantId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
   remediate: (body: { tenantId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
   approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean }) =>
-    request<ApproveResponse>("/api/approve", { method: "POST", body: JSON.stringify(body) }),
+    request<ApproveResponse>("/api/remediate/approve", { method: "POST", body: JSON.stringify(body) }),
+  labState: () => request<{ convergence: Convergence[] }>("/api/lab/state"),
+  resetDrift: (tenantId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(tenantId ? { tenantId } : {}) }),
+  issueTap: (body: { tenantId: string; upn: string }) => request<TapIssueResult>("/api/actions/issue-tap", { method: "POST", body: JSON.stringify(body) }),
+  policy: (tenantId: string, policyId: string) => request<PolicyDetailResponse>(`/api/tenants/${tenantId}/policies/${encodeURIComponent(policyId)}`),
+  visionExtract: (body: { tenantId: string; ticketId: string; fileName: string; imageDataUri: string }) =>
+    request<VisionResponse>("/api/vision-extract", { method: "POST", body: JSON.stringify(body) }),
+  audit: (limit = 50) => request<{ entries: AuditEntry[]; file: string }>(`/api/audit?limit=${limit}`),
   voiceSteer: (body: { tenantId?: string; text?: string; audioBase64?: string; mimeType?: string }) =>
     request<VoiceResponse>("/api/voice-steer", { method: "POST", body: JSON.stringify(body) }),
   telemetryStats: () => request<TelemetryStats>("/api/telemetry/stats"),

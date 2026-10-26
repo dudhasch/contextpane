@@ -1,10 +1,14 @@
 import { KNOWN_APP_IDS, lookupAadsts, toAadstsLabel } from "@contextpane/catalog";
+import { randomInt } from "node:crypto";
 import {
+  createTemporaryAccessPassLive,
   fetchConditionalAccessPoliciesLive,
   fetchGraphContextLive,
   fetchGroupMembersLive,
   fetchSignInEventsLive,
   fetchSubscribedSkusLive,
+  patchLicenseExtensionsLive,
+  type ExtensionPatchResult,
 } from "./live.ts";
 import { getManifestTenant, type ManifestCaPolicy, type ManifestSignIn, type ManifestTenant, type ManifestUser } from "./manifest.ts";
 import { isLiveCloudMode } from "./pwsh.ts";
@@ -133,6 +137,37 @@ export interface UserDiagnostic {
   recentSignIns: SignInSummary[];
   lastFailure: SignInSummary | null;
   errorTranslation: ReturnType<typeof lookupAadsts>;
+}
+
+/** Lab license state written to the open extension: what a remediation sets and a demo reset restores. */
+export const LAB_LICENSE_STATES = {
+  remediated: { currentSku: "SPE_E5", driftStatus: "compliant", entraAssignedSku: "SPE_E5", avdEntitlementStatus: "Compliant" },
+  drifted: { currentSku: "SPE_E3", driftStatus: "drifted", entraAssignedSku: "SPE_E3", avdEntitlementStatus: "Drift_Missing_E5_SKU" },
+} as const;
+export type LabLicenseState = keyof typeof LAB_LICENSE_STATES;
+
+export interface LicenseWriteResult {
+  source: "live-graph" | "simulated";
+  fallbackReason?: string;
+  latencyMs: number;
+  results: ExtensionPatchResult[];
+}
+
+export interface TemporaryAccessPassResult {
+  upn: string;
+  source: "live-graph" | "simulated-fallback";
+  fallbackReason?: string;
+  temporaryAccessPass: string;
+  lifetimeInMinutes: number;
+  isUsableOnce: boolean;
+  startDateTime: string;
+  methodId: string | null;
+  latencyMs: number;
+}
+
+/** Shape of a real TAP (readable, one-time) for when the tenant's TAP policy or token scope refuses the live call. */
+function fallbackTapCode(): string {
+  return `tap-${randomInt(1000, 10000)}-ctx#`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -415,6 +450,61 @@ export const msgraphService = {
         errorTranslation: lastFailure ? lookupAadsts(lastFailure.errorCode) : null,
       },
     };
+  },
+
+  /**
+   * Writes the lab license state (open extension com.contextpane.licenseState) for the
+   * given users in one Graph $batch. Manifest-only tenants and offline mode are simulated.
+   */
+  async setLicenseExtensionState(tenantId: string, upns: string[], state: LabLicenseState): Promise<LicenseWriteResult> {
+    const started = performance.now();
+    const simulated = (fallbackReason: string): LicenseWriteResult => ({
+      source: "simulated",
+      fallbackReason,
+      latencyMs: Math.round(performance.now() - started),
+      results: upns.map((upn) => ({ upn, ok: true, status: 0 })),
+    });
+    if (!isLiveCloudMode()) return simulated("LIVE_CLOUD_MODE=false");
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulated(`${tenantId} is manifest-only`);
+    try {
+      const results = await patchLicenseExtensionsLive(upns, { ...LAB_LICENSE_STATES[state], lastSyncedAt: new Date().toISOString() }, LIVE_TIMEOUT_MS);
+      return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
+    } catch (error) {
+      return simulated(error instanceof Error ? error.message : String(error));
+    }
+  },
+
+  /** Live TAP when the tenant allows it, otherwise a clearly-labelled fallback with the same shape. */
+  async issueTemporaryAccessPass(tenantId: string, upn: string, lifetimeInMinutes = 60, isUsableOnce = true): Promise<TemporaryAccessPassResult> {
+    const started = performance.now();
+    const fallback = (fallbackReason: string): TemporaryAccessPassResult => ({
+      upn,
+      source: "simulated-fallback",
+      fallbackReason,
+      temporaryAccessPass: fallbackTapCode(),
+      lifetimeInMinutes,
+      isUsableOnce,
+      startDateTime: new Date().toISOString(),
+      methodId: null,
+      latencyMs: Math.round(performance.now() - started),
+    });
+    if (!isLiveCloudMode()) return fallback("LIVE_CLOUD_MODE=false");
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return fallback(`${tenantId} is manifest-only`);
+    try {
+      const tap = await createTemporaryAccessPassLive(upn, lifetimeInMinutes, isUsableOnce, LIVE_TIMEOUT_MS);
+      return {
+        upn,
+        source: "live-graph",
+        temporaryAccessPass: tap.temporaryAccessPass,
+        lifetimeInMinutes: tap.lifetimeInMinutes,
+        isUsableOnce: tap.isUsableOnce,
+        startDateTime: tap.startDateTime,
+        methodId: tap.id || null,
+        latencyMs: Math.round(performance.now() - started),
+      };
+    } catch (error) {
+      return fallback(error instanceof Error ? error.message : String(error));
+    }
   },
 
   async getPolicyDiagnostic(tenantId: string, policyNameOrId: string) {

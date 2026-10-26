@@ -5,8 +5,12 @@
 
 .DESCRIPTION
     Calls GET /api/health, GET /api/recipe/default/hydrate, POST /api/hover, POST /api/correlate,
-    POST /api/voice-steer, POST /api/remediate and GET /api/telemetry/stats, then prints a formatted
-    table with status, latency, router tier/provider and a schema verdict.
+    POST /api/voice-steer, POST /api/vision-extract (only with a Meta key), POST /api/remediate,
+    POST /api/remediate/approve, POST /api/lab/reset-drift, GET /api/audit and GET /api/telemetry/stats,
+    then prints a formatted table with status, latency, router tier/provider and a schema verdict.
+
+    With LIVE_CLOUD_MODE=true the approval writes the lab users' license extension (SPE_E5); the
+    reset-drift check right after it puts them back to SPE_E3, so a run leaves the lab drifted.
 
     Schema checks mirror packages/catalog: component types must be inside the allow-list, every
     component carries an id + props, hover popovers carry headline/facts/quickActions/providerTelemetry,
@@ -152,6 +156,21 @@ $null = Invoke-Check -Name voice -Method POST -Path '/api/voice-steer' -Body @{ 
     $i
 }
 
+$metaKey = [bool]($health.providers | Where-Object { $_.id -eq 'meta' -and $_.hasKey })
+$attachment = Join-Path $PSScriptRoot '..' 'apps' 'web' 'public' 'attachments' 'contoso-avd-error-screenshot.png'
+if ($metaKey -and $TenantId -eq 'tenant-contoso-01' -and (Test-Path $attachment)) {
+    $png = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($attachment))
+    $null = Invoke-Check -Name vision -Method POST -Path '/api/vision-extract' -Body @{ tenantId = $TenantId; ticketId = 'INC-4092'; fileName = 'contoso-avd-error-screenshot.png'; imageDataUri = "data:image/png;base64,$png" } -Schema {
+        param($r)
+        $i = @()
+        if ($r.extraction.errorCode -ne 'AADSTS53003') { $i += "errorCode $($r.extraction.errorCode)" }
+        if ($r.extraction.correlationId -ne '7f8a9d12-4410-4b9e-9c1a-00155d8a4201') { $i += 'correlationId mismatch' }
+        if (-not $r.match.eventId) { $i += 'no sign-in matched' }
+        if ($r.telemetry.tier -ne 'Vision') { $i += 'tier != Vision' }
+        $i
+    }
+}
+
 if (-not $SkipRemediate) {
     $rem = Invoke-Check -Name remediate -Method POST -Path '/api/remediate' -Body @{ tenantId = $TenantId } -Schema {
         param($r)
@@ -169,10 +188,25 @@ if (-not $SkipRemediate) {
     if ($rem) {
         $v = $rem.drawer.verificationStatus
         Write-Host "  pre-flight: $($v.verdict)  ast=$($v.astCheckPassed) fmt=$($v.terraformFmtPassed) validate=$($v.terraformValidatePassed) sandbox=$($v.sandboxProvider) $($v.validationLatencyMs)ms  branch=$($rem.drawer.staging.branchName)" -ForegroundColor DarkGray
-        $null = Invoke-Check -Name approve -Method POST -Path '/api/approve' -Body @{ remediationId = $rem.drawer.remediationId } -Schema {
+        $null = Invoke-Check -Name approve -Method POST -Path '/api/remediate/approve' -Body @{ remediationId = $rem.drawer.remediationId } -Schema {
             param($r)
             $i = @()
             if ($r.drawer.approval.state -notin @('approved', 'simulated', 'executed')) { $i += "approval.state $($r.drawer.approval.state)" }
+            if (-not $r.convergence) { $i += 'no convergence pushed' }
+            elseif (@($r.convergence.remediatedUpns).Count -lt 1) { $i += 'convergence lists no users' }
+            $i
+        }
+        $null = Invoke-Check -Name reset -Method POST -Path '/api/lab/reset-drift' -Body @{ tenantId = $TenantId } -Schema {
+            param($r)
+            $i = @()
+            if (-not $r.ok) { $i += "reset failed: $(($r.results.failed | ForEach-Object { $_.upn }) -join ', ')" }
+            $i
+        }
+        $null = Invoke-Check -Name audit -Method GET -Path '/api/audit?limit=5' -Schema {
+            param($r)
+            $i = @()
+            $types = @($r.entries.actionType)
+            foreach ($t in 'remediation-verified', 'hitl-approval', 'drift-reset') { if ($t -notin $types) { $i += "audit lacks $t" } }
             $i
         }
     }

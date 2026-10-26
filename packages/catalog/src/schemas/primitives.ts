@@ -38,6 +38,7 @@ export const RouterTierSchema = z.enum([
   "Tier 3A",
   "Tier 3B",
   "Voice",
+  "Vision",
 ]);
 export type RouterTier = z.infer<typeof RouterTierSchema>;
 

@@ -33,6 +33,8 @@ export interface ErpTicket {
   /** Free-text infrastructure spec from the ticket; the IaC CodeLens renders above it. */
   infrastructureSpec: string;
   timeline: Array<{ at: string; actor: string; note: string }>;
+  /** Files the customer attached; url is served by the web app (apps/web/public). */
+  attachments?: Array<{ fileName: string; mimeType: string; url: string; uploadedBy: string; uploadedAt: string; sizeBytes: number }>;
 }
 
 export interface ErpContractLine {
@@ -149,6 +151,16 @@ export const ERP_TICKETS: Record<string, ErpTicket> = {
       { at: "2026-10-24T16:05:00Z", actor: "Vendor (cutover)", note: "Opened temporary RDP on host pool NSG for diagnostics." },
       { at: "2026-10-26T08:11:00Z", actor: "Lynne Robins", note: "Ticket opened via portal: cannot connect to AVD, error AADSTS53003." },
       { at: "2026-10-26T08:40:00Z", actor: "Service Desk", note: "Escalated to P1 - three analysts affected, month-end close at risk." },
+    ],
+    attachments: [
+      {
+        fileName: "contoso-avd-error-screenshot.png",
+        mimeType: "image/png",
+        url: "/attachments/contoso-avd-error-screenshot.png",
+        uploadedBy: "Lynne Robins",
+        uploadedAt: "2026-10-26T08:11:00Z",
+        sizeBytes: 295990,
+      },
     ],
   },
   "INC-4099": {

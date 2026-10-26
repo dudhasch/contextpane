@@ -1,10 +1,13 @@
-import type { RouterTelemetry } from "@contextpane/catalog";
+import type { AuditEntry, Convergence, RouterTelemetry } from "@contextpane/catalog";
 import type { TelemetryStats } from "./api";
 
 export interface TelemetryHandlers {
   onEvent: (event: RouterTelemetry, stats: TelemetryStats) => void;
   onHello: (stats: TelemetryStats, recent: RouterTelemetry[]) => void;
   onStatus: (connected: boolean) => void;
+  onAudit?: (entry: AuditEntry) => void;
+  /** notifications/resources/updated: a tenant's canvas converged (remediated) or was reset (convergence null). */
+  onResourcesUpdated?: (tenantId: string, convergence: Convergence | null) => void;
 }
 
 /**
@@ -30,9 +33,13 @@ export function connectTelemetry(handlers: TelemetryHandlers): () => void {
         const data = JSON.parse(String(msg.data)) as
           | { type: "hello"; stats: TelemetryStats; recent: RouterTelemetry[] }
           | { type: "telemetry"; event: RouterTelemetry; stats: TelemetryStats }
-          | { type: "pong" | "stats"; stats?: TelemetryStats };
+          | { type: "pong" | "stats"; stats?: TelemetryStats }
+          | { type: "audit"; entry: AuditEntry }
+          | { type: "resources/updated"; params: { tenantId: string; convergence: Convergence | null } };
         if (data.type === "hello") handlers.onHello(data.stats, data.recent);
         else if (data.type === "telemetry") handlers.onEvent(data.event, data.stats);
+        else if (data.type === "audit") handlers.onAudit?.(data.entry);
+        else if (data.type === "resources/updated") handlers.onResourcesUpdated?.(data.params.tenantId, data.params.convergence);
       } catch {
         /* ignore malformed frames */
       }

@@ -11,9 +11,12 @@ const DEBUG_DIR = config.dataDir;
  * Works unchanged against Baseten, Fireworks and the Meta Model API.
  */
 
+/** OpenAI-style multimodal parts; images travel as base64 data URIs. */
+export type ChatContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | ChatContentPart[];
 }
 
 export interface TokenUsage {

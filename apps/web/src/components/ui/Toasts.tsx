@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { useWorkbench } from "@/store";
 import { Dot, type Tone } from "./Pill";
 
@@ -19,6 +19,11 @@ export function Toasts() {
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-semibold">{t.title}</div>
             {t.detail && <div className="mt-0.5 text-xs text-muted break-words">{t.detail}</div>}
+            {t.href && (
+              <a href={t.href} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-healthy hover:underline">
+                {t.hrefLabel ?? t.href} <ExternalLink className="size-3" />
+              </a>
+            )}
           </div>
           <button type="button" onClick={() => dismiss(t.id)} className="text-faint hover:text-text" aria-label="Dismiss">
             <X className="size-3.5" />

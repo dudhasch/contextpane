@@ -6,3 +6,4 @@ export * from "./tools.ts";
 export * from "./aadsts.ts";
 export * from "./tenants.ts";
 export * from "./validate.ts";
+export * from "./actions.ts";

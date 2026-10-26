@@ -113,11 +113,29 @@ interface BatchResponse {
   body?: { value?: unknown[]; error?: { message?: string } } & Record<string, unknown>;
 }
 
+interface BatchRequest {
+  id: string;
+  url: string;
+  method?: "GET" | "PATCH" | "POST";
+  body?: unknown;
+}
+
 /** One POST /$batch (Graph allows 20 requests per batch). Per-request failures come back as status codes. */
-async function graphBatch(requests: Array<{ id: string; url: string }>, timeoutMs: number): Promise<Map<string, BatchResponse>> {
+async function graphBatch(requests: BatchRequest[], timeoutMs: number): Promise<Map<string, BatchResponse>> {
   const body = (await graphFetch(
     "/$batch",
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requests: requests.map((r) => ({ ...r, method: "GET" })) }) },
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requests: requests.map((r) => ({
+          id: r.id,
+          url: r.url,
+          method: r.method ?? "GET",
+          ...(r.body === undefined ? {} : { body: r.body, headers: { "content-type": "application/json" } }),
+        })),
+      }),
+    },
     timeoutMs,
   )) as { responses?: BatchResponse[] };
   return new Map((body.responses ?? []).map((r) => [r.id, r]));
@@ -308,5 +326,67 @@ export async function fetchGraphContextLive(timeoutMs: number): Promise<{ tenant
     tenantId: String(claims.tid ?? ""),
     account: typeof claims.upn === "string" ? claims.upn : typeof claims.unique_name === "string" ? claims.unique_name : null,
     scopes: typeof claims.scp === "string" ? claims.scp.split(" ") : [],
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Writes: lab license state + Temporary Access Pass                           */
+/* -------------------------------------------------------------------------- */
+
+/** Drop cached snapshots so the next read sees a write made a moment ago. */
+export function invalidateGraphSnapshots() {
+  snapshots.clear();
+}
+
+export interface ExtensionPatchResult {
+  upn: string;
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+/**
+ * PATCHes the com.contextpane.licenseState open extension of every user, in parallel
+ * (Graph runs a $batch of PATCHes one after another, ~1.1 s for three; parallel is ~0.4 s).
+ * Open-extension PATCH merges: listed properties change, the rest stay.
+ */
+export async function patchLicenseExtensionsLive(upns: string[], fields: Record<string, string>, timeoutMs: number): Promise<ExtensionPatchResult[]> {
+  const body = JSON.stringify({ "@odata.type": "#microsoft.graph.openTypeExtension", extensionName: EXTENSION_ID, ...fields });
+  const results = await Promise.all(
+    upns.map(async (upn): Promise<ExtensionPatchResult> => {
+      try {
+        await graphFetch(`/users/${encodeURIComponent(upn)}/extensions/${EXTENSION_ID}`, { method: "PATCH", headers: { "content-type": "application/json" }, body }, timeoutMs);
+        return { upn, ok: true, status: 204 };
+      } catch (error) {
+        return { upn, ok: false, status: error instanceof GraphHttpError ? error.status : 0, error: error instanceof Error ? error.message : String(error) };
+      }
+    }),
+  );
+  invalidateGraphSnapshots();
+  return results;
+}
+
+export interface LiveTemporaryAccessPass {
+  id: string;
+  temporaryAccessPass: string;
+  lifetimeInMinutes: number;
+  isUsableOnce: boolean;
+  startDateTime: string;
+}
+
+/** POST /users/{id}/authentication/temporaryAccessPassMethods; throws GraphHttpError when the TAP policy or token scope says no. */
+export async function createTemporaryAccessPassLive(upn: string, lifetimeInMinutes: number, isUsableOnce: boolean, timeoutMs: number): Promise<LiveTemporaryAccessPass> {
+  const body = (await graphFetch(
+    `/users/${encodeURIComponent(upn)}/authentication/temporaryAccessPassMethods`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lifetimeInMinutes, isUsableOnce }) },
+    timeoutMs,
+  )) as Partial<LiveTemporaryAccessPass>;
+  if (!body.temporaryAccessPass) throw new GraphHttpError(502, "temporaryAccessPassMethods answered without a pass");
+  return {
+    id: body.id ?? "",
+    temporaryAccessPass: body.temporaryAccessPass,
+    lifetimeInMinutes: body.lifetimeInMinutes ?? lifetimeInMinutes,
+    isUsableOnce: body.isUsableOnce ?? isUsableOnce,
+    startDateTime: body.startDateTime ?? new Date().toISOString(),
   };
 }

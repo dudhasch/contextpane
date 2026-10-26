@@ -13,6 +13,56 @@ costs **0 tokens and <150 ms**, an inline hover costs one `muse-glimmer-30b` / `
 only an explicit *Generate Fix* click escalates to `muse-wonder-1.0` with a
 verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 
+| | |
+|---|---|
+| ![Contoso Finance workbench with the Tier 1A hover popover on the affected UPN](docs/screenshots/01-workbench-hover-popover.png) | ![Unified HCL diff, live Azure NSG vs the Terraform baseline](docs/screenshots/02-iac-diff-modal.png) |
+| **1 · Workbench + inline hover.** The ticket's UPN resolves to a `HoverDiagnosticPopover` served from the Muse Glimmer 30B cache in 7 ms with 0 tokens, with `[Issue TAP]`, `[Inspect CA Policy]` and `[Assign SPE_E5]`. | **2 · IaC CodeLens diff.** The live `nsg-contoso-avd-hostpool-01` in Azure against `demo-iac/main.tf`: tag drift plus a rogue RDP rule open to `*`. |
+| ![Tier 3 approval drawer, Verified Safe in the Modal cloud sandbox](docs/screenshots/03-tier3-approval-drawer.png) | ![Fabrikam Legal hydrated from a pinned Contoso recipe with 0 LLM tokens, router savings open](docs/screenshots/04-fabrikam-recipe-router-savings.png) |
+| **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle; the `modal-cloud-sandbox` pre-flight (AST, `terraform fmt` + `validate`) says **Verified Safe** in 750 ms and the fix is staged on a `fix/inc-4092-nsg-drift-*` branch. | **4 · Zero-token recipe switch.** The canvas pinned on Contoso re-hydrates Fabrikam Legal through Tier 0 (0 LLM tokens, 0 ms server time); the router savings panel tallies every tier. |
+
+Screenshots are 1600×900 captures of the live workbench (`bun run scripts/capture-readme-screenshots.ts`).
+
+## Reproduce the Demo in 60 Seconds
+
+```bash
+bun install
+bun run dev
+```
+
+Open http://localhost:5173 and press the hotkeys in order (no keys needed for everything but `7`):
+
+| Key | What you see |
+|---|---|
+| `1` | Hover Lynne's UPN: AADSTS53003 translated, SPE_E3 ≠ SPE_E5, blocking CA policy (Tier 1A) |
+| `7` | Read the customer's screenshot with Muse Vision; the matching sign-in lights up (Tier 2 · Vision) |
+| `3` | The NSG drift as a unified diff |
+| `4` | Generate Fix: plan + PowerShell + Terraform, sandbox-verified, staged on a git branch (Tier 3) |
+| `5` | Approve: the drifted users are fixed and all four cards turn emerald (Tier 0 push, 0 tokens) |
+| `a` | The audit ledger: delegated identity, Modal verification, AST / `terraform validate`, branch, PR |
+| `p` then `6` | Pin the canvas and switch to Fabrikam Legal: 0 tokens |
+| `0` | Reset the demo drift for the next take |
+
+Offline (no `.env.local`) every step runs on the deterministic engine and the approval is
+simulated; with `META_API_KEY` and `LIVE_CLOUD_MODE=true` (see [Live cloud mode](#live-cloud-mode)) it is all real.
+
+## Live Benchmarks Measured on Oct 26, 2026
+
+Reference machine in Switzerland, Meta Model API, Modal us-east, lab tenant
+`c4a8shili.onmicrosoft.com`, warm orchestrator.
+
+| Path | Measured | LLM tokens |
+|---|---|---|
+| Tier 0 · View Recipe hydrate (server time) | 0–1 ms (2–6 ms wall) | 0 |
+| Tier 1A · cached Muse Glimmer 30B hover (wall) | 1–2 ms | 0 |
+| MCP gather · batched Graph + Azure, fresh | 0.16–0.65 s | 0 |
+| Tier 3 · warm Modal pre-flight (`TF_REATTACH_PROVIDERS`: AST + `fmt` + `validate`) | 638–871 ms | 0 |
+| Tier 2 · Vision · `muse-spark-1.3` reads the ticket screenshot | 3.4–5.3 s | ~2.9k |
+| HITL approve → 3 live Graph writes → canvas converged | 1.75 s end to end | 0 |
+| Reset demo drift (3 live Graph PATCHes; the canvas reverts at once) | 0.56–1.3 s | 0 |
+| Tier 1B · correlate (`muse-spark-1.3`, header painted from MCP data first) | 4–5.5 s (~1 s first paint) | ~10.5k |
+| Tier 3 · generate fix (`muse-wonder-1.0` plan + bundle, Modal, git stage) | 16.5–18 s | ~13k |
+| Muse Glimmer 30B on Modal L40S · cold boot from zero / one uncached hover | 17.7 s / ~25 s | ~1.1k |
+
 ---
 
 ## Quick start (works with zero API keys)
@@ -47,37 +97,46 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 
 ## Architecture
 
+```mermaid
+flowchart TB
+  subgraph WEB["apps/web · React workbench :5173"]
+    direction LR
+    TICKET["ERP ticket pane<br/>entity pills · contract toolbar · IaC CodeLens · screenshot"]
+    CANVAS["Catalog-constrained canvas<br/>only Zod-validated components"]
+    HUD["HUD<br/>telemetry pills · Savings · Audit · Reset drift"]
+  end
+
+  subgraph ORCH["apps/orchestrator · Hono on Bun :4000 · 4-Tier Compute Router"]
+    direction LR
+    T0["Tier 0 · Local AST<br/>View Recipe hydrate · convergence push<br/>0 tokens"]
+    T1A["Tier 1A · Modal L40S<br/>Muse Glimmer 30B (llama.cpp)<br/>hover cache on disk"]
+    T12["Tier 1B / 2 · Meta Muse Spark 1.3<br/>+ Vision (image input)<br/>+ Voice ASR"]
+    T3["Tier 3 · Meta Muse Wonder + Muse Code<br/>+ Modal pre-flight sandbox<br/>+ git branch / gh PR"]
+    LEDGER[("Audit ledger<br/>data/audit-log.json")]
+  end
+
+  subgraph MCP["3 MCP servers · gathered in parallel (in-process or stdio)"]
+    direction LR
+    ERP["mcp-erp<br/>tickets · contracts"]
+    GRAPH["mcp-msgraph<br/>licenses · CA · sign-ins · TAP"]
+    AZ["mcp-azure-iac<br/>NSG vs Terraform"]
+  end
+
+  CATALOG[["packages/catalog<br/>Zod component catalog · forced tool schemas · convergeLayout"]]
+  TENANT[("Entra ID + Azure<br/>lab tenant")]
+
+  TICKET -- "REST + SSE" --> ORCH
+  ORCH -- "WebSocket /ws: telemetry · audit · notifications/resources/updated" --> HUD
+  ORCH --> CANVAS
+  T0 & T1A & T12 & T3 --> MCP
+  T3 --> LEDGER
+  GRAPH & AZ -- "fetch() with cached Az token" --> TENANT
+  CATALOG -. "schemas" .-> ORCH
+  CATALOG -. "schemas" .-> CANVAS
 ```
-┌────────────────────────────── apps/web (:5173) ──────────────────────────────┐
-│  HUD: tenant switcher · router telemetry pills · Pin as Recipe · Voice Steer  │
-│ ┌─ Left: ERP ticket ──────────┐ ┌─ Right: Catalog-constrained GenUI canvas ─┐ │
-│ │ entity pills → hover (1A)   │ │ <TenantSummaryHeader/>                    │ │
-│ │ contract line → toolbar     │ │ <LicenseDriftCard/>                       │ │
-│ │ IaC CodeLens → remediate(3) │ │ <EntraSignInTimeline/>                    │ │
-│ └─────────────────────────────┘ │ <IaCDriftBanner/>  <ActionApprovalDrawer/>│ │
-└──────────────────────────────────┴───────────────────────────────────────────┘
-                 │ REST + SSE (progress)          │ WebSocket /ws (telemetry)
-┌────────────────────────── apps/orchestrator (:4000) ─────────────────────────┐
-│                          4-Tier Meta Model Router                            │
-│  Tier 0  recipe hydrate    0 tokens   in-process MCP binding      <150 ms    │
-│  Tier 1A hover             Glimmer 30B open weights → Meta spark-1.3         │
-│  Tier 1B catalog           Meta spark-1.3 (Glimmer opt-in, hovers only)      │
-│  Tier 2  correlate         Meta API muse-spark-1.3 (escalation)              │
-│  Tier 3A/3B remediate      Meta API muse-wonder-1.0 (muse-code if served)    │
-│          └─ pre-flight: Modal sandbox → pwsh AST + terraform fmt/validate    │
-│          └─ stage: git worktree branch fix/<ticket>-nsg-drift                │
-│  Voice   voice-steer       muse-voice-transcribe → intent → layout filter    │
-│  Every tier: Zod validate → deterministic local fallback                     │
-└───────────────┬───────────────────────┬───────────────────────┬──────────────┘
-                │ in-process (<50 ms) or MCP stdio              │
-     ┌──────────┴────────┐  ┌───────────┴───────────┐  ┌────────┴─────────────┐
-     │ packages/mcp-erp  │  │ packages/mcp-msgraph  │  │ packages/mcp-azure-iac│
-     │ tickets,contracts │  │ Graph via pwsh 7 or   │  │ Az via pwsh 7 or      │
-     │ 2 tenants         │  │ demo-lab-manifest.json│  │ manifest vs main.tf   │
-     └───────────────────┘  └───────────────────────┘  └───────────────────────┘
-                                        shared: packages/catalog (Zod schemas,
-                                        View Recipes, hydrate_contextpane_layout tool)
-```
+
+Every model answer is a forced tool call validated against `packages/catalog`; anything
+that fails is repaired by the deterministic hydrator, and every tier falls back to it.
 
 ### The 4-Tier Meta Model Router
 
@@ -87,8 +146,9 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 | **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of both tenants is pre-generated and persisted to `data/hover-cache.json` |
 | **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Meta API `muse-spark-1.3` (`minimal`; open-weight Glimmer first only with `CTX_OPEN_WEIGHT_TIERS=hover,catalog`); the SSE stream paints `TenantSummaryHeader` from MCP data (`mcp_ready`) before the model answers |
 | **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
-| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
+| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
 | **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe-1.0` + `muse-spark-1.3` |
+| **Vision** | `POST /api/vision-extract` | The ticket's screenshot (base64 data URI) → `{ errorCode, appId, correlationId, timestamp, deviceState, recommendedComponent }`, Zod-validated, then matched to the sign-in it shows (same AADSTS code and app id, nearest time), which the timeline highlights. No model, no extraction: pixels have no deterministic fallback. | Meta API `muse-spark-1.3` with an `image_url` part (`CTX_MODEL_META_VISION`) |
 
 **Primary stack: Meta Model API + Modal.** A `META_API_KEY` alone (plus the optional Modal
 sandbox URL) is a complete, first-class configuration: providers without a key are left out
@@ -127,6 +187,35 @@ one of six allow-listed primitives, each with a strict Zod schema:
 Anything that fails validation is dropped and the deterministic hydrator fills the gap,
 so the canvas is always complete and always typed.
 
+### Approval, zero-token convergence and the audit ledger
+
+`POST /api/remediate/approve` (alias `/api/approve`) is the only path that changes a tenant.
+In `LIVE_CLOUD_MODE` it PATCHes the drifted users' `com.contextpane.licenseState` open
+extension (`entraAssignedSku = SPE_E5`, `avdEntitlementStatus = Compliant`) with the cached
+Graph token, the lab's stand-in for the license itself; `CTX_ALLOW_EXECUTE=true` additionally
+runs the approved PowerShell. With **Open GitHub PR on approval** ticked it pushes the staged
+branch and opens (or returns) the pull request with `gh pr create`.
+
+The orchestrator then pushes `notifications/resources/updated` over `/ws`. The workbench
+overlays `convergeLayout()` from `packages/catalog` on the mounted canvas, so
+`TenantSummaryHeader`, `LicenseDriftCard` (`15/15 Assigned`), `EntraSignInTimeline` and
+`IaCDriftBanner` turn emerald with 0 LLM tokens, and a toast shows the execution latency
+and the PR link. `POST /api/lab/reset-drift` (the ↺ button, hotkey `0`) clears that state
+at once and puts the three users back to `SPE_E3` / `Drift_Missing_E5_SKU`, so video takes
+run back to back without the seed script.
+
+Hover popovers carry three micro-actions: `[Issue TAP]` (`POST /api/actions/issue-tap`, demo
+users only) tries Graph's `temporaryAccessPassMethods` and otherwise returns a clearly labelled
+fallback pass; on the lab tenant the Az-derived token lacks `UserAuthenticationMethod.ReadWrite.All`,
+so it answers 403 and the card says so. `[Inspect CA Policy]` scrolls to the timeline and
+expands the live policy JSON. `[Assign SPE_E5]` opens the approval drawer on its PowerShell tab,
+because a license change only ever runs through the HITL path.
+
+Every pre-flight verification, approval or rejection, TAP and reset is appended to
+`data/audit-log.json` as `{ id, timestamp, tenantId, ticketId, actionType, delegatedIdentity,
+modalSandboxVerified, astPass, tfValidatePass, gitBranch, prUrl, latencyMs }` (never a TAP
+code) and listed in the **Audit** popover next to **Savings** (`GET /api/audit`).
+
 ### View Recipes (0 tokens)
 
 Pinning the current layout saves a `ViewRecipe` (pinned components + MCP bindings) to
@@ -154,16 +243,18 @@ contextpane/
 │   ├── Publish-ContextPaneRepo.ps1      Hackathon-compliant history audit/normalise + gh repo create
 │   ├── Start-GlimmerOpenWeights.ps1     Open-weight Muse Glimmer 30B GGUF on Modal (L40S) or local llama-server
 │   ├── Start-RunPodGlimmer.ps1          Optional RunPod vLLM pod for open-weight muse-glimmer-30b
-│   └── Test-ContextPaneSmoke.ps1
+│   ├── Test-ContextPaneSmoke.ps1
+│   └── capture-readme-screenshots.ts    The four 1600x900 README shots via headless Edge/Chrome (CDP)
+├── docs/screenshots/             README screenshots
 ├── modal-sandbox/                Modal Tier 3B pre-flight sandbox + optional open-weight Glimmer (Python)
 ├── packages/
-│   ├── catalog/                  Zod schemas, View Recipes, forced tool schema, AADSTS catalog
+│   ├── catalog/                  Zod schemas, View Recipes, forced tool schema, AADSTS catalog, audit/TAP/vision contracts, convergeLayout
 │   ├── mcp-erp/                  MCP server 1: ERP/PSA tickets & contracts
-│   ├── mcp-msgraph/              MCP server 2: Entra licenses, CA policies, sign-ins
+│   ├── mcp-msgraph/              MCP server 2: Entra licenses, CA policies, sign-ins (+ license-extension and TAP writes)
 │   └── mcp-azure-iac/            MCP server 3: NSG drift vs. Terraform baseline
 └── apps/
     ├── orchestrator/             Bun + Hono, port 4000, 4-tier router, SSE + WS
-    └── web/                      Vite + React 19 + Tailwind v4, port 5173
+    └── web/                      Vite + React 19 + Tailwind v4, port 5173 (public/attachments: the synthetic ticket screenshot)
 ```
 
 Each MCP package exposes both a **stdio MCP server** (`src/server.ts`, wired in
@@ -182,7 +273,9 @@ up to 45 minutes, and from then on talks to the APIs with plain `fetch()`:
 
 - **Graph:** one `$batch` returns the entitlement group, its members, subscribed SKUs and
   the Conditional Access policies; a second batch fetches each member's
-  `com.contextpane.licenseState` open extension. ~0.3-0.9 s warm.
+  `com.contextpane.licenseState` open extension. 0.16-0.65 s for a fresh gather (Graph + ARM).
+- **Writes:** an approval PATCHes the drifted users' open extensions (parallel, ~1 s) and
+  `[Issue TAP]` POSTs `temporaryAccessPassMethods`; both run only from an explicit click.
 - **ARM:** one `GET .../networkSecurityGroups/nsg-contoso-avd-hostpool-01` (~80-300 ms),
   diffed against `demo-iac/main.tf`.
 - **Sign-ins:** a UPN-filtered `auditLogs/signIns` query takes 40-60 s on a busy tenant and
@@ -272,6 +365,9 @@ Press `?` in the workbench for the overlay.
 | `4` | Generate Fix & Stage PR → Tier 3 drawer with verification badge and staged branch |
 | `5` | Approve & Execute via Delegated Identity (HITL) |
 | `6` | Switch tenant (Contoso ↔ Fabrikam); with a pinned recipe this is Tier 0, 0 tokens |
+| `7` | Extract telemetry from the ticket screenshot with Muse Vision (Tier 2 · Vision) |
+| `a` | Audit ledger popover |
+| `0` | Reset demo drift (lab users back to SPE_E3, remediation state cleared) |
 | `p` | Pin / release the canvas as a View Recipe |
 | `v` | Voice Steer panel (record, or type a command) |
 | `t` | Router savings panel |

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, KeyRound, LogIn, ShieldBan, ShieldCheck, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, KeyRound, LogIn, ShieldBan, ShieldCheck, Sparkles, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { EntraSignInTimeline as Props, Provenance, QuickAction, SignInEvent } from "@contextpane/catalog";
 import { fmtTimeUtc } from "@/lib/format";
@@ -10,9 +10,9 @@ import { CardShell } from "./CardShell";
 /** Events shown before "show more": every highlighted one plus the nearest context, so the fourth canvas card stays above the fold. */
 const COLLAPSED_EVENTS = 4;
 
-function collapseEvents(events: SignInEvent[]): SignInEvent[] {
+function collapseEvents(events: SignInEvent[], pinned: string | null): SignInEvent[] {
   if (events.length <= COLLAPSED_EVENTS) return events;
-  const keep = new Set(events.filter((e) => e.isHighlighted).map((e) => e.id));
+  const keep = new Set(events.filter((e) => e.isHighlighted || e.id === pinned).map((e) => e.id));
   for (const e of events) {
     if (keep.size >= COLLAPSED_EVENTS) break;
     keep.add(e.id);
@@ -22,7 +22,9 @@ function collapseEvents(events: SignInEvent[]): SignInEvent[] {
 
 export function EntraSignInTimelineCard({ props, provenance, repaired }: { props: Props; provenance: Provenance; repaired?: boolean }) {
   const [showAll, setShowAll] = useState(false);
-  const events = useMemo(() => (showAll ? props.events : collapseEvents(props.events)), [props.events, showAll]);
+  const vision = useWorkbench((s) => s.vision);
+  const visionEventId = vision.status === "ready" ? (vision.result?.match?.eventId ?? null) : null;
+  const events = useMemo(() => (showAll ? props.events : collapseEvents(props.events, visionEventId)), [props.events, showAll, visionEventId]);
   const hidden = props.events.length - events.length;
   return (
     <CardShell
@@ -54,11 +56,18 @@ export function EntraSignInTimelineCard({ props, provenance, repaired }: { props
         </div>
       )}
 
+      <PolicyInspector />
+
       <ol className="relative ml-2 border-l border-border-subtle pl-4">
         {events.map((e) => {
           const tone: Tone = e.status === "failure" ? "critical" : e.status === "interrupted" ? "warning" : "healthy";
+          const visionHit = e.id === visionEventId;
           return (
-            <li key={e.id} className={`relative mb-1 last:mb-0 ${e.isHighlighted ? "" : "opacity-85"}`}>
+            <li
+              key={e.id}
+              data-event-id={e.id}
+              className={`relative mb-1 last:mb-0 ${e.isHighlighted || visionHit ? "" : "opacity-85"} ${visionHit ? "rounded-md ring-2 ring-meta ring-offset-1 ring-offset-canvas" : ""}`}
+            >
               <span className="absolute -left-[21px] top-1.5">
                 <Dot tone={tone} pulse={e.isHighlighted} />
               </span>
@@ -78,6 +87,11 @@ export function EntraSignInTimelineCard({ props, provenance, repaired }: { props
                     </span>
                   )}
                   <span className="ml-auto flex shrink-0 items-center gap-1">
+                    {visionHit && (
+                      <Pill tone="meta" icon={<Eye />} title="Matched by Tier 2 · Vision (muse-spark-1.3) from the customer's screenshot">
+                        vision match
+                      </Pill>
+                    )}
                     {e.errorCodeLabel ? <Pill tone="critical">{e.errorCodeLabel}</Pill> : <Pill tone="healthy" icon={<ShieldCheck />}>success</Pill>}
                   </span>
                 </div>
@@ -114,22 +128,60 @@ export function EntraSignInTimelineCard({ props, provenance, repaired }: { props
   );
 }
 
+/** [Inspect CA Policy]: the blocking policy as the Graph MCP server reports it, expanded in place. */
+function PolicyInspector() {
+  const inspect = useWorkbench((s) => s.policyInspect);
+  const close = useWorkbench((s) => s.closePolicyInspect);
+  if (!inspect) return null;
+  const p = inspect.detail?.policy;
+  return (
+    <div className="mb-2 animate-fade-in rounded-md border border-critical/40 bg-canvas" data-testid="policy-inspector">
+      <div className="flex items-center gap-2 border-b border-border-subtle px-2.5 py-1 text-[11px]">
+        <ShieldBan className="size-3.5 text-critical" />
+        <span className="font-medium">{p?.displayName ?? inspect.policyId}</span>
+        {p && <Pill tone={p.state === "enabled" ? "critical" : "warning"}>{p.state}</Pill>}
+        {inspect.detail && <span className="font-mono text-[10px] text-faint">{inspect.detail.source} · blocks {inspect.detail.blockedUpns.length} users</span>}
+        <button type="button" onClick={close} className="ml-auto text-faint hover:text-text" aria-label="Close policy">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {inspect.status === "loading" && <div className="m-2 h-16 animate-pulse rounded bg-surface" />}
+      {inspect.status === "error" && <div className="px-2.5 py-1.5 text-[11px] text-critical">{inspect.error}</div>}
+      {p && (
+        <pre className="max-h-44 overflow-auto px-2.5 py-1.5 font-mono text-[10.5px] leading-snug text-muted">
+          {JSON.stringify(
+            {
+              id: p.id,
+              state: p.state,
+              conditions: { users: { includeGroups: p.includeGroupNames, excludeGroups: p.excludeGroupNames }, applications: p.targetApps },
+              grantControls: p.grant,
+              blockedUpns: inspect.detail?.blockedUpns,
+            },
+            null,
+            2,
+          )}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function MicroAction({ action }: { action: QuickAction }) {
   const toast = useWorkbench((s) => s.toast);
   const remediate = useWorkbench((s) => s.remediate);
-  const hover = useWorkbench((s) => s.hover);
+  const issueTap = useWorkbench((s) => s.issueTap);
+  const inspectPolicy = useWorkbench((s) => s.inspectPolicy);
   const run = () => {
     switch (action.kind) {
       case "issue-tap":
-        toast({ tone: "healthy", title: "Temporary Access Pass issued (simulated)", detail: `${action.targetEntityId} · 60 min · one-time use` });
+        if (action.targetEntityId) void issueTap(action.targetEntityId);
         break;
       case "exclude-group-report-only":
         toast({ tone: "meta", title: "Staging CA change via Tier 3", detail: action.description });
         void remediate();
         break;
       case "inspect-policy":
-        if (action.targetEntityId) void hover(action.targetEntityId, "policy");
-        toast({ tone: "info", title: "Inspecting policy", detail: action.description ?? action.targetEntityId });
+        if (action.targetEntityId) void inspectPolicy(action.targetEntityId);
         break;
       default:
         toast({ tone: "info", title: action.label, detail: action.description });

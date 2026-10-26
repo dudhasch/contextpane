@@ -186,15 +186,15 @@ function QuickActionButton({ action, onDone }: { action: QuickAction; entityType
     const state = s();
     switch (action.kind) {
       case "issue-tap":
-        state.toast({ tone: "healthy", title: "Temporary Access Pass issued (simulated)", detail: `${action.targetEntityId} · valid 60 min · New-MgUserAuthenticationTemporaryAccessPassMethod` });
+        if (action.targetEntityId) void state.issueTap(action.targetEntityId);
         break;
       case "inspect-policy":
-        state.flashComponent("EntraSignInTimeline");
-        state.toast({ tone: "info", title: "Conditional Access policy", detail: action.description ?? action.targetEntityId ?? "" });
+        if (action.targetEntityId) void state.inspectPolicy(action.targetEntityId);
+        else state.revealComponent("EntraSignInTimeline");
         break;
       case "assign-license":
-        state.flashComponent("LicenseDriftCard");
-        state.toast({ tone: "warning", title: "License assignment is part of the Tier 3 bundle", detail: "Use Generate Fix & Stage PR for an auditable change." });
+        // HITL: the license change only ever runs from the approval drawer, opened on its PowerShell tab.
+        state.openLicenseRemediation(action.targetEntityId?.includes("@") ? action.targetEntityId : undefined);
         break;
       case "view-diff":
         state.setDiffOpen(true);

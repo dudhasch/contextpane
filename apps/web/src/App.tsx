@@ -2,8 +2,10 @@ import { LayoutGrid, Ticket } from "lucide-react";
 import { useEffect } from "react";
 import { ActionApprovalDrawerSheet } from "./components/canvas/ActionApprovalDrawer";
 import { DiffModal } from "./components/canvas/DiffModal";
+import { TapIssuedCard } from "./components/canvas/TapIssuedCard";
 import { GenUICanvas } from "./components/canvas/GenUICanvas";
 import { HotkeysOverlay } from "./components/demo/HotkeysOverlay";
+import { AuditPanel } from "./components/hud/AuditPanel";
 import { RouterSavingsPanel } from "./components/hud/RouterSavingsPanel";
 import { TopBar } from "./components/hud/TopBar";
 import { VoiceSteerPanel } from "./components/hud/VoiceSteer";
@@ -25,7 +27,7 @@ export function App() {
   return (
     <div className="relative flex h-full flex-col">
       <TopBar />
-      <main className="grid min-h-0 flex-1 grid-cols-[minmax(420px,38%)_1fr]">
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(420px,38%)_minmax(0,1fr)]">
         <section className="flex min-h-0 flex-col border-r border-border bg-surface/40">
           <PaneHeader
             icon={<Ticket />}
@@ -54,9 +56,11 @@ export function App() {
         </section>
       </main>
       <RouterSavingsPanel />
+      <AuditPanel />
       <VoiceSteerPanel />
       <DiffModal />
       <ActionApprovalDrawerSheet />
+      <TapIssuedCard />
       <HotkeysOverlay />
       <Toasts />
     </div>

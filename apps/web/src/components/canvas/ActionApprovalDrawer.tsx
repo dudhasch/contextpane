@@ -1,15 +1,13 @@
 import { Check, ExternalLink, FileCode2, GitBranch, GitPullRequest, Rocket, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle } from "lucide-react";
-import { useState } from "react";
 import type { ActionApprovalDrawer as Drawer } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
-import { useWorkbench } from "@/store";
+import { useWorkbench, type DrawerTab as Tab } from "@/store";
 import { Button } from "../ui/Button";
 import { CodeBlock } from "../ui/CodeBlock";
 import { Pill, type Tone } from "../ui/Pill";
 import { DiffView } from "./DiffView";
 import { ProgressRail } from "./ProgressRail";
 
-type Tab = "powershell" | "terraform" | "entities";
 
 const VERDICT_TONE: Record<Drawer["verificationStatus"]["verdict"], Tone> = {
   "Verified Safe": "healthy",
@@ -30,7 +28,9 @@ export function ActionApprovalDrawerSheet() {
   const github = useWorkbench((s) => s.health?.github);
   const openPr = useWorkbench((s) => s.openPrOnApprove);
   const setOpenPr = useWorkbench((s) => s.setOpenPrOnApprove);
-  const [tab, setTab] = useState<Tab>("powershell");
+  const tab = useWorkbench((s) => s.drawerTab);
+  const setTab = useWorkbench((s) => s.setDrawerTab);
+  const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
   if (!open) return null;
   const prPossible = Boolean(github?.origin && github.ghAuthenticated);
 
@@ -114,6 +114,14 @@ export function ActionApprovalDrawerSheet() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {tab === "powershell" && focusUpn && (
+                <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted">
+                  <Pill tone="warning">License remediation</Pill>
+                  <span>
+                    Set-MgUserLicense for <span className="font-mono text-text">{focusUpn}</span> runs with the rest of this bundle after approval.
+                  </span>
+                </div>
+              )}
               {tab === "powershell" && <CodeBlock code={drawer.powershellScript} />}
               {tab === "terraform" && (
                 <CodeBlock code={drawer.terraformDiff} render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="max-h-none" wrap={wrap} className="pt-8" />} />

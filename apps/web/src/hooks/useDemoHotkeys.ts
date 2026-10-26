@@ -27,6 +27,8 @@ export function useDemoHotkeys() {
           s.setDiffOpen(false);
           s.setVoiceOpen(false);
           s.setSavingsOpen(false);
+          s.setAuditOpen(false);
+          s.closeTap();
           s.setToolbarLine(null);
           dispatchDemo({ kind: "close-popovers" });
           break;
@@ -67,6 +69,17 @@ export function useDemoHotkeys() {
           break;
         case "r":
           void s.correlate({ fresh: true });
+          break;
+        case "a":
+          s.setAuditOpen(!s.auditOpen);
+          break;
+        case "7": {
+          const attachment = s.context?.ticket.attachments?.[0];
+          if (attachment) void s.extractVision(attachment);
+          break;
+        }
+        case "0":
+          void s.resetDrift();
           break;
         default:
           return;

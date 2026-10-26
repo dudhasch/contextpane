@@ -26,7 +26,11 @@ export function TenantSummaryHeaderCard({ props, provenance, repaired }: { props
       state={overall}
       provenance={provenance}
       repaired={repaired}
-      right={props.activeEscalation ? <Pill tone={SEV_TONE[props.activeEscalation.severity] ?? "warning"}>{props.activeEscalation.badge}</Pill> : null}
+      right={
+        props.activeEscalation ? (
+          <Pill tone={props.activeEscalation.badge.endsWith("Remediated") ? "healthy" : (SEV_TONE[props.activeEscalation.severity] ?? "warning")}>{props.activeEscalation.badge}</Pill>
+        ) : null
+      }
     >
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 md:grid-cols-[1.1fr_1.2fr_0.8fr_0.6fr_1.6fr]">
         <KeyValue label="Tenant ID" mono>
