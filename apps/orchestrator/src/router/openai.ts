@@ -61,6 +61,11 @@ interface ChatCompletionResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
 
+/** Self-hosted vLLM may run without --api-key, so the bearer header is optional. */
+function authHeader(provider: ProviderConfig): Record<string, string> {
+  return provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {};
+}
+
 export interface ChatOptions {
   timeoutMs: number;
   temperature?: number;
@@ -81,7 +86,7 @@ export async function chatWithForcedTool(
   try {
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${provider.apiKey}` },
+      headers: { "content-type": "application/json", ...authHeader(provider) },
       body: JSON.stringify({
         model,
         messages,
@@ -148,7 +153,7 @@ export async function transcribeAudio(
     form.append("file", new Blob([audio.bytes.buffer.slice(audio.bytes.byteOffset, audio.bytes.byteOffset + audio.bytes.byteLength) as ArrayBuffer], { type: audio.mimeType }), audio.fileName ?? "voice.webm");
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/audio/transcriptions`, {
       method: "POST",
-      headers: { authorization: `Bearer ${provider.apiKey}` },
+      headers: authHeader(provider),
       body: form,
       signal: controller.signal,
     });

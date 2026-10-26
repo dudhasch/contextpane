@@ -198,7 +198,7 @@ export const VerificationStatusSchema = z.object({
   astCheckPassed: z.boolean().nullable().describe("PowerShell AST parse result; null if not run"),
   terraformFmtPassed: z.boolean().nullable(),
   terraformValidatePassed: z.boolean().nullable(),
-  sandboxProvider: z.enum(["local-pwsh", "modal", "none"]),
+  sandboxProvider: z.enum(["local-pwsh", "modal-cloud-sandbox", "none"]),
   validationLatencyMs: z.number().int().nonnegative(),
   findings: z.array(z.string().max(300)).default([]),
 });

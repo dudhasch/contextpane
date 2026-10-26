@@ -11,7 +11,7 @@ import {
   type Provenance,
   type RouterTelemetry,
 } from "@contextpane/catalog";
-import { config, models, providers } from "../config.ts";
+import { config, models, providerFor, providers } from "../config.ts";
 import { DEFAULT_COMPONENT_ORDER, buildComponent } from "../local/hydrate.ts";
 import { buildLayout } from "../local/hydrate.ts";
 import { contextForModel, gatherContext, type CorrelationContext } from "../mcp/context.ts";
@@ -51,17 +51,21 @@ Rules:
 
 function chainSteps(): ChainStep[] {
   return [
-    { provider: "baseten", modelId: models.basetenSpark, hasKey: providers.baseten.hasKey },
-    { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey },
+    { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey, tier: "Tier 1B" },
+    { provider: "baseten", modelId: models.basetenSpark, hasKey: providers.baseten.hasKey, tier: "Tier 1B" },
+    { provider: "meta", modelId: models.metaSparkContributor, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
+    { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey, tier: "Tier 2" },
   ];
 }
 
 /**
  * Tier 1B / Tier 2 — ticket correlation and layout hydration.
- * Promise.all over the 3 MCP servers → forced hydrate_contextpane_layout on
- * Baseten (open-weight muse-spark-open-1026, Tier 1B) → Meta API (muse-spark-1.3,
- * Tier 2) → deterministic AST hydration. Every component is Zod-validated and
- * any gap is repaired locally so the canvas is always complete.
+ * Promise.all over the 3 MCP servers → forced hydrate_contextpane_layout.
+ * Tier 1B (catalog hydration): open-weight vLLM on Modal / RunPod, Baseten
+ * muse-spark-open-1026 when keyed, then Meta API muse-spark-1.3-contributor.
+ * Tier 2 (cross-MCP correlation): Meta API muse-spark-1.3 when Tier 1B fails or
+ * returns an invalid layout. Last resort is deterministic AST hydration. Every
+ * component is Zod-validated and any gap is repaired locally.
  */
 export async function correlate(input: CorrelateInput, sink?: ProgressSink): Promise<CorrelateResult> {
   const started = performance.now();
@@ -101,9 +105,8 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       steps,
       async (step) => {
         report("llm:attempt", `Calling ${step.provider} · ${step.modelId} with forced hydrate_contextpane_layout`, { provider: step.provider, modelId: step.modelId });
-        const providerConfig = providers[step.provider as "baseten" | "meta"];
         const result = await chatWithForcedTool(
-          providerConfig,
+          providerFor(step.provider),
           step.modelId,
           [
             { role: "system", content: SYSTEM_PROMPT },
@@ -128,7 +131,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       usage = outcome.result.usage;
       provider = outcome.winner.provider;
       modelId = outcome.winner.modelId;
-      tier = outcome.winner.provider === "meta" ? "Tier 2" : "Tier 1B";
+      tier = outcome.winner.tier ?? "Tier 1B";
       validated = !outcome.result.partial;
     }
   } else {

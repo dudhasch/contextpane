@@ -3,18 +3,20 @@ import { config } from "../config.ts";
 import type { PreflightInput } from "./local.ts";
 
 /**
- * Modal sandbox client. POSTs the bundle to the deployed web endpoint in
- * modal-sandbox/contextpane_sandbox.py, which runs the same AST + terraform
- * checks inside an isolated container and returns a VerificationStatus-shaped
- * JSON document.
+ * Modal sandbox client (Tier 3B). POSTs the bundle to the validate_remediation
+ * web endpoint in modal-sandbox/contextpane_sandbox.py, which runs the same AST +
+ * terraform checks inside an isolated container and returns a
+ * VerificationStatus-shaped JSON document.
  */
 
 interface ModalResponse {
+  VerifiedSafe?: boolean;
   astCheckPassed: boolean | null;
   terraformFmtPassed: boolean | null;
   terraformValidatePassed: boolean | null;
+  sandboxProvider?: string;
+  validationLatencyMs?: number;
   findings?: string[];
-  sandboxLatencyMs?: number;
 }
 
 export function modalConfigured(): boolean {
@@ -50,7 +52,7 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
       astCheckPassed: json.astCheckPassed,
       terraformFmtPassed: json.terraformFmtPassed,
       terraformValidatePassed: json.terraformValidatePassed,
-      sandboxProvider: "modal",
+      sandboxProvider: "modal-cloud-sandbox",
       validationLatencyMs: Math.round(performance.now() - started),
       findings,
     };

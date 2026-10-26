@@ -41,7 +41,7 @@ export const RouterTierSchema = z.enum([
 ]);
 export type RouterTier = z.infer<typeof RouterTierSchema>;
 
-export const ProviderIdSchema = z.enum(["local", "fireworks", "baseten", "meta", "modal"]);
+export const ProviderIdSchema = z.enum(["local", "fireworks", "baseten", "meta", "modal", "runpod"]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
 export const QuickActionKindSchema = z.enum([

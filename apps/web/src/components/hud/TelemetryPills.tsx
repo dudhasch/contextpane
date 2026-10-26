@@ -1,5 +1,5 @@
 import { Activity, Cpu, Gauge, Layers, Sparkles, Wifi, WifiOff } from "lucide-react";
-import { PROVIDER_LABEL, TIER_COLOR, fmtMs, fmtTokens } from "@/lib/format";
+import { PROVIDER_LABEL, TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens, tierRouteLabel } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Pill, type Tone } from "../ui/Pill";
 
@@ -18,8 +18,8 @@ export function TelemetryPills() {
 
   return (
     <div className="flex min-w-0 items-center gap-1.5">
-      <Pill tone={tierTone} icon={<Layers />} flashKey={flashKey} title="Active router tier">
-        {telemetry ? telemetry.tier : "Tier —"}
+      <Pill tone={tierTone} icon={<Layers />} flashKey={flashKey} title={telemetry ? `Active router tier · ${tierRouteLabel(telemetry.tier)}` : "Active router tier"}>
+        {telemetry ? TIER_ROUTE[telemetry.tier].label : "Tier —"}
       </Pill>
       <Pill tone={providerTone} icon={<Cpu />} flashKey={flashKey} title="Provider">
         {telemetry ? (PROVIDER_LABEL[telemetry.provider] ?? telemetry.provider) : "Provider —"}

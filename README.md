@@ -60,10 +60,11 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 ┌────────────────────────── apps/orchestrator (:4000) ─────────────────────────┐
 │                          4-Tier Meta Model Router                            │
 │  Tier 0  recipe hydrate    0 tokens   in-process MCP binding      <150 ms    │
-│  Tier 1A hover             Fireworks → Baseten → Meta API (muse-glimmer-30b) │
-│  Tier 1B/2 correlate       Baseten muse-spark-open-1026 → Meta API spark 1.3 │
+│  Tier 1A hover             Modal/RunPod vLLM → Meta API (muse-glimmer-30b)   │
+│  Tier 1B catalog           Modal/RunPod vLLM → Meta spark-1.3-contributor    │
+│  Tier 2  correlate         Meta API muse-spark-1.3 (escalation)              │
 │  Tier 3A/3B remediate      Meta API muse-wonder-1.0 + muse-code              │
-│          └─ pre-flight: pwsh AST + terraform fmt/validate | Modal sandbox    │
+│          └─ pre-flight: Modal sandbox → pwsh AST + terraform fmt/validate    │
 │          └─ stage: git worktree branch fix/<ticket>-nsg-drift                │
 │  Voice   voice-steer       muse-voice-transcribe → intent → layout filter    │
 │  Every tier: Zod validate → deterministic local fallback                     │
@@ -83,11 +84,20 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 | Tier | Endpoint | What happens | Model / provider chain |
 |---|---|---|---|
 | **0** | `GET /api/recipe/:id/hydrate?tenantId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. Measured: 2–11 ms server time. | — |
-| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Fireworks `muse-glimmer-30b` → Baseten → Meta API |
-| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Baseten `meta-models/muse-spark-open-1026` (open weights) |
-| **2** | `POST /api/correlate` | Same call, escalated when Baseten is unavailable. | Meta API `muse-spark-1.3` |
-| **3A / 3B** | `POST /api/remediate` | `muse-wonder` plans, `muse-code` emits the PowerShell + Terraform bundle, pre-flight verifies it (PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`, or the Modal sandbox), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0` + `muse-code` |
-| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe` + `muse-spark-open-1026` |
+| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight `muse-glimmer-30b` on Modal / RunPod vLLM → Meta API `muse-glimmer-30b` |
+| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Open-weight vLLM on Modal / RunPod → Meta API `muse-spark-1.3-contributor` |
+| **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` |
+| **3A / 3B** | `POST /api/remediate` | `muse-wonder` plans, `muse-code` emits the PowerShell + Terraform bundle, pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0` + `muse-code`, Modal `validate_remediation` |
+| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe` + `muse-spark-1.3` |
+
+**Primary stack: Meta Model API + Modal.** A `META_API_KEY` alone (plus the optional Modal
+sandbox URL) is a complete, first-class configuration: providers without a key are left out
+of the chain entirely, so Meta answering Tier 1A/1B is not reported as a fallback. Open
+weights are opt-in: `modal-sandbox/open_weights_vllm.py` serves `muse-glimmer-30b` on Modal
+with vLLM (scale to zero), and `scripts/Start-RunPodGlimmer.ps1` does the same on RunPod;
+either URL goes into `CTX_OPEN_WEIGHT_BASE_URL` (or `MODAL_INFERENCE_BASE_URL` /
+`RUNPOD_VLLM_BASE_URL`). Baseten (`muse-spark-open-1026`) and Fireworks keys remain optional
+drop-in overrides ahead of Meta.
 
 Every provider in a chain is bounded by a timeout and falls through on error, timeout,
 missing key or invalid schema. When no provider answers, the deterministic engine produces
@@ -139,8 +149,9 @@ contextpane/
 │   ├── Invoke-SeedContextPaneLab.ps1
 │   ├── Remove-ContextPaneLab.ps1
 │   ├── Publish-ContextPaneRepo.ps1      Hackathon-compliant history audit/normalise + gh repo create
+│   ├── Start-RunPodGlimmer.ps1          Optional RunPod vLLM pod for open-weight muse-glimmer-30b
 │   └── Test-ContextPaneSmoke.ps1
-├── modal-sandbox/                Optional Modal pre-flight sandbox (Python)
+├── modal-sandbox/                Modal Tier 3B pre-flight sandbox + optional open-weight vLLM (Python)
 ├── packages/
 │   ├── catalog/                  Zod schemas, View Recipes, forced tool schema, AADSTS catalog
 │   ├── mcp-erp/                  MCP server 1: ERP/PSA tickets & contracts

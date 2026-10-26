@@ -4,7 +4,8 @@ ContextPane pre-flight sandbox on Modal.
 Deploys a web endpoint that validates a Tier 3 remediation bundle in an isolated
 container, exactly like the local pre-flight in apps/orchestrator/src/preflight/local.ts:
 
-  * PowerShell 7 AST parse of the remediation script (+ cmdlet allow-list)
+  * PowerShell 7 AST parse of the remediation script via
+    [System.Management.Automation.Language.Parser]::ParseInput() (+ cmdlet allow-list)
   * unified diff applied to the live NSG state must reproduce the Terraform baseline
   * `terraform fmt -check` and `terraform validate` on the patched state
 
@@ -12,10 +13,12 @@ Deploy:
     modal secret create contextpane-sandbox CTX_MODAL_SANDBOX_TOKEN=<random-token>
     modal deploy modal-sandbox/contextpane_sandbox.py
 
-Then point the orchestrator at it (scripts/Set-ContextPaneRouterConfig.ps1 -ModalSandboxUrl <url> -ModalSandboxToken <token>).
+Modal prints https://<workspace>--contextpane-sandbox-validate-remediation.modal.run; point the
+orchestrator at it (scripts/Set-ContextPaneRouterConfig.ps1 -ModalSandboxUrl <url> -ModalSandboxToken <token>).
 
 Request body (JSON): { powershellScript, terraformDiff, actualHcl, expectedHcl }
-Response (JSON):     { astCheckPassed, terraformFmtPassed, terraformValidatePassed, findings[], sandboxLatencyMs }
+Response (JSON):     { VerifiedSafe, astCheckPassed, terraformFmtPassed, terraformValidatePassed,
+                       sandboxProvider: "modal-cloud-sandbox", validationLatencyMs, findings[] }
 """
 
 from __future__ import annotations
@@ -48,7 +51,12 @@ image = (
     .pip_install("fastapi[standard]", "unidiff==0.7.5")
 )
 
+with image.imports():
+    from fastapi import HTTPException, Request
+
 app = modal.App("contextpane-sandbox", image=image)
+
+SANDBOX_PROVIDER = "modal-cloud-sandbox"
 
 FORBIDDEN = {"invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod"}
 REQUIRED = {"set-mguserlicense"}
@@ -57,7 +65,8 @@ AST_RUNNER = r"""
 $ErrorActionPreference = 'Stop'
 try {
   $tokens = $null; $errors = $null
-  $ast = [System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$tokens, [ref]$errors)
+  $source = Get-Content -LiteralPath $args[0] -Raw
+  $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
   $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Select-Object -Unique)
   $attrs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AttributeAst] }, $true) | ForEach-Object { $_.Extent.Text })
   [pscustomobject]@{
@@ -168,48 +177,49 @@ def check_terraform(diff: str, actual_hcl: str, expected_hcl: str) -> tuple[bool
         return fmt_passed, validate_passed, findings
 
 
-@app.function(timeout=300, secrets=[modal.Secret.from_name("contextpane-sandbox")])
-@modal.fastapi_endpoint(method="POST")
-def preflight(payload: dict, request=None) -> dict:
-    """Validate a remediation bundle. Bearer token must match CTX_MODAL_SANDBOX_TOKEN."""
-    from fastapi import HTTPException
-
-    expected_token = os.environ.get("CTX_MODAL_SANDBOX_TOKEN", "")
-    if expected_token:
-        auth = ""
-        if request is not None:
-            auth = request.headers.get("authorization", "")
-        if auth != f"Bearer {expected_token}":
-            raise HTTPException(status_code=401, detail="invalid sandbox token")
-
+def verify_bundle(payload: dict) -> dict:
+    """Run every pre-flight check on one bundle; shared by the web endpoint and `modal run`."""
     started = time.time()
-    script = payload.get("powershellScript", "")
-    diff = payload.get("terraformDiff", "")
-    actual_hcl = payload.get("actualHcl", "")
-    expected_hcl = payload.get("expectedHcl", "")
-    if not script or not diff:
-        raise HTTPException(status_code=400, detail="powershellScript and terraformDiff are required")
-
-    ast_passed, ast_findings = check_powershell(script)
-    fmt_passed, validate_passed, tf_findings = check_terraform(diff, actual_hcl, expected_hcl)
+    ast_passed, ast_findings = check_powershell(payload.get("powershellScript", ""))
+    fmt_passed, validate_passed, tf_findings = check_terraform(
+        payload.get("terraformDiff", ""), payload.get("actualHcl", ""), payload.get("expectedHcl", "")
+    )
     return {
+        "VerifiedSafe": ast_passed is True and fmt_passed is True and validate_passed is True,
         "astCheckPassed": ast_passed,
         "terraformFmtPassed": fmt_passed,
         "terraformValidatePassed": validate_passed,
+        "sandboxProvider": SANDBOX_PROVIDER,
+        "validationLatencyMs": int((time.time() - started) * 1000),
         "findings": ast_findings + tf_findings,
-        "sandboxLatencyMs": int((time.time() - started) * 1000),
-        "sandbox": "modal",
         "terraformVersion": TERRAFORM_VERSION,
     }
 
 
+@app.function(timeout=300, secrets=[modal.Secret.from_name("contextpane-sandbox")])
+@modal.fastapi_endpoint(method="POST")
+def validate_remediation(payload: dict, request: Request) -> dict:
+    """Tier 3B pre-flight. Bearer token must match CTX_MODAL_SANDBOX_TOKEN when the secret sets one."""
+    expected_token = os.environ.get("CTX_MODAL_SANDBOX_TOKEN", "")
+    if expected_token and request.headers.get("authorization", "") != f"Bearer {expected_token}":
+        raise HTTPException(status_code=401, detail="invalid sandbox token")
+    if not payload.get("powershellScript") or not payload.get("terraformDiff"):
+        raise HTTPException(status_code=400, detail="powershellScript and terraformDiff are required")
+    return verify_bundle(payload)
+
+
+@app.function(timeout=300)
+def validate_remediation_remote(payload: dict) -> dict:
+    return verify_bundle(payload)
+
+
 @app.local_entrypoint()
 def main():
-    """Quick local check: `modal run modal-sandbox/contextpane_sandbox.py` validates a trivial bundle."""
+    """Quick check without the web endpoint: `modal run modal-sandbox/contextpane_sandbox.py`."""
     sample = {
         "powershellScript": "[CmdletBinding(SupportsShouldProcess)]\nparam()\nSet-MgUserLicense -UserId x -AddLicenses @() -RemoveLicenses @()\n",
         "terraformDiff": "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-x = 1\n+x = 2\n",
         "actualHcl": "x = 1\n",
         "expectedHcl": "x = 2\n",
     }
-    print(json.dumps(preflight.remote(sample), indent=2))
+    print(json.dumps(validate_remediation_remote.remote(sample), indent=2))

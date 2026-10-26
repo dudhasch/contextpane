@@ -9,7 +9,7 @@ import {
   type HoverDiagnosticPopover,
   type RouterTelemetry,
 } from "@contextpane/catalog";
-import { config, models, providers } from "../config.ts";
+import { config, models, providerFor, providers } from "../config.ts";
 import { buildHoverDiagnostic, inferEntityType } from "../local/hover.ts";
 import { contextForModel, gatherContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
@@ -38,6 +38,7 @@ Rules:
 
 function chainSteps(): ChainStep[] {
   return [
+    { provider: providers.openWeight.id, modelId: models.openWeightGlimmer, hasKey: providers.openWeight.hasKey },
     { provider: "fireworks", modelId: models.fireworksGlimmer, hasKey: providers.fireworks.hasKey },
     { provider: "baseten", modelId: models.basetenGlimmer, hasKey: providers.baseten.hasKey },
     { provider: "meta", modelId: models.metaGlimmer, hasKey: providers.meta.hasKey },
@@ -45,9 +46,11 @@ function chainSteps(): ChainStep[] {
 }
 
 /**
- * Tier 1A — inline hover. Fireworks → Baseten → Meta API, all muse-glimmer-30b,
- * each bounded by CTX_HOVER_TIMEOUT_MS; deterministic fallback keeps the popover
- * well under the 350 ms budget when no provider answers.
+ * Tier 1A — inline hover, all muse-glimmer-30b. Open-weight vLLM on Modal / RunPod
+ * when CTX_OPEN_WEIGHT_BASE_URL is set, otherwise the Meta Model API as a first-class
+ * route; Fireworks and Baseten slot in ahead of Meta only when their keys exist.
+ * Each call is bounded by CTX_HOVER_TIMEOUT_MS; the deterministic fallback keeps the
+ * popover well under the 350 ms budget when no provider answers.
  */
 export async function hover(input: HoverInput): Promise<HoverResult> {
   const started = performance.now();
@@ -78,9 +81,8 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
       },
     };
     const outcome = await runChain(steps, async (step) => {
-      const providerConfig = providers[step.provider as "fireworks" | "baseten" | "meta"];
       const result = await chatWithForcedTool(
-        providerConfig,
+        providerFor(step.provider),
         step.modelId,
         [
           { role: "system", content: SYSTEM_PROMPT },

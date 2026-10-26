@@ -69,14 +69,32 @@ const envFloat = (key: string, fallback: number): number => {
 /* -------------------------------------------------------------------------- */
 
 export interface ProviderConfig {
-  id: Exclude<ProviderId, "local" | "modal">;
+  id: Exclude<ProviderId, "local">;
   label: string;
   baseUrl: string;
   apiKey: string;
+  /** Ready to call: an API key for hosted APIs, a base URL for self-hosted open-weight vLLM. */
   hasKey: boolean;
 }
 
-export const providers: Record<"fireworks" | "baseten" | "meta", ProviderConfig> = {
+/** MODEL_API_KEY is accepted as an alias for the Meta Model API key. */
+const metaApiKey = env("META_API_KEY", env("MODEL_API_KEY"));
+
+/**
+ * Self-hosted open-weight endpoint (OpenAI-compatible vLLM serving muse-glimmer-30b):
+ * CTX_OPEN_WEIGHT_BASE_URL wins, else the Modal deployment, else the RunPod pod.
+ */
+const openWeightBaseUrl = env("CTX_OPEN_WEIGHT_BASE_URL", env("MODAL_INFERENCE_BASE_URL", env("RUNPOD_VLLM_BASE_URL")));
+const openWeightIsRunPod = /runpod/i.test(openWeightBaseUrl) || (openWeightBaseUrl !== "" && openWeightBaseUrl === env("RUNPOD_VLLM_BASE_URL"));
+
+export const providers: Record<"openWeight" | "fireworks" | "baseten" | "meta", ProviderConfig> = {
+  openWeight: {
+    id: openWeightIsRunPod ? "runpod" : "modal",
+    label: openWeightIsRunPod ? "RunPod vLLM" : "Modal vLLM",
+    baseUrl: openWeightBaseUrl,
+    apiKey: env("CTX_OPEN_WEIGHT_API_KEY"),
+    hasKey: openWeightBaseUrl !== "",
+  },
   fireworks: {
     id: "fireworks",
     label: "Fireworks",
@@ -95,12 +113,21 @@ export const providers: Record<"fireworks" | "baseten" | "meta", ProviderConfig>
     id: "meta",
     label: "Meta API",
     baseUrl: env("META_API_BASE_URL", "https://api.meta.ai/v1"),
-    apiKey: env("META_API_KEY"),
-    hasKey: env("META_API_KEY") !== "",
+    apiKey: metaApiKey,
+    hasKey: metaApiKey !== "",
   },
 };
 
+/** Resolve a chain step's provider id to its config (the open-weight endpoint reports as modal or runpod). */
+export function providerFor(id: ProviderId): ProviderConfig {
+  const found = Object.values(providers).find((p) => p.id === id);
+  if (!found) throw new Error(`no provider config for ${id}`);
+  return found;
+}
+
 export const models = {
+  openWeightGlimmer: env("CTX_MODEL_OPEN_WEIGHT_GLIMMER", "muse-glimmer-30b"),
+  openWeightCatalog: env("CTX_MODEL_OPEN_WEIGHT_CATALOG", env("CTX_MODEL_OPEN_WEIGHT_GLIMMER", "muse-glimmer-30b")),
   fireworksGlimmer: env("CTX_MODEL_FIREWORKS_GLIMMER", "accounts/fireworks/models/muse-glimmer-30b"),
   basetenSpark: env("CTX_MODEL_BASETEN_SPARK", "meta-models/muse-spark-open-1026"),
   basetenGlimmer: env("CTX_MODEL_BASETEN_GLIMMER", "muse-glimmer-30b"),
@@ -126,7 +153,8 @@ export const config = {
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
   },
   modal: {
-    enabled: envBool("CTX_MODAL_SANDBOX_ENABLED", false),
+    /** On whenever a sandbox URL is set; CTX_MODAL_SANDBOX_ENABLED=false is an explicit opt-out. */
+    enabled: envBool("CTX_MODAL_SANDBOX_ENABLED", env("CTX_MODAL_SANDBOX_URL") !== "") && env("CTX_MODAL_SANDBOX_URL") !== "",
     url: env("CTX_MODAL_SANDBOX_URL"),
     token: env("CTX_MODAL_SANDBOX_TOKEN"),
   },

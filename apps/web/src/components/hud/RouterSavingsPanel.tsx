@@ -1,5 +1,5 @@
 import { PiggyBank, X } from "lucide-react";
-import { TIER_COLOR, fmtMs, fmtTokens } from "@/lib/format";
+import { TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import type { RouterTier } from "@contextpane/catalog";
 import { Dot, Pill, TONE_DOT, TONE_TEXT, type Tone } from "../ui/Pill";
@@ -17,11 +17,11 @@ interface TierRow {
 
 /** The five routing tiers a judge should see, always, even before a tier has served a request. */
 const TIER_ROWS: TierRow[] = [
-  { key: "t0", tiers: ["Tier 0"], label: "Tier 0: Recipe / SSE", route: "0 tokens · MCP hydrate", tone: "primary" },
-  { key: "t1a", tiers: ["Tier 1A"], label: "Tier 1A: Hover", route: "Fireworks • muse-glimmer-30b", tone: "healthy" },
-  { key: "t1b", tiers: ["Tier 1B"], label: "Tier 1B: Catalog", route: "Baseten • muse-spark-open-1026", tone: "meta" },
-  { key: "t2", tiers: ["Tier 2"], label: "Tier 2: Correlation", route: "Meta • muse-spark-1.3", tone: "meta" },
-  { key: "t3", tiers: ["Tier 3A", "Tier 3B"], label: "Tier 3: Remediation", route: "Meta • muse-wonder + muse-code + Modal", tone: "warning" },
+  { key: "t0", tiers: ["Tier 0"], ...TIER_ROUTE["Tier 0"], tone: "primary" },
+  { key: "t1a", tiers: ["Tier 1A"], ...TIER_ROUTE["Tier 1A"], tone: "healthy" },
+  { key: "t1b", tiers: ["Tier 1B"], ...TIER_ROUTE["Tier 1B"], tone: "meta" },
+  { key: "t2", tiers: ["Tier 2"], ...TIER_ROUTE["Tier 2"], tone: "meta" },
+  { key: "t3", tiers: ["Tier 3A", "Tier 3B"], ...TIER_ROUTE["Tier 3A"], tone: "warning" },
 ];
 
 function fmtUsd(n: number): string {
@@ -120,7 +120,7 @@ export function RouterSavingsPanel() {
                   <Dot tone="meta" />
                   <span className="font-medium text-text">Voice steer</span>
                 </span>
-                <span className="block pl-3.5 font-mono text-[10px] text-faint">muse-voice-transcribe → muse-spark</span>
+                <span className="block pl-3.5 font-mono text-[10px] text-faint">{TIER_ROUTE.Voice.route}</span>
               </td>
               <td className="py-1 text-right font-mono">{voice.requests}</td>
               <td className="py-1 text-right font-mono">{voice.avgLatencyMs}</td>

@@ -6,7 +6,7 @@ import {
   type RouterTelemetry,
   type SteerLayoutArgs,
 } from "@contextpane/catalog";
-import { config, models, providers } from "../config.ts";
+import { config, models, providerFor, providers } from "../config.ts";
 import { parseSteerIntent } from "../local/voice-intent.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, transcribeAudio, type TokenUsage } from "../router/openai.ts";
@@ -66,15 +66,15 @@ export async function voiceSteer(input: VoiceInput): Promise<VoiceResult> {
   let intent = parseSteerIntent(transcript);
   let intentSource: VoiceResult["intentSource"] = "deterministic";
   const steerSteps: ChainStep[] = [
+    { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey },
     { provider: "baseten", modelId: models.basetenSpark, hasKey: providers.baseten.hasKey },
     { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey },
   ];
   if (intent.confidence < 0.7 && !config.forceLocal && steerSteps.some((s) => s.hasKey)) {
     const tool = getSteerLayoutToolDefinition();
     const outcome = await runChain(steerSteps, async (step) => {
-      const providerConfig = providers[step.provider as "baseten" | "meta"];
       const result = await chatWithForcedTool(
-        providerConfig,
+        providerFor(step.provider),
         step.modelId,
         [
           { role: "system", content: SYSTEM_PROMPT },
