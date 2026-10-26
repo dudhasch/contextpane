@@ -1,85 +1,88 @@
 import type { NsgRule, NsgState } from "./hcl.ts";
-import { psq, runPwshJson } from "./shared.ts";
+import { cachedTokenClaims, getAccessToken, invalidateAccessToken } from "./token.ts";
 
 /**
- * Live Azure queries via PowerShell 7 + Az. Requires an existing
- * `Connect-AzAccount` context (the Az token cache persists across processes).
+ * Live Azure reads against the ARM REST API with a bearer token minted once from
+ * the cached Az sign-in (see token.ts). Requires an existing `Connect-AzAccount`.
  */
 
-interface AzNsgJson {
-  Name: string;
-  Location: string;
-  ResourceGroupName: string;
-  Id: string;
-  Tag: Record<string, string> | null;
-  SecurityRules: Array<{
-    Name: string;
-    Priority: number;
-    Direction: string;
-    Access: string;
-    Protocol: string;
-    SourcePortRange: string[] | string;
-    DestinationPortRange: string[] | string;
-    SourceAddressPrefix: string[] | string;
-    DestinationAddressPrefix: string[] | string;
-    Description: string | null;
-  }>;
+const ARM = "https://management.azure.com";
+const NSG_API_VERSION = "2024-03-01";
+
+async function armGet<T>(path: string, timeoutMs: number): Promise<T> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = await getAccessToken(`${ARM}/`, Math.max(timeoutMs, 30_000));
+    const response = await fetch(`${ARM}${path}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status === 401 && attempt === 0) {
+      invalidateAccessToken(`${ARM}/`);
+      continue;
+    }
+    const body = (await response.json().catch(() => ({}))) as T & { error?: { code?: string; message?: string } };
+    if (!response.ok) throw new Error(`ARM HTTP ${response.status}: ${body.error?.code ?? ""} ${body.error?.message ?? response.statusText}`.trim());
+    return body;
+  }
+  throw new Error("ARM token rejected twice");
 }
 
-const first = (v: string[] | string | null | undefined): string => (Array.isArray(v) ? (v[0] ?? "*") : (v ?? "*"));
-
-export async function fetchNsgLive(resourceGroup: string, nsgName: string, subscriptionId: string, timeoutMs: number): Promise<NsgState & { id: string }> {
-  const script = `
-if (-not (Get-Command Get-AzContext -ErrorAction SilentlyContinue)) { throw 'Az.Accounts module is not installed.' }
-$ctx = Get-AzContext
-if (-not $ctx) { throw 'No Azure context. Run Connect-AzAccount first.' }
-if ($ctx.Subscription.Id -ne ${psq(subscriptionId)}) { $null = Set-AzContext -SubscriptionId ${psq(subscriptionId)} -ErrorAction Stop }
-$nsg = Get-AzNetworkSecurityGroup -ResourceGroupName ${psq(resourceGroup)} -Name ${psq(nsgName)} -ErrorAction Stop
-[pscustomobject]@{
-  Name              = $nsg.Name
-  Location          = $nsg.Location
-  ResourceGroupName = $nsg.ResourceGroupName
-  Id                = $nsg.Id
-  Tag               = $nsg.Tag
-  SecurityRules     = @($nsg.SecurityRules | ForEach-Object {
-    [pscustomobject]@{
-      Name = $_.Name; Priority = [int]$_.Priority; Direction = [string]$_.Direction; Access = [string]$_.Access; Protocol = [string]$_.Protocol
-      SourcePortRange = @($_.SourcePortRange); DestinationPortRange = @($_.DestinationPortRange)
-      SourceAddressPrefix = @($_.SourceAddressPrefix); DestinationAddressPrefix = @($_.DestinationAddressPrefix)
-      Description = $_.Description
-    }
-  })
-} | ConvertTo-Json -Depth 6 -Compress
-`;
-  const json = await runPwshJson<AzNsgJson>(script, timeoutMs);
-  const rules: NsgRule[] = (json.SecurityRules ?? []).map((r) => ({
-    name: r.Name,
-    priority: r.Priority,
-    direction: r.Direction === "Outbound" ? "Outbound" : "Inbound",
-    access: r.Access === "Deny" ? "Deny" : "Allow",
-    protocol: r.Protocol,
-    sourcePortRange: first(r.SourcePortRange),
-    destinationPortRange: first(r.DestinationPortRange),
-    sourceAddressPrefix: first(r.SourceAddressPrefix),
-    destinationAddressPrefix: first(r.DestinationAddressPrefix),
-    ...(r.Description ? { description: r.Description } : {}),
-  }));
-  return {
-    id: json.Id,
-    name: json.Name,
-    resourceGroup: json.ResourceGroupName,
-    location: json.Location,
-    tags: json.Tag ?? {},
-    rules,
+interface ArmNsg {
+  id: string;
+  name: string;
+  location: string;
+  tags?: Record<string, string>;
+  properties: {
+    securityRules?: Array<{
+      name: string;
+      properties: {
+        priority: number;
+        direction: string;
+        access: string;
+        protocol: string;
+        sourcePortRange?: string;
+        sourcePortRanges?: string[];
+        destinationPortRange?: string;
+        destinationPortRanges?: string[];
+        sourceAddressPrefix?: string;
+        sourceAddressPrefixes?: string[];
+        destinationAddressPrefix?: string;
+        destinationAddressPrefixes?: string[];
+        description?: string;
+      };
+    }>;
   };
 }
 
-export async function fetchAzContextLive(timeoutMs: number): Promise<{ subscriptionId: string; subscriptionName: string; tenantId: string; account: string }> {
-  const script = `
-if (-not (Get-Command Get-AzContext -ErrorAction SilentlyContinue)) { throw 'Az.Accounts module is not installed.' }
-$ctx = Get-AzContext
-if (-not $ctx) { throw 'No Azure context. Run Connect-AzAccount first.' }
-[pscustomobject]@{ subscriptionId = $ctx.Subscription.Id; subscriptionName = $ctx.Subscription.Name; tenantId = $ctx.Tenant.Id; account = $ctx.Account.Id } | ConvertTo-Json -Compress
-`;
-  return runPwshJson(script, timeoutMs);
+const first = (single: string | undefined, many: string[] | undefined): string => single ?? many?.[0] ?? "*";
+
+export async function fetchNsgLive(resourceGroup: string, nsgName: string, subscriptionId: string, timeoutMs: number): Promise<NsgState & { id: string }> {
+  const nsg = await armGet<ArmNsg>(
+    `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Network/networkSecurityGroups/${nsgName}?api-version=${NSG_API_VERSION}`,
+    timeoutMs,
+  );
+  const rules: NsgRule[] = (nsg.properties.securityRules ?? []).map(({ name, properties: r }) => ({
+    name,
+    priority: r.priority,
+    direction: r.direction === "Outbound" ? "Outbound" : "Inbound",
+    access: r.access === "Deny" ? "Deny" : "Allow",
+    protocol: r.protocol,
+    sourcePortRange: first(r.sourcePortRange, r.sourcePortRanges),
+    destinationPortRange: first(r.destinationPortRange, r.destinationPortRanges),
+    sourceAddressPrefix: first(r.sourceAddressPrefix, r.sourceAddressPrefixes),
+    destinationAddressPrefix: first(r.destinationAddressPrefix, r.destinationAddressPrefixes),
+    ...(r.description ? { description: r.description } : {}),
+  }));
+  return { id: nsg.id, name: nsg.name, resourceGroup, location: nsg.location, tags: nsg.tags ?? {}, rules };
+}
+
+export async function fetchAzContextLive(
+  subscriptionId: string,
+  timeoutMs: number,
+): Promise<{ subscriptionId: string; subscriptionName: string; tenantId: string; account: string }> {
+  const sub = await armGet<{ subscriptionId: string; displayName: string; tenantId?: string }>(`/subscriptions/${subscriptionId}?api-version=2022-12-01`, timeoutMs);
+  const claims = cachedTokenClaims(`${ARM}/`) ?? {};
+  return {
+    subscriptionId: sub.subscriptionId,
+    subscriptionName: sub.displayName,
+    tenantId: sub.tenantId ?? String(claims.tid ?? ""),
+    account: String(claims.upn ?? claims.unique_name ?? ""),
+  };
 }

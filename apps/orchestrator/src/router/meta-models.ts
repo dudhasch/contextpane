@@ -20,7 +20,20 @@ export interface MetaModelResolution {
   missing: string[];
 }
 
-export async function resolveMetaModels(timeoutMs = 8000): Promise<MetaModelResolution | null> {
+let resolution: Promise<unknown> = Promise.resolve();
+
+/** Settles once the startup model check has run (or failed), so no request uses an unresolved id. */
+export function metaModelsResolved(): Promise<unknown> {
+  return resolution;
+}
+
+export function resolveMetaModels(timeoutMs = 8000): Promise<MetaModelResolution | null> {
+  const pending = resolveMetaModelsNow(timeoutMs);
+  resolution = pending.catch(() => null);
+  return pending;
+}
+
+async function resolveMetaModelsNow(timeoutMs: number): Promise<MetaModelResolution | null> {
   if (!providers.meta.hasKey) return null;
   const response = await fetch(`${providers.meta.baseUrl.replace(/\/$/, "")}/models`, {
     headers: { authorization: `Bearer ${providers.meta.apiKey}` },

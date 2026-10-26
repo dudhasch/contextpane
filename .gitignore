@@ -16,6 +16,7 @@ build/
 data/recipes.json
 data/remediations/
 data/router-debug.jsonl
+data/test-voice-command.*
 .contextpane/
 *.log
 

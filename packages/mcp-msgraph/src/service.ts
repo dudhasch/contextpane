@@ -7,13 +7,14 @@ import {
   fetchSubscribedSkusLive,
 } from "./live.ts";
 import { getManifestTenant, type ManifestCaPolicy, type ManifestSignIn, type ManifestTenant, type ManifestUser } from "./manifest.ts";
-import { isLiveCloudMode, isPwshAvailable } from "./pwsh.ts";
+import { isLiveCloudMode } from "./pwsh.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Result envelope                                                             */
 /* -------------------------------------------------------------------------- */
 
-export type GraphSource = "live-graph" | "seeded-manifest";
+/** live-synthesized: seeded sign-in timeline re-keyed to the live Conditional Access policy (see getSignInEvents). */
+export type GraphSource = "live-graph" | "live-synthesized" | "seeded-manifest";
 
 export interface GraphResult<T> {
   source: GraphSource;
@@ -30,30 +31,31 @@ const DEMO_POLICY_PREFIX = "[ContextPane-Demo]";
 const LIVE_TIMEOUT_MS = Number.parseInt(process.env.CTX_GRAPH_TIMEOUT_MS ?? "25000", 10);
 /**
  * auditLogs/signIns filtered by UPN takes 40-60 s on a tenant with a large sign-in log,
- * and the lab users never sign in, so the seeded timeline is the expected outcome.
- * A short budget keeps a live context gather at ~10 s instead of waiting out LIVE_TIMEOUT_MS.
+ * and the lab users never sign in, so it never runs on a request path: it is probed in
+ * the background with this budget and only replaces the timeline if it finds events.
  */
-const SIGNIN_TIMEOUT_MS = Number.parseInt(process.env.CTX_GRAPH_SIGNIN_TIMEOUT_MS ?? "6000", 10);
+const SIGNIN_TIMEOUT_MS = Number.parseInt(process.env.CTX_GRAPH_SIGNIN_TIMEOUT_MS ?? "60000", 10);
+const SIGNIN_PROBE_TTL_MS = 10 * 60_000;
+
+function envelope<T>(started: number) {
+  return (data: T, source: GraphSource, fallbackReason?: string): GraphResult<T> => ({
+    source,
+    liveCloudMode: isLiveCloudMode(),
+    ...(fallbackReason ? { fallbackReason } : {}),
+    fetchedAt: new Date().toISOString(),
+    latencyMs: Math.round(performance.now() - started),
+    data,
+  });
+}
 
 async function withSource<T>(
   tenantId: string,
   live: () => Promise<T>,
   fallback: () => T,
 ): Promise<GraphResult<T>> {
-  const started = performance.now();
-  const liveMode = isLiveCloudMode();
-  const done = (data: T, source: GraphSource, fallbackReason?: string): GraphResult<T> => ({
-    source,
-    liveCloudMode: liveMode,
-    ...(fallbackReason ? { fallbackReason } : {}),
-    fetchedAt: new Date().toISOString(),
-    latencyMs: Math.round(performance.now() - started),
-    data,
-  });
-
-  if (!liveMode) return done(fallback(), "seeded-manifest");
+  const done = envelope<T>(performance.now());
+  if (!isLiveCloudMode()) return done(fallback(), "seeded-manifest");
   if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return done(fallback(), "seeded-manifest", `${tenantId} is manifest-only`);
-  if (!(await isPwshAvailable())) return done(fallback(), "seeded-manifest", "pwsh 7 not available");
   try {
     return done(await live(), "live-graph");
   } catch (error) {
@@ -239,8 +241,8 @@ export const msgraphService = {
     };
     const live = async (): Promise<LicenseState> => {
       const [members, skus] = await Promise.all([
-        fetchGroupMembersLive(group.displayName, LIVE_TIMEOUT_MS),
-        fetchSubscribedSkusLive(LIVE_TIMEOUT_MS).catch(() => [] as Awaited<ReturnType<typeof fetchSubscribedSkusLive>>),
+        fetchGroupMembersLive(group.objectId, LIVE_TIMEOUT_MS),
+        fetchSubscribedSkusLive(group.objectId, LIVE_TIMEOUT_MS).catch(() => [] as Awaited<ReturnType<typeof fetchSubscribedSkusLive>>),
       ]);
       const skuById = new Map(skus.map((s) => [s.skuId.toLowerCase(), s]));
       const target = skus.find((s) => s.skuPartNumber === tenant.licenses.skuPartNumber);
@@ -302,7 +304,7 @@ export const msgraphService = {
       members: tenant.users.filter((u) => group.memberUpns.includes(u.upn)).map(mapManifestUser),
     });
     const live = async () => {
-      const res = await fetchGroupMembersLive(group.displayName, LIVE_TIMEOUT_MS);
+      const res = await fetchGroupMembersLive(group.objectId, LIVE_TIMEOUT_MS);
       return {
         group: { objectId: res.group.objectId, displayName: res.group.displayName, description: res.group.description ?? "" },
         members: res.users.map((u) => {
@@ -329,7 +331,7 @@ export const msgraphService = {
     const groupNameById = new Map(tenant.groups.map((g) => [g.objectId, g.displayName]));
     const fallback = () => tenant.conditionalAccessPolicies.map(mapManifestPolicy);
     const live = async (): Promise<CaPolicySummary[]> => {
-      const policies = await fetchConditionalAccessPoliciesLive(DEMO_POLICY_PREFIX, LIVE_TIMEOUT_MS);
+      const policies = await fetchConditionalAccessPoliciesLive(primaryGroup(tenant).objectId, DEMO_POLICY_PREFIX, LIVE_TIMEOUT_MS);
       if (policies.length === 0) throw new Error("no [ContextPane-Demo] policies found in live tenant (seed the lab first)");
       return policies.map((p) => ({
         id: p.id,
@@ -348,47 +350,38 @@ export const msgraphService = {
     return withSource(tenantId, live, fallback);
   },
 
+  /**
+   * Live mode never waits on auditLogs/signIns. Real events found by the background
+   * probe win; until then the seeded timeline is re-keyed to the live Conditional
+   * Access policy (real id and name), reported as source "live-synthesized".
+   */
   async getSignInEvents(tenantId: string, options: { upn?: string; top?: number } = {}): Promise<GraphResult<SignInSummary[]>> {
+    const done = envelope<SignInSummary[]>(performance.now());
     const tenant = getManifestTenant(tenantId);
     const top = options.top ?? 50;
-    const fallback = () =>
-      tenant.signInEvents
-        .filter((e) => !options.upn || e.userPrincipalName.toLowerCase() === options.upn?.toLowerCase())
-        .map(mapManifestSignIn)
+    const select = (events: SignInSummary[]) =>
+      events
+        .filter((e) => !options.upn || e.upn.toLowerCase() === options.upn.toLowerCase())
         .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
         .slice(0, top);
-    const live = async (): Promise<SignInSummary[]> => {
-      const upns = options.upn ? [options.upn] : tenant.users.map((u) => u.upn);
-      const events = await fetchSignInEventsLive(upns, top, SIGNIN_TIMEOUT_MS);
-      // Lab users never actually sign in to AVD, so an empty live log falls back to the seeded timeline.
-      if (events.length === 0) throw new Error("live sign-in log is empty for the lab users");
-      return events
-        .map((e): SignInSummary => {
-          const blocking = e.appliedPolicies.find((p) => p.result.toLowerCase() === "failure");
-          const label = toAadstsLabel(e.errorCode);
-          return {
-            id: e.id,
-            timestamp: e.createdDateTime,
-            upn: e.userPrincipalName,
-            displayName: e.userDisplayName,
-            appId: e.appId,
-            appDisplayName: e.appDisplayName || KNOWN_APP_IDS[e.appId] || e.appId,
-            status: e.errorCode === 0 ? "success" : e.errorCode === 50140 ? "interrupted" : "failure",
-            errorCode: e.errorCode,
-            ...(label ? { errorCodeLabel: label } : {}),
-            ...(e.failureReason ? { failureReason: e.failureReason } : {}),
-            conditionalAccessStatus: normaliseCaStatus(e.conditionalAccessStatus),
-            ...(blocking ? { blockingPolicyName: blocking.displayName, blockingPolicyId: blocking.id } : {}),
-            clientApp: e.clientAppUsed ?? "",
-            location: [e.city, e.countryOrRegion].filter(Boolean).join(", "),
-            ipAddress: e.ipAddress ?? "",
-            deviceName: e.deviceDisplayName ?? "",
-            deviceCompliant: e.isCompliant,
-          };
-        })
-        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    };
-    return withSource(tenantId, live, fallback);
+    const seeded = () => select(tenant.signInEvents.map(mapManifestSignIn));
+
+    if (!isLiveCloudMode()) return done(seeded(), "seeded-manifest");
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return done(seeded(), "seeded-manifest", `${tenantId} is manifest-only`);
+
+    const probed = probeSignIns(tenantId, tenant.users.map((u) => u.upn));
+    if (probed?.length) return done(select(probed), "live-graph");
+
+    const policies = await msgraphService.getConditionalAccessPolicies(tenantId);
+    if (policies.source !== "live-graph") return done(seeded(), "seeded-manifest", policies.fallbackReason);
+    const liveByManifestId = new Map(
+      tenant.conditionalAccessPolicies.map((mp) => [mp.id, policies.data.find((lp) => lp.displayName === mp.displayName) ?? policies.data[0]]),
+    );
+    const events = seeded().map((e) => {
+      const live = e.blockingPolicyId ? liveByManifestId.get(e.blockingPolicyId) : undefined;
+      return live ? { ...e, blockingPolicyId: live.id, blockingPolicyName: live.displayName } : e;
+    });
+    return done(events, "live-synthesized");
   },
 
   /** Everything the hover popover needs for a UPN. */
@@ -405,7 +398,7 @@ export const msgraphService = {
     const blockingPolicies = policies.data.filter((p) => p.includeGroupNames.some((g) => groups.includes(g)));
     const failures = signIns.data.filter((e) => e.status === "failure");
     const lastFailure = failures.at(-1) ?? null;
-    const source: GraphSource = [license, policies, signIns].every((r) => r.source === "live-graph") ? "live-graph" : "seeded-manifest";
+    const source: GraphSource = [license, policies, signIns].every((r) => r.source !== "seeded-manifest") ? "live-graph" : "seeded-manifest";
     const fallbackReason = [license, policies, signIns].map((r) => r.fallbackReason).filter(Boolean).join("; ");
     return {
       source,
@@ -456,6 +449,49 @@ export const msgraphService = {
     };
   },
 };
+
+/* -------------------------------------------------------------------------- */
+/* Background sign-in probe                                                    */
+/* -------------------------------------------------------------------------- */
+
+const signInProbes = new Map<string, { at: number; events: SignInSummary[] | null; running: boolean }>();
+
+/** Cached real sign-ins (null when none were found); starts a background refresh when stale. */
+function probeSignIns(tenantId: string, upns: string[]): SignInSummary[] | null {
+  const entry = signInProbes.get(tenantId);
+  if (!entry || (!entry.running && Date.now() - entry.at > SIGNIN_PROBE_TTL_MS)) {
+    signInProbes.set(tenantId, { at: entry?.at ?? 0, events: entry?.events ?? null, running: true });
+    fetchSignInEventsLive(upns, 50, SIGNIN_TIMEOUT_MS)
+      .then((events) => events.map(mapLiveSignIn))
+      .catch(() => null)
+      .then((events) => signInProbes.set(tenantId, { at: Date.now(), events: events?.length ? events : null, running: false }));
+  }
+  return entry?.events ?? null;
+}
+
+function mapLiveSignIn(e: Awaited<ReturnType<typeof fetchSignInEventsLive>>[number]): SignInSummary {
+  const blocking = e.appliedPolicies.find((p) => p.result.toLowerCase() === "failure");
+  const label = toAadstsLabel(e.errorCode);
+  return {
+    id: e.id,
+    timestamp: e.createdDateTime,
+    upn: e.userPrincipalName,
+    displayName: e.userDisplayName,
+    appId: e.appId,
+    appDisplayName: e.appDisplayName || KNOWN_APP_IDS[e.appId] || e.appId,
+    status: e.errorCode === 0 ? "success" : e.errorCode === 50140 ? "interrupted" : "failure",
+    errorCode: e.errorCode,
+    ...(label ? { errorCodeLabel: label } : {}),
+    ...(e.failureReason ? { failureReason: e.failureReason } : {}),
+    conditionalAccessStatus: normaliseCaStatus(e.conditionalAccessStatus),
+    ...(blocking ? { blockingPolicyName: blocking.displayName, blockingPolicyId: blocking.id } : {}),
+    clientApp: e.clientAppUsed ?? "",
+    location: [e.city, e.countryOrRegion].filter(Boolean).join(", "),
+    ipAddress: e.ipAddress ?? "",
+    deviceName: e.deviceDisplayName ?? "",
+    deviceCompliant: e.isCompliant,
+  };
+}
 
 function normaliseCaStatus(value: string | null): SignInSummary["conditionalAccessStatus"] {
   const v = (value ?? "").toLowerCase();

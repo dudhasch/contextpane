@@ -170,18 +170,29 @@ Each MCP package exposes both a **stdio MCP server** (`src/server.ts`, wired in
 
 ## Live cloud mode
 
-Set `LIVE_CLOUD_MODE=true` to have `mcp-msgraph` and `mcp-azure-iac` shell out to
-PowerShell 7 (`Get-MgGroupMember`, `Get-MgUserExtension`,
-`Get-MgIdentityConditionalAccessPolicy`, `Get-AzNetworkSecurityGroup`). One cached
-`Connect-AzAccount` sign-in on the machine is enough: the Az token cache persists across
-processes, and when a spawned `pwsh` has no `Connect-MgGraph` context, `mcp-msgraph` mints a
-Microsoft Graph token with `Get-AzAccessToken -ResourceUrl https://graph.microsoft.com` and
-hands it to `Connect-MgGraph -AccessToken`. If a live query fails or exceeds its budget
-(`CTX_GRAPH_TIMEOUT_MS`, `CTX_AZ_TIMEOUT_MS`, `CTX_GRAPH_SIGNIN_TIMEOUT_MS`), the server
-transparently falls back to the manifest, so the demo never breaks when Wi-Fi drops. The
-sign-in timeline always comes from the manifest in practice: the lab users never sign in,
-and a UPN-filtered `auditLogs/signIns` query takes 40-60 s on a busy tenant, so it gets a
-6 s budget.
+Set `LIVE_CLOUD_MODE=true` to have `mcp-msgraph` and `mcp-azure-iac` read the real tenant.
+One cached `Connect-AzAccount` sign-in on the machine is enough: each server runs `pwsh`
+once to mint a bearer token from the Az token cache (`Get-AzAccessToken` for
+`https://graph.microsoft.com` and `https://management.azure.com/`), keeps it in memory for
+up to 45 minutes, and from then on talks to the APIs with plain `fetch()`:
+
+- **Graph:** one `$batch` returns the entitlement group, its members, subscribed SKUs and
+  the Conditional Access policies; a second batch fetches each member's
+  `com.contextpane.licenseState` open extension. ~0.3-0.9 s warm.
+- **ARM:** one `GET .../networkSecurityGroups/nsg-contoso-avd-hostpool-01` (~80-300 ms),
+  diffed against `demo-iac/main.tf`.
+- **Sign-ins:** a UPN-filtered `auditLogs/signIns` query takes 40-60 s on a busy tenant and
+  the lab users never sign in, so it never blocks a request. It runs as a background probe
+  (`CTX_GRAPH_SIGNIN_TIMEOUT_MS`); until it finds events, the timeline is the seeded one
+  re-keyed to the live policy's real id and name (source `live-synthesized`).
+- **Caching:** the assembled context is cached per tenant, fresh for 30 s and then served
+  stale for up to 10 minutes while one background refresh replaces it. `?refresh=true` on
+  any endpoint bypasses it. The orchestrator warms every tenant at startup (~6 s, mostly
+  the two token mints).
+
+If a live read fails or exceeds its budget (`CTX_GRAPH_TIMEOUT_MS`, `CTX_AZ_TIMEOUT_MS`),
+the server transparently falls back to the manifest, so the demo never breaks when Wi-Fi
+drops.
 
 Install the Az and Microsoft.Graph submodules first. The script bootstraps
 [ModuleFast](https://github.com/JustinGrote/ModuleFast) by Justin Grote
@@ -281,28 +292,39 @@ POST /api/approve                                          OK              51 - 
 The first `/api/remediate` on a machine takes ~30 s while `terraform init` downloads the
 azurerm provider into `.contextpane/tf-validate`; every later run validates in ~0.5 s.
 
-## Verified behaviour (live: Meta Model API + seeded lab tenant)
+## Verified behaviour (live: Meta Model API + Modal + seeded lab tenant)
 
-Same smoke test with `META_API_KEY` set and `LIVE_CLOUD_MODE=true` against
-`c4a8shili.onmicrosoft.com`:
+Same smoke test with `META_API_KEY` and the Modal sandbox set and `LIVE_CLOUD_MODE=true`
+against `c4a8shili.onmicrosoft.com`, after the startup warm-up:
 
 ```
-Endpoint                                                   Status       Latency(ms) Tier    Provider Model           Tokens Schema
-GET /api/health                                            OK                    60 -       -        -                    0 PASS
-GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK     11176 (srv 11169) Tier 0  local    deterministic        0 PASS
-POST /api/hover                                            OK     15166 (srv 15156) Tier 1A meta     muse-spark-1.3    4154 PASS
-POST /api/hover                                            OK       8704 (srv 8702) Tier 1A meta     muse-spark-1.3    3751 PASS
-POST /api/correlate                                        OK     14715 (srv 14711) Tier 1B meta     muse-spark-1.3   12796 PASS
-POST /api/voice-steer                                      OK             2 (srv 0) Voice   local    deterministic        0 PASS
-POST /api/remediate                                        OK     22982 (srv 22974) Tier 3B meta     muse-wonder-1.0  13357 PASS
-POST /api/approve                                          OK                  3143 -       -        -                    0 PASS
-GET /api/telemetry/stats                                   OK                     1 -       -        -                    0 PASS
+  pre-flight: Verified Safe  ast=True fmt=True validate=True sandbox=modal-cloud-sandbox
+Endpoint                                                   Status       Latency(ms) Tier    Provider Model                   Tokens Schema
+GET /api/health                                            OK                    57 -       -        -                            0 PASS
+GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK             6 (srv 3) Tier 0  local    deterministic                0 PASS
+POST /api/hover                                            OK             8 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
+POST /api/hover                                            OK             1 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
+POST /api/correlate                                        OK       5139 (srv 5137) Tier 1B meta     muse-spark-1.3           10533 PASS
+POST /api/voice-steer                                      OK            17 (srv 0) Voice   local    deterministic                0 PASS
+POST /api/remediate                                        OK     38000 (srv 37994) Tier 3B meta     muse-wonder-1.0          13793 PASS
+POST /api/approve                                          OK                  3098 -       -        -                            0 PASS
+GET /api/telemetry/stats                                   OK                     1 -       -        -                            0 PASS
 ```
 
-The model calls themselves take ~2 s (hover), ~7-8 s (layout) and ~14 s (plan + bundle);
-the rest of each latency is the live Graph/Az gather, whose sign-in query always spends its
-6 s budget before falling back to the seeded timeline. What the live Meta Model API taught
-the router:
+- **Hover:** the ticket's hero entities (requester UPN, entitlement group, AADSTS code) are
+  pre-fetched after startup and after every correlate, then served from memory in <10 ms
+  with 0 tokens. An uncached hover on the Meta API takes ~2.3-3 s even at
+  `reasoning_effort: minimal` (measured across `muse-spark-1.1`/`1.2`/`1.3`).
+- **Correlate:** ~5-6 s. The model reasons over the context but leaves the verbatim MCP
+  data (license users, sign-in events, HCL diff) for the orchestrator to fill in before Zod
+  validation, which cut the layout output from ~9k to ~3k characters.
+- **Remediate:** ~14 s of `muse-wonder-1.0` plus the Modal pre-flight (~18 s on a cold
+  container, ~5.5 s warm).
+- **Voice:** `scripts/New-ContextPaneVoiceFixture.ps1 -WebM -Send` synthesizes the command
+  with Windows' speech engine and transcribes it live: WAV in 1.9 s, MediaRecorder-style
+  WebM/Opus in 2.5 s, both "only show license drift and the sign in timeline" → `filter`.
+
+What the live Meta Model API taught the router:
 
 - It only accepts `tool_choice: "auto"`; a named function choice is HTTP 400. The client
   sends `"auto"` with the single tool and an explicit "call this tool" instruction to Meta,
@@ -312,9 +334,14 @@ the router:
   every tier sends `reasoning_effort` (`CTX_META_REASONING_*`) and leaves headroom.
 - `muse-glimmer-30b` and `muse-code` are not served, and the voice model is
   `muse-voice-transcribe-1.0`; the startup `GET /models` check swaps in the stand-ins.
+- There is no `/audio/transcriptions`. Batch speech-to-text is `POST /v1/asr/transcribe`
+  with a JSON `request` part (`{ "model", "audioEncoding": "WAV" }`) and an `audio` part,
+  and it accepts 16-bit mono PCM WAV at 16 or 24 kHz only. The workbench re-encodes the
+  MediaRecorder recording to 16 kHz WAV in the browser (`apps/web/src/lib/wav.ts`), and the
+  orchestrator transcodes anything else with `ffmpeg` when it is installed.
 
-Not yet exercised: the deployed Modal sandbox and open-weight endpoints, and audio
-transcription. All are typed, timeout-bounded and fall back on failure.
+Not yet exercised: the open-weight endpoints on Modal / RunPod. They are typed,
+timeout-bounded and fall back to the Meta Model API on failure.
 
 ---
 

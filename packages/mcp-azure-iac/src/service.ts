@@ -4,7 +4,7 @@ import { createTwoFilesPatch } from "diff";
 import type { RogueSecurityRule, Severity, TagDrift } from "@contextpane/catalog";
 import { parseNsgResources, renderNsgHcl, ruleSignature, type NsgRule, type NsgState, type ParsedNsg } from "./hcl.ts";
 import { fetchAzContextLive, fetchNsgLive } from "./live.ts";
-import { getManifestTenant, isLiveCloudMode, isPwshAvailable, resolveIacDir, type ManifestAzureTenant } from "./shared.ts";
+import { getManifestTenant, isLiveCloudMode, resolveIacDir, type ManifestAzureTenant } from "./shared.ts";
 
 export type IacSource = "live-azure" | "seeded-manifest";
 
@@ -33,7 +33,6 @@ async function withSource<T>(tenantId: string, live: () => Promise<T>, fallback:
   });
   if (!liveMode) return done(fallback(), "seeded-manifest");
   if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return done(fallback(), "seeded-manifest", `${tenantId} is manifest-only`);
-  if (!(await isPwshAvailable())) return done(fallback(), "seeded-manifest", "pwsh 7 not available");
   try {
     return done(await live(), "live-azure");
   } catch (error) {
@@ -220,7 +219,7 @@ export const azureIacService = {
   async getAzContext() {
     return withSource(
       "tenant-contoso-01",
-      () => fetchAzContextLive(LIVE_TIMEOUT_MS),
+      () => fetchAzContextLive(getManifestTenant("tenant-contoso-01").subscriptionId, LIVE_TIMEOUT_MS),
       () => ({ subscriptionId: "", subscriptionName: "", tenantId: "", account: "" }),
     );
   },

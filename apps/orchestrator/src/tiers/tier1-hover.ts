@@ -11,7 +11,7 @@ import {
 } from "@contextpane/catalog";
 import { config, models, providerFor, providers } from "../config.ts";
 import { buildHoverDiagnostic, inferEntityType } from "../local/hover.ts";
-import { contextForModel, gatherContext } from "../mcp/context.ts";
+import { gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
@@ -20,6 +20,8 @@ export interface HoverInput {
   tenantId: string;
   entityId: string;
   entityType?: EntityType;
+  /** Bypass the hover cache and refresh the MCP context. */
+  fresh?: boolean;
 }
 
 export interface HoverResult {
@@ -27,14 +29,15 @@ export interface HoverResult {
   telemetry: RouterTelemetry;
 }
 
+// Measured on the Meta API: this wording drew ~100 fewer reasoning tokens than an explicit "refine" instruction.
 const SYSTEM_PROMPT = `You are ContextPane's inline diagnostic engine for Microsoft 365 / Entra ID / Azure escalations at a managed service provider.
-You receive one hovered entity plus verified context from the ERP, Microsoft Graph and Azure. A deterministic diagnostic is included as ground truth.
-Rules:
-- Respond ONLY through the emit_hover_diagnostic tool.
-- Use only facts present in the context. Never invent users, policies, resources or error meanings.
-- The headline is one line an MSP engineer can act on. Prefer naming the blocking policy and the license gap.
-- Keep AADSTS translations consistent with the supplied catalog entry.
-- Quick actions must come from the allowed kinds and reference real entity ids.`;
+You receive one hovered entity plus verified context. A deterministic diagnostic is included as ground truth.
+Rules: respond only through emit_hover_diagnostic; use only facts present in the context; the headline is one line an MSP engineer can act on, naming the blocking policy and the license gap.`;
+
+/** Model answers per (tenant, entity), so a hover after warm-up renders from memory. */
+const HOVER_CACHE_TTL_MS = 10 * 60_000;
+const hoverCache = new Map<string, { at: number; args: HoverDiagnosticArgs; provider: RouterTelemetry["provider"]; modelId: string }>();
+const hoverKey = (tenantId: string, entityId: string) => `${tenantId}|${entityId.toLowerCase()}`;
 
 function chainSteps(): ChainStep[] {
   return [
@@ -45,18 +48,66 @@ function chainSteps(): ChainStep[] {
   ];
 }
 
+/** Only what this entity's popover can use: the deterministic diagnostic already carries the rest. */
+function hoverContext(ctx: CorrelationContext, entityId: string, entityType: EntityType) {
+  const id = entityId.toLowerCase();
+  const signIns = ctx.signIns.data.filter((e) => e.upn.toLowerCase() === id || e.errorCodeLabel?.toLowerCase() === id || e.blockingPolicyId === entityId);
+  return {
+    ticket: { ticketId: ctx.erp.ticket.ticketId, title: ctx.erp.ticket.title },
+    sku: { expected: ctx.license.data.sku.skuPartNumber, legacy: ctx.license.data.sku.legacySkuPartNumber, drifted: ctx.license.data.driftedUsers.length },
+    user: entityType === "upn" ? (ctx.license.data.users.find((u) => u.upn.toLowerCase() === id) ?? null) : undefined,
+    policies: ctx.policies.data.map((p) => ({ id: p.id, displayName: p.displayName, state: p.state, blocks: p.blocks, includeGroupNames: p.includeGroupNames })),
+    signIns: (signIns.length ? signIns : ctx.signIns.data.filter((e) => e.status === "failure")).slice(-3).map((e) => ({
+      at: e.timestamp,
+      upn: e.upn,
+      app: e.appDisplayName,
+      status: e.status,
+      code: e.errorCodeLabel,
+      blockedBy: e.blockingPolicyName,
+    })),
+    nsgDrift:
+      entityType === "resource"
+        ? { summary: ctx.drift.data.summary, rogueSecurityRules: ctx.drift.data.rogueSecurityRules, tagDrift: ctx.drift.data.tagDrift }
+        : undefined,
+  };
+}
+
 /**
- * Tier 1A — inline hover, all muse-glimmer-30b. Open-weight vLLM on Modal / RunPod
- * when CTX_OPEN_WEIGHT_BASE_URL is set, otherwise the Meta Model API as a first-class
+ * Tier 1A — inline hover. Open-weight muse-glimmer-30b on Modal / RunPod when
+ * CTX_OPEN_WEIGHT_BASE_URL is set, otherwise the Meta Model API as a first-class
  * route; Fireworks and Baseten slot in ahead of Meta only when their keys exist.
- * Each call is bounded by CTX_HOVER_TIMEOUT_MS; the deterministic fallback keeps the
- * popover well under the 350 ms budget when no provider answers.
+ * Model answers are cached per (tenant, entity) and pre-fetched for the ticket's
+ * hero entities (warmHoverCache); the deterministic fallback keeps the popover
+ * under the 350 ms budget when no provider answers.
  */
 export async function hover(input: HoverInput): Promise<HoverResult> {
   const started = performance.now();
   const requestId = telemetry.nextRequestId("t1a");
   const entityType = input.entityType ?? inferEntityType(input.entityId);
-  const ctx = await gatherContext(input.tenantId);
+  const cached = input.fresh ? undefined : hoverCache.get(hoverKey(input.tenantId, input.entityId));
+  if (cached && Date.now() - cached.at < HOVER_CACHE_TTL_MS) {
+    const modelId = `${cached.modelId} (cached)`;
+    const latencyMs = Math.round(performance.now() - started);
+    return {
+      popover: HoverDiagnosticPopoverSchema.parse({
+        ...cached.args,
+        latencyBudgetMs: 350,
+        providerTelemetry: { tier: "Tier 1A", provider: cached.provider, modelId, latencyMs, tokensUsed: 0 },
+      }),
+      telemetry: telemetry.record({
+        requestId,
+        endpoint: "/api/hover",
+        tier: "Tier 1A",
+        provider: cached.provider,
+        modelId,
+        latencyMs,
+        tokensUsed: ZERO_USAGE,
+        fallbackChain: [],
+        tenantId: input.tenantId,
+      }),
+    };
+  }
+  const ctx = await gatherContext(input.tenantId, { fresh: input.fresh ?? false });
   const deterministic = buildHoverDiagnostic(ctx, { entityId: input.entityId, entityType });
 
   let args: HoverDiagnosticArgs = deterministic;
@@ -68,17 +119,10 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
   const steps = chainSteps();
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const tool = getHoverDiagnosticToolDefinition();
-    const model = contextForModel(ctx);
     const userPayload = {
       entity: { entityId: input.entityId, entityType },
       deterministicDiagnostic: deterministic,
-      context: {
-        ticket: model.ticket,
-        entraLicenseState: model.entraLicenseState,
-        conditionalAccessPolicies: model.conditionalAccessPolicies,
-        signInEvents: model.signInEvents.filter((e) => e.upn === input.entityId || e.errorCodeLabel === input.entityId.toUpperCase() || e.status === "failure").slice(-12),
-        azureNsgDrift: entityType === "resource" ? { ...model.azureNsgDrift, hclDiff: undefined } : undefined,
-      },
+      context: hoverContext(ctx, input.entityId, entityType),
     };
     const outcome = await runChain(steps, async (step) => {
       const result = await chatWithForcedTool(
@@ -117,6 +161,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
       usage = outcome.result.usage;
       provider = outcome.winner.provider;
       modelId = outcome.winner.modelId;
+      hoverCache.set(hoverKey(input.tenantId, input.entityId), { at: Date.now(), args, provider, modelId });
     }
   } else {
     chain = steps.map((s) => ({ provider: s.provider, modelId: s.modelId, outcome: config.forceLocal ? "skipped" : "no-key", latencyMs: 0 }));
@@ -140,4 +185,32 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
     tenantId: input.tenantId,
   });
   return { popover, telemetry: event };
+}
+
+const warming = new Set<string>();
+
+/**
+ * Pre-fetch the popovers a demo hovers first: the ticket's requester UPN, its
+ * entitlement group and the AADSTS code of the latest failed sign-in. Runs one
+ * hover at a time in the background so it never competes with the request path.
+ */
+export async function warmHoverCache(tenantId: string): Promise<void> {
+  if (warming.has(tenantId) || config.forceLocal || !chainSteps().some((s) => s.hasKey)) return;
+  warming.add(tenantId);
+  try {
+    const ctx = await gatherContext(tenantId);
+    const lastFailure = ctx.signIns.data.filter((e) => e.status === "failure").at(-1);
+    const heroes: Array<{ entityId: string; entityType: EntityType }> = [
+      ...ctx.erp.ticket.affectedUpns.slice(0, 1).map((entityId) => ({ entityId, entityType: "upn" as const })),
+      ...ctx.erp.ticket.affectedGroups.slice(0, 1).map((entityId) => ({ entityId, entityType: "group" as const })),
+      ...(lastFailure?.errorCodeLabel ? [{ entityId: lastFailure.errorCodeLabel, entityType: "errorCode" as const }] : []),
+    ];
+    for (const hero of heroes) {
+      const cached = hoverCache.get(hoverKey(tenantId, hero.entityId));
+      if (cached && Date.now() - cached.at < HOVER_CACHE_TTL_MS) continue;
+      await hover({ tenantId, ...hero }).catch(() => undefined);
+    }
+  } finally {
+    warming.delete(tenantId);
+  }
 }

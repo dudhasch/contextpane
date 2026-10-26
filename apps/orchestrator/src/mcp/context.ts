@@ -5,8 +5,9 @@ import { sources, type McpDataSources } from "./clients.ts";
 
 /**
  * Everything the tiers need about a tenant, gathered from the three MCP
- * servers in parallel. Cached for a few seconds so hover → correlate → remediate
- * within one demo beat never re-queries Graph.
+ * servers in parallel. Stale-while-revalidate: fresh for 30 s, then served
+ * from memory for up to 10 min while one background refresh replaces it, so
+ * hover → correlate → remediate never wait on Graph or ARM twice.
  */
 export interface CorrelationContext {
   tenantId: string;
@@ -22,8 +23,9 @@ export interface CorrelationContext {
   sourcesUsed: { msgraph: GraphResult<unknown>["source"]; azure: IacResult<unknown>["source"] };
 }
 
-const TTL_MS = 5_000;
-const cache = new Map<string, { at: number; value: Promise<CorrelationContext> }>();
+const FRESH_MS = 30_000;
+const STALE_MAX_MS = 10 * 60_000;
+const cache = new Map<string, { at: number; value: Promise<CorrelationContext>; revalidating: boolean }>();
 
 export function invalidateContext(tenantId?: string) {
   if (tenantId) cache.delete(tenantId);
@@ -32,9 +34,27 @@ export function invalidateContext(tenantId?: string) {
 
 export async function gatherContext(tenantId: string, options: { fresh?: boolean } = {}): Promise<CorrelationContext> {
   const hit = cache.get(tenantId);
-  if (!options.fresh && hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (!options.fresh && hit) {
+    const age = Date.now() - hit.at;
+    if (age < FRESH_MS) return hit.value;
+    if (age < STALE_MAX_MS) {
+      if (!hit.revalidating) {
+        hit.revalidating = true;
+        const next = load(tenantId);
+        // Swap in only a successful refresh; a failed one keeps serving the stale context.
+        next.then(() => cache.set(tenantId, { at: Date.now(), value: next, revalidating: false })).catch(() => (hit.revalidating = false));
+      }
+      return hit.value;
+    }
+  }
+  const value = load(tenantId);
+  cache.set(tenantId, { at: Date.now(), value, revalidating: false });
+  value.catch(() => cache.delete(tenantId));
+  return value;
+}
 
-  const value = (async () => {
+function load(tenantId: string): Promise<CorrelationContext> {
+  return (async () => {
     const started = performance.now();
     const [erp, license, policies, signIns, drift] = await Promise.all([
       sources.erp.getTenantContext(tenantId),
@@ -57,9 +77,6 @@ export async function gatherContext(tenantId: string, options: { fresh?: boolean
       sourcesUsed: { msgraph: license.source, azure: drift.source },
     } satisfies CorrelationContext;
   })();
-  cache.set(tenantId, { at: Date.now(), value });
-  value.catch(() => cache.delete(tenantId));
-  return value;
 }
 
 /**

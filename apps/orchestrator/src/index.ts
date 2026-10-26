@@ -1,10 +1,12 @@
 import { createBunWebSocket } from "hono/bun";
 import type { ServerWebSocket } from "bun";
-import type { RouterTelemetry } from "@contextpane/catalog";
+import { TENANT_REGISTRY, type RouterTelemetry } from "@contextpane/catalog";
 import { app } from "./app.ts";
 import { config, describeConfig, providers } from "./config.ts";
+import { gatherContext } from "./mcp/context.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
 import { telemetry } from "./telemetry.ts";
+import { warmHoverCache } from "./tiers/tier1-hover.ts";
 
 /**
  * Bun entrypoint: Hono HTTP app + WebSocket telemetry feed on /ws.
@@ -47,12 +49,22 @@ console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
 console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
 console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
 
-if (!config.forceLocal) {
-  resolveMetaModels()
-    .then((r) => {
-      if (!r) return;
-      for (const s of r.substituted) console.log(`  [meta] ${s.configured} is not served → ${s.using}`);
-      if (r.missing.length) console.warn(`  [meta] not served and no stand-in: ${r.missing.join(", ")}`);
-    })
-    .catch((error) => console.warn(`  [meta] model check skipped: ${error instanceof Error ? error.message : String(error)}`));
-}
+// Warm-up, all in the background: mint the Graph/ARM tokens and gather the context
+// for every tenant, resolve the Meta model ids, then pre-fetch the hero hovers.
+const warmStarted = performance.now();
+const contexts = Promise.all(Object.keys(TENANT_REGISTRY).map((tenantId) => gatherContext(tenantId).catch(() => null)));
+const metaModels = config.forceLocal
+  ? Promise.resolve()
+  : resolveMetaModels()
+      .then((r) => {
+        if (!r) return;
+        for (const s of r.substituted) console.log(`  [meta] ${s.configured} is not served → ${s.using}`);
+        if (r.missing.length) console.warn(`  [meta] not served and no stand-in: ${r.missing.join(", ")}`);
+      })
+      .catch((error) => console.warn(`  [meta] model check skipped: ${error instanceof Error ? error.message : String(error)}`));
+void Promise.all([contexts, metaModels]).then(async ([gathered]) => {
+  const live = gathered.filter((c) => c && c.sourcesUsed.msgraph !== "seeded-manifest").length;
+  console.log(`  [warm] MCP context for ${gathered.filter(Boolean).length} tenants (${live} live) in ${Math.round(performance.now() - warmStarted)} ms`);
+  await warmHoverCache("tenant-contoso-01");
+  console.log(`  [warm] hero hovers ready in ${Math.round(performance.now() - warmStarted)} ms`);
+});

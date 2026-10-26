@@ -1,5 +1,6 @@
 import { Mic, MicOff, Send, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toWav16k } from "@/lib/wav";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill } from "../ui/Pill";
@@ -98,9 +99,10 @@ export function VoiceSteerPanel() {
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: mimeType });
-        const base64 = await blobToBase64(blob);
         const spoken = heard || liveTranscript;
-        await submit(spoken, blob.size > 0 ? { base64, mimeType: "audio/webm" } : undefined);
+        // Meta's ASR takes 16 kHz mono WAV only; fall back to the raw WebM (the server can transcode it) if decoding fails.
+        const audio = blob.size > 0 ? await toWav16k(blob).then((wav) => ({ blob: wav, mimeType: "audio/wav" }), () => ({ blob, mimeType: "audio/webm" })) : null;
+        await submit(spoken, audio ? { base64: await blobToBase64(audio.blob), mimeType: audio.mimeType } : undefined);
       };
       recorder.start();
       recorderRef.current = recorder;

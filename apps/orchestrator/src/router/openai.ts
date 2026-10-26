@@ -176,7 +176,12 @@ export interface TranscriptionResult {
   latencyMs: number;
 }
 
-/** OpenAI-compatible /audio/transcriptions (multipart). */
+/**
+ * Speech to text. The Meta Model API has no /audio/transcriptions: muse-voice-transcribe
+ * is served by POST /asr/transcribe with a JSON `request` part and an `audio` part, and
+ * accepts 16-bit mono PCM WAV at 16 or 24 kHz only (see router/wav.ts). Other providers
+ * get the OpenAI-compatible /audio/transcriptions.
+ */
 export async function transcribeAudio(
   provider: ProviderConfig,
   model: string,
@@ -187,20 +192,27 @@ export async function transcribeAudio(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = performance.now();
+  const blob = new Blob([audio.bytes.buffer.slice(audio.bytes.byteOffset, audio.bytes.byteOffset + audio.bytes.byteLength) as ArrayBuffer], { type: audio.mimeType });
   try {
     const form = new FormData();
-    form.append("model", model);
-    form.append("response_format", "json");
-    form.append("file", new Blob([audio.bytes.buffer.slice(audio.bytes.byteOffset, audio.bytes.byteOffset + audio.bytes.byteLength) as ArrayBuffer], { type: audio.mimeType }), audio.fileName ?? "voice.webm");
-    const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/audio/transcriptions`, {
+    const meta = provider.id === "meta";
+    if (meta) {
+      form.append("request", new Blob([JSON.stringify({ model, audioEncoding: "WAV" })], { type: "application/json" }), "request.json");
+      form.append("audio", blob, audio.fileName ?? "voice.wav");
+    } else {
+      form.append("model", model);
+      form.append("response_format", "json");
+      form.append("file", blob, audio.fileName ?? "voice.webm");
+    }
+    const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}${meta ? "/asr/transcribe" : "/audio/transcriptions"}`, {
       method: "POST",
       headers: authHeader(provider),
       body: form,
       signal: controller.signal,
     });
     if (!response.ok) throw new ProviderHttpError(provider.id, response.status, await response.text());
-    const json = (await response.json()) as { text?: string };
-    return { text: (json.text ?? "").trim(), latencyMs: Math.round(performance.now() - started) };
+    const json = (await response.json()) as { text?: string; transcript?: string };
+    return { text: (json.transcript ?? json.text ?? "").trim(), latencyMs: Math.round(performance.now() - started) };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw new ProviderTimeoutError(provider.id, timeoutMs);
     throw error;

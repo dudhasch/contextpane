@@ -14,12 +14,13 @@ import {
 import { config, describeConfig, providers } from "./config.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext } from "./mcp/context.ts";
+import { metaModelsResolved } from "./router/meta-models.ts";
 import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
 import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
 import { telemetry } from "./telemetry.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
-import { hover } from "./tiers/tier1-hover.ts";
+import { hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
 import { approve, remediate } from "./tiers/tier3-remediate.ts";
 import { voiceSteer } from "./tiers/voice.ts";
@@ -36,6 +37,12 @@ app.use(
   }),
 );
 
+// Model ids are swapped for served stand-ins at startup; never route a request on an unresolved id.
+app.use("/api/*", async (_c, next) => {
+  await metaModelsResolved();
+  await next();
+});
+
 app.onError((error, c) => {
   console.error(`[orchestrator] ${c.req.method} ${c.req.path} failed:`, error);
   const status = error instanceof RecipeNotFoundError ? 404 : 500;
@@ -43,6 +50,11 @@ app.onError((error, c) => {
 });
 
 const TenantIdSchema = z.string().refine(isTenantId, { message: `tenantId must be one of ${Object.keys(TENANT_REGISTRY).join(", ")}` });
+
+/** ?refresh=true (or the older ?fresh=1) bypasses the context and hover caches. */
+function wantsRefresh(c: { req: { query: (name: string) => string | undefined } }): boolean {
+  return /^(1|true)$/i.test(c.req.query("refresh") ?? c.req.query("fresh") ?? "");
+}
 
 function wantsSse(c: { req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined } }): boolean {
   return (c.req.header("accept") ?? "").includes("text/event-stream") || c.req.query("stream") === "1" || c.req.query("stream") === "true";
@@ -75,7 +87,7 @@ app.get("/api/tenants", (c) => c.json({ tenants: Object.values(TENANT_REGISTRY) 
 
 app.get("/api/tenants/:tenantId/context", async (c) => {
   const tenantId = TenantIdSchema.parse(c.req.param("tenantId"));
-  const ctx = await gatherContext(tenantId, { fresh: c.req.query("fresh") === "1" });
+  const ctx = await gatherContext(tenantId, { fresh: wantsRefresh(c) });
   return c.json({
     tenantId,
     ticket: ctx.erp.ticket,
@@ -99,7 +111,8 @@ app.post("/api/tenants/:tenantId/refresh", (c) => {
 
 app.get("/api/recipe/:recipeId/hydrate", async (c) => {
   const tenantId = TenantIdSchema.parse(c.req.query("tenantId") ?? "tenant-contoso-01");
-  const result = await hydrateRecipe(c.req.param("recipeId"), tenantId, { fresh: c.req.query("fresh") === "1" });
+  const result = await hydrateRecipe(c.req.param("recipeId"), tenantId, { fresh: wantsRefresh(c) });
+  void warmHoverCache(tenantId);
   return c.json(result);
 });
 
@@ -157,11 +170,12 @@ const HoverBodySchema = z.object({
   tenantId: TenantIdSchema.default("tenant-contoso-01"),
   entityId: z.string().min(1),
   entityType: EntityTypeSchema.optional(),
+  fresh: z.boolean().optional(),
 });
 
 app.post("/api/hover", async (c) => {
   const body = HoverBodySchema.parse(await c.req.json());
-  const result = await hover(body);
+  const result = await hover({ ...body, fresh: body.fresh || wantsRefresh(c) });
   return c.json(result);
 });
 
@@ -174,12 +188,19 @@ const CorrelateBodySchema = z.object({
 });
 
 app.post("/api/correlate", async (c) => {
-  const body = CorrelateBodySchema.parse(await c.req.json().catch(() => ({})));
-  if (!wantsSse(c)) return c.json(await correlate(body));
+  const parsed = CorrelateBodySchema.parse(await c.req.json().catch(() => ({})));
+  const body = { ...parsed, fresh: parsed.fresh || wantsRefresh(c) };
+  // A correlate is the "ticket opened" moment: pre-fetch the hero hovers once it is done.
+  if (!wantsSse(c)) {
+    const result = await correlate(body);
+    void warmHoverCache(body.tenantId);
+    return c.json(result);
+  }
   return streamSSE(c, async (stream) => {
     const send = (event: string, data: unknown) => stream.writeSSE({ event, data: JSON.stringify(data) });
     try {
       const result = await correlate(body, (p: ProgressEvent) => void send("progress", p));
+      void warmHoverCache(body.tenantId);
       await send("result", result);
     } catch (error) {
       await send("error", { error: error instanceof Error ? error.message : String(error) });

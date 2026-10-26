@@ -45,7 +45,8 @@ Rules:
 - Fill every prop strictly from the supplied context. Copy identifiers (UPNs, policy names, rule names, tag values, error codes) verbatim.
 - driftedCount = erpBilledCount - entraAssignedCount, never negative. Mark users drifted when currentSku != expectedSku.
 - In EntraSignInTimeline, highlight the failing sign-ins of the ticket requester and set rootCause to the AADSTS code, blocking policy and target app.
-- In IaCDriftBanner, copy tagDrift, rogueSecurityRules and hclDiff from azureNsgDrift and write a one-line summary beginning with "State: DRIFT DETECTED" or "State: IN SYNC".
+- In IaCDriftBanner, copy tagDrift and rogueSecurityRules from azureNsgDrift and write a one-line summary beginning with "State: DRIFT DETECTED" or "State: IN SYNC".
+- Leave out LicenseDriftCard.users, EntraSignInTimeline.events and IaCDriftBanner.hclDiff: the orchestrator copies them verbatim from the MCP data.
 - providerTelemetry inside TenantSummaryHeader may be left as zeros; the orchestrator overwrites it.
 - Never output prose, markdown or components outside the catalog.`;
 
@@ -56,6 +57,28 @@ function chainSteps(): ChainStep[] {
     { provider: "meta", modelId: models.metaCatalog, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
     { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey, tier: "Tier 2" },
   ];
+}
+
+/**
+ * The model reasons about the layout but does not re-type MCP data: every prop it
+ * leaves out (license users, sign-in events, the HCL diff) is filled from the
+ * deterministic hydrator for the same component before Zod validation. This roughly
+ * halves the output tokens of a layout.
+ */
+function fillVerbatimProps(raw: unknown, ctx: CorrelationContext): unknown {
+  const components = (raw as { components?: unknown })?.components;
+  if (!Array.isArray(components)) return raw;
+  const zero = { tier: "Tier 1B" as const, provider: "local" as const, modelId: "deterministic", latencyMs: 0, tokensUsed: 0 };
+  return {
+    ...(raw as Record<string, unknown>),
+    components: components.map((c: { type?: ComponentType; props?: Record<string, unknown> }) => {
+      const reference = c?.type ? buildComponent(c.type, ctx, zero) : null;
+      if (!reference || !c.props || typeof c.props !== "object") return c;
+      const props = { ...c.props };
+      for (const [key, value] of Object.entries(reference.props)) if (props[key] === undefined || props[key] === null) props[key] = value;
+      return { ...c, props };
+    }),
+  };
 }
 
 /**
@@ -101,7 +124,14 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
 
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const tool = getHydrateLayoutToolDefinition();
-    const payload = { tenantId: ctx.tenantId, ticketId: ctx.ticketId, requestedComponents: wanted, context: contextForModel(ctx) };
+    const modelContext = contextForModel(ctx);
+    const payload = {
+      tenantId: ctx.tenantId,
+      ticketId: ctx.ticketId,
+      requestedComponents: wanted,
+      // The diff body is copied in by the orchestrator, so the model never needs to read it either.
+      context: { ...modelContext, azureNsgDrift: { ...modelContext.azureNsgDrift, hclDiff: undefined } },
+    };
     const outcome = await runChain(
       steps,
       async (step) => {
@@ -121,7 +151,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
             reasoningEffort: step.tier === "Tier 2" ? config.reasoning.correlate : config.reasoning.catalog,
           },
         );
-        const raw = parseToolArguments(result.argumentsRaw);
+        const raw = fillVerbatimProps(parseToolArguments(result.argumentsRaw), ctx);
         const parsed = HydrateLayoutArgsSchema.safeParse(raw);
         if (parsed.success) return { components: parsed.data.components, usage: result.usage, partial: false };
         // Salvage valid components even when the envelope fails.

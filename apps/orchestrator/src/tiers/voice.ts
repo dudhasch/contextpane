@@ -10,6 +10,7 @@ import { config, models, providerFor, providers } from "../config.ts";
 import { parseSteerIntent } from "../local/voice-intent.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, transcribeAudio, type TokenUsage } from "../router/openai.ts";
+import { fixStreamedWavSizes, isMetaAsrWav, transcodeToWav16k } from "../router/wav.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 
 export interface VoiceInput {
@@ -45,11 +46,12 @@ export async function voiceSteer(input: VoiceInput): Promise<VoiceResult> {
   let modelId = "deterministic";
 
   if (input.audioBase64) {
-    const bytes = Uint8Array.from(Buffer.from(input.audioBase64, "base64"));
+    const received = Uint8Array.from(Buffer.from(input.audioBase64, "base64"));
     const steps: ChainStep[] = [{ provider: "meta", modelId: models.metaVoice, hasKey: providers.meta.hasKey && !config.forceLocal }];
     const outcome = await runChain(steps, async (step) => {
-      const providerConfig = providers.meta;
-      return transcribeAudio(providerConfig, step.modelId, { bytes, mimeType: input.mimeType ?? "audio/webm" }, config.timeouts.voiceMs);
+      // Meta's ASR takes 16-bit mono WAV at 16/24 kHz only; the workbench already sends that.
+      const bytes = isMetaAsrWav(received) ? received : fixStreamedWavSizes(await transcodeToWav16k(received));
+      return transcribeAudio(providers.meta, step.modelId, { bytes, mimeType: "audio/wav", fileName: "voice.wav" }, config.timeouts.voiceMs);
     });
     chain.push(...outcome.chain);
     if (outcome.result && outcome.winner) {
@@ -58,7 +60,12 @@ export async function voiceSteer(input: VoiceInput): Promise<VoiceResult> {
       provider = "meta";
       modelId = outcome.winner.modelId;
     } else if (!transcript) {
-      throw new Error("Audio received but no transcription provider is configured (set META_API_KEY) and no text fallback was supplied");
+      const failure = outcome.chain.at(-1);
+      throw new Error(
+        failure?.outcome === "no-key"
+          ? "Audio received but no transcription provider is configured (set META_API_KEY) and no text fallback was supplied"
+          : `Transcription failed (${failure?.error ?? failure?.outcome ?? "unknown"}) and no text fallback was supplied`,
+      );
     }
   }
   if (!transcript) throw new Error("voice-steer needs `text` or `audioBase64`");
