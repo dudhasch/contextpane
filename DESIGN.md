@@ -35,6 +35,22 @@ mapped into Tailwind v4 via `@theme`. Components never hardcode hex values.
 Each accent ships with a `-dim` (12% alpha fill) and `-ring` (40% alpha border) variant
 so badges, pills and banners share one recipe: dim fill + ring border + solid text.
 
+### Provenance categories
+
+Entities and cards are coloured by where the data came from, not by health. The colour is set
+once per element as the `--cat` custom property (`apps/web/src/lib/provenance.ts`, values from
+`CATEGORY_META` in `packages/catalog`), and pills, accents, rings and tabs all read it.
+
+| Category | Hex | Sources |
+|---|---|---|
+| Licensing | `#F59E0B` | SKU pools, license assignment state, group-based licensing |
+| Identity / CA | `#F43F5E` | Users, groups, Conditional Access, sign-ins, AADSTS codes |
+| Intune | `#A855F7` | Settings Catalog policies, device configurations, devices, MDM error codes |
+| Azure | `#14B8A6` | AVD host pool, NSG, Azure Policy, Terraform |
+
+Health still uses the semantic accents above (status pills, emerald once converged), so a
+rose identity card can carry an amber *Drifted* pill.
+
 ### Text
 
 | Token | Hex | Usage |
@@ -67,8 +83,10 @@ Fonts are bundled via `@fontsource-variable/*` so the demo renders identically o
 - Base unit 4px. Pane padding 16px, card padding 12px, table cell padding 6px 10px.
 - Row height 28px in tables, 32px for interactive list rows.
 - Max line length is irrelevant: panes are fixed-width columns, content wraps at the pane.
-- Split layout: left ticket pane `minmax(420px, 38%)`, right GenUI canvas fills the rest.
-- HUD bar is 48px tall, sticky, `--cp-surface` with a bottom `--cp-border`.
+- Split layout: left scenario pane `minmax(420px, 38%)`, right GenUI canvas fills the rest.
+- Top bar is 48px tall, sticky, `--cp-surface` with a bottom `--cp-border`. It holds only the
+  title, the Tickets / Tenant Anomalies switch, the scenario selector, Pin Recipe, Voice Steer,
+  Reset Drift and the System & Audit drawer. No SLA timers, burn rates or tier badges on cards.
 
 ---
 
@@ -78,10 +96,11 @@ Fonts are bundled via `@fontsource-variable/*` so the demo renders identically o
 `inline-flex h-6 items-center gap-1.5 rounded-md border px-2 font-mono text-[11px]`
 with the semantic dim/ring/text triple. Icon 12px from Lucide.
 
-### Entity pill (hoverable UPN / group / error code)
-Same as status pill but `--cp-primary` ring, dotted underline, cursor help. On hover
+### Entity pill (hoverable UPN / group / policy / setting / error code)
+Same as status pill but in its provenance colour (`--cat` fill, ring and text). On hover
 (150ms delay) it opens the **Hover Diagnostic Popover** anchored below-start via
-floating-ui with 6px offset and flip/shift middleware.
+floating-ui with 6px offset and flip/shift middleware, and rings the card it spawned while
+dimming the others. Clicking it expands that card on the matching tab and scrolls to it.
 
 ### Hover Diagnostic Popover
 320px wide, `--cp-elevated`, 1px `--cp-border`, 8px radius, shadow `0 12px 32px -8px #000`.
@@ -89,29 +108,34 @@ Header: entity id (mono) + status pill. Body: headline (13px/500), error transla
 (12px muted), quick actions as ghost buttons. Must render within 350ms; skeleton state
 shows immediately.
 
-### Floating Toolbar (semantic selection)
-Appears above a highlighted contract line. Pill group on `--cp-elevated` with drift
-summary (`12/15 Assigned • 3 Missing E5`), burn-rate delta, and one primary action.
-
-### CodeLens
-A single 11px mono line rendered *above* a code/spec block, `--cp-text-muted` with
-semantic-colored state and `|`-separated actions styled as links. Mirrors VS Code.
+### Summary & Resolution Plan
+The first block of the left pane: 2px `--cp-primary` ring (emerald once resolved), a two-line
+summary, then numbered steps with a checkbox each. Clicking a step expands and scrolls to the
+card and tab it names. The contract and the infrastructure spec sit below in collapsed
+accordions, so the plan is always above the fold.
 
 ### Cards (GenUI canvas)
-`--cp-elevated` background, 1px `--cp-border`, 10px radius, 12px padding.
-Header row: title (13px/600) + right-aligned status pill + provenance tag
-(`Tier 0 · 0 tokens` or `Tier 2 · muse-spark-open-1026`).
+`--cp-elevated` background, 1px `--cp-border`, 10px radius, 12px padding, and a 4px left
+border in the card's provenance colour (emerald once remediated). Header row: title (13px/600)
++ status pill + right-aligned *Triggered by* badge and data source. Compact by default: a
+two-line summary and one primary action; *Expand Details* reveals tabs (Sign-ins / Policies,
+Settings / Devices, Host pool / NSG / Azure Policy). Above the cards a breadcrumb shows
+tenant › domain › scenario.
 
 ### Drawer (HITL Action Approval)
-Right-side sheet, 560px, `--cp-surface`, backdrop `rgba(9,13,22,0.7)`. Tabs for
-PowerShell / Terraform. Verification badge uses `--cp-healthy` when all checks pass,
-`--cp-warning` if any check was skipped, `--cp-critical` on failure. Primary CTA is full
-width at the bottom and disabled until verification passes.
+Right-side sheet, 600px, `--cp-surface`, backdrop `rgba(9,13,22,0.7)`. Tabs for
+PowerShell / Graph JSON / Terraform (only when the scenario has IaC) / Entities.
+**Path A** at the top copies the script or the Terraform / Graph JSON, with a
+`[Dry-Run (-WhatIf) Verified]` badge when every mutating cmdlet is `ShouldProcess`-guarded.
+**Path B** at the bottom is *Approve & Execute via Delegated Identity* with the PR checkbox.
+Verification badge uses `--cp-healthy` when all checks pass, `--cp-warning` if any check was
+skipped, `--cp-critical` on failure. The Path B CTA is full width and disabled until
+verification passes.
 
-### Telemetry HUD pills
-Mono 11px. Tier pill color: Tier 0 `--cp-primary`, Tier 1 `--cp-healthy`,
-Tier 2 `--cp-meta`, Tier 3 `--cp-warning`. Provider pill shows provider + model id.
-Latency and tokens are plain mono with muted labels.
+### System & Audit drawer
+Right-side sheet like the approval drawer, with three tabs: router savings, audit log and
+provider status. Tier colours: Tier 0 `--cp-primary`, Tier 1 `--cp-healthy`, Tier 2
+`--cp-meta`, Tier 3 `--cp-warning`. Latency and tokens are plain mono with muted labels.
 
 ---
 
@@ -119,7 +143,7 @@ Latency and tokens are plain mono with muted labels.
 
 - Popovers / toolbars: 120ms opacity + 4px translate, ease-out.
 - Drawer: 200ms translate-x, ease-out.
-- Telemetry pill value change: 300ms color flash to the tier color then back.
+- Pill hover link: 150ms ring on the linked card, the others fade to 55% opacity.
 - No bounce, no spring, nothing slower than 250ms. This UI should feel like a terminal.
 
 ---
@@ -138,6 +162,7 @@ Semantic icon mapping:
 | Conditional Access | `ShieldBan` / `ShieldCheck` |
 | Sign-in event | `LogIn` |
 | Azure resource | `Cloud` |
+| Intune / device | `MonitorCog` |
 | Drift | `GitCompareArrows` |
 | Terraform / IaC | `FileCode2` |
 | PowerShell | `Terminal` |

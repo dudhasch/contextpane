@@ -1,12 +1,13 @@
 /**
- * Captures the four README screenshots (1600x900) from the running workbench with a
+ * Captures the five README screenshots (1600x900) from the running workbench with a
  * headless Edge/Chrome driven over the DevTools protocol (no extra dependencies).
  *
  *   bun run scripts/capture-readme-screenshots.ts [--url http://localhost:5173] [--out docs/screenshots]
  *
  * Needs the orchestrator (:4000) and the web app (:5173) running. Shot 3 runs a real
- * Tier 3 remediation (stages a local fix/* branch, never approves); shot 4 pins the
- * current canvas as the "Contoso Finance triage" recipe and switches to Fabrikam.
+ * Tier 3 remediation for INC-4092 (stages the local fix/INC-4092-contoso-remediation
+ * branch, never approves); shot 5 pins the ANOM-CA-204 canvas as a View Recipe, switches
+ * to ANOM-INT-309 through Tier 0 and releases the pin again.
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -119,20 +120,24 @@ try {
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
   await cdp.send("Page.navigate", { url: URL_BASE });
 
-  const canvasReady = `document.querySelectorAll("[data-component]").length >= 4 && !document.body.innerText.includes("Correlating ticket")`;
-  await cdp.waitFor(canvasReady, 90_000, "the Contoso canvas");
+  const canvasReady = (scenarioId: string, cards: number) =>
+    `document.querySelector('[data-testid="tenant-breadcrumb"]')?.innerText.includes("#${scenarioId}") && document.querySelectorAll("section[data-component]").length >= ${cards} && !document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("correlating")`;
+  await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
   await sleep(1500);
 
-  /* 1 · workbench + hover popover on the requester's UPN */
+  /* 1 · ticket mode: summary & plan, provenance pills, hover popover on the requester's UPN */
   const pill = await cdp.eval<{ x: number; y: number } | null>(`(() => {
-    const el = [...document.querySelectorAll("button")].find((b) => /^lynne\\.robins/.test(b.innerText.trim()));
+    const el = document.querySelector('[data-testid="enriched-context"] [data-entity^="lynne.robins"]') ?? document.querySelector('[data-entity^="lynne.robins"]');
     if (!el) return null;
+    el.scrollIntoView({ block: "center" });
     const r = el.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   })()`);
   if (!pill) throw new Error("UPN pill not found");
+  await cdp.mouseTo(pill.x - 4, pill.y);
+  await sleep(100);
   await cdp.mouseTo(pill.x, pill.y);
-  await cdp.waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((d) => /tok/.test(d.innerText) && !d.querySelector(".animate-pulse"))`, 20_000, "the hover popover");
+  await cdp.waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((d) => /Assigned SKU/.test(d.innerText) && / ms/.test(d.innerText) && !d.querySelector(".animate-pulse"))`, 20_000, "the hover popover");
   await sleep(400);
   await cdp.shot(join(OUT, "01-workbench-hover-popover.png"));
 
@@ -140,30 +145,42 @@ try {
   await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
   await cdp.key("Escape");
   await sleep(300);
-  await cdp.key("3");
+  await cdp.key("d");
   await cdp.waitFor(`document.body.innerText.includes("@@")`, 10_000, "the diff modal");
   await sleep(500);
   await cdp.shot(join(OUT, "02-iac-diff-modal.png"));
 
-  /* 3 · Tier 3 approval drawer, verified in the Modal sandbox */
+  /* 3 · Tier 3 approval drawer: Path A (copy + dry-run proof), Path B (delegated approval) */
   await cdp.key("Escape");
   await sleep(300);
-  await cdp.key("4");
+  await cdp.key("f");
   await cdp.waitFor(`/Verified Safe|Verified With Warnings|Verification Failed/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
   await sleep(600);
   await cdp.shot(join(OUT, "03-tier3-approval-drawer.png"));
 
-  /* 4 · pin the canvas as a recipe, switch to Fabrikam (Tier 0, 0 tokens), router savings open */
+  /* 4 · tenant anomaly ANOM-CA-204: plan step 1 expands the Conditional Access card */
   await cdp.key("Escape");
   await sleep(300);
+  await cdp.key("4");
+  await cdp.waitFor(canvasReady("ANOM-CA-204", 1), 60_000, "the ANOM-CA-204 canvas");
+  await sleep(800);
+  await cdp.key("e");
+  await cdp.waitFor(`document.querySelector('section[data-component="EntraSignInTimeline"][data-expanded]')`, 10_000, "the expanded CA card");
+  await sleep(700);
+  await cdp.shot(join(OUT, "04-tenant-anomaly-ca-policy.png"));
+
+  /* 5 · pin the canvas as a recipe, switch to ANOM-INT-309 (Tier 0, 0 tokens), System & Audit open */
   await cdp.key("p");
-  await cdp.waitFor(`document.body.innerText.includes("Pinned · 0 tokens")`, 10_000, "the pinned recipe");
-  await cdp.key("6");
-  await cdp.waitFor(`document.querySelector('[data-component="TenantSummaryHeader"]')?.innerText.includes("Fabrikam") && document.body.innerText.includes("LLM tokens")`, 30_000, "the Fabrikam recipe canvas");
+  await cdp.waitFor(`document.body.innerText.includes("Recipe Pinned")`, 10_000, "the pinned recipe");
+  await cdp.key("5");
+  await cdp.waitFor(`${canvasReady("ANOM-INT-309", 1)} && document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("0 tokens")`, 30_000, "the ANOM-INT-309 recipe canvas");
   await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
   await cdp.key("t");
   await sleep(900);
-  await cdp.shot(join(OUT, "04-fabrikam-recipe-router-savings.png"));
+  await cdp.shot(join(OUT, "05-recipe-switch-system-audit.png"));
+  await cdp.key("Escape");
+  await cdp.key("p");
+  await sleep(300);
   cdp.close();
 } finally {
   browser.kill();
