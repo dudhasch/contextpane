@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+.bun/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+
+# runtime state
+data/recipes.json
+data/remediations/
+.contextpane/
+*.log
+
+# terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# editor / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# modal
+modal-sandbox/__pycache__/
+modal-sandbox/.modal/

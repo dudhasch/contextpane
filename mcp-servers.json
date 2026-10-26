@@ -1,0 +1,24 @@
+{
+  "$comment": "Standard MCP server configuration for ContextPane. Works with any MCP-compatible client (Claude Code, headless CLIs, the ContextPane orchestrator in stdio mode). Run from the repository root.",
+  "mcpServers": {
+    "contextpane-erp": {
+      "command": "bun",
+      "args": ["run", "packages/mcp-erp/src/server.ts"],
+      "env": {}
+    },
+    "contextpane-msgraph": {
+      "command": "bun",
+      "args": ["run", "packages/mcp-msgraph/src/server.ts"],
+      "env": {
+        "LIVE_CLOUD_MODE": "false"
+      }
+    },
+    "contextpane-azure-iac": {
+      "command": "bun",
+      "args": ["run", "packages/mcp-azure-iac/src/server.ts"],
+      "env": {
+        "LIVE_CLOUD_MODE": "false"
+      }
+    }
+  }
+}

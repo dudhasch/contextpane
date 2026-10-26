@@ -1,0 +1,621 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-26T12:00:00Z",
+  "generatedBy": "static-seed",
+  "liveSeeded": false,
+  "notes": "Deterministic fallback for LIVE_CLOUD_MODE=false. scripts/Invoke-SeedContextPaneLab.ps1 rewrites this file with real object IDs after seeding the lab tenant. Contoso Finance lives in the real lab tenant; Fabrikam Legal is manifest-only.",
+  "tenants": {
+    "tenant-contoso-01": {
+      "displayName": "Contoso Finance",
+      "tenantId": "4cc41c20-8b01-40a3-93c6-b4f1e846f6ea",
+      "verifiedDomain": "c4a8shili.onmicrosoft.com",
+      "subscriptionId": "20505597-043c-4742-a884-42dc3f621aef",
+      "groups": [
+        {
+          "displayName": "SG-Contoso-Finance-AVD",
+          "mailNickname": "sg-contoso-finance-avd",
+          "objectId": "6d1f2c7a-0c3e-4b9a-9d1e-3a7f5b2c8e01",
+          "description": "ContextPane demo: Contoso Finance users entitled to AVD host pool vdpool-contoso-fin-01 (Microsoft 365 E5)",
+          "memberUpns": [
+            "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+            "alex.wilber.contoso@c4a8shili.onmicrosoft.com",
+            "miriam.graham.contoso@c4a8shili.onmicrosoft.com",
+            "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+            "patti.fernandez.contoso@c4a8shili.onmicrosoft.com"
+          ]
+        },
+        {
+          "displayName": "SG-Contoso-Finance-Legacy",
+          "mailNickname": "sg-contoso-finance-legacy",
+          "objectId": "b2e4a9c1-7f6d-4e3b-8a2c-5d9f1e0b7c02",
+          "description": "ContextPane demo: legacy Microsoft 365 E3 users that should have been migrated out after the E5 upgrade",
+          "memberUpns": [
+            "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+            "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+            "patti.fernandez.contoso@c4a8shili.onmicrosoft.com"
+          ]
+        }
+      ],
+      "users": [
+        {
+          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000001",
+          "upn": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+          "displayName": "Lynne Robins",
+          "jobTitle": "Senior Financial Analyst",
+          "department": "Finance",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-884",
+            "lastSyncedAt": "2026-10-24T16:12:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000002",
+          "upn": "alex.wilber.contoso@c4a8shili.onmicrosoft.com",
+          "displayName": "Alex Wilber",
+          "jobTitle": "Finance Manager",
+          "department": "Finance",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
+            "contractId": "CNT-2026-884",
+            "lastSyncedAt": "2026-10-24T16:12:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000003",
+          "upn": "miriam.graham.contoso@c4a8shili.onmicrosoft.com",
+          "displayName": "Miriam Graham",
+          "jobTitle": "Financial Controller",
+          "department": "Finance",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
+            "contractId": "CNT-2026-884",
+            "lastSyncedAt": "2026-10-24T16:12:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000004",
+          "upn": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+          "displayName": "Diego Siciliani",
+          "jobTitle": "Accounts Payable Specialist",
+          "department": "Finance",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-884",
+            "lastSyncedAt": "2026-10-24T16:12:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000005",
+          "upn": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+          "displayName": "Patti Fernandez",
+          "jobTitle": "Treasury Analyst",
+          "department": "Finance",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-884",
+            "lastSyncedAt": "2026-10-24T16:12:00Z"
+          }
+        }
+      ],
+      "licenses": {
+        "skuPartNumber": "SPE_E5",
+        "skuName": "Microsoft 365 E5",
+        "skuId": "06ebc4ee-1bb5-47dd-8e1b-7f71b4b2b1f3",
+        "erpBilledCount": 15,
+        "entraAssignedCount": 12,
+        "monthlyUnitPriceUsd": 57.0,
+        "legacySkuPartNumber": "SPE_E3",
+        "legacySkuId": "05e9a617-0261-4cee-bb44-138d3ef5d965"
+      },
+      "conditionalAccessPolicies": [
+        {
+          "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01",
+          "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+          "state": "enabled",
+          "createdDateTime": "2026-10-24T15:40:00Z",
+          "modifiedDateTime": "2026-10-24T15:40:00Z",
+          "conditions": {
+            "users": {
+              "includeGroups": ["b2e4a9c1-7f6d-4e3b-8a2c-5d9f1e0b7c02"],
+              "includeGroupNames": ["SG-Contoso-Finance-Legacy"],
+              "excludeGroups": [],
+              "excludeGroupNames": []
+            },
+            "applications": {
+              "includeApplications": ["9cdead84-a844-4324-93f2-b2e6bb768d07"],
+              "includeApplicationNames": ["Azure Virtual Desktop"]
+            },
+            "clientAppTypes": ["all"]
+          },
+          "grantControls": {
+            "operator": "OR",
+            "builtInControls": ["block"]
+          }
+        }
+      ],
+      "signInEvents": [
+        {
+          "id": "sgn-contoso-0001",
+          "createdDateTime": "2026-10-26T07:58:12Z",
+          "userPrincipalName": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+          "userDisplayName": "Lynne Robins",
+          "appId": "00000002-0000-0ff1-ce00-000000000000",
+          "appDisplayName": "Office 365 Exchange Online",
+          "clientAppUsed": "Browser",
+          "ipAddress": "203.0.113.42",
+          "location": "Zurich, CH",
+          "deviceDetail": { "displayName": "CONTOSO-LT-0471", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
+          "status": { "errorCode": 0, "failureReason": null },
+          "conditionalAccessStatus": "success",
+          "appliedConditionalAccessPolicies": []
+        },
+        {
+          "id": "sgn-contoso-0002",
+          "createdDateTime": "2026-10-26T08:02:41Z",
+          "userPrincipalName": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+          "userDisplayName": "Lynne Robins",
+          "appId": "9cdead84-a844-4324-93f2-b2e6bb768d07",
+          "appDisplayName": "Azure Virtual Desktop",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "203.0.113.42",
+          "location": "Zurich, CH",
+          "deviceDetail": { "displayName": "CONTOSO-LT-0471", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
+          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            { "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01", "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy", "result": "failure", "enforcedGrantControls": ["Block"] }
+          ]
+        },
+        {
+          "id": "sgn-contoso-0003",
+          "createdDateTime": "2026-10-26T08:04:10Z",
+          "userPrincipalName": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+          "userDisplayName": "Lynne Robins",
+          "appId": "9cdead84-a844-4324-93f2-b2e6bb768d07",
+          "appDisplayName": "Azure Virtual Desktop",
+          "clientAppUsed": "Browser",
+          "ipAddress": "203.0.113.42",
+          "location": "Zurich, CH",
+          "deviceDetail": { "displayName": "CONTOSO-LT-0471", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
+          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            { "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01", "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy", "result": "failure", "enforcedGrantControls": ["Block"] }
+          ]
+        },
+        {
+          "id": "sgn-contoso-0004",
+          "createdDateTime": "2026-10-26T08:05:30Z",
+          "userPrincipalName": "alex.wilber.contoso@c4a8shili.onmicrosoft.com",
+          "userDisplayName": "Alex Wilber",
+          "appId": "9cdead84-a844-4324-93f2-b2e6bb768d07",
+          "appDisplayName": "Azure Virtual Desktop",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "203.0.113.17",
+          "location": "Zurich, CH",
+          "deviceDetail": { "displayName": "CONTOSO-LT-0302", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
+          "status": { "errorCode": 0, "failureReason": null },
+          "conditionalAccessStatus": "notApplied",
+          "appliedConditionalAccessPolicies": []
+        },
+        {
+          "id": "sgn-contoso-0005",
+          "createdDateTime": "2026-10-26T08:07:02Z",
+          "userPrincipalName": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+          "userDisplayName": "Diego Siciliani",
+          "appId": "9cdead84-a844-4324-93f2-b2e6bb768d07",
+          "appDisplayName": "Azure Virtual Desktop",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "203.0.113.88",
+          "location": "Basel, CH",
+          "deviceDetail": { "displayName": "CONTOSO-LT-0519", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
+          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            { "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01", "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy", "result": "failure", "enforcedGrantControls": ["Block"] }
+          ]
+        },
+        {
+          "id": "sgn-contoso-0006",
+          "createdDateTime": "2026-10-26T08:09:15Z",
+          "userPrincipalName": "miriam.graham.contoso@c4a8shili.onmicrosoft.com",
+          "userDisplayName": "Miriam Graham",
+          "appId": "9cdead84-a844-4324-93f2-b2e6bb768d07",
+          "appDisplayName": "Azure Virtual Desktop",
+          "clientAppUsed": "Browser",
+          "ipAddress": "203.0.113.21",
+          "location": "Zurich, CH",
+          "deviceDetail": { "displayName": "CONTOSO-LT-0288", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
+          "status": { "errorCode": 0, "failureReason": null },
+          "conditionalAccessStatus": "notApplied",
+          "appliedConditionalAccessPolicies": []
+        }
+      ],
+      "azure": {
+        "resourceGroup": "rg-contoso-avd-prod",
+        "location": "westeurope",
+        "terraformFile": "main.tf",
+        "gitBranch": "main",
+        "nsg": {
+          "name": "nsg-contoso-avd-hostpool-01",
+          "id": "/subscriptions/20505597-043c-4742-a884-42dc3f621aef/resourceGroups/rg-contoso-avd-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-contoso-avd-hostpool-01",
+          "tags": {
+            "Environment": "Prod-Hotfix-Manual",
+            "Owner": "ContextPane",
+            "CostCenter": "FIN-4092",
+            "Workload": "AVD-HostPool",
+            "ManagedBy": "Terraform",
+            "ChangeTicket": "manual-hotfix-2026-10-24"
+          },
+          "securityRules": [
+            {
+              "name": "Allow-AVD-ServiceTraffic",
+              "priority": 100,
+              "direction": "Outbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "WindowsVirtualDesktop"
+            },
+            {
+              "name": "Allow-Temp-RDP-Diagnostic-Drift",
+              "priority": 150,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3389",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "description": "TEMP: diagnostic RDP opened manually during E5 cutover - REMOVE"
+            },
+            {
+              "name": "Allow-Internal-RDP-Shortpath",
+              "priority": 200,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Udp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3390",
+              "sourceAddressPrefix": "10.20.0.0/16",
+              "destinationAddressPrefix": "VirtualNetwork"
+            },
+            {
+              "name": "Deny-All-Inbound-Internet",
+              "priority": 4000,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*"
+            }
+          ]
+        }
+      }
+    },
+    "tenant-fabrikam-02": {
+      "displayName": "Fabrikam Legal",
+      "tenantId": "7f3c9b2e-5d41-4a8e-9c6f-2b1d8e4f7a30",
+      "verifiedDomain": "fabrikamlegal.onmicrosoft.com",
+      "subscriptionId": "e1c2d3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "groups": [
+        {
+          "displayName": "SG-Fabrikam-Legal",
+          "mailNickname": "sg-fabrikam-legal",
+          "objectId": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c03",
+          "description": "ContextPane demo: Fabrikam Legal paralegal group entitled to Microsoft 365 E5 Compliance (Purview eDiscovery + Copilot)",
+          "memberUpns": [
+            "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
+            "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+            "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
+            "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+            "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com"
+          ]
+        }
+      ],
+      "users": [
+        {
+          "objectId": "0a1b2c3d-2222-4a02-9c02-000000000001",
+          "upn": "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
+          "displayName": "Nestor Wilke",
+          "jobTitle": "Lead Paralegal",
+          "department": "Litigation",
+          "usageLocation": "CH",
+          "currentSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "driftStatus": "compliant",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "currentSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "driftStatus": "compliant",
+            "contractId": "CNT-2026-912",
+            "lastSyncedAt": "2026-10-25T09:30:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-2222-4a02-9c02-000000000002",
+          "upn": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+          "displayName": "Grady Archie",
+          "jobTitle": "Paralegal",
+          "department": "Litigation",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-912",
+            "lastSyncedAt": "2026-10-25T09:30:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-2222-4a02-9c02-000000000003",
+          "upn": "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
+          "displayName": "Isaiah Langer",
+          "jobTitle": "Paralegal",
+          "department": "Litigation",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-912",
+            "lastSyncedAt": "2026-10-25T09:30:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-2222-4a02-9c02-000000000004",
+          "upn": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+          "displayName": "Lidia Holloway",
+          "jobTitle": "Litigation Support Specialist",
+          "department": "Litigation",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-912",
+            "lastSyncedAt": "2026-10-25T09:30:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-2222-4a02-9c02-000000000005",
+          "upn": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+          "displayName": "Johanna Lorenz",
+          "jobTitle": "Paralegal",
+          "department": "Litigation",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E3",
+          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "driftStatus": "drifted",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "currentSku": "SPE_E3",
+            "driftStatus": "drifted",
+            "contractId": "CNT-2026-912",
+            "lastSyncedAt": "2026-10-25T09:30:00Z"
+          }
+        }
+      ],
+      "licenses": {
+        "skuPartNumber": "INFORMATION_PROTECTION_COMPLIANCE",
+        "skuName": "Microsoft 365 E5 Compliance",
+        "skuId": "184f3ca7-6b8f-4a8d-9c6e-3f2e1d0c9b8a",
+        "erpBilledCount": 25,
+        "entraAssignedCount": 21,
+        "monthlyUnitPriceUsd": 12.0,
+        "legacySkuPartNumber": "SPE_E3",
+        "legacySkuId": "05e9a617-0261-4cee-bb44-138d3ef5d965"
+      },
+      "conditionalAccessPolicies": [
+        {
+          "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+          "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+          "state": "enabled",
+          "createdDateTime": "2026-10-20T10:15:00Z",
+          "modifiedDateTime": "2026-10-25T08:02:00Z",
+          "conditions": {
+            "users": {
+              "includeGroups": ["9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c03"],
+              "includeGroupNames": ["SG-Fabrikam-Legal"],
+              "excludeGroups": [],
+              "excludeGroupNames": []
+            },
+            "applications": {
+              "includeApplications": ["80ccca67-54bd-44ab-8625-4b79c4dc7775"],
+              "includeApplicationNames": ["Microsoft Purview"]
+            },
+            "clientAppTypes": ["all"]
+          },
+          "grantControls": {
+            "operator": "AND",
+            "builtInControls": ["compliantDevice"]
+          }
+        }
+      ],
+      "signInEvents": [
+        {
+          "id": "sgn-fabrikam-0001",
+          "createdDateTime": "2026-10-26T06:41:03Z",
+          "userPrincipalName": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Grady Archie",
+          "appId": "fb8d773d-7ef8-4ec0-a117-179f88add510",
+          "appDisplayName": "Microsoft 365 Copilot",
+          "clientAppUsed": "Browser",
+          "ipAddress": "198.51.100.23",
+          "location": "Geneva, CH",
+          "deviceDetail": { "displayName": "FABRIKAM-LT-1107", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Hybrid Azure AD joined" },
+          "status": { "errorCode": 50105, "failureReason": "The signed in user is not assigned to a role for the application." },
+          "conditionalAccessStatus": "notApplied",
+          "appliedConditionalAccessPolicies": []
+        },
+        {
+          "id": "sgn-fabrikam-0002",
+          "createdDateTime": "2026-10-26T06:44:50Z",
+          "userPrincipalName": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Lidia Holloway",
+          "appId": "80ccca67-54bd-44ab-8625-4b79c4dc7775",
+          "appDisplayName": "Microsoft Purview",
+          "clientAppUsed": "Browser",
+          "ipAddress": "198.51.100.61",
+          "location": "Geneva, CH",
+          "deviceDetail": { "displayName": "FABRIKAM-MBP-0042", "operatingSystem": "macOS", "isCompliant": false, "trustType": "Azure AD registered" },
+          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            { "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02", "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal", "result": "failure", "enforcedGrantControls": ["RequireCompliantDevice"] }
+          ]
+        },
+        {
+          "id": "sgn-fabrikam-0003",
+          "createdDateTime": "2026-10-26T06:52:17Z",
+          "userPrincipalName": "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Nestor Wilke",
+          "appId": "80ccca67-54bd-44ab-8625-4b79c4dc7775",
+          "appDisplayName": "Microsoft Purview",
+          "clientAppUsed": "Browser",
+          "ipAddress": "198.51.100.19",
+          "location": "Geneva, CH",
+          "deviceDetail": { "displayName": "FABRIKAM-LT-0981", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Hybrid Azure AD joined" },
+          "status": { "errorCode": 0, "failureReason": null },
+          "conditionalAccessStatus": "success",
+          "appliedConditionalAccessPolicies": [
+            { "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02", "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal", "result": "success", "enforcedGrantControls": ["RequireCompliantDevice"] }
+          ]
+        },
+        {
+          "id": "sgn-fabrikam-0004",
+          "createdDateTime": "2026-10-26T07:03:44Z",
+          "userPrincipalName": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Johanna Lorenz",
+          "appId": "fb8d773d-7ef8-4ec0-a117-179f88add510",
+          "appDisplayName": "Microsoft 365 Copilot",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "198.51.100.77",
+          "location": "Lausanne, CH",
+          "deviceDetail": { "displayName": "FABRIKAM-LT-1133", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Hybrid Azure AD joined" },
+          "status": { "errorCode": 50105, "failureReason": "The signed in user is not assigned to a role for the application." },
+          "conditionalAccessStatus": "notApplied",
+          "appliedConditionalAccessPolicies": []
+        }
+      ],
+      "azure": {
+        "resourceGroup": "rg-fabrikam-slz-prod",
+        "location": "switzerlandnorth",
+        "terraformFile": "fabrikam.tf",
+        "gitBranch": "main",
+        "nsg": {
+          "name": "nsg-fabrikam-slz-hub-01",
+          "id": "/subscriptions/e1c2d3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f/resourceGroups/rg-fabrikam-slz-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-fabrikam-slz-hub-01",
+          "tags": {
+            "Environment": "Production",
+            "Owner": "ContextPane",
+            "CostCenter": "LEG-4099",
+            "DataResidency": "Global",
+            "ManagedBy": "Terraform"
+          },
+          "securityRules": [
+            {
+              "name": "Allow-Purview-Egress",
+              "priority": 100,
+              "direction": "Outbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "AzureCloud.switzerlandnorth"
+            },
+            {
+              "name": "Allow-Temp-SSH-Vendor",
+              "priority": 120,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "22",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "description": "TEMP: vendor SSH for eDiscovery connector troubleshooting - REMOVE"
+            },
+            {
+              "name": "Allow-Bastion-SSH",
+              "priority": 200,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "22",
+              "sourceAddressPrefix": "10.40.250.0/26",
+              "destinationAddressPrefix": "VirtualNetwork"
+            },
+            {
+              "name": "Deny-All-Inbound-Internet",
+              "priority": 4000,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

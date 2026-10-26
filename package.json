@@ -1,0 +1,32 @@
+{
+  "name": "contextpane",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ContextPane — local-first, MCP-driven, catalog-constrained Generative UI workbench for MSP Azure & Microsoft 365 engineers.",
+  "license": "MIT",
+  "author": "Timur Dudhasch",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter './apps/*' dev",
+    "dev:orchestrator": "bun run --filter @contextpane/orchestrator dev",
+    "dev:web": "bun run --filter @contextpane/web dev",
+    "build": "bun run --filter '*' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test",
+    "smoke": "pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1",
+    "mcp:erp": "bun run packages/mcp-erp/src/server.ts",
+    "mcp:msgraph": "bun run packages/mcp-msgraph/src/server.ts",
+    "mcp:azure-iac": "bun run packages/mcp-azure-iac/src/server.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  }
+}
