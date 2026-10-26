@@ -117,7 +117,11 @@ accordions, so the plan is always above the fold.
 ### Cards (GenUI canvas)
 `--cp-elevated` background, 1px `--cp-border`, 10px radius, 12px padding, and a 4px left
 border in the card's provenance colour (emerald once remediated). Header row: title (13px/600)
-+ status pill + right-aligned *Triggered by* badge and data source. Compact by default: a
++ status pill + right-aligned *Triggered by* badge, CodeLens and data source. The CodeLens is a
+subtle 10px JetBrains Mono badge (1px `--cp-border-subtle`, `--cp-text-faint`, file icon) naming the
+lines that declare the drifted resource or baseline rule, last two path segments only
+(`demo-iac/main.tf:L43-L84`, `conditional-access/CA-001.json:L9-L11`); it never shrinks, the
+*Triggered by* badge truncates first, and a click opens the card's diff. Compact by default: a
 two-line summary and one primary action; *Expand Details* reveals tabs (Sign-ins / Policies,
 Settings / Devices, Host pool / NSG / Azure Policy). Above the cards a breadcrumb shows
 tenant › domain › scenario.
@@ -127,10 +131,15 @@ Right-side sheet, 600px, `--cp-surface`, backdrop `rgba(9,13,22,0.7)`. Tabs for
 PowerShell / Graph JSON / Terraform (only when the scenario has IaC) / Entities.
 **Path A** at the top copies the script or the Terraform / Graph JSON, with a
 `[Dry-Run (-WhatIf) Verified]` badge when every mutating cmdlet is `ShouldProcess`-guarded.
-**Path B** at the bottom is *Approve & Execute via Delegated Identity* with the PR checkbox.
-Verification badge uses `--cp-healthy` when all checks pass, `--cp-warning` if any check was
-skipped, `--cp-critical` on failure. The Path B CTA is full width and disabled until
-verification passes.
+**Path B** at the bottom opens with a two-option segmented control (one 1px `--cp-border` track,
+two equal cells): *Emergency Break-Glass* (Zap icon, `--cp-warning` tint when selected, hint
+"Direct API + Auto-Reconcile PR") and *Pure GitOps* (GitMerge icon, `--cp-primary` tint, hint
+"Stage PR & Modal Plan Only"). One 11px line under it says what the selected mode will do, then the
+delegated identity, the PR checkbox and the CTA, whose label follows the mode. Tickets default to
+Break-Glass, anomalies to GitOps; once approved the control locks on the mode used. No mode
+controls anywhere on the cards. Verification badge uses `--cp-healthy` when all checks pass,
+`--cp-warning` if any check was skipped, `--cp-critical` on failure. The Path B CTA is full width
+and disabled until verification passes.
 
 ### System & Audit drawer
 Right-side sheet like the approval drawer, with three tabs: router savings, audit log and

@@ -18,8 +18,8 @@ verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 |---|---|
 | ![INC-4092 in ticket mode: summary and resolution plan, provenance pills, hover popover on the affected UPN](docs/screenshots/01-workbench-hover-popover.png) | ![Unified HCL diff, live Azure NSG vs the Terraform baseline](docs/screenshots/02-iac-diff-modal.png) |
 | **1 · Ticket mode + inline hover.** INC-4092's left pane opens with the Summary & Resolution Plan and the *Detected & Enriched Context* pills, coloured by provenance (amber licensing, rose identity / CA, violet Intune, teal Azure). Hovering Lynne's UPN opens the `HoverDiagnosticPopover` from the Muse Glimmer 30B cache: assigned vs expected SKU, assignment state, group memberships and the last AADSTS53003 block with its policy, plus `[Inspect Blocking CA Policy]` and `[Stage License Fix]`. | **2 · IaC diff.** The live `nsg-contoso-avd-hostpool-01` in Azure against `demo-iac/main.tf`: tag drift plus a rogue RDP rule open to `*`. |
-| ![Tier 3 approval drawer with Path A copy and dry-run proof and Path B delegated approval](docs/screenshots/03-tier3-approval-drawer.png) | ![ANOM-CA-204 tenant anomaly with the Conditional Access card expanded on its policies](docs/screenshots/04-tenant-anomaly-ca-policy.png) |
-| **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle and the pre-flight (PowerShell AST, static `-WhatIf` proof, `terraform fmt` + `validate`) says **Verified Safe**. Path A copies the script or the Terraform with a `[Dry-Run (-WhatIf) Verified]` badge; Path B approves and executes it via the delegated identity. The fix is staged on `fix/INC-4092-contoso-remediation`. | **4 · Tenant anomaly.** ANOM-CA-204: step 1 of the plan expands the Conditional Access card on its policy tab. CA-001 lacks the break-glass exclusion and CA-004 is still Report-Only. |
+| ![Tier 3 approval drawer with Path A copy and dry-run proof and Path B with the Break-Glass / GitOps switch](docs/screenshots/03-tier3-approval-drawer.png) | ![ANOM-CA-204 tenant anomaly with the Conditional Access card expanded on its policies](docs/screenshots/04-tenant-anomaly-ca-policy.png) |
+| **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle and the pre-flight (PowerShell AST, static `-WhatIf` proof, `terraform fmt` + `validate`) says **Verified Safe**. Path A copies the script or the Terraform with a `[Dry-Run (-WhatIf) Verified]` badge; Path B approves it as **Emergency Break-Glass** (live write + reconcile commit) or **Pure GitOps** (PR and sandbox plan only). The fix is staged on `fix/INC-4092-contoso-remediation`. | **4 · Tenant anomaly.** ANOM-CA-204: step 1 of the plan expands the Conditional Access card on its policy tab. CA-001 lacks the break-glass exclusion and CA-004 is still Report-Only; the CodeLens in the card header (`conditional-access/CA-001.json:L9-L11`) opens the diff against the golden baseline. |
 | ![ANOM-INT-309 hydrated from a pinned recipe with 0 LLM tokens, System & Audit drawer open](docs/screenshots/05-recipe-switch-system-audit.png) | |
 | **5 · Zero-token recipe switch.** The canvas pinned on ANOM-CA-204 re-hydrates ANOM-INT-309 (ASR rule in Audit, firewall conflict on 11 devices) through Tier 0 with 0 LLM tokens; the System & Audit drawer tallies the router savings per tier. | |
 
@@ -61,7 +61,7 @@ Open http://localhost:5173 and press the hotkeys in order (no keys needed for ev
 | `7` | Read the customer's screenshot with Muse Vision; the matching sign-in lights up (Tier 2 · Vision) |
 | `d` | The NSG drift as a unified diff |
 | `f` | Stage the fix: plan + PowerShell + Terraform, `-WhatIf` proof, sandbox-verified, staged on a git branch (Tier 3) |
-| `x` | Approve & Execute: the drifted users are fixed and every card turns emerald (Tier 0 push, 0 tokens) |
+| `x` | Approve as Emergency Break-Glass (the default for a ticket): the drifted users and the NSG are fixed live, the state is committed to the fix branch, every card turns emerald (Tier 0 push, 0 tokens) |
 | `3` `4` `5` | Tenant anomalies: orphaned E5 seats, the CA break-glass gap, Intune ASR / firewall drift; `e` runs step 1 of each plan |
 | `a` | System & Audit: delegated identity, Modal verification, AST / `-WhatIf` / `terraform validate`, branch, PR |
 | `p` then `2` | Pin the canvas and switch to INC-4099: Tier 0, 0 tokens |
@@ -85,13 +85,15 @@ hover cache that now ships in the repo.
 | **Tier 0** · View Recipe switch (server time) | 0–1 ms (2–6 ms wall) | 0 |
 | **Tier 1A** · Muse Glimmer 30B on a Modal L40S (open weights, llama.cpp) | 17.7 s cold boot from the Modal Volume → 29–44 tok/s per stream; 567–1,849 completion tokens per hover (reasoning + answer, median 880; the Contoso `AADSTS53003` hover is 1,097 tokens in 24.6 s), pre-computed on ticket ingest → served from the persistent cache in **1–2 ms** | 0 on hover |
 | **MCP gather** · live Microsoft Graph + Azure ARM, in-memory Bearer token cache + Graph `/$batch` | 0.16–0.65 s fresh | 0 |
-| **Tier 1B / 2** · cross-MCP layout correlation (`muse-spark-1.3`) | 0.67–0.86 s SSE `mcp_ready` first paint → 4–10 s full validated layout | ~10.5k |
+| **Tier 1B / 2** · cross-MCP layout correlation (`muse-spark-1.3`), `ptr://` descriptors instead of rows | 0.67–0.86 s SSE `mcp_ready` first paint → 4–8 s full validated layout | ~7.4k (was ~10.5k with rows in the prompt) |
 | **Voice** · `POST /v1/asr/transcribe` (16 kHz mono WAV) + intent routing | 1.6–2.6 s | 0 (deterministic intent) |
 | **Vision** · `muse-spark-1.3` reads the ticket screenshot | 3.4–5.3 s | ~2.9k |
 | **Tier 3B** · Modal pre-flight sandbox (`@modal.cls`, `TF_REATTACH_PROVIDERS`), in the container | 306–338 ms: pwsh AST 7–18 ms (persistent `pwsh`) · `terraform fmt` 38–47 ms · `terraform validate` 304–337 ms (warm `azurerm`), the last two in parallel | 0 |
 | **Tier 3B** · same pre-flight, round trip from Switzerland | 481–871 ms | 0 |
 | **Tier 3** · generate fix (`muse-wonder-1.0` plan + bundle, Modal pre-flight, git stage) | 16.5–18 s | ~13k |
 | **HITL approve** → 3 live Graph writes → zero-token canvas convergence | 1.3–1.75 s end to end | 0 |
+| **Break-Glass approve** (INC-4092) → 3 Graph writes + ARM rule delete and tag update, each polled to completion → reconcile commit | 3.6 s end to end | 0 |
+| **Pure GitOps approve** (ANOM-CA-204) → warm Modal pre-flight re-run, nothing written live | 0.34 s end to end | 0 |
 | **Reset demo drift** (3 live Graph PATCHes; the canvas reverts at once) | 0.56–1.3 s | 0 |
 
 ---
@@ -227,14 +229,68 @@ card *Settings* and *Devices*; the Azure card *Host pool*, *NSG* and *Azure Poli
 Anything that fails validation is dropped and the deterministic hydrator fills the gap,
 so the canvas is always complete and always typed.
 
+### The `ptr://` data-plane bypass
+
+No customer row ever travels through a model. When a scenario is gathered, the orchestrator
+publishes every row set its cards show under a deterministic pointer
+(`apps/orchestrator/src/local/dataplane.ts`):
+
+```
+ptr://inc-4092/entra/users        5 rows   assignmentState Drifted:3, Active:2 · currentSku SPE_E3:3, SPE_E5:2
+ptr://inc-4092/entra/signins      6 rows   status failure:3, success:3 · appDisplayName Azure Virtual Desktop:5, …
+ptr://inc-4092/iac/drift-diff     42 lines files 1 · hunks 2 · added 5 · removed 19
+ptr://anom-int-309/intune/devices 11 rows  complianceState Conflict:11
+```
+
+Tier 1B / 2 get the ticket text, one scalar fact sheet per source and these **schema-and-aggregate
+descriptors** (row count, columns, value counts of the low-cardinality columns; UPNs, names, IPs and
+timestamps are never aggregated). The forced tool schema (`HydrateLayoutModelArgsSchema`) types
+every row-set prop as `{ "dataPtr": "ptr://…" }`, so `muse-spark-1.3` answers with the pointer and
+the headline. Before the layout is streamed, `bindDataPlane()` binds each prop from the rows behind
+the card's own pointer and records them in the component's `dataPtrs`; a wrong pointer or inline
+rows are replaced and counted as `rejected`. Measured on INC-4092: 11 datasets, 66 rows and 10 KB
+kept out of the prompt, all 11 pointers bound with 0 rejected, the tool schema down from 30.3 KB to
+11.4 KB, and a full correlate from ~10.4k to ~7.4k tokens. `GET /api/dataplane/:scenarioId` lists
+the descriptors and `GET /api/dataplane?ptr=…` returns one pointer's rows. Tier 3 still sees the
+full context, because its PowerShell has to name the users and policies it changes.
+
+### Git line provenance
+
+Every drift card cites the lines in this repository that declare what the tenant should look like,
+as a monospaced CodeLens in its header that opens the exact diff:
+
+- **AVD Host Pool / NSG:** the `azurerm_network_security_group` block, located by the HCL reader
+  (`demo-iac/main.tf:L43-L84`); the badge opens the live-vs-Terraform HCL diff.
+- **Conditional Access (ANOM-CA-204):** each drifted field of CA-001 / CA-004 in
+  [`golden-tenant/entra/conditional-access/`](./golden-tenant), located by a position-tracking JSON
+  parser (`CA-001.json:L9-L11` for `excludeGroups`).
+- **Intune (ANOM-INT-309, INC-4099):** the drifted setting in `golden-tenant/intune/…`, and the
+  profile assignments the baseline pins.
+
+For the policy cards the badge opens a unified diff of the live Graph object, rendered the same way
+as the golden file, against that file, so the hunk headers carry the real line numbers. The same
+references appear in the PR body under *Declared in*, linked to `#L43-L84` on GitHub.
+
 ### Approval, zero-token convergence and the audit ledger
 
-`POST /api/remediate/approve` (alias `/api/approve`) is the only path that changes a tenant.
-In `LIVE_CLOUD_MODE` it applies the scenario's lab write:
+`POST /api/remediate/approve` (alias `/api/approve`) is the only path that changes a tenant. A
+segmented switch above the drawer's footer picks how the approval lands (`mode` in the request):
+
+| Mode | Live tenant | Git | Canvas |
+|---|---|---|---|
+| ⚡ **Emergency Break-Glass** (Direct API + Auto-Reconcile PR), default for a ticket | The scenario's lab write below, now | A reconcile commit on top of the staged one, on the same `fix/*` branch: `demo-iac/remediations/<id>/reconciled-state.json` with every live write, the Graph request bodies, the ARM operations and the *Declared in* line refs | Converges to emerald |
+| 🔀 **Pure GitOps** (Stage PR & Modal Plan Only), default for an anomaly | Nothing | The staged patch; the warm Modal pre-flight (pwsh AST, `terraform validate` when there is IaC) re-runs against the state of that moment, and a failure stops the approval | Stays drifted until the pipeline deploys; approval state `staged` |
+
+Either way the GitHub PR is opened or updated only when **Open GitHub PR on approval** is ticked;
+otherwise the branch stays local. In `LIVE_CLOUD_MODE` a break-glass approval applies the scenario's
+lab write:
 
 - **INC-4092 / ANOM-LIC-101:** PATCH the users' `com.contextpane.licenseState` open extension
   (SPE_E5 for the drifted users, reclaimed seats for the leavers), the lab's stand-in for the
-  license itself. SKU pools are read live from `subscribedSkus`.
+  license itself. SKU pools are read live from `subscribedSkus`. For INC-4092 the live NSG is put
+  back to the Terraform baseline over ARM with the Az token at the same time (rogue rules deleted,
+  tags restored, each long-running operation followed to completion); Reset Drift re-creates the
+  seeded drift from the manifest.
 - **ANOM-CA-204:** PATCH CA-001 to exclude `SG-BreakGlass-Accounts` and switch CA-004 to enabled.
 - **ANOM-INT-309:** flip the ASR LSASS rule from Audit to Block (Settings Catalog GET + PUT) and
   unassign the duplicate `Win11-Firewall-MDM` profile.
@@ -253,10 +309,10 @@ one PR per scenario instead of opening duplicates
 
 The drawer offers two paths. **Path A** copies the PowerShell, the Terraform or the Graph JSON for an
 engineer to run by hand; its `[Dry-Run (-WhatIf) Verified]` badge means the pre-flight proved every
-mutating cmdlet is guarded by `ShouldProcess`. **Path B** is *Approve & Execute via Delegated
-Identity*, with the PR checkbox.
+mutating cmdlet is guarded by `ShouldProcess`. **Path B** approves in the selected mode, with the PR
+checkbox.
 
-The orchestrator then pushes `notifications/resources/updated` over `/ws`. The workbench
+After a break-glass approval the orchestrator pushes `notifications/resources/updated` over `/ws`. The workbench
 overlays `convergeLayout()` from `packages/catalog` on the mounted canvas, so every card of the
 scenario turns emerald with 0 LLM tokens (license pools adjust, CA policies take their fixed state,
 Intune settings fall in sync and devices turn Compliant, the NSG and Azure Policy go Compliant),
@@ -273,7 +329,7 @@ approval drawer, because a change only ever runs through the HITL path.
 
 Every pre-flight verification, approval or rejection and reset is appended to
 `data/audit-log.json` as `{ id, timestamp, tenantId, ticketId, actionType, delegatedIdentity,
-modalSandboxVerified, astPass, tfValidatePass, gitBranch, prUrl, latencyMs }` (never a secret or
+modalSandboxVerified, astPass, tfValidatePass, gitBranch, prUrl, latencyMs, execution, executionMode }` (never a secret or
 token) and listed in the **System & Audit** drawer next to the router savings and the provider
 status (`GET /api/audit`).
 
@@ -296,6 +352,7 @@ contextpane/
 ├── demo-iac/
 │   ├── main.tf                   Expected clean Terraform baseline (Contoso Finance AVD)
 │   └── demo-lab-manifest.json    Deterministic offline telemetry, rewritten by the seed script
+├── golden-tenant/                Golden CA and Intune baseline (JSON) the drift cards cite by line
 ├── scripts/                      PowerShell 7 only
 │   ├── Install-ContextPaneModules.ps1   Az + Microsoft.Graph submodules via ModuleFast (Justin Grote)
 │   ├── Set-ContextPaneRouterConfig.ps1
@@ -426,7 +483,7 @@ pwsh -NoProfile -File ./scripts/Publish-ContextPaneRepo.ps1 -NormalizeTimestamps
   `gh repo create contextpane --public --source . --remote origin --push`.
 - Once `origin` exists, the Tier 3 drawer can open a real pull request: tick
   **Open GitHub PR on approval** (or set `CTX_GH_PR_ON_APPROVE=true`) and
-  `[Approve & Execute]` force-pushes the approved commit to the scenario's canonical branch
+  `[Approve]` (either mode) force-pushes the approved commit to the scenario's canonical branch
   (`fix/INC-4092-contoso-remediation`) and returns the open PR for it, or runs
   `gh pr create --base $CTX_GH_PR_BASE` when there is none. Without a remote the approval behaves as before.
 
@@ -442,9 +499,9 @@ Press `?` in the workbench for the overlay.
 | `m` | Switch Tickets / Tenant Anomalies |
 | `h` | Hover the hero entity → Tier 1A diagnostic popover |
 | `e` | Run step 1 of the resolution plan (its card expands on the right tab) |
-| `d` | Unified HCL diff, Azure live state vs `demo-iac/main.tf` |
+| `d` | The scenario's diff: live NSG vs `demo-iac/main.tf`, or live CA / Intune vs `golden-tenant/` |
 | `f` | Stage the fix → Tier 3 drawer with verification badge and staged branch |
-| `x` | Approve & Execute via Delegated Identity (HITL) |
+| `x` | Approve in the drawer's mode: Emergency Break-Glass or Pure GitOps (HITL) |
 | `7` | Extract telemetry from the ticket screenshot with Muse Vision (Tier 2 · Vision) |
 | `p` | Pin / release the canvas as a View Recipe (0 tokens on the next scenario switch) |
 | `v` | Voice Steer panel (record, or type a command) |
@@ -498,7 +555,14 @@ GET /api/telemetry/stats                                   OK                   
 - **Correlate:** ~4-5.5 s for the layout, but the SSE stream sends `mcp_ready` with the
   deterministic layout built from the MCP data first (~0.7-1 s in the workbench). The model reasons over the context but leaves the verbatim MCP
   data (license users, sign-in events, HCL diff) for the orchestrator to fill in before Zod
-  validation, which cut the layout output from ~9k to ~3k characters.
+  validation, which cut the layout output from ~9k to ~3k characters. Since the `ptr://` bypass the
+  prompt carries descriptors instead of those rows too: 7,382-7,443 tokens per INC-4092 correlate
+  instead of 10,409, with all 11 pointers bound and none rejected.
+- **Execution modes** (2026-10-26, `-Mode` on the smoke test): INC-4092 break-glass passed 15/15
+  (approve 3.6 s: 3 Graph writes at HTTP 204, ARM `DELETE Allow-Temp-RDP-Diagnostic-Drift` 202 and
+  the tag update 200, reconcile commit on the fix branch; reset re-created the rule in 3.5 s);
+  ANOM-CA-204 GitOps passed 13/13 (approve 337 ms including the Modal re-run, approval state
+  `staged`, no convergence, nothing written live).
 - **Remediate:** ~15-18 s, almost all of it `muse-wonder-1.0`. The Modal pre-flight takes
   670-770 ms round trip from Europe to us-east (350-420 ms inside the sandbox: AST ~10 ms,
   `fmt` ~40 ms, `validate` ~300 ms, run concurrently), down from 5.5-7 s, because the container
