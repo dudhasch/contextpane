@@ -4,8 +4,8 @@ import {
   EntraSignInTimelineSchema,
   HoverDiagnosticPopoverSchema,
   IaCDriftBannerSchema,
+  IntuneDriftCardSchema,
   LicenseDriftCardSchema,
-  TenantSummaryHeaderSchema,
 } from "./components.ts";
 import { IsoTimestampSchema, ProviderIdSchema, RouterTierSchema } from "./primitives.ts";
 
@@ -14,9 +14,9 @@ import { IsoTimestampSchema, ProviderIdSchema, RouterTierSchema } from "./primit
  * generic "markdown" or "text" component on purpose.
  */
 export const COMPONENT_TYPES = [
-  "TenantSummaryHeader",
   "LicenseDriftCard",
   "EntraSignInTimeline",
+  "IntuneDriftCard",
   "IaCDriftBanner",
   "HoverDiagnosticPopover",
   "ActionApprovalDrawer",
@@ -24,15 +24,28 @@ export const COMPONENT_TYPES = [
 export const ComponentTypeSchema = z.enum(COMPONENT_TYPES);
 export type ComponentType = z.infer<typeof ComponentTypeSchema>;
 
+/** The four cards a layout can pin to the canvas (the popover and the drawer come from their own tiers). */
+export const CANVAS_COMPONENT_TYPES = ["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner"] as const;
+export type CanvasComponentType = (typeof CANVAS_COMPONENT_TYPES)[number];
+
+export function isCanvasComponentType(value: unknown): value is CanvasComponentType {
+  return typeof value === "string" && (CANVAS_COMPONENT_TYPES as readonly string[]).includes(value);
+}
+
 const componentId = z.string().min(1).describe("Stable id for React keys and pinning, kebab-case.");
+const triggeredBy = z
+  .array(z.string())
+  .max(8)
+  .default([])
+  .describe("Ids of the left-pane entities that spawned this card (UPNs, SKUs, policy names, resources)");
 
 export const LayoutComponentSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("TenantSummaryHeader"), id: componentId, props: TenantSummaryHeaderSchema }),
-  z.object({ type: z.literal("LicenseDriftCard"), id: componentId, props: LicenseDriftCardSchema }),
-  z.object({ type: z.literal("EntraSignInTimeline"), id: componentId, props: EntraSignInTimelineSchema }),
-  z.object({ type: z.literal("IaCDriftBanner"), id: componentId, props: IaCDriftBannerSchema }),
-  z.object({ type: z.literal("HoverDiagnosticPopover"), id: componentId, props: HoverDiagnosticPopoverSchema }),
-  z.object({ type: z.literal("ActionApprovalDrawer"), id: componentId, props: ActionApprovalDrawerSchema }),
+  z.object({ type: z.literal("LicenseDriftCard"), id: componentId, triggeredBy, props: LicenseDriftCardSchema }),
+  z.object({ type: z.literal("EntraSignInTimeline"), id: componentId, triggeredBy, props: EntraSignInTimelineSchema }),
+  z.object({ type: z.literal("IntuneDriftCard"), id: componentId, triggeredBy, props: IntuneDriftCardSchema }),
+  z.object({ type: z.literal("IaCDriftBanner"), id: componentId, triggeredBy, props: IaCDriftBannerSchema }),
+  z.object({ type: z.literal("HoverDiagnosticPopover"), id: componentId, triggeredBy, props: HoverDiagnosticPopoverSchema }),
+  z.object({ type: z.literal("ActionApprovalDrawer"), id: componentId, triggeredBy, props: ActionApprovalDrawerSchema }),
 ]);
 export type LayoutComponent = z.infer<typeof LayoutComponentSchema>;
 
@@ -63,7 +76,7 @@ export type Provenance = z.infer<typeof ProvenanceSchema>;
  */
 export const HydrateLayoutArgsSchema = z.object({
   tenantId: z.string().describe("Tenant the layout is for, e.g. tenant-contoso-01"),
-  ticketId: z.string().describe("ERP ticket that triggered the correlation, e.g. INC-4092"),
+  ticketId: z.string().describe("Scenario that triggered the correlation: an ERP ticket (INC-4092) or a tenant anomaly (ANOM-LIC-101)"),
   components: z
     .array(LayoutComponentSchema)
     .min(1)

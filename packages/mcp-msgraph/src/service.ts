@@ -1,14 +1,43 @@
-import { KNOWN_APP_IDS, lookupAadsts, toAadstsLabel } from "@contextpane/catalog";
-import { randomInt } from "node:crypto";
 import {
-  createTemporaryAccessPassLive,
+  KNOWN_APP_IDS,
+  lookupAadsts,
+  toAadstsLabel,
+  type CaPolicyInspector,
+  type GroupLicenseError,
+  type IntuneDevice,
+  type IntunePolicyRef,
+  type IntuneSettingDrift,
+  type LicenseDriftUser,
+  type SkuPool,
+} from "@contextpane/catalog";
+import {
+  CA_POSTURE,
+  INTUNE_SCENARIOS,
+  LICENSE_ANOMALY,
+  caAuditEvents,
+  legacySignIns,
+  type CaGoldenPolicy,
+  type DirectoryAuditEvent,
+  type IntuneScenarioFixture,
+  type IntuneScenarioKey,
+  type LicenseAnomalyUser,
+} from "./fixtures.ts";
+import {
+  GraphHttpError,
+  assignDeviceConfigurationLive,
+  fetchCaPostureLive,
   fetchConditionalAccessPoliciesLive,
   fetchGraphContextLive,
   fetchGroupMembersLive,
+  fetchIntuneStateLive,
+  fetchLabUsersLive,
   fetchSignInEventsLive,
   fetchSubscribedSkusLive,
+  patchCaPolicyLive,
   patchLicenseExtensionsLive,
+  setAsrRuleLive,
   type ExtensionPatchResult,
+  type LiveIntuneState,
 } from "./live.ts";
 import { getManifestTenant, type ManifestCaPolicy, type ManifestSignIn, type ManifestTenant, type ManifestUser } from "./manifest.ts";
 import { isLiveCloudMode } from "./pwsh.ts";
@@ -153,21 +182,253 @@ export interface LicenseWriteResult {
   results: ExtensionPatchResult[];
 }
 
-export interface TemporaryAccessPassResult {
-  upn: string;
-  source: "live-graph" | "simulated-fallback";
-  fallbackReason?: string;
-  temporaryAccessPass: string;
-  lifetimeInMinutes: number;
-  isUsableOnce: boolean;
-  startDateTime: string;
-  methodId: string | null;
-  latencyMs: number;
+/* -------------------------------------------------------------------------- */
+/* Licensing, Conditional Access and Intune scenarios                          */
+/* -------------------------------------------------------------------------- */
+
+export interface LicenseInventory {
+  sku: { skuPartNumber: string; skuName: string };
+  groupName: string;
+  skuPools: SkuPool[];
+  groupErrors: GroupLicenseError[];
+  users: LicenseDriftUser[];
 }
 
-/** Shape of a real TAP (readable, one-time) for when the tenant's TAP policy or token scope refuses the live call. */
-function fallbackTapCode(): string {
-  return `tap-${randomInt(1000, 10000)}-ctx#`;
+export interface CaPosture {
+  policies: CaPolicyInspector[];
+  breakGlassGroup: string;
+  breakGlassAccount: string;
+  goldenSource: string;
+  legacySignIns: SignInSummary[];
+  auditEvents: DirectoryAuditEvent[];
+}
+
+export interface IntuneDrift {
+  issueKind: IntuneScenarioFixture["issueKind"];
+  errorCode?: string;
+  errorMeaning?: string;
+  goldenSource: string;
+  policies: IntunePolicyRef[];
+  settings: IntuneSettingDrift[];
+  devices: IntuneDevice[];
+  affectedDeviceCount: number;
+  /** True when the live tenant already matches the golden baseline (the fix was applied). */
+  resolved: boolean;
+}
+
+/** Outcome of a Conditional Access or Intune write: one row per policy. */
+export interface LabWriteResult {
+  source: "live-graph" | "simulated";
+  fallbackReason?: string;
+  latencyMs: number;
+  results: Array<{ id: string; ok: boolean; status: number; error?: string }>;
+}
+
+function simulatedWrite(ids: string[], fallbackReason: string, started: number): LabWriteResult {
+  return { source: "simulated", fallbackReason, latencyMs: Math.round(performance.now() - started), results: ids.map((id) => ({ id, ok: true, status: 0 })) };
+}
+
+async function writeExtensions(tenantId: string, upns: string[], fields: (upn: string) => Record<string, string>): Promise<LicenseWriteResult> {
+  const started = performance.now();
+  const simulated = (fallbackReason: string): LicenseWriteResult => ({
+    source: "simulated",
+    fallbackReason,
+    latencyMs: Math.round(performance.now() - started),
+    results: upns.map((upn) => ({ upn, ok: true, status: 0 })),
+  });
+  if (!isLiveCloudMode()) return simulated("LIVE_CLOUD_MODE=false");
+  if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulated(`${tenantId} is manifest-only`);
+  try {
+    const stamp = new Date().toISOString();
+    const results = await patchLicenseExtensionsLive(upns, (upn) => ({ ...fields(upn), lastSyncedAt: stamp }), LIVE_TIMEOUT_MS);
+    if (results.length && results.every((r) => r.status === 404)) return simulated("lab users not found in the live tenant (seed the lab first)");
+    return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
+  } catch (error) {
+    return simulated(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function licenseAnomalyFields(u: LicenseAnomalyUser, state: LabLicenseState): Record<string, string> {
+  const sku = LICENSE_ANOMALY.sku.skuPartNumber;
+  if (u.role === "orphaned") {
+    return state === "remediated"
+      ? { currentSku: "NONE", expectedSku: "NONE", assignmentState: "Reclaimed", assignmentPath: "None", driftStatus: "compliant" }
+      : { currentSku: u.heldSkus.join(", "), expectedSku: "NONE", assignmentState: "Orphaned", assignmentPath: u.assignmentPath, driftStatus: "drifted" };
+  }
+  return state === "remediated"
+    ? { currentSku: sku, expectedSku: sku, assignmentState: "Active", assignmentPath: "Group", driftStatus: "compliant" }
+    : { currentSku: "NONE", expectedSku: sku, assignmentState: "Error: CountViolation", assignmentPath: "Group", driftStatus: "unassigned" };
+}
+
+const ASSIGNMENT_STATES = new Set<string>(["Active", "Error: CountViolation", "Drifted", "Orphaned", "Reclaimed"]);
+const ASSIGNMENT_PATHS = new Set<string>(["Direct", "Group", "Direct + Group", "None"]);
+const DRIFT_STATUSES = new Set<string>(["compliant", "drifted", "unassigned"]);
+
+async function licenseAnomalyInventory(): Promise<GraphResult<LicenseInventory>> {
+  const done = envelope<LicenseInventory>(performance.now());
+  const build = (live: Map<string, Awaited<ReturnType<typeof fetchLabUsersLive>>[number]>): LicenseInventory => {
+    const users: LicenseDriftUser[] = LICENSE_ANOMALY.users.map((u) => {
+      const fixture = licenseAnomalyFields(u, "drifted");
+      const found = live.get(u.upn.toLowerCase());
+      const ext = (found?.extension ?? {}) as Record<string, unknown>;
+      const pick = (key: string, allowed?: Set<string>) => (typeof ext[key] === "string" && (!allowed || allowed.has(ext[key] as string)) ? (ext[key] as string) : fixture[key]!);
+      return {
+        upn: u.upn,
+        displayName: found?.displayName ?? u.displayName,
+        jobTitle: found?.jobTitle ?? u.jobTitle,
+        accountEnabled: found ? found.accountEnabled : u.accountEnabled,
+        lastSignIn: u.lastSignIn,
+        currentSku: pick("currentSku"),
+        expectedSku: pick("expectedSku"),
+        assignmentPath: pick("assignmentPath", ASSIGNMENT_PATHS) as LicenseDriftUser["assignmentPath"],
+        assignmentState: pick("assignmentState", ASSIGNMENT_STATES) as LicenseDriftUser["assignmentState"],
+        driftStatus: pick("driftStatus", DRIFT_STATUSES) as LicenseDriftUser["driftStatus"],
+        ...(found ? { objectId: found.objectId } : {}),
+      };
+    });
+    const holding = (sku: string) => users.filter((u) => u.currentSku.split(",").map((s) => s.trim()).includes(sku)).length;
+    const skuPools: SkuPool[] = LICENSE_ANOMALY.pools.map((p) => {
+      const consumed = p.othersConsumed + holding(p.skuPartNumber);
+      const orphaned = users.filter((u) => !u.accountEnabled && u.currentSku.includes(p.skuPartNumber)).length;
+      return {
+        skuPartNumber: p.skuPartNumber,
+        skuName: p.skuName,
+        enabled: p.enabled,
+        consumed,
+        available: p.enabled - consumed,
+        ...(orphaned ? { note: `${orphaned} held by disabled accounts` } : {}),
+        source: "fixture",
+      };
+    });
+    const failed = users.filter((u) => u.assignmentState === "Error: CountViolation");
+    const pool = skuPools[0]!;
+    return {
+      sku: LICENSE_ANOMALY.sku,
+      groupName: LICENSE_ANOMALY.groupName,
+      skuPools,
+      groupErrors: failed.length
+        ? [
+            {
+              groupName: LICENSE_ANOMALY.groupName,
+              skuPartNumber: pool.skuPartNumber,
+              state: "CountViolation",
+              affectedUsers: failed.length,
+              detail: `${pool.consumed}/${pool.enabled} ${pool.skuPartNumber} seats consumed, ${Math.max(0, pool.available)} available: group-based licensing could not assign ${pool.skuPartNumber} to ${failed.length} members`,
+            },
+          ]
+        : [],
+      users,
+    };
+  };
+  if (!isLiveCloudMode()) return done(build(new Map()), "seeded-manifest");
+  try {
+    const live = await fetchLabUsersLive(
+      LICENSE_ANOMALY.users.map((u) => u.upn),
+      LIVE_TIMEOUT_MS,
+    );
+    const seeded = live.filter((u) => u.extension);
+    if (seeded.length === 0) return done(build(new Map()), "seeded-manifest", "ANOM-LIC-101 users not found in the live tenant (seed the lab first)");
+    return done(build(new Map(live.map((u) => [u.upn.toLowerCase(), u]))), "live-graph", seeded.length < LICENSE_ANOMALY.users.length ? `${LICENSE_ANOMALY.users.length - seeded.length} of ${LICENSE_ANOMALY.users.length} users not seeded` : undefined);
+  } catch (error) {
+    return done(build(new Map()), "seeded-manifest", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function normaliseCaState(state: string): CaPolicyInspector["state"] {
+  return state === "enabled" || state === "disabled" ? state : "enabledForReportingButNotEnforced";
+}
+
+function inspectCaPolicy(
+  g: CaGoldenPolicy,
+  live: { id: string; state: CaPolicyInspector["state"]; includeGroups: string[]; excludeGroups: string[]; modifiedDateTime: string | null },
+): CaPolicyInspector {
+  const drift: CaPolicyInspector["drift"] = [];
+  if (live.state !== g.golden.state) {
+    drift.push({ field: "state", expected: g.golden.state, actual: live.state, severity: g.key === "CA-004" ? "high" : "critical" });
+  }
+  const missing = g.golden.excludeGroups.filter((x) => !live.excludeGroups.includes(x));
+  if (missing.length) {
+    drift.push({ field: "conditions.users.excludeGroups", expected: g.golden.excludeGroups.join(", "), actual: live.excludeGroups.join(", ") || "(none)", severity: "critical" });
+  }
+  return {
+    id: live.id,
+    displayName: g.displayName,
+    state: live.state,
+    role: drift.length ? "drifted" : "in-scope",
+    includeGroups: live.includeGroups,
+    excludeGroups: live.excludeGroups,
+    targetApps: g.targetApps,
+    clientAppTypes: g.clientAppTypes,
+    grantControls: g.grantControls,
+    drift,
+    fixedState: g.golden.state,
+    fixedExcludeGroups: [...new Set([...live.excludeGroups, ...g.golden.excludeGroups])],
+    modifiedDateTime: live.modifiedDateTime,
+  };
+}
+
+function caPosture(policies: CaPolicyInspector[]): CaPosture {
+  const now = Date.now();
+  return {
+    policies,
+    breakGlassGroup: CA_POSTURE.breakGlassGroup,
+    breakGlassAccount: CA_POSTURE.breakGlassAccount,
+    goldenSource: CA_POSTURE.goldenSource,
+    auditEvents: caAuditEvents(now),
+    legacySignIns: legacySignIns().map((e, i) => ({
+      id: `sgn-legacy-${(i + 1).toString().padStart(4, "0")}`,
+      timestamp: new Date(now - e.hoursAgo * 3_600_000).toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: e.upn,
+      displayName: e.displayName,
+      appId: "00000002-0000-0ff1-ce00-000000000000",
+      appDisplayName: "Office 365 Exchange Online",
+      status: "success",
+      errorCode: 0,
+      conditionalAccessStatus: "notApplied",
+      // Report-only: the would-be block shows up in the policy result, not in the sign-in status.
+      blockingPolicyName: undefined,
+      clientApp: e.clientApp,
+      location: e.location,
+      ipAddress: e.ipAddress,
+      deviceName: "",
+      deviceCompliant: null,
+    })),
+  };
+}
+
+const capitalise = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
+
+function intuneDrift(fixture: IntuneScenarioFixture, live: LiveIntuneState | null): IntuneDrift {
+  const probe = fixture.live;
+  const asrFixed = live && probe.asrPolicy ? live.asrRuleValue === "block" : false;
+  const conflictFixed = live ? live.conflictingProfileAssigned === false : false;
+  const resolved = Boolean(live) && (!probe.asrPolicy || asrFixed) && conflictFixed;
+  const settings = fixture.settings.map((s): IntuneSettingDrift => {
+    if (!live) return s;
+    if (s.settingId === "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2") {
+      const value = live.asrRuleValue ? capitalise(live.asrRuleValue) : s.live;
+      return { ...s, live: value, status: value === s.golden ? "in-sync" : "drifted" };
+    }
+    if (s.status === "conflict") return conflictFixed ? { ...s, live: s.golden, status: "in-sync" } : s;
+    return resolved ? { ...s, live: s.golden, status: "in-sync" } : s;
+  });
+  const policies = fixture.policies.map((p): IntunePolicyRef => {
+    const isLive = Boolean(live) && ((p.name === probe.asrPolicy && live!.asrPolicyId) || (p.name === probe.conflictingProfile && live!.conflictingProfileId));
+    const unassigned = p.name === probe.conflictingProfile && conflictFixed;
+    return { ...p, assignedTo: unassigned ? [] : p.assignedTo, source: isLive ? "live-graph" : "fixture" };
+  });
+  const devices = resolved ? fixture.devices.map((d) => ({ ...d, complianceState: "Compliant" as const, detail: "Re-evaluated after the policy fix" })) : fixture.devices;
+  return {
+    issueKind: fixture.issueKind,
+    ...(fixture.errorCode ? { errorCode: fixture.errorCode } : {}),
+    ...(fixture.errorMeaning ? { errorMeaning: fixture.errorMeaning } : {}),
+    goldenSource: fixture.goldenSource,
+    policies,
+    settings,
+    devices,
+    affectedDeviceCount: devices.filter((d) => d.complianceState !== "Compliant").length,
+    resolved,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -474,36 +735,199 @@ export const msgraphService = {
     }
   },
 
-  /** Live TAP when the tenant allows it, otherwise a clearly-labelled fallback with the same shape. */
-  async issueTemporaryAccessPass(tenantId: string, upn: string, lifetimeInMinutes = 60, isUsableOnce = true): Promise<TemporaryAccessPassResult> {
+  /**
+   * SKU pools, group-licensing errors and per-user assignment state for a License Pool &
+   * Assignment card. Tickets read the entitlement group (open extension) and the live
+   * subscribedSkus; ANOM-LIC-101 reads its seeded users and keeps the 15/15 pool a fixture.
+   */
+  async getLicenseInventory(tenantId: string, scenarioId?: string): Promise<GraphResult<LicenseInventory>> {
+    if (scenarioId === "ANOM-LIC-101") return licenseAnomalyInventory();
     const started = performance.now();
-    const fallback = (fallbackReason: string): TemporaryAccessPassResult => ({
-      upn,
-      source: "simulated-fallback",
-      fallbackReason,
-      temporaryAccessPass: fallbackTapCode(),
-      lifetimeInMinutes,
-      isUsableOnce,
-      startDateTime: new Date().toISOString(),
-      methodId: null,
+    const license = await msgraphService.getLicenseState(tenantId);
+    const tenant = getManifestTenant(tenantId);
+    const lic = license.data;
+    const users: LicenseDriftUser[] = lic.users.map((u) => ({
+      upn: u.upn,
+      displayName: u.displayName,
+      jobTitle: u.jobTitle,
+      accountEnabled: true,
+      currentSku: u.currentSku,
+      expectedSku: u.expectedSku,
+      assignmentPath: "Group",
+      assignmentState: u.driftStatus === "compliant" ? "Active" : "Drifted",
+      driftStatus: u.driftStatus,
+      objectId: u.objectId,
+    }));
+    const onLegacy = users.filter((u) => u.currentSku === lic.sku.legacySkuPartNumber).length;
+    const fixturePools: SkuPool[] = [
+      {
+        skuPartNumber: lic.sku.skuPartNumber,
+        skuName: lic.sku.skuName,
+        enabled: tenant.licenses.erpBilledCount,
+        consumed: lic.entraAssignedCount,
+        available: tenant.licenses.erpBilledCount - lic.entraAssignedCount,
+        note: `entitlement of ${lic.group.displayName}`,
+        source: "fixture",
+      },
+      {
+        skuPartNumber: lic.sku.legacySkuPartNumber,
+        skuName: lic.sku.legacySkuPartNumber === "SPE_E3" ? "Microsoft 365 E3" : lic.sku.legacySkuPartNumber,
+        enabled: onLegacy + 2,
+        consumed: onLegacy,
+        available: 2,
+        note: onLegacy ? `${onLegacy} assigned to ${lic.group.displayName.replace(/^SG-/, "")} users` : "none assigned to the group",
+        source: "fixture",
+      },
+    ];
+    let skuPools = fixturePools;
+    let fallbackReason = license.fallbackReason;
+    if (license.source === "live-graph") {
+      try {
+        const live = await fetchSubscribedSkusLive(primaryGroup(tenant).objectId, LIVE_TIMEOUT_MS);
+        skuPools = fixturePools.map((p) => {
+          const s = live.find((x) => x.skuPartNumber === p.skuPartNumber);
+          return s ? { ...p, enabled: s.enabledUnits, consumed: s.consumedUnits, available: s.enabledUnits - s.consumedUnits, source: "live-graph" as const } : p;
+        });
+      } catch (error) {
+        fallbackReason = error instanceof Error ? error.message : String(error);
+      }
+    }
+    return {
+      source: license.source,
+      liveCloudMode: isLiveCloudMode(),
+      ...(fallbackReason ? { fallbackReason } : {}),
+      fetchedAt: new Date().toISOString(),
       latencyMs: Math.round(performance.now() - started),
-    });
-    if (!isLiveCloudMode()) return fallback("LIVE_CLOUD_MODE=false");
-    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return fallback(`${tenantId} is manifest-only`);
+      data: { sku: { skuPartNumber: lic.sku.skuPartNumber, skuName: lic.sku.skuName }, groupName: lic.group.displayName, skuPools, groupErrors: [], users },
+    };
+  },
+
+  /** ANOM-CA-204: the demo CA policies against their golden baseline, the break-glass group and the legacy sign-ins CA-004 only reported. */
+  async getCaPosture(tenantId: string): Promise<GraphResult<CaPosture>> {
+    const groupNames = [CA_POSTURE.breakGlassGroup, CA_POSTURE.adminGroup, CA_POSTURE.legacyAuthScopeGroup];
+    const live = async (): Promise<CaPosture> => {
+      const posture = await fetchCaPostureLive(groupNames, LIVE_TIMEOUT_MS);
+      const nameById = new Map([...posture.groupIds].map(([name, id]) => [id, name]));
+      const policies = CA_POSTURE.policies.map((g) => {
+        const p = posture.policies.find((x) => x.displayName === g.displayName);
+        if (!p) throw new Error(`'${g.displayName}' not found in the live tenant (seed the lab first)`);
+        return inspectCaPolicy(g, {
+          id: p.id,
+          state: normaliseCaState(p.state),
+          includeGroups: p.includeGroups.map((id) => nameById.get(id) ?? id),
+          excludeGroups: p.excludeGroups.map((id) => nameById.get(id) ?? id),
+          modifiedDateTime: p.modifiedDateTime,
+        });
+      });
+      return caPosture(policies);
+    };
+    const fallback = () =>
+      caPosture(
+        CA_POSTURE.policies.map((g, i) =>
+          inspectCaPolicy(g, { id: `ca-demo-00${i === 0 ? 1 : 4}`, state: g.drifted.state, includeGroups: g.includeGroups, excludeGroups: g.drifted.excludeGroups, modifiedDateTime: caAuditEvents()[i]?.at ?? null }),
+        ),
+      );
+    return withSource(tenantId, live, fallback);
+  },
+
+  /** ANOM-INT-309 / INC-4099: Intune policy drift against the golden baseline. The demo Intune objects live in the lab tenant for both. */
+  async getIntuneDrift(key: IntuneScenarioKey): Promise<GraphResult<IntuneDrift>> {
+    const done = envelope<IntuneDrift>(performance.now());
+    const fixture = INTUNE_SCENARIOS[key];
+    if (!isLiveCloudMode()) return done(intuneDrift(fixture, null), "seeded-manifest");
     try {
-      const tap = await createTemporaryAccessPassLive(upn, lifetimeInMinutes, isUsableOnce, LIVE_TIMEOUT_MS);
-      return {
-        upn,
-        source: "live-graph",
-        temporaryAccessPass: tap.temporaryAccessPass,
-        lifetimeInMinutes: tap.lifetimeInMinutes,
-        isUsableOnce: tap.isUsableOnce,
-        startDateTime: tap.startDateTime,
-        methodId: tap.id || null,
-        latencyMs: Math.round(performance.now() - started),
-      };
+      return done(intuneDrift(fixture, await fetchIntuneStateLive(fixture.live, LIVE_TIMEOUT_MS)), "live-graph");
     } catch (error) {
-      return fallback(error instanceof Error ? error.message : String(error));
+      const reason = error instanceof Error ? error.message : String(error);
+      return done(intuneDrift(fixture, null), "seeded-manifest", reason);
+    }
+  },
+
+  /** Writes the ANOM-LIC-101 users' extension: seats reclaimed + new hires active, or back to the CountViolation state. */
+  async setLicenseAnomalyState(state: LabLicenseState): Promise<LicenseWriteResult> {
+    const users = LICENSE_ANOMALY.users;
+    return writeExtensions(
+      "tenant-contoso-01",
+      users.map((u) => u.upn),
+      (upn) => licenseAnomalyFields(users.find((u) => u.upn === upn)!, state),
+    );
+  },
+
+  /** ANOM-CA-204 fix (remediated) or the demo drift (drifted) on CA-001 / CA-004, via the delegated Connect-MgGraph token. */
+  async setCaPostureState(state: LabLicenseState): Promise<LabWriteResult> {
+    const started = performance.now();
+    const ids = CA_POSTURE.policies.map((p) => p.key);
+    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    try {
+      const posture = await fetchCaPostureLive([CA_POSTURE.breakGlassGroup], LIVE_TIMEOUT_MS);
+      const results: LabWriteResult["results"] = [];
+      for (const g of CA_POSTURE.policies) {
+        const p = posture.policies.find((x) => x.displayName === g.displayName);
+        if (!p) throw new Error(`'${g.displayName}' not found in the live tenant (seed the lab first)`);
+        const target = state === "remediated" ? g.golden : g.drifted;
+        const excludeGroups = target.excludeGroups.map((name) => {
+          const id = posture.groupIds.get(name);
+          if (!id) throw new Error(`group ${name} not found in the live tenant (seed the lab first)`);
+          return id;
+        });
+        try {
+          await patchCaPolicyLive(
+            p.id,
+            {
+              state: target.state,
+              conditions: {
+                users: { includeGroups: p.includeGroups, includeUsers: p.includeUsers, excludeGroups },
+                applications: { includeApplications: p.includeApplications },
+                clientAppTypes: p.clientAppTypes,
+              },
+            },
+            LIVE_TIMEOUT_MS,
+          );
+          results.push({ id: g.key, ok: true, status: 204 });
+        } catch (error) {
+          results.push({ id: g.key, ok: false, status: error instanceof GraphHttpError ? error.status : 0, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
+    } catch (error) {
+      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
+    }
+  },
+
+  /** ANOM-INT-309 / INC-4099 fix (ASR rule → Block, conflicting profile unassigned) or the demo drift, via the delegated token. */
+  async setIntuneState(key: IntuneScenarioKey, state: LabLicenseState): Promise<LabWriteResult> {
+    const started = performance.now();
+    const probe = INTUNE_SCENARIOS[key].live;
+    const ids = [...(probe.asrPolicy ? [probe.asrPolicy] : []), probe.conflictingProfile];
+    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    try {
+      const live = await fetchIntuneStateLive(probe, LIVE_TIMEOUT_MS);
+      const results: LabWriteResult["results"] = [];
+      const attempt = async (id: string, fn: () => Promise<void>) => {
+        try {
+          await fn();
+          results.push({ id, ok: true, status: 204 });
+        } catch (error) {
+          results.push({ id, ok: false, status: error instanceof GraphHttpError ? error.status : 0, error: error instanceof Error ? error.message : String(error) });
+        }
+      };
+      if (probe.asrPolicy && probe.asrRuleSetting) {
+        const policyId = live.asrPolicyId;
+        const rule = probe.asrRuleSetting;
+        if (policyId) await attempt(probe.asrPolicy, () => setAsrRuleLive(policyId, rule, state === "remediated" ? "block" : "audit", LIVE_TIMEOUT_MS));
+        else results.push({ id: probe.asrPolicy, ok: false, status: 404, error: "policy not found (seed the lab first)" });
+      }
+      const profileId = live.conflictingProfileId;
+      if (profileId) {
+        const groupId = state === "remediated" ? null : live.assignmentGroupId;
+        if (state === "drifted" && !groupId) results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: `group ${probe.assignmentGroup} not found` });
+        else await attempt(probe.conflictingProfile, () => assignDeviceConfigurationLive(profileId, groupId, LIVE_TIMEOUT_MS));
+      } else {
+        results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: "profile not found (seed the lab first)" });
+      }
+      return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
+    } catch (error) {
+      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
     }
   },
 

@@ -166,12 +166,13 @@ export const ERP_TICKETS: Record<string, ErpTicket> = {
   "INC-4099": {
     ticketId: "INC-4099",
     tenantId: "tenant-fabrikam-02",
-    title: "M365 Copilot & Purview eDiscovery access failure for paralegal group",
+    title: "Six Windows 11 laptops lost access to Outlook and Teams: BitLocker not encrypting",
     description:
-      "Fabrikam Legal M365 Copilot & Purview eDiscovery access failure for paralegal group SG-Fabrikam-Legal. " +
-      "Paralegals receive AADSTS50105 when opening Microsoft 365 Copilot and AADSTS53003 when opening Purview eDiscovery from " +
-      "non-managed devices. Lead paralegal nestor.wilke.legal@fabrikamlegal.onmicrosoft.com is unaffected. " +
-      "Customer security officer also flagged an unexpected SSH rule on the sovereign landing zone hub NSG.",
+      "Fabrikam Legal reports that six Windows 11 laptops lost access to Outlook, Teams and SharePoint this morning. " +
+      "Affected user: grady.archie.legal@fabrikamlegal.onmicrosoft.com sees AADSTS53000 (device not compliant). Intune shows " +
+      "silent BitLocker encryption failing with 0x87D1FDE8 on the devices in SG-Fabrikam-Win11-Devices since the new Endpoint Security " +
+      "disk encryption baseline was rolled out; the 7-day grace period of Fabrikam-Win11-Compliance expired yesterday. " +
+      "A legacy Fabrikam-Legacy-BitLocker-DeviceConfig profile from the 2024 rollout is still assigned to the same group.",
     severity: "P2",
     status: "Open",
     openedAt: "2026-10-26T07:20:00Z",
@@ -184,26 +185,30 @@ export const ERP_TICKETS: Record<string, ErpTicket> = {
       "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
       "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
       "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+      "debra.berger.legal@fabrikamlegal.onmicrosoft.com",
     ],
-    affectedGroups: ["SG-Fabrikam-Legal"],
+    affectedGroups: ["SG-Fabrikam-Win11-Devices"],
     relatedContractId: "CNT-2026-912",
-    category: "Identity & Access / Compliance",
+    category: "Endpoint Management / Intune",
     entities: [
       { type: "upn", id: "grady.archie.legal@fabrikamlegal.onmicrosoft.com", label: "grady.archie.legal@fabrikamlegal.onmicrosoft.com" },
-      { type: "group", id: "SG-Fabrikam-Legal", label: "SG-Fabrikam-Legal" },
-      { type: "errorCode", id: "AADSTS50105", label: "AADSTS50105" },
-      { type: "errorCode", id: "AADSTS53003", label: "AADSTS53003" },
-      { type: "resource", id: "nsg-fabrikam-slz-hub-01", label: "nsg-fabrikam-slz-hub-01" },
+      { type: "errorCode", id: "AADSTS53000", label: "AADSTS53000" },
+      { type: "errorCode", id: "0x87D1FDE8", label: "0x87D1FDE8" },
+      { type: "group", id: "SG-Fabrikam-Win11-Devices", label: "SG-Fabrikam-Win11-Devices" },
+      { type: "policy", id: "Fabrikam-Win11-Compliance", label: "Fabrikam-Win11-Compliance" },
+      { type: "policy", id: "Fabrikam-Legacy-BitLocker-DeviceConfig", label: "Fabrikam-Legacy-BitLocker-DeviceConfig" },
     ],
     infrastructureSpec:
-      "Sovereign Landing Zone: rg-fabrikam-slz-prod (switzerlandnorth)\n" +
-      "Hub NSG: nsg-fabrikam-slz-hub-01 -> demo-iac/fabrikam.tf @ main\n" +
-      "Data residency: CH only, Purview eDiscovery connector via private endpoint\n" +
-      "Entitlement: SG-Fabrikam-Legal (Microsoft 365 E5 Compliance / INFORMATION_PROTECTION_COMPLIANCE)",
+      "Devices: 40x Windows 11 Enterprise 24H2, Microsoft Entra joined, Intune managed\n" +
+      "Assignment group: SG-Fabrikam-Win11-Devices\n" +
+      "Disk encryption: Fabrikam-EndpointSecurity-DiskEncryption (XTS-AES 256, silent)\n" +
+      "Compliance: Fabrikam-Win11-Compliance (BitLocker required, 7-day grace period)\n" +
+      "Conditional Access: Require compliant device for Office 365",
     timeline: [
-      { at: "2026-10-25T08:02:00Z", actor: "Fabrikam SecOps", note: "Compliant-device CA policy tightened for Purview." },
-      { at: "2026-10-25T09:30:00Z", actor: "Vendor", note: "E5 Compliance SKU roll-out started; 21 of 25 seats assigned." },
-      { at: "2026-10-26T07:20:00Z", actor: "Grady Archie", note: "Ticket opened: Copilot and eDiscovery unavailable for paralegals." },
+      { at: "2026-10-18T09:00:00Z", actor: "Fabrikam IT", note: "Endpoint Security disk encryption baseline assigned to SG-Fabrikam-Win11-Devices." },
+      { at: "2026-10-18T11:30:00Z", actor: "Intune", note: "First devices report BitLocker 0x87D1FDE8; compliance grace period starts." },
+      { at: "2026-10-25T11:30:00Z", actor: "Intune", note: "Grace period expired: six devices NonCompliant." },
+      { at: "2026-10-26T07:20:00Z", actor: "Grady Archie", note: "Ticket opened: Outlook and Teams blocked with AADSTS53000." },
     ],
   },
 };
@@ -250,39 +255,39 @@ export const ERP_CONTRACTS: Record<string, ErpContract> = {
   "CNT-2026-912": {
     contractId: "CNT-2026-912",
     tenantId: "tenant-fabrikam-02",
-    title: "Fabrikam Legal — Compliance & Sovereign Landing Zone",
+    title: "Fabrikam Legal: Modern Workplace & Intune Managed Service",
     startDate: "2026-03-01",
     endDate: "2027-02-28",
     slaTier: "Gold",
-    monthlyValueUsd: 2500,
+    monthlyValueUsd: 1142,
     lines: [
       {
         lineId: "L1",
-        description: "25x Microsoft 365 E5 Compliance (INFORMATION_PROTECTION_COMPLIANCE) SKUs for SG-Fabrikam-Legal",
-        skuPartNumber: "INFORMATION_PROTECTION_COMPLIANCE",
-        skuName: "Microsoft 365 E5 Compliance",
-        quantity: 25,
-        unitPriceUsd: 12,
+        description: "6x Microsoft 365 E5 (SPE_E5) for SG-Fabrikam-Legal",
+        skuPartNumber: "SPE_E5",
+        skuName: "Microsoft 365 E5",
+        quantity: 6,
+        unitPriceUsd: 57,
         billingCycle: "monthly",
         entitlementGroup: "SG-Fabrikam-Legal",
         semanticAnchor: true,
       },
       {
         lineId: "L2",
-        description: "Sovereign Landing Zone hub NSG & private endpoints (switzerlandnorth)",
-        skuPartNumber: "MSP-SLZ-HUB",
-        skuName: "Managed Sovereign Landing Zone",
-        quantity: 1,
-        unitPriceUsd: 2200,
+        description: "Managed Intune endpoints (40 Windows 11 devices, golden baseline in Git)",
+        skuPartNumber: "MSP-INTUNE-ENDPOINT",
+        skuName: "Managed Intune Endpoint",
+        quantity: 40,
+        unitPriceUsd: 20,
         billingCycle: "monthly",
-        entitlementGroup: null,
+        entitlementGroup: "SG-Fabrikam-Win11-Devices",
         semanticAnchor: false,
       },
     ],
     terms: [
       "P2 response 1 h / resolution 8 h (Gold)",
-      "All data processing restricted to switzerlandnorth; DataResidency tag is audited monthly",
-      "Inbound management access only via Bastion subnet 10.40.250.0/26",
+      "Intune configuration changes via the golden-tenant Git repository only; portal changes are drift",
+      "Device compliance reported weekly; BitLocker required on every managed device",
     ],
   },
 };

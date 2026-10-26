@@ -112,7 +112,8 @@ export interface ManifestTenant {
   licenses: ManifestLicenses;
   conditionalAccessPolicies: ManifestCaPolicy[];
   signInEvents: ManifestSignIn[];
-  azure: ManifestAzure;
+  /** Absent for tenants without an Azure estate in the demo. */
+  azure?: ManifestAzure;
 }
 
 export interface LabManifest {

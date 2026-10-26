@@ -44,9 +44,10 @@ const MG_KEY = "mg:https://graph.microsoft.com";
 /**
  * A Graph token from the Microsoft Graph PowerShell sign-in (Connect-MgGraph, persisted to
  * ~/.mg by -ContextScope CurrentUser). Its client consents per scope, so it can carry
- * UserAuthenticationMethod.ReadWrite.All; the Az token's client (1950a258-…) never does,
- * which is why a Temporary Access Pass needs this one. Silent only: throws when this machine
- * has no persisted Connect-MgGraph sign-in (run scripts/Enable-ContextPaneTapPolicy.ps1 once).
+ * Policy.ReadWrite.ConditionalAccess and DeviceManagementConfiguration.ReadWrite.All; the Az
+ * token's client (1950a258-...) never does, which is why Conditional Access and Intune writes
+ * need this one. Silent only: throws when this machine has no persisted Connect-MgGraph
+ * sign-in (run scripts/Connect-ContextPaneGraph.ps1 once).
  */
 export async function getGraphSdkAccessToken(timeoutMs = 30_000): Promise<string> {
   const hit = cache.get(MG_KEY);
@@ -57,7 +58,7 @@ export async function getGraphSdkAccessToken(timeoutMs = 30_000): Promise<string
   const mint = (async () => {
     const result = await runPwshJson<{ token: string }>(
       `
-if (-not (Test-Path (Join-Path $HOME '.mg/mg.authrecord.json'))) { throw 'No persisted Connect-MgGraph sign-in. Run scripts/Enable-ContextPaneTapPolicy.ps1 first.' }
+if (-not (Test-Path (Join-Path $HOME '.mg/mg.authrecord.json'))) { throw 'No persisted Connect-MgGraph sign-in. Run scripts/Connect-ContextPaneGraph.ps1 first.' }
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 if (-not (Get-MgContext)) { Connect-MgGraph ${tenantId ? `-TenantId ${psq(tenantId)} ` : ""}-ContextScope CurrentUser -NoWelcome -ErrorAction Stop }
 $r = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/organization?$select=id' -OutputType HttpResponseMessage -ErrorAction Stop

@@ -12,8 +12,6 @@ export interface TenantRegistryEntry {
   ticketId: string;
   contractId: string;
   shortLabel: string;
-  /** What a Tier 3 fix for this ticket reconciles; used in the canonical PR title. */
-  remediationScope: string;
 }
 
 export const TENANT_REGISTRY: Record<TenantId, TenantRegistryEntry> = {
@@ -23,7 +21,6 @@ export const TENANT_REGISTRY: Record<TenantId, TenantRegistryEntry> = {
     ticketId: "INC-4092",
     contractId: "CNT-2026-884",
     shortLabel: "Contoso Finance (#INC-4092)",
-    remediationScope: "AVD NSG drift & E5 license state",
   },
   "tenant-fabrikam-02": {
     tenantId: "tenant-fabrikam-02",
@@ -31,7 +28,6 @@ export const TENANT_REGISTRY: Record<TenantId, TenantRegistryEntry> = {
     ticketId: "INC-4099",
     contractId: "CNT-2026-912",
     shortLabel: "Fabrikam Legal (#INC-4099)",
-    remediationScope: "SLZ hub NSG drift & Information Protection license state",
   },
 };
 
@@ -49,4 +45,6 @@ export const KNOWN_APP_IDS: Record<string, string> = {
   "00000002-0000-0ff1-ce00-000000000000": "Office 365 Exchange Online",
   "80ccca67-54bd-44ab-8625-4b79c4dc7775": "Microsoft Purview",
   "fb8d773d-7ef8-4ec0-a117-179f88add510": "Microsoft 365 Copilot",
+  "Office365": "Office 365",
+  "797f4846-ba00-4fd7-ba43-dac1f8f63013": "Windows Azure Service Management API",
 };

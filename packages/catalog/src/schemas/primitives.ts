@@ -26,7 +26,7 @@ export const TicketSeveritySchema = z.enum(["P1", "P2", "P3", "P4"]);
 export type TicketSeverity = z.infer<typeof TicketSeveritySchema>;
 
 export const EntityTypeSchema = z
-  .enum(["upn", "group", "device", "policy", "errorCode", "sku", "resource", "ticket", "contract"])
+  .enum(["upn", "group", "device", "policy", "errorCode", "sku", "resource", "setting", "ticket", "contract"])
   .describe("Kind of entity an inline pill or popover refers to.");
 export type EntityType = z.infer<typeof EntityTypeSchema>;
 
@@ -47,14 +47,12 @@ export const ProviderIdSchema = z.enum(["local", "fireworks", "baseten", "meta",
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
 export const QuickActionKindSchema = z.enum([
-  "issue-tap",
-  "exclude-group-report-only",
   "inspect-policy",
-  "assign-license",
+  "stage-license-fix",
+  "stage-intune-fix",
   "view-diff",
   "generate-fix",
   "open-sign-in-logs",
-  "reset-mfa",
   "custom",
 ]);
 export type QuickActionKind = z.infer<typeof QuickActionKindSchema>;
@@ -85,6 +83,13 @@ export const ProviderTelemetrySchema = z.object({
   tokensUsed: z.number().int().nonnegative(),
 });
 export type ProviderTelemetry = z.infer<typeof ProviderTelemetrySchema>;
+
+/**
+ * Semantic provenance of an MCP-enriched entity and of the canvas card it spawns.
+ * licensing=amber, identity=rose, intune=violet, azure=teal (see CATEGORY_META).
+ */
+export const ProvenanceCategorySchema = z.enum(["licensing", "identity", "intune", "azure"]);
+export type ProvenanceCategory = z.infer<typeof ProvenanceCategorySchema>;
 
 export const IsoTimestampSchema = z
   .string()

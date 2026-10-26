@@ -53,6 +53,16 @@ export function createAzureIacMcpServer(): McpServer {
   );
 
   server.registerTool(
+    "get_avd_estate",
+    {
+      title: "Get AVD estate",
+      description: "AVD host pool topology (pool type, load balancing, session hosts, FSLogix) and the Azure Policy compliance of its resource group.",
+      inputSchema: { tenantId: z.string() },
+    },
+    async ({ tenantId }) => run(() => azureIacService.getAvdEstate(tenantId)),
+  );
+
+  server.registerTool(
     "get_nsg_drift",
     {
       title: "Get NSG drift",

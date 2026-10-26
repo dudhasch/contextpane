@@ -81,14 +81,6 @@
             "kind": "open-sign-in-logs",
             "description": "View recent AVD failures for affected users",
             "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign SPE_E5",
-            "kind": "assign-license",
-            "description": "Remediate license drift for users still on SPE_E3",
-            "targetEntityId": "INC-4092",
-            "destructive": false
           }
         ]
       }
@@ -203,27 +195,11 @@
         ],
         "quickActions": [
           {
-            "id": "issue-tap",
-            "label": "Issue TAP",
-            "kind": "issue-tap",
-            "description": "Create temporary access pass for immediate AVD access",
-            "targetEntityId": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
-            "destructive": false
-          },
-          {
             "id": "inspect-policy",
             "label": "Inspect CA Policy",
             "kind": "inspect-policy",
             "description": "Open Conditional Access policy d09ae604-4c06-4769-ad01-20ec8efa18ad",
             "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
-            "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign SPE_E5",
-            "kind": "assign-license",
-            "description": "Upgrade user from SPE_E3 to SPE_E5 as per M365 upgrade",
-            "targetEntityId": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
             "destructive": false
           }
         ]
@@ -296,27 +272,11 @@
         ],
         "quickActions": [
           {
-            "id": "issue-tap",
-            "label": "Issue TAP",
-            "kind": "issue-tap",
-            "description": "Create temporary access pass for immediate AVD access",
-            "targetEntityId": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
-            "destructive": false
-          },
-          {
             "id": "inspect-policy",
             "label": "Inspect CA Policy",
             "kind": "inspect-policy",
             "description": "Open [ContextPane-Demo] Block AVD - Contoso Finance Legacy details",
             "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
-            "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign SPE_E5",
-            "kind": "assign-license",
-            "description": "Upgrade license from SPE_E3 to expected SPE_E5",
-            "targetEntityId": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
             "destructive": false
           }
         ]
@@ -475,16 +435,7 @@
             "tone": "warning"
           }
         ],
-        "quickActions": [
-          {
-            "id": "assign-license",
-            "label": "Assign SPE_E5",
-            "kind": "assign-license",
-            "description": "Assign SPE_E5 to patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
-            "targetEntityId": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
-            "destructive": false
-          }
-        ]
+        "quickActions": []
       }
     },
     "tenant-contoso-01|sg-contoso-finance-avd": {
@@ -547,14 +498,6 @@
           }
         ],
         "quickActions": [
-          {
-            "id": "assign-license",
-            "label": "Assign SPE_E5 ×3",
-            "kind": "assign-license",
-            "description": "Assign missing Microsoft 365 E5 licenses to drifted members",
-            "targetEntityId": "SG-Contoso-Finance-AVD",
-            "destructive": false
-          },
           {
             "id": "inspect-policy",
             "label": "Inspect CA policy",
@@ -647,14 +590,6 @@
             "destructive": false
           },
           {
-            "id": "assign-license-spe-e5",
-            "label": "Assign SPE_E5 licenses",
-            "kind": "assign-license",
-            "description": "Remediate 3 users still on SPE_E3 to expected SPE_E5",
-            "targetEntityId": "INC-4092",
-            "destructive": false
-          },
-          {
             "id": "view-sign-in-logs",
             "label": "View sign-in logs",
             "kind": "open-sign-in-logs",
@@ -743,14 +678,6 @@
             "kind": "open-sign-in-logs",
             "description": "Review AADSTS50105 failures for Copilot sign-ins",
             "targetEntityId": "AADSTS50105",
-            "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign license",
-            "kind": "assign-license",
-            "description": "Assign INFORMATION_PROTECTION_COMPLIANCE to affected users",
-            "targetEntityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
             "destructive": false
           },
           {
@@ -907,24 +834,7 @@
             "tone": "unknown"
           }
         ],
-        "quickActions": [
-          {
-            "id": "issue-tap",
-            "label": "Issue TAP",
-            "kind": "issue-tap",
-            "description": "Create a temporary access pass for immediate sign-in",
-            "targetEntityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
-            "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
-            "kind": "assign-license",
-            "description": "Replace SPE_E3 with required service plan for Copilot/Purview",
-            "targetEntityId": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
-            "destructive": false
-          }
-        ]
+        "quickActions": []
       }
     },
     "tenant-fabrikam-02|isaiah.langer.legal@fabrikamlegal.onmicrosoft.com": {
@@ -993,16 +903,7 @@
             "tone": "warning"
           }
         ],
-        "quickActions": [
-          {
-            "id": "assign-license",
-            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
-            "kind": "assign-license",
-            "description": "Replace SPE_E3 with INFORMATION_PROTECTION_COMPLIANCE for isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
-            "targetEntityId": "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
-            "destructive": false
-          }
-        ]
+        "quickActions": []
       }
     },
     "tenant-fabrikam-02|johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com": {
@@ -1064,24 +965,7 @@
             "tone": "unknown"
           }
         ],
-        "quickActions": [
-          {
-            "id": "issue-tap",
-            "label": "Issue TAP",
-            "kind": "issue-tap",
-            "description": "",
-            "targetEntityId": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
-            "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
-            "kind": "assign-license",
-            "description": "",
-            "targetEntityId": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
-            "destructive": false
-          }
-        ]
+        "quickActions": []
       }
     },
     "tenant-fabrikam-02|lidia.holloway.legal@fabrikamlegal.onmicrosoft.com": {
@@ -1151,27 +1035,11 @@
         ],
         "quickActions": [
           {
-            "id": "issue-tap",
-            "label": "Issue TAP",
-            "kind": "issue-tap",
-            "description": "Create a time-limited access pass for emergency Purview access",
-            "targetEntityId": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
-            "destructive": false
-          },
-          {
             "id": "inspect-policy",
             "label": "Inspect CA Policy",
             "kind": "inspect-policy",
             "description": "Open Conditional Access policy f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02 to review scope and grant",
             "targetEntityId": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
-            "destructive": false
-          },
-          {
-            "id": "assign-license",
-            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
-            "kind": "assign-license",
-            "description": "Replace SPE_E3 with required INFORMATION_PROTECTION_COMPLIANCE SKU for Purview",
-            "targetEntityId": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
             "destructive": false
           }
         ]
@@ -1340,14 +1208,6 @@
           }
         ],
         "quickActions": [
-          {
-            "id": "assign-license",
-            "label": "Assign INFORMATION_PROTECTION_COMPLIANCE",
-            "kind": "assign-license",
-            "description": "Assign INFORMATION_PROTECTION_COMPLIANCE ×4",
-            "targetEntityId": "SG-Fabrikam-Legal",
-            "destructive": false
-          },
           {
             "id": "inspect-policy",
             "label": "Inspect CA Policy",

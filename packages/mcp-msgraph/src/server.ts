@@ -44,6 +44,37 @@ export function createMsGraphMcpServer(): McpServer {
   );
 
   server.registerTool(
+    "get_license_inventory",
+    {
+      title: "Get license inventory",
+      description:
+        "SKU pools (subscribedSkus enabled/consumed/available), group-based licensing errors (CountViolation) and per-user assignment state and path (Direct / Group) for a tenant or for ANOM-LIC-101.",
+      inputSchema: { tenantId, scenarioId: z.string().optional() },
+    },
+    async (args) => run(() => msgraphService.getLicenseInventory(args.tenantId, args.scenarioId)),
+  );
+
+  server.registerTool(
+    "get_ca_posture",
+    {
+      title: "Get Conditional Access posture",
+      description: "Demo Conditional Access policies diffed against the golden baseline (break-glass exclusion, report-only drift), the directory audit trail and legacy-auth sign-ins.",
+      inputSchema: { tenantId },
+    },
+    async (args) => run(() => msgraphService.getCaPosture(args.tenantId)),
+  );
+
+  server.registerTool(
+    "get_intune_drift",
+    {
+      title: "Get Intune drift",
+      description: "Intune policy drift against the golden baseline: Settings Catalog values, conflicting profile assignments and device compliance (ANOM-INT-309, INC-4099).",
+      inputSchema: { scenarioId: z.enum(["ANOM-INT-309", "INC-4099"]) },
+    },
+    async (args) => run(() => msgraphService.getIntuneDrift(args.scenarioId)),
+  );
+
+  server.registerTool(
     "get_group_members",
     {
       title: "Get group members",

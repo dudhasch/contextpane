@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTwoFilesPatch } from "diff";
-import type { RogueSecurityRule, Severity, TagDrift } from "@contextpane/catalog";
+import type { AzurePolicyState, HostPool, RogueSecurityRule, Severity, TagDrift } from "@contextpane/catalog";
 import { parseNsgResources, renderNsgHcl, ruleSignature, type NsgRule, type NsgState, type ParsedNsg } from "./hcl.ts";
 import { fetchAzContextLive, fetchNsgLive } from "./live.ts";
-import { getManifestTenant, isLiveCloudMode, resolveIacDir, type ManifestAzureTenant } from "./shared.ts";
+import { getManifestAzure, getManifestTenant, isLiveCloudMode, resolveIacDir, type ManifestAzureEstate, type ManifestAzureTenant } from "./shared.ts";
 
 export type IacSource = "live-azure" | "seeded-manifest";
 
@@ -53,7 +53,9 @@ export interface TerraformBaseline {
   nsg: ParsedNsg;
 }
 
-export function getTerraformBaseline(tenant: ManifestAzureTenant): TerraformBaseline {
+type AzureTenant = ManifestAzureTenant & { azure: ManifestAzureEstate };
+
+export function getTerraformBaseline(tenant: AzureTenant): TerraformBaseline {
   const dir = resolveIacDir();
   const file = join(dir, tenant.azure.terraformFile);
   const content = readFileSync(file, "utf8");
@@ -62,7 +64,7 @@ export function getTerraformBaseline(tenant: ManifestAzureTenant): TerraformBase
   return { file, relativePath: `demo-iac/${tenant.azure.terraformFile}`, content, nsg };
 }
 
-function manifestNsgState(tenant: ManifestAzureTenant): NsgState & { id: string } {
+function manifestNsgState(tenant: AzureTenant): NsgState & { id: string } {
   return {
     id: tenant.azure.nsg.id,
     name: tenant.azure.nsg.name,
@@ -117,7 +119,7 @@ function classifyRogue(rule: NsgRule): { severity: Severity; reason: string } {
   return { severity: "low", reason: "Rule not present in Terraform baseline" };
 }
 
-export function computeDrift(tenantId: string, tenant: ManifestAzureTenant, expected: ParsedNsg, actual: NsgState & { id?: string }, baselinePath: string): NsgDrift {
+export function computeDrift(tenantId: string, tenant: AzureTenant, expected: ParsedNsg, actual: NsgState & { id?: string }, baselinePath: string): NsgDrift {
   const expectedByName = new Map(expected.rules.map((r) => [r.name, r]));
   const actualByName = new Map(actual.rules.map((r) => [r.name, r]));
 
@@ -225,11 +227,11 @@ export const azureIacService = {
   },
 
   getTerraformBaseline(tenantId: string): TerraformBaseline {
-    return getTerraformBaseline(getManifestTenant(tenantId));
+    return getTerraformBaseline(getManifestAzure(tenantId));
   },
 
   async getNsgState(tenantId: string): Promise<IacResult<NsgState & { id: string }>> {
-    const tenant = getManifestTenant(tenantId);
+    const tenant = getManifestAzure(tenantId);
     return withSource(
       tenantId,
       () => fetchNsgLive(tenant.azure.resourceGroup, tenant.azure.nsg.name, tenant.subscriptionId, LIVE_TIMEOUT_MS),
@@ -238,14 +240,14 @@ export const azureIacService = {
   },
 
   async getNsgDrift(tenantId: string): Promise<IacResult<NsgDrift>> {
-    const tenant = getManifestTenant(tenantId);
+    const tenant = getManifestAzure(tenantId);
     const baseline = getTerraformBaseline(tenant);
     const state = await azureIacService.getNsgState(tenantId);
     return { ...state, data: computeDrift(tenantId, tenant, baseline.nsg, state.data, baseline.relativePath) };
   },
 
   async getResourceInventory(tenantId: string) {
-    const tenant = getManifestTenant(tenantId);
+    const tenant = getManifestAzure(tenantId);
     const state = await azureIacService.getNsgState(tenantId);
     return {
       ...state,
@@ -266,6 +268,67 @@ export const azureIacService = {
     };
   },
 
+  /**
+   * The AVD estate around the NSG: host pool topology (a fixture: the lab has no session
+   * hosts) and the Azure Policy states of the resource group, derived from the live NSG
+   * drift so they flip with it: an open management port fails "Management ports should be
+   * closed", a drifted Environment tag fails the tagging policy.
+   */
+  async getAvdEstate(tenantId: string): Promise<IacResult<AvdEstate>> {
+    const tenant = getManifestAzure(tenantId);
+    const drift = await azureIacService.getNsgDrift(tenantId);
+    const d = drift.data;
+    const openMgmt = d.rogueSecurityRules.filter((r) => r.direction === "Inbound" && r.access === "Allow" && ADMIN_PORTS.has(r.port));
+    const tagIssues = d.tagDrift.filter((t) => ["CostCenter", "Environment"].includes(t.key));
+    const scope = tenant.azure.resourceGroup;
+    const azurePolicies: AzurePolicyState[] = [
+      {
+        name: "Management ports should be closed on your virtual machines",
+        effect: "AuditIfNotExists",
+        compliance: openMgmt.length ? "NonCompliant" : "Compliant",
+        nonCompliantResources: openMgmt.length ? 1 : 0,
+        scope,
+        detail: openMgmt.length
+          ? `${openMgmt.map((r) => `${r.ruleName} (${r.protocol.toUpperCase()}/${r.port} from ${r.source})`).join(", ")} on ${d.resourceName}`.slice(0, 200)
+          : "No inbound management port open",
+      },
+      {
+        name: "Require CostCenter & Environment tags on resources",
+        effect: "Audit",
+        compliance: tagIssues.length ? "NonCompliant" : "Compliant",
+        nonCompliantResources: tagIssues.length ? 1 : 0,
+        scope,
+        detail: tagIssues.length
+          ? tagIssues.map((t) => `${t.key} = ${t.actualInAzure ?? "missing"} (expected ${t.expectedInTf ?? "absent"})`).join("; ").slice(0, 200)
+          : "Tags match the Terraform baseline",
+      },
+      {
+        name: "Azure Virtual Desktop session hosts should be Microsoft Entra joined",
+        effect: "Audit",
+        compliance: "Compliant",
+        nonCompliantResources: 0,
+        scope,
+        detail: "Both session hosts are Microsoft Entra joined",
+      },
+    ];
+    const hostPool: HostPool = {
+      name: "vdpool-contoso-fin-01",
+      poolType: "Pooled",
+      loadBalancer: "BreadthFirst",
+      maxSessionLimit: 12,
+      vmSize: "Standard_D4s_v5",
+      location: tenant.azure.location,
+      joinType: "Microsoft Entra joined",
+      fslogix: { status: "Healthy", share: "stcontosofslogix01.file.core.windows.net/profiles" },
+      sessionHosts: [
+        { name: "vm-contoso-avd-0", status: "Available", sessions: 0, agentVersion: "1.0.9742.1100" },
+        { name: "vm-contoso-avd-1", status: "Available", sessions: 0, agentVersion: "1.0.9742.1100" },
+      ],
+      source: "fixture",
+    };
+    return { ...drift, data: { hostPool, azurePolicies, resourceGroup: scope, applicationGroup: "vdag-contoso-fin-01", workspace: "vdws-contoso-fin" } };
+  },
+
   /** Hover-ready diagnostic for a resource name. */
   async getResourceDiagnostic(tenantId: string, resourceName: string) {
     const drift = await azureIacService.getNsgDrift(tenantId);
@@ -280,5 +343,13 @@ export const azureIacService = {
     };
   },
 };
+
+export interface AvdEstate {
+  hostPool: HostPool;
+  azurePolicies: AzurePolicyState[];
+  resourceGroup: string;
+  applicationGroup: string;
+  workspace: string;
+}
 
 export type AzureIacService = typeof azureIacService;

@@ -9,74 +9,64 @@ import {
   ProviderTelemetrySchema,
   QuickActionSchema,
   SeveritySchema,
-  SlaTierSchema,
-  TicketSeveritySchema,
 } from "./primitives.ts";
 
 /* -------------------------------------------------------------------------- */
-/* 1. TenantSummaryHeader                                                      */
+/* 1. LicenseDriftCard · License Pool & Assignment (amber)                     */
 /* -------------------------------------------------------------------------- */
 
-export const TenantSummaryHeaderSchema = z.object({
-  tenantName: z.string().min(1).describe("Customer display name, e.g. Contoso Finance"),
-  tenantId: z.string().describe("Entra tenant id (GUID)"),
-  verifiedDomain: z.string().describe("Primary verified domain"),
-  erpContractId: z.string().describe("ERP contract id, e.g. CNT-2026-884"),
-  slaTier: SlaTierSchema,
-  activeEscalation: z
-    .object({
-      ticketId: z.string(),
-      severity: TicketSeveritySchema,
-      title: z.string().max(160),
-      badge: z.string().max(40).describe("Short badge text, e.g. 'P1 · Breach in 2h 14m'"),
-      slaBreachAt: IsoTimestampSchema.optional(),
-    })
-    .nullable()
-    .describe("Null when no escalation is open."),
-  healthSummary: z.object({
-    licenses: HealthStateSchema,
-    identity: HealthStateSchema,
-    infrastructure: HealthStateSchema,
-  }),
-  providerTelemetry: ProviderTelemetrySchema,
+export const SkuPoolSchema = z.object({
+  skuPartNumber: z.string().describe("e.g. SPE_E5"),
+  skuName: z.string(),
+  enabled: z.number().int().nonnegative().describe("Seats purchased (prepaidUnits.enabled)"),
+  consumed: z.number().int().nonnegative().describe("Seats assigned (consumedUnits)"),
+  available: z.number().int().describe("enabled - consumed"),
+  note: z.string().max(120).optional().describe("e.g. '3 assigned to AVD users'"),
+  source: z.enum(["live-graph", "fixture"]),
 });
-export type TenantSummaryHeader = z.infer<typeof TenantSummaryHeaderSchema>;
+export type SkuPool = z.infer<typeof SkuPoolSchema>;
 
-/* -------------------------------------------------------------------------- */
-/* 2. LicenseDriftCard                                                         */
-/* -------------------------------------------------------------------------- */
+export const GroupLicenseErrorSchema = z.object({
+  groupName: z.string(),
+  skuPartNumber: z.string(),
+  state: z.enum(["CountViolation", "MutuallyExclusiveViolation", "DependencyViolation"]),
+  affectedUsers: z.number().int().nonnegative(),
+  detail: z.string().max(240),
+});
+export type GroupLicenseError = z.infer<typeof GroupLicenseErrorSchema>;
+
+export const AssignmentStateSchema = z.enum(["Active", "Error: CountViolation", "Drifted", "Orphaned", "Reclaimed"]);
+export type AssignmentState = z.infer<typeof AssignmentStateSchema>;
 
 export const LicenseDriftUserSchema = z.object({
   upn: z.string().describe("User principal name"),
   displayName: z.string(),
   jobTitle: z.string().default(""),
-  currentSku: z.string().describe("SKU part number currently assigned, e.g. SPE_E3, or NONE"),
-  expectedSku: z.string().describe("SKU part number the contract entitles, e.g. SPE_E5"),
+  accountEnabled: z.boolean().default(true),
+  lastSignIn: z.string().optional().describe("ISO timestamp or a relative label like '>90 days ago'"),
+  currentSku: z.string().describe("SKU part number(s) currently assigned, e.g. SPE_E3, or NONE"),
+  expectedSku: z.string().describe("SKU part number the user should hold, e.g. SPE_E5, or NONE for offboarded accounts"),
+  assignmentPath: z.enum(["Direct", "Group", "Direct + Group", "None"]).default("Group"),
+  assignmentState: AssignmentStateSchema,
   driftStatus: DriftStatusSchema,
   objectId: z.string().optional(),
 });
 export type LicenseDriftUser = z.infer<typeof LicenseDriftUserSchema>;
 
 export const LicenseDriftCardSchema = z.object({
-  skuName: z.string().describe("Human SKU name, e.g. Microsoft 365 E5"),
-  skuPartNumber: z.string().describe("SKU part number, e.g. SPE_E5"),
-  groupName: z.string().describe("Entitlement group, e.g. SG-Contoso-Finance-AVD"),
-  contractId: z.string(),
-  erpBilledCount: z.number().int().nonnegative().describe("Seats billed by the ERP contract"),
-  entraAssignedCount: z.number().int().nonnegative().describe("Seats actually assigned in Entra"),
-  driftedCount: z.number().int().nonnegative().describe("erpBilledCount - entraAssignedCount, never negative"),
-  monthlyUnitPriceUsd: z.number().nonnegative().optional(),
-  burnRateDeltaUsdPerMonth: z
-    .number()
-    .optional()
-    .describe("Money billed but not delivered per month (driftedCount * unit price)."),
+  headline: z.string().max(200).describe("One-line technical summary shown on the compact card"),
+  skuName: z.string().describe("Human name of the SKU the fix targets, e.g. Microsoft 365 E5"),
+  skuPartNumber: z.string().describe("SKU the fix targets, e.g. SPE_E5"),
+  groupName: z.string().describe("Licensing / entitlement group, e.g. SG-Contoso-Finance-AVD"),
+  skuPools: z.array(SkuPoolSchema).max(6),
+  groupErrors: z.array(GroupLicenseErrorSchema).max(6).default([]),
   users: z.array(LicenseDriftUserSchema).max(50),
   state: HealthStateSchema,
 });
 export type LicenseDriftCard = z.infer<typeof LicenseDriftCardSchema>;
 
 /* -------------------------------------------------------------------------- */
-/* 3. EntraSignInTimeline                                                      */
+/* 2. EntraSignInTimeline · Sign-In History & Conditional Access (rose)        */
 /* -------------------------------------------------------------------------- */
 
 export const SignInEventSchema = z.object({
@@ -98,12 +88,41 @@ export const SignInEventSchema = z.object({
   ipAddress: z.string().default(""),
   deviceName: z.string().default(""),
   deviceCompliant: z.boolean().nullable().default(null),
-  isHighlighted: z.boolean().default(false).describe("True for the event(s) that explain the ticket."),
+  isHighlighted: z.boolean().default(false).describe("True for the event(s) that explain the scenario."),
 });
 export type SignInEvent = z.infer<typeof SignInEventSchema>;
 
+export const PolicyDriftSchema = z.object({
+  field: z.string().describe("Policy field, e.g. state or conditions.users.excludeGroups"),
+  expected: z.string().describe("Golden baseline value"),
+  actual: z.string().describe("Live tenant value"),
+  severity: SeveritySchema,
+});
+export type PolicyDrift = z.infer<typeof PolicyDriftSchema>;
+
+export const CaPolicyStateSchema = z.enum(["enabled", "disabled", "enabledForReportingButNotEnforced"]);
+
+export const CaPolicyInspectorSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  state: CaPolicyStateSchema,
+  role: z.enum(["blocking", "drifted", "in-scope"]).describe("Why the policy is on the card"),
+  includeGroups: z.array(z.string()).max(10),
+  excludeGroups: z.array(z.string()).max(10),
+  targetApps: z.array(z.string()).max(10),
+  clientAppTypes: z.array(z.string()).max(6).default([]),
+  grantControls: z.array(z.string()).max(6),
+  drift: z.array(PolicyDriftSchema).max(6).default([]),
+  /** What the policy looks like once the staged fix is applied; the canvas converges to it. */
+  fixedState: CaPolicyStateSchema.optional(),
+  fixedExcludeGroups: z.array(z.string()).max(10).optional(),
+  modifiedDateTime: z.string().nullable().default(null),
+});
+export type CaPolicyInspector = z.infer<typeof CaPolicyInspectorSchema>;
+
 export const EntraSignInTimelineSchema = z.object({
-  focusUpn: z.string().describe("The affected user the ticket is about"),
+  headline: z.string().max(200).describe("One-line summary of the blocking or drifted Conditional Access state"),
+  focusUpn: z.string().describe("The affected user the scenario is about (empty for tenant-wide anomalies)"),
   windowStart: IsoTimestampSchema,
   windowEnd: IsoTimestampSchema,
   events: z.array(SignInEventSchema).max(100),
@@ -115,13 +134,64 @@ export const EntraSignInTimelineSchema = z.object({
       explanation: z.string().max(400),
     })
     .nullable(),
+  policies: z.array(CaPolicyInspectorSchema).max(6).default([]),
   microActions: z.array(QuickActionSchema).max(6),
   state: HealthStateSchema,
 });
 export type EntraSignInTimeline = z.infer<typeof EntraSignInTimelineSchema>;
 
 /* -------------------------------------------------------------------------- */
-/* 4. IaCDriftBanner                                                           */
+/* 3. IntuneDriftCard · Intune Policy & Compliance Drift (violet)              */
+/* -------------------------------------------------------------------------- */
+
+export const IntunePolicyRefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(["Settings Catalog", "Endpoint Security", "Device Configuration", "Security Baseline", "Compliance Policy"]),
+  assignedTo: z.array(z.string()).max(6),
+  role: z.enum(["golden", "drifted", "conflicting", "duplicate", "compliance"]),
+  source: z.enum(["live-graph", "fixture"]),
+});
+export type IntunePolicyRef = z.infer<typeof IntunePolicyRefSchema>;
+
+export const IntuneSettingDriftSchema = z.object({
+  policyName: z.string(),
+  settingName: z.string(),
+  settingId: z.string().optional(),
+  golden: z.string().describe("Value in the golden baseline (Git)"),
+  live: z.string().describe("Value Graph reports for the tenant"),
+  status: z.enum(["drifted", "conflict", "in-sync"]),
+  severity: SeveritySchema,
+});
+export type IntuneSettingDrift = z.infer<typeof IntuneSettingDriftSchema>;
+
+export const IntuneDeviceSchema = z.object({
+  deviceName: z.string(),
+  upn: z.string(),
+  os: z.string(),
+  complianceState: z.enum(["Compliant", "NonCompliant", "InGracePeriod", "Conflict", "Error"]),
+  lastCheckIn: z.string(),
+  detail: z.string().max(200).default(""),
+});
+export type IntuneDevice = z.infer<typeof IntuneDeviceSchema>;
+
+export const IntuneDriftCardSchema = z.object({
+  headline: z.string().max(200),
+  issueKind: z.enum(["policy-conflict", "baseline-drift"]),
+  errorCode: z.string().optional().describe("Intune error, e.g. 0x87D1FDE8"),
+  errorMeaning: z.string().max(240).optional(),
+  goldenSource: z.string().describe("Where the golden configuration lives, e.g. golden-tenant/intune/... @ main"),
+  policies: z.array(IntunePolicyRefSchema).max(8),
+  settings: z.array(IntuneSettingDriftSchema).max(12),
+  devices: z.array(IntuneDeviceSchema).max(40),
+  affectedDeviceCount: z.number().int().nonnegative(),
+  comparedAgainst: z.enum(["live-graph", "fixture"]),
+  state: HealthStateSchema,
+});
+export type IntuneDriftCard = z.infer<typeof IntuneDriftCardSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* 4. IaCDriftBanner · AVD Host Pool, NSG & Azure Policy (teal)                */
 /* -------------------------------------------------------------------------- */
 
 export const TagDriftSchema = z.object({
@@ -145,6 +215,39 @@ export const RogueSecurityRuleSchema = z.object({
 });
 export type RogueSecurityRule = z.infer<typeof RogueSecurityRuleSchema>;
 
+export const HostPoolSchema = z.object({
+  name: z.string(),
+  poolType: z.enum(["Pooled", "Personal"]),
+  loadBalancer: z.string().describe("BreadthFirst | DepthFirst"),
+  maxSessionLimit: z.number().int().positive().optional(),
+  vmSize: z.string(),
+  location: z.string(),
+  joinType: z.string().describe("e.g. Microsoft Entra joined"),
+  fslogix: z.object({ status: z.enum(["Healthy", "Degraded", "Unknown"]), share: z.string() }),
+  sessionHosts: z
+    .array(
+      z.object({
+        name: z.string(),
+        status: z.enum(["Available", "Unavailable", "Draining", "NeedsAssistance"]),
+        sessions: z.number().int().nonnegative(),
+        agentVersion: z.string().optional(),
+      }),
+    )
+    .max(10),
+  source: z.enum(["live-azure", "fixture"]),
+});
+export type HostPool = z.infer<typeof HostPoolSchema>;
+
+export const AzurePolicyStateSchema = z.object({
+  name: z.string(),
+  effect: z.string().describe("Audit | Deny | Modify | AuditIfNotExists"),
+  compliance: z.enum(["Compliant", "NonCompliant"]),
+  nonCompliantResources: z.number().int().nonnegative(),
+  scope: z.string(),
+  detail: z.string().max(200).default(""),
+});
+export type AzurePolicyState = z.infer<typeof AzurePolicyStateSchema>;
+
 export const IaCDriftBannerSchema = z.object({
   resourceName: z.string(),
   resourceGroup: z.string(),
@@ -159,6 +262,8 @@ export const IaCDriftBannerSchema = z.object({
   missingSecurityRules: z.array(z.string()).default([]).describe("Rules in Terraform but absent in Azure"),
   hclDiff: z.string().describe("Unified diff, Azure live state (-) vs Terraform baseline (+)"),
   summary: z.string().max(240).describe("One-line CodeLens summary"),
+  hostPool: HostPoolSchema.nullable().default(null),
+  azurePolicies: z.array(AzurePolicyStateSchema).max(8).default([]),
   state: HealthStateSchema,
   comparedAgainst: z.enum(["live-azure", "seeded-manifest"]),
 });
@@ -201,6 +306,11 @@ export const VerificationStatusSchema = z.object({
   sandboxProvider: z.enum(["local-pwsh", "modal-cloud-sandbox", "none"]),
   validationLatencyMs: z.number().int().nonnegative(),
   findings: z.array(z.string().max(300)).default([]),
+  whatIfSafe: z
+    .boolean()
+    .nullable()
+    .default(null)
+    .describe("True when the script declares SupportsShouldProcess and every mutating cmdlet runs inside $PSCmdlet.ShouldProcess, so -WhatIf is a real dry run"),
   sandboxLatencyMs: z.number().int().nonnegative().optional().describe("Time spent inside the sandbox; validationLatencyMs is the round trip"),
   checkLatencyMs: z
     .object({ powershellAst: z.number().optional(), terraformFmt: z.number().optional(), terraformValidate: z.number().optional() })
@@ -238,7 +348,8 @@ export const ActionApprovalDrawerSchema = z.object({
     provider: ProviderIdSchema,
   }),
   powershellScript: z.string().describe("Complete PowerShell 7 script using Microsoft.Graph cmdlets"),
-  terraformDiff: z.string().describe("Unified diff against the Terraform baseline"),
+  terraformDiff: z.string().default("").describe("Unified diff against the Terraform baseline; empty when the fix has no IaC part"),
+  graphPatch: z.string().default("").describe("Graph request bodies (JSON) the fix sends, for review or a manual Invoke-MgGraphRequest"),
   affectedEntities: z.array(AffectedEntitySchema).max(20),
   verificationStatus: VerificationStatusSchema,
   staging: StagingInfoSchema.nullable(),

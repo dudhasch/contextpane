@@ -88,13 +88,14 @@ export class GraphHttpError extends Error {
 /* Transport                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** "az": the Get-AzAccessToken bearer every read uses; "graph-sdk": the Connect-MgGraph one (TAP writes). */
+/** "az": the Get-AzAccessToken bearer every read uses; "graph-sdk": the Connect-MgGraph one (Conditional Access and Intune). */
 type TokenSource = "az" | "graph-sdk";
 
 async function graphFetch(path: string, init: RequestInit, timeoutMs: number, tokenSource: TokenSource = "az"): Promise<unknown> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = tokenSource === "graph-sdk" ? await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000)) : await getAccessToken(GRAPH, Math.max(timeoutMs, 30_000));
-    const response = await fetch(`${GRAPH_V1}${path}`, {
+    // "/beta/..." paths go to the beta endpoint (Intune Settings Catalog), everything else to v1.0.
+    const response = await fetch(path.startsWith("/beta/") ? `${GRAPH}${path}` : `${GRAPH_V1}${path}`, {
       ...init,
       headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(timeoutMs),
@@ -232,25 +233,29 @@ export function fetchGraphSnapshot(groupId: string, timeoutMs: number): Promise<
         };
       }),
       skus: skus.map((s) => ({ skuId: s.skuId, skuPartNumber: s.skuPartNumber, consumedUnits: s.consumedUnits ?? 0, enabledUnits: s.prepaidUnits?.enabled ?? 0 })),
-      policies: policies.map((p) => ({
-        id: p.id,
-        displayName: p.displayName,
-        state: p.state,
-        createdDateTime: p.createdDateTime ?? null,
-        modifiedDateTime: p.modifiedDateTime ?? null,
-        includeGroups: p.conditions?.users?.includeGroups ?? [],
-        excludeGroups: p.conditions?.users?.excludeGroups ?? [],
-        includeUsers: p.conditions?.users?.includeUsers ?? [],
-        includeApplications: p.conditions?.applications?.includeApplications ?? [],
-        clientAppTypes: p.conditions?.clientAppTypes ?? [],
-        grantOperator: p.grantControls?.operator ?? null,
-        builtInControls: p.grantControls?.builtInControls ?? [],
-      })),
+      policies: policies.map(mapPolicy),
     };
   })();
   snapshots.set(groupId, { at: Date.now(), value });
   value.catch(() => snapshots.delete(groupId));
   return value;
+}
+
+function mapPolicy(p: GraphPolicy): LiveCaPolicy {
+  return {
+    id: p.id,
+    displayName: p.displayName,
+    state: p.state,
+    createdDateTime: p.createdDateTime ?? null,
+    modifiedDateTime: p.modifiedDateTime ?? null,
+    includeGroups: p.conditions?.users?.includeGroups ?? [],
+    excludeGroups: p.conditions?.users?.excludeGroups ?? [],
+    includeUsers: p.conditions?.users?.includeUsers ?? [],
+    includeApplications: p.conditions?.applications?.includeApplications ?? [],
+    clientAppTypes: p.conditions?.clientAppTypes ?? [],
+    grantOperator: p.grantControls?.operator ?? null,
+    builtInControls: p.grantControls?.builtInControls ?? [],
+  };
 }
 
 function stripODataKeys(body: Record<string, unknown>): Record<string, unknown> {
@@ -334,7 +339,7 @@ export async function fetchGraphContextLive(timeoutMs: number): Promise<{ tenant
 }
 
 /* -------------------------------------------------------------------------- */
-/* Writes: lab license state + Temporary Access Pass                           */
+/* Writes: lab license state                                                   */
 /* -------------------------------------------------------------------------- */
 
 /** Drop cached snapshots so the next read sees a write made a moment ago. */
@@ -354,10 +359,10 @@ export interface ExtensionPatchResult {
  * (Graph runs a $batch of PATCHes one after another, ~1.1 s for three; parallel is ~0.4 s).
  * Open-extension PATCH merges: listed properties change, the rest stay.
  */
-export async function patchLicenseExtensionsLive(upns: string[], fields: Record<string, string>, timeoutMs: number): Promise<ExtensionPatchResult[]> {
-  const body = JSON.stringify({ "@odata.type": "#microsoft.graph.openTypeExtension", extensionName: EXTENSION_ID, ...fields });
+export async function patchLicenseExtensionsLive(upns: string[], fields: Record<string, string> | ((upn: string) => Record<string, string>), timeoutMs: number): Promise<ExtensionPatchResult[]> {
   const results = await Promise.all(
     upns.map(async (upn): Promise<ExtensionPatchResult> => {
+      const body = JSON.stringify({ "@odata.type": "#microsoft.graph.openTypeExtension", extensionName: EXTENSION_ID, ...(typeof fields === "function" ? fields(upn) : fields) });
       try {
         await graphFetch(`/users/${encodeURIComponent(upn)}/extensions/${EXTENSION_ID}`, { method: "PATCH", headers: { "content-type": "application/json" }, body }, timeoutMs);
         return { upn, ok: true, status: 204 };
@@ -370,55 +375,212 @@ export async function patchLicenseExtensionsLive(upns: string[], fields: Record<
   return results;
 }
 
-export interface LiveTemporaryAccessPass {
-  id: string;
-  temporaryAccessPass: string;
-  lifetimeInMinutes: number;
-  isUsableOnce: boolean;
-  startDateTime: string;
-}
+/* -------------------------------------------------------------------------- */
+/* Delegated Connect-MgGraph token for Conditional Access and Intune           */
+/* -------------------------------------------------------------------------- */
 
-// After a failed Connect-MgGraph mint, TAP requests go straight to the Az token for a while instead of paying a pwsh spawn each.
+// After a failed Connect-MgGraph mint, requests go straight to the Az token for a while instead of paying a pwsh spawn each.
 let graphSdkRetryAt = 0;
 
 /**
- * POST /users/{id}/authentication/temporaryAccessPassMethods; throws GraphHttpError when the TAP policy or token scope says no.
- * Prefers the Connect-MgGraph token (it can carry UserAuthenticationMethod.ReadWrite.All) and falls back to the Az token.
+ * Conditional Access writes need Policy.ReadWrite.ConditionalAccess and Intune needs
+ * DeviceManagementConfiguration.ReadWrite.All; the Az token's client never carries
+ * either, the persisted Connect-MgGraph sign-in can. Falls back to "az" (and its 403).
  */
-export async function createTemporaryAccessPassLive(upn: string, lifetimeInMinutes: number, isUsableOnce: boolean, timeoutMs: number): Promise<LiveTemporaryAccessPass> {
-  let tokenSource: TokenSource = "az";
-  if (Date.now() >= graphSdkRetryAt) {
-    try {
-      await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000));
-      tokenSource = "graph-sdk";
-    } catch {
-      graphSdkRetryAt = Date.now() + 5 * 60_000;
-    }
-  }
-  let body: Partial<LiveTemporaryAccessPass>;
+async function delegatedTokenSource(timeoutMs: number): Promise<TokenSource> {
+  if (Date.now() < graphSdkRetryAt) return "az";
   try {
-    body = (await graphFetch(
-      `/users/${encodeURIComponent(upn)}/authentication/temporaryAccessPassMethods`,
-      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lifetimeInMinutes, isUsableOnce }) },
-      timeoutMs,
-      tokenSource,
-    )) as Partial<LiveTemporaryAccessPass>;
+    await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000));
+    return "graph-sdk";
+  } catch {
+    graphSdkRetryAt = Date.now() + 5 * 60_000;
+    return "az";
+  }
+}
+
+const SIGN_IN_HINT = "run scripts/Connect-ContextPaneGraph.ps1 once to persist a delegated sign-in with Policy.ReadWrite.ConditionalAccess and DeviceManagementConfiguration.ReadWrite.All";
+
+async function delegatedFetch(path: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
+  const source = await delegatedTokenSource(timeoutMs);
+  try {
+    return await graphFetch(path, init, timeoutMs, source);
   } catch (error) {
-    if (error instanceof GraphHttpError && error.status === 403) {
-      const hint =
-        tokenSource === "az"
-          ? "the Az token never carries UserAuthenticationMethod.ReadWrite.All; run scripts/Enable-ContextPaneTapPolicy.ps1"
-          : "the Connect-MgGraph token lacks UserAuthenticationMethod.ReadWrite.All or an Authentication Administrator role; re-run scripts/Enable-ContextPaneTapPolicy.ps1";
-      throw new GraphHttpError(403, `${error.message.replace(/^Graph HTTP 403: /, "")} (${hint})`);
+    if (error instanceof GraphHttpError && (error.status === 403 || error.status === 401)) {
+      const hint = source === "az" ? `the Az token lacks the scope; ${SIGN_IN_HINT}` : `the Connect-MgGraph token lacks the scope or role; ${SIGN_IN_HINT}`;
+      throw new GraphHttpError(error.status, `${error.message.replace(/^Graph HTTP \d+: /, "")} (${hint})`);
     }
     throw error;
   }
-  if (!body.temporaryAccessPass) throw new GraphHttpError(502, "temporaryAccessPassMethods answered without a pass");
+}
+
+/* -------------------------------------------------------------------------- */
+/* Users with their lab license extension (ANOM-LIC-101)                       */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveLabUser {
+  upn: string;
+  objectId: string;
+  displayName: string;
+  jobTitle: string | null;
+  accountEnabled: boolean;
+  extension: Record<string, unknown> | null;
+}
+
+/** Users plus their open extension in one $batch; users that do not exist are left out. */
+export async function fetchLabUsersLive(upns: string[], timeoutMs: number): Promise<LiveLabUser[]> {
+  const requests = upns.slice(0, 10).flatMap((upn, i) => [
+    { id: `u${i}`, url: `/users/${encodeURIComponent(upn)}?$select=id,userPrincipalName,displayName,jobTitle,accountEnabled` },
+    { id: `x${i}`, url: `/users/${encodeURIComponent(upn)}/extensions/${EXTENSION_ID}` },
+  ]);
+  const responses = await graphBatch(requests, timeoutMs);
+  const users: LiveLabUser[] = [];
+  upns.slice(0, 10).forEach((upn, i) => {
+    const u = responses.get(`u${i}`);
+    if (!u || u.status >= 300 || !u.body) return;
+    const x = responses.get(`x${i}`);
+    const body = u.body as unknown as { id: string; displayName: string; jobTitle?: string | null; accountEnabled?: boolean };
+    users.push({
+      upn,
+      objectId: body.id,
+      displayName: body.displayName,
+      jobTitle: body.jobTitle ?? null,
+      accountEnabled: body.accountEnabled !== false,
+      extension: x && x.status < 300 && x.body ? stripODataKeys(x.body) : null,
+    });
+  });
+  return users;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Conditional Access posture (ANOM-CA-204)                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveCaPosture {
+  policies: LiveCaPolicy[];
+  /** displayName → object id for the groups the posture refers to (missing groups are absent). */
+  groupIds: Map<string, string>;
+}
+
+/** All Conditional Access policies plus the object ids of the named groups, in one $batch. */
+export async function fetchCaPostureLive(groupNames: string[], timeoutMs: number): Promise<LiveCaPosture> {
+  const responses = await graphBatch(
+    [
+      { id: "policies", url: "/identity/conditionalAccess/policies" },
+      ...groupNames.map((name, i) => ({ id: `g${i}`, url: `/groups?$filter=${encodeURIComponent(`displayName eq '${name.replace(/'/g, "''")}'`)}&$select=id,displayName` })),
+    ],
+    timeoutMs,
+  );
+  const policies = ((okBody(responses, "policies").value ?? []) as GraphPolicy[]).map(mapPolicy);
+  const groupIds = new Map<string, string>();
+  groupNames.forEach((name, i) => {
+    const r = responses.get(`g${i}`);
+    const first = (r && r.status < 300 ? (r.body?.value ?? []) : [])[0] as { id?: string } | undefined;
+    if (first?.id) groupIds.set(name, first.id);
+  });
+  return { policies, groupIds };
+}
+
+/** PATCH one Conditional Access policy (state and/or conditions.users.excludeGroups). */
+export async function patchCaPolicyLive(policyId: string, body: Record<string, unknown>, timeoutMs: number): Promise<void> {
+  await delegatedFetch(`/identity/conditionalAccess/policies/${encodeURIComponent(policyId)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, timeoutMs);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Intune (ANOM-INT-309, INC-4099)                                             */
+/* -------------------------------------------------------------------------- */
+
+export interface LiveIntuneState {
+  /** "block" | "audit" | … for the probed ASR rule; null when the policy or rule is absent. */
+  asrRuleValue: string | null;
+  asrPolicyId: string | null;
+  /** Legacy Device Configuration profile, and whether it is still assigned. */
+  conflictingProfileId: string | null;
+  conflictingProfileAssigned: boolean | null;
+  /** Object id of the assignment group, needed to re-assign on a reset. */
+  assignmentGroupId: string | null;
+}
+
+const BETA = "/beta";
+
+/** Reads the seeded demo Intune objects by display name; throws when none exist so the caller falls back to the fixture. */
+export async function fetchIntuneStateLive(
+  probe: { asrPolicy?: string; asrRuleSetting?: string; conflictingProfile: string; assignmentGroup: string },
+  timeoutMs: number,
+): Promise<LiveIntuneState> {
+  const [policies, configs, groups] = await Promise.all([
+    probe.asrPolicy
+      ? (delegatedFetch(`${BETA}/deviceManagement/configurationPolicies?$select=id,name&$top=100`, { method: "GET" }, timeoutMs) as Promise<{ value?: Array<{ id: string; name: string }> }>)
+      : Promise.resolve({ value: [] as Array<{ id: string; name: string }> }),
+    delegatedFetch(`/deviceManagement/deviceConfigurations?$select=id,displayName`, { method: "GET" }, timeoutMs) as Promise<{ value?: Array<{ id: string; displayName: string }> }>,
+    graphFetch(`/groups?$filter=${encodeURIComponent(`displayName eq '${probe.assignmentGroup.replace(/'/g, "''")}'`)}&$select=id`, { method: "GET" }, timeoutMs) as Promise<{ value?: Array<{ id: string }> }>,
+  ]);
+  const asrPolicy = (policies.value ?? []).find((p) => p.name.endsWith(probe.asrPolicy ?? "\u0000"));
+  const profile = (configs.value ?? []).find((c) => c.displayName.endsWith(probe.conflictingProfile));
+  if (!asrPolicy && !profile) throw new Error("no [ContextPane-Demo] Intune objects found in the lab tenant (seed the lab first)");
+
+  let asrRuleValue: string | null = null;
+  if (asrPolicy && probe.asrRuleSetting) {
+    const settings = JSON.stringify(await delegatedFetch(`${BETA}/deviceManagement/configurationPolicies/${asrPolicy.id}/settings`, { method: "GET" }, timeoutMs));
+    asrRuleValue = new RegExp(`${probe.asrRuleSetting}_(block|audit|warn|off)"`, "i").exec(settings)?.[1]?.toLowerCase() ?? null;
+  }
+  let conflictingProfileAssigned: boolean | null = null;
+  if (profile) {
+    const assignments = (await delegatedFetch(`/deviceManagement/deviceConfigurations/${profile.id}/assignments`, { method: "GET" }, timeoutMs)) as { value?: unknown[] };
+    conflictingProfileAssigned = (assignments.value ?? []).length > 0;
+  }
   return {
-    id: body.id ?? "",
-    temporaryAccessPass: body.temporaryAccessPass,
-    lifetimeInMinutes: body.lifetimeInMinutes ?? lifetimeInMinutes,
-    isUsableOnce: body.isUsableOnce ?? isUsableOnce,
-    startDateTime: body.startDateTime ?? new Date().toISOString(),
+    asrRuleValue,
+    asrPolicyId: asrPolicy?.id ?? null,
+    conflictingProfileId: profile?.id ?? null,
+    conflictingProfileAssigned,
+    assignmentGroupId: groups.value?.[0]?.id ?? null,
   };
+}
+
+/**
+ * Flips one ASR rule in a Settings Catalog policy. Settings Catalog has no per-setting
+ * PATCH: the policy is read with its settings and PUT back with the rule's choice value
+ * swapped (…_audit ⟷ …_block).
+ */
+export async function setAsrRuleLive(policyId: string, ruleSetting: string, value: "block" | "audit", timeoutMs: number): Promise<void> {
+  const [policy, settings] = (await Promise.all([
+    delegatedFetch(`${BETA}/deviceManagement/configurationPolicies/${policyId}`, { method: "GET" }, timeoutMs),
+    delegatedFetch(`${BETA}/deviceManagement/configurationPolicies/${policyId}/settings`, { method: "GET" }, timeoutMs),
+  ])) as [Record<string, unknown>, { value?: Array<Record<string, unknown>> }];
+  const swapped = JSON.parse(
+    JSON.stringify((settings.value ?? []).map((s) => ({ "@odata.type": "#microsoft.graph.deviceManagementConfigurationSetting", settingInstance: s.settingInstance }))).replace(
+      new RegExp(`(${ruleSetting})_(block|audit|warn|off)"`, "gi"),
+      `$1_${value}"`,
+    ),
+  );
+  await delegatedFetch(
+    `${BETA}/deviceManagement/configurationPolicies/${policyId}`,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: policy.name,
+        description: policy.description ?? "",
+        platforms: policy.platforms,
+        technologies: policy.technologies,
+        roleScopeTagIds: policy.roleScopeTagIds ?? ["0"],
+        ...(policy.templateReference ? { templateReference: policy.templateReference } : {}),
+        settings: swapped,
+      }),
+    },
+    timeoutMs,
+  );
+}
+
+/** Replaces the assignments of a Device Configuration profile (null group = unassign). */
+export async function assignDeviceConfigurationLive(profileId: string, groupId: string | null, timeoutMs: number): Promise<void> {
+  await delegatedFetch(
+    `/deviceManagement/deviceConfigurations/${profileId}/assign`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assignments: groupId ? [{ target: { "@odata.type": "#microsoft.graph.groupAssignmentTarget", groupId } }] : [] }),
+    },
+    timeoutMs,
+  );
 }

@@ -5,5 +5,6 @@ export * from "./schemas/recipe.ts";
 export * from "./tools.ts";
 export * from "./aadsts.ts";
 export * from "./tenants.ts";
+export * from "./scenarios.ts";
 export * from "./validate.ts";
 export * from "./actions.ts";

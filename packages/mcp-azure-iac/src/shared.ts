@@ -53,7 +53,8 @@ export interface ManifestAzureTenant {
   displayName: string;
   tenantId: string;
   subscriptionId: string;
-  azure: {
+  /** Absent for tenants without an Azure estate in the demo (Fabrikam Legal is Intune-only). */
+  azure?: {
     resourceGroup: string;
     location: string;
     terraformFile: string;
@@ -81,6 +82,15 @@ export function getManifestTenant(tenantId: string): ManifestAzureTenant {
   const tenant = loadManifest().tenants[tenantId];
   if (!tenant) throw new Error(`Tenant '${tenantId}' not present in demo-lab-manifest.json`);
   return tenant;
+}
+
+export type ManifestAzureEstate = NonNullable<ManifestAzureTenant["azure"]>;
+
+/** The tenant's Azure estate; throws for tenants the demo models without one. */
+export function getManifestAzure(tenantId: string): ManifestAzureTenant & { azure: ManifestAzureEstate } {
+  const tenant = getManifestTenant(tenantId);
+  if (!tenant.azure) throw new Error(`Tenant '${tenantId}' has no Azure estate in demo-lab-manifest.json`);
+  return tenant as ManifestAzureTenant & { azure: ManifestAzureEstate };
 }
 
 /* -------------------------------------------------------------------------- */

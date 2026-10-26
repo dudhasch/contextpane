@@ -58,7 +58,7 @@ export const AADSTS_CATALOG: Record<string, AadstsEntry> = {
     category: "mfa",
     severity: "warning",
     meaning: "The user must register security info before MFA can be enforced.",
-    likelyCause: "New user, or MFA registration was reset. Issue a Temporary Access Pass to bootstrap registration.",
+    likelyCause: "New user, or MFA registration was reset. The user has to complete security info registration (aka.ms/mysecurityinfo) before signing in again.",
     docsUrl: DOCS,
   },
   AADSTS50058: {

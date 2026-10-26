@@ -17,7 +17,7 @@ describe("hcl subset parser", () => {
   });
 
   test("render is stable and re-parseable", () => {
-    const baseline = azureIacService.getTerraformBaseline("tenant-fabrikam-02");
+    const baseline = azureIacService.getTerraformBaseline("tenant-contoso-01");
     const rendered = renderNsgHcl(baseline.nsg, "x");
     const reparsed = parseNsgResources(rendered)[0];
     expect(reparsed?.name).toBe(baseline.nsg.name);
@@ -48,10 +48,17 @@ describe("drift computation (seeded manifest)", () => {
     expect(d.summary).toContain("TCP 3389");
   });
 
-  test("Fabrikam: rogue SSH + residency tag drift", async () => {
-    const { data } = await azureIacService.getNsgDrift("tenant-fabrikam-02");
-    expect(data.rogueSecurityRules[0]?.ruleName).toBe("Allow-Temp-SSH-Vendor");
-    expect(data.tagDrift.find((t) => t.key === "DataResidency")).toEqual({ key: "DataResidency", expectedInTf: "CH", actualInAzure: "Global" });
-    expect(data.tagDrift.find((t) => t.key === "Classification")).toEqual({ key: "Classification", expectedInTf: "Confidential", actualInAzure: null });
+  test("Fabrikam has no Azure estate (INC-4099 is an Intune scenario)", async () => {
+    expect(azureIacService.getNsgDrift("tenant-fabrikam-02")).rejects.toThrow("no Azure estate");
+  });
+
+  test("Azure Policy states follow the NSG drift", async () => {
+    const { data } = await azureIacService.getAvdEstate("tenant-contoso-01");
+    expect(data.hostPool.name).toBe("vdpool-contoso-fin-01");
+    expect(data.hostPool.loadBalancer).toBe("BreadthFirst");
+    const mgmt = data.azurePolicies.find((p) => p.name.startsWith("Management ports"));
+    expect(mgmt?.compliance).toBe("NonCompliant");
+    expect(mgmt?.detail).toContain("Allow-Temp-RDP-Diagnostic-Drift");
+    expect(data.azurePolicies.find((p) => p.name.includes("tags"))?.compliance).toBe("NonCompliant");
   });
 });

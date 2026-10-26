@@ -424,14 +424,22 @@
           "displayName": "SG-Fabrikam-Legal",
           "mailNickname": "sg-fabrikam-legal",
           "objectId": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c03",
-          "description": "ContextPane demo: Fabrikam Legal paralegal group entitled to Microsoft 365 E5 Compliance (Purview eDiscovery + Copilot)",
+          "description": "ContextPane demo: Fabrikam Legal staff, in scope of the compliant-device Conditional Access policy",
           "memberUpns": [
             "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
             "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
             "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
             "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
-            "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com"
+            "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+            "debra.berger.legal@fabrikamlegal.onmicrosoft.com"
           ]
+        },
+        {
+          "displayName": "SG-Fabrikam-Win11-Devices",
+          "mailNickname": "sg-fabrikam-win11-devices",
+          "objectId": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c04",
+          "description": "ContextPane demo: Fabrikam Legal Windows 11 devices (Intune assignment target)",
+          "memberUpns": []
         }
       ],
       "users": [
@@ -442,13 +450,13 @@
           "jobTitle": "Lead Paralegal",
           "department": "Litigation",
           "usageLocation": "CH",
-          "currentSku": "INFORMATION_PROTECTION_COMPLIANCE",
-          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
           "driftStatus": "compliant",
           "extension": {
             "extensionName": "com.contextpane.licenseState",
-            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-            "currentSku": "INFORMATION_PROTECTION_COMPLIANCE",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
             "driftStatus": "compliant",
             "contractId": "CNT-2026-912",
             "lastSyncedAt": "2026-10-25T09:30:00Z"
@@ -461,14 +469,14 @@
           "jobTitle": "Paralegal",
           "department": "Litigation",
           "usageLocation": "CH",
-          "currentSku": "SPE_E3",
-          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-          "driftStatus": "drifted",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
           "extension": {
             "extensionName": "com.contextpane.licenseState",
-            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-            "currentSku": "SPE_E3",
-            "driftStatus": "drifted",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
             "contractId": "CNT-2026-912",
             "lastSyncedAt": "2026-10-25T09:30:00Z"
           }
@@ -478,16 +486,16 @@
           "upn": "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
           "displayName": "Isaiah Langer",
           "jobTitle": "Paralegal",
-          "department": "Litigation",
+          "department": "Corporate",
           "usageLocation": "CH",
-          "currentSku": "SPE_E3",
-          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-          "driftStatus": "drifted",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
           "extension": {
             "extensionName": "com.contextpane.licenseState",
-            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-            "currentSku": "SPE_E3",
-            "driftStatus": "drifted",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
             "contractId": "CNT-2026-912",
             "lastSyncedAt": "2026-10-25T09:30:00Z"
           }
@@ -496,17 +504,17 @@
           "objectId": "0a1b2c3d-2222-4a02-9c02-000000000004",
           "upn": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
           "displayName": "Lidia Holloway",
-          "jobTitle": "Litigation Support Specialist",
-          "department": "Litigation",
+          "jobTitle": "Associate",
+          "department": "Corporate",
           "usageLocation": "CH",
-          "currentSku": "SPE_E3",
-          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-          "driftStatus": "drifted",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
           "extension": {
             "extensionName": "com.contextpane.licenseState",
-            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-            "currentSku": "SPE_E3",
-            "driftStatus": "drifted",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
             "contractId": "CNT-2026-912",
             "lastSyncedAt": "2026-10-25T09:30:00Z"
           }
@@ -518,36 +526,55 @@
           "jobTitle": "Paralegal",
           "department": "Litigation",
           "usageLocation": "CH",
-          "currentSku": "SPE_E3",
-          "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-          "driftStatus": "drifted",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
           "extension": {
             "extensionName": "com.contextpane.licenseState",
-            "expectedSku": "INFORMATION_PROTECTION_COMPLIANCE",
-            "currentSku": "SPE_E3",
-            "driftStatus": "drifted",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
+            "contractId": "CNT-2026-912",
+            "lastSyncedAt": "2026-10-25T09:30:00Z"
+          }
+        },
+        {
+          "objectId": "0a1b2c3d-2222-4a02-9c02-000000000006",
+          "upn": "debra.berger.legal@fabrikamlegal.onmicrosoft.com",
+          "displayName": "Debra Berger",
+          "jobTitle": "Legal Secretary",
+          "department": "Litigation",
+          "usageLocation": "CH",
+          "currentSku": "SPE_E5",
+          "expectedSku": "SPE_E5",
+          "driftStatus": "compliant",
+          "extension": {
+            "extensionName": "com.contextpane.licenseState",
+            "expectedSku": "SPE_E5",
+            "currentSku": "SPE_E5",
+            "driftStatus": "compliant",
             "contractId": "CNT-2026-912",
             "lastSyncedAt": "2026-10-25T09:30:00Z"
           }
         }
       ],
       "licenses": {
-        "skuPartNumber": "INFORMATION_PROTECTION_COMPLIANCE",
-        "skuName": "Microsoft 365 E5 Compliance",
-        "skuId": "184f3ca7-6b8f-4a8d-9c6e-3f2e1d0c9b8a",
-        "erpBilledCount": 25,
-        "entraAssignedCount": 21,
-        "monthlyUnitPriceUsd": 12.0,
+        "skuPartNumber": "SPE_E5",
+        "skuName": "Microsoft 365 E5",
+        "skuId": "06ebc4ee-1bb5-47dd-8120-11324bc54e06",
+        "erpBilledCount": 6,
+        "entraAssignedCount": 6,
+        "monthlyUnitPriceUsd": 57.0,
         "legacySkuPartNumber": "SPE_E3",
         "legacySkuId": "05e9a617-0261-4cee-bb44-138d3ef5d965"
       },
       "conditionalAccessPolicies": [
         {
           "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
-          "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+          "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
           "state": "enabled",
-          "createdDateTime": "2026-10-20T10:15:00Z",
-          "modifiedDateTime": "2026-10-25T08:02:00Z",
+          "createdDateTime": "2026-09-02T10:15:00Z",
+          "modifiedDateTime": "2026-09-02T10:15:00Z",
           "conditions": {
             "users": {
               "includeGroups": [
@@ -561,10 +588,10 @@
             },
             "applications": {
               "includeApplications": [
-                "80ccca67-54bd-44ab-8625-4b79c4dc7775"
+                "Office365"
               ],
               "includeApplicationNames": [
-                "Microsoft Purview"
+                "Office 365"
               ]
             },
             "clientAppTypes": [
@@ -572,7 +599,7 @@
             ]
           },
           "grantControls": {
-            "operator": "AND",
+            "operator": "OR",
             "builtInControls": [
               "compliantDevice"
             ]
@@ -585,49 +612,58 @@
           "createdDateTime": "2026-10-26T06:41:03Z",
           "userPrincipalName": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
           "userDisplayName": "Grady Archie",
-          "appId": "fb8d773d-7ef8-4ec0-a117-179f88add510",
-          "appDisplayName": "Microsoft 365 Copilot",
-          "clientAppUsed": "Browser",
+          "appId": "00000002-0000-0ff1-ce00-000000000000",
+          "appDisplayName": "Office 365 Exchange Online",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
           "ipAddress": "198.51.100.23",
           "location": "Geneva, CH",
           "deviceDetail": {
             "displayName": "FABRIKAM-LT-1107",
             "operatingSystem": "Windows 11",
-            "isCompliant": true,
-            "trustType": "Hybrid Azure AD joined"
-          },
-          "status": {
-            "errorCode": 50105,
-            "failureReason": "The signed in user is not assigned to a role for the application."
-          },
-          "conditionalAccessStatus": "notApplied",
-          "appliedConditionalAccessPolicies": []
-        },
-        {
-          "id": "sgn-fabrikam-0002",
-          "createdDateTime": "2026-10-26T06:44:50Z",
-          "userPrincipalName": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
-          "userDisplayName": "Lidia Holloway",
-          "appId": "80ccca67-54bd-44ab-8625-4b79c4dc7775",
-          "appDisplayName": "Microsoft Purview",
-          "clientAppUsed": "Browser",
-          "ipAddress": "198.51.100.61",
-          "location": "Geneva, CH",
-          "deviceDetail": {
-            "displayName": "FABRIKAM-MBP-0042",
-            "operatingSystem": "macOS",
             "isCompliant": false,
-            "trustType": "Azure AD registered"
+            "trustType": "Azure AD joined"
           },
           "status": {
-            "errorCode": 53003,
-            "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance."
+            "errorCode": 53000,
+            "failureReason": "Device is not in required device state: compliant. Conditional Access policy requires a compliant device, and the device is not compliant."
           },
           "conditionalAccessStatus": "failure",
           "appliedConditionalAccessPolicies": [
             {
               "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
-              "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sgn-fabrikam-0002",
+          "createdDateTime": "2026-10-26T06:58:47Z",
+          "userPrincipalName": "isaiah.langer.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Isaiah Langer",
+          "appId": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+          "appDisplayName": "Microsoft Teams",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "198.51.100.31",
+          "location": "Geneva, CH",
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-1112",
+            "operatingSystem": "Windows 11",
+            "isCompliant": false,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 53000,
+            "failureReason": "Device is not in required device state: compliant. Conditional Access policy requires a compliant device, and the device is not compliant."
+          },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            {
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
               "result": "failure",
               "enforcedGrantControls": [
                 "RequireCompliantDevice"
@@ -637,19 +673,83 @@
         },
         {
           "id": "sgn-fabrikam-0003",
-          "createdDateTime": "2026-10-26T06:52:17Z",
-          "userPrincipalName": "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
-          "userDisplayName": "Nestor Wilke",
-          "appId": "80ccca67-54bd-44ab-8625-4b79c4dc7775",
-          "appDisplayName": "Microsoft Purview",
-          "clientAppUsed": "Browser",
-          "ipAddress": "198.51.100.19",
+          "createdDateTime": "2026-10-26T07:04:12Z",
+          "userPrincipalName": "lidia.holloway.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Lidia Holloway",
+          "appId": "00000003-0000-0ff1-ce00-000000000000",
+          "appDisplayName": "SharePoint Online",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "198.51.100.44",
+          "location": "Zurich, CH",
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-1115",
+            "operatingSystem": "Windows 11",
+            "isCompliant": false,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 53000,
+            "failureReason": "Device is not in required device state: compliant. Conditional Access policy requires a compliant device, and the device is not compliant."
+          },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            {
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sgn-fabrikam-0004",
+          "createdDateTime": "2026-10-26T07:09:38Z",
+          "userPrincipalName": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Johanna Lorenz",
+          "appId": "00000002-0000-0ff1-ce00-000000000000",
+          "appDisplayName": "Office 365 Exchange Online",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "198.51.100.52",
           "location": "Geneva, CH",
           "deviceDetail": {
-            "displayName": "FABRIKAM-LT-0981",
+            "displayName": "FABRIKAM-LT-1121",
+            "operatingSystem": "Windows 11",
+            "isCompliant": false,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 53000,
+            "failureReason": "Device is not in required device state: compliant. Conditional Access policy requires a compliant device, and the device is not compliant."
+          },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            {
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sgn-fabrikam-0005",
+          "createdDateTime": "2026-10-26T07:12:05Z",
+          "userPrincipalName": "nestor.wilke.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Nestor Wilke",
+          "appId": "00000002-0000-0ff1-ce00-000000000000",
+          "appDisplayName": "Office 365 Exchange Online",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "198.51.100.12",
+          "location": "Geneva, CH",
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-1088",
             "operatingSystem": "Windows 11",
             "isCompliant": true,
-            "trustType": "Hybrid Azure AD joined"
+            "trustType": "Azure AD joined"
           },
           "status": {
             "errorCode": 0,
@@ -659,7 +759,7 @@
           "appliedConditionalAccessPolicies": [
             {
               "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
-              "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
               "result": "success",
               "enforcedGrantControls": [
                 "RequireCompliantDevice"
@@ -668,93 +768,70 @@
           ]
         },
         {
-          "id": "sgn-fabrikam-0004",
-          "createdDateTime": "2026-10-26T07:03:44Z",
-          "userPrincipalName": "johanna.lorenz.legal@fabrikamlegal.onmicrosoft.com",
-          "userDisplayName": "Johanna Lorenz",
-          "appId": "fb8d773d-7ef8-4ec0-a117-179f88add510",
-          "appDisplayName": "Microsoft 365 Copilot",
+          "id": "sgn-fabrikam-0006",
+          "createdDateTime": "2026-10-26T07:15:51Z",
+          "userPrincipalName": "grady.archie.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Grady Archie",
+          "appId": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+          "appDisplayName": "Microsoft Teams",
           "clientAppUsed": "Mobile Apps and Desktop clients",
-          "ipAddress": "198.51.100.77",
-          "location": "Lausanne, CH",
+          "ipAddress": "198.51.100.23",
+          "location": "Geneva, CH",
           "deviceDetail": {
-            "displayName": "FABRIKAM-LT-1133",
+            "displayName": "FABRIKAM-SP-1131",
             "operatingSystem": "Windows 11",
-            "isCompliant": true,
-            "trustType": "Hybrid Azure AD joined"
+            "isCompliant": false,
+            "trustType": "Azure AD joined"
           },
           "status": {
-            "errorCode": 50105,
-            "failureReason": "The signed in user is not assigned to a role for the application."
+            "errorCode": 53000,
+            "failureReason": "Device is not in required device state: compliant. Conditional Access policy requires a compliant device, and the device is not compliant."
           },
-          "conditionalAccessStatus": "notApplied",
-          "appliedConditionalAccessPolicies": []
-        }
-      ],
-      "azure": {
-        "resourceGroup": "rg-fabrikam-slz-prod",
-        "location": "switzerlandnorth",
-        "terraformFile": "fabrikam.tf",
-        "gitBranch": "main",
-        "nsg": {
-          "name": "nsg-fabrikam-slz-hub-01",
-          "id": "/subscriptions/e1c2d3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f/resourceGroups/rg-fabrikam-slz-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-fabrikam-slz-hub-01",
-          "tags": {
-            "Environment": "Production",
-            "Owner": "ContextPane",
-            "CostCenter": "LEG-4099",
-            "DataResidency": "Global",
-            "ManagedBy": "Terraform"
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
+            {
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sgn-fabrikam-0007",
+          "createdDateTime": "2026-10-26T07:18:24Z",
+          "userPrincipalName": "debra.berger.legal@fabrikamlegal.onmicrosoft.com",
+          "userDisplayName": "Debra Berger",
+          "appId": "00000002-0000-0ff1-ce00-000000000000",
+          "appDisplayName": "Office 365 Exchange Online",
+          "clientAppUsed": "Mobile Apps and Desktop clients",
+          "ipAddress": "198.51.100.61",
+          "location": "Geneva, CH",
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-1126",
+            "operatingSystem": "Windows 11",
+            "isCompliant": false,
+            "trustType": "Azure AD joined"
           },
-          "securityRules": [
+          "status": {
+            "errorCode": 53000,
+            "failureReason": "Device is not in required device state: compliant. Conditional Access policy requires a compliant device, and the device is not compliant."
+          },
+          "conditionalAccessStatus": "failure",
+          "appliedConditionalAccessPolicies": [
             {
-              "name": "Allow-Purview-Egress",
-              "priority": 100,
-              "direction": "Outbound",
-              "access": "Allow",
-              "protocol": "Tcp",
-              "sourcePortRange": "*",
-              "destinationPortRange": "443",
-              "sourceAddressPrefix": "VirtualNetwork",
-              "destinationAddressPrefix": "AzureCloud.switzerlandnorth"
-            },
-            {
-              "name": "Allow-Temp-SSH-Vendor",
-              "priority": 120,
-              "direction": "Inbound",
-              "access": "Allow",
-              "protocol": "Tcp",
-              "sourcePortRange": "*",
-              "destinationPortRange": "22",
-              "sourceAddressPrefix": "*",
-              "destinationAddressPrefix": "*",
-              "description": "TEMP: vendor SSH for eDiscovery connector troubleshooting - REMOVE"
-            },
-            {
-              "name": "Allow-Bastion-SSH",
-              "priority": 200,
-              "direction": "Inbound",
-              "access": "Allow",
-              "protocol": "Tcp",
-              "sourcePortRange": "*",
-              "destinationPortRange": "22",
-              "sourceAddressPrefix": "10.40.250.0/26",
-              "destinationAddressPrefix": "VirtualNetwork"
-            },
-            {
-              "name": "Deny-All-Inbound-Internet",
-              "priority": 4000,
-              "direction": "Inbound",
-              "access": "Deny",
-              "protocol": "*",
-              "sourcePortRange": "*",
-              "destinationPortRange": "*",
-              "sourceAddressPrefix": "Internet",
-              "destinationAddressPrefix": "*"
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require compliant device - Fabrikam M365",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
             }
           ]
         }
-      }
+      ]
     }
   }
 }

@@ -61,10 +61,10 @@ export function getHydrateLayoutToolDefinition(): OpenAIFunctionTool {
       name: HYDRATE_LAYOUT_TOOL_NAME,
       description:
         "Hydrate the ContextPane generative UI canvas. Emit an ordered list of catalog components " +
-        "(TenantSummaryHeader, LicenseDriftCard, EntraSignInTimeline, IaCDriftBanner) whose props are " +
-        "filled exclusively from the supplied MCP context (ERP ticket + contract, Entra license state, " +
-        "sign-in events, Conditional Access policies, Azure NSG drift). Never emit prose, markdown or " +
-        "components outside the catalog. Never invent users, policies, rules or identifiers.",
+        "(LicenseDriftCard, EntraSignInTimeline, IntuneDriftCard, IaCDriftBanner) whose props are " +
+        "filled exclusively from the supplied MCP context (ERP ticket or tenant anomaly, Entra license pools and " +
+        "assignments, sign-in events, Conditional Access policies, Intune policy drift, Azure NSG drift). Never emit " +
+        "prose, markdown or components outside the catalog. Never invent users, policies, rules or identifiers.",
       parameters: zodToToolParameters(HydrateLayoutArgsSchema),
     },
   };
@@ -114,7 +114,9 @@ export const RemediationBundleArgsSchema = z.object({
     ),
   terraformDiff: z
     .string()
-    .describe("Unified diff (---/+++ headers, @@ hunks) that removes rogue rules and restores drifted tags in the Terraform baseline."),
+    .default("")
+    .describe("Unified diff (---/+++ headers, @@ hunks) that removes rogue rules and restores drifted tags in the Terraform baseline; empty when the fix has no IaC part."),
+  graphPatch: z.string().default("").describe("The Microsoft Graph request bodies the fix sends (JSON), for review and manual runs."),
   affectedEntities: z
     .array(
       z.object({
@@ -134,8 +136,8 @@ export function getRemediationBundleToolDefinition(): OpenAIFunctionTool {
     function: {
       name: REMEDIATION_BUNDLE_TOOL_NAME,
       description:
-        "Emit a Human-in-the-Loop remediation bundle: an exact PowerShell 7 Microsoft.Graph script plus a unified " +
-        "Terraform diff that together resolve the correlated license drift, Conditional Access block and NSG/tag drift. " +
+        "Emit a Human-in-the-Loop remediation bundle: an exact PowerShell 7 Microsoft.Graph script plus, where the scenario " +
+        "has IaC drift, a unified Terraform diff, that together resolve the correlated license, Conditional Access, Intune and NSG drift. " +
         "The bundle will be AST-parsed and terraform-validated before a human approves it. Do not execute anything.",
       parameters: zodToToolParameters(RemediationBundleArgsSchema),
     },
@@ -149,12 +151,13 @@ export function getRemediationBundleToolChoice(): ForcedToolChoice {
 /* ---------------------------------- Voice ---------------------------------- */
 
 export const SteerLayoutArgsSchema = z.object({
-  intent: z.enum(["filter", "pin", "unpin", "switch-tenant", "focus", "reset", "generate-fix", "unknown"]),
+  intent: z.enum(["filter", "pin", "unpin", "switch-tenant", "switch-scenario", "focus", "reset", "generate-fix", "unknown"]),
   componentTypes: z
-    .array(z.enum(["TenantSummaryHeader", "LicenseDriftCard", "EntraSignInTimeline", "IaCDriftBanner"]))
+    .array(z.enum(["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner"]))
     .default([])
     .describe("Components the command refers to, if any"),
   tenantId: z.string().optional().describe("Target tenant id when intent is switch-tenant"),
+  scenarioId: z.string().optional().describe("Target scenario (INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309) when intent is switch-scenario"),
   recipeName: z.string().optional().describe("Recipe name when intent is pin"),
   transcript: z.string().describe("What the user said, normalised"),
   confidence: z.number().min(0).max(1),
@@ -168,7 +171,7 @@ export function getSteerLayoutToolDefinition(): OpenAIFunctionTool {
       name: STEER_LAYOUT_TOOL_NAME,
       description:
         "Interpret a spoken or typed operator command for the ContextPane canvas and map it to a layout intent: " +
-        "filter to specific components, pin the current view as a recipe, switch tenant, focus a component, reset, or generate a fix.",
+        "filter to specific components, pin the current view as a recipe, switch tenant or scenario, focus a component, reset, or generate a fix.",
       parameters: zodToToolParameters(SteerLayoutArgsSchema),
     },
   };
