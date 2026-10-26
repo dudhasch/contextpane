@@ -12,12 +12,13 @@ import {
   useInteractions,
   useRole,
 } from "@floating-ui/react";
-import { AlertTriangle, ExternalLink, KeyRound, ShieldBan, Sparkles, UserRound, Users, Cloud, Hash } from "lucide-react";
+import { AlertTriangle, Cloud, Cpu, ExternalLink, Hash, Laptop, ShieldBan, SlidersHorizontal, Sparkles, UserRound, Users, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import type { EntityType, QuickAction } from "@contextpane/catalog";
+import type { EnrichedEntity, EntityType, QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
 import { PROVIDER_LABEL, healthTone } from "@/lib/format";
-import { useWorkbench } from "@/store";
+import { CAT_CHIP, catStyle } from "@/lib/provenance";
+import { selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
 
@@ -28,26 +29,31 @@ const ICON: Partial<Record<EntityType, ReactNode>> = {
   resource: <Cloud />,
   policy: <ShieldBan />,
   sku: <Hash />,
+  setting: <SlidersHorizontal />,
+  device: <Laptop />,
 };
 
 interface EntityPillProps {
-  entityId: string;
-  entityType: EntityType;
-  label?: string;
+  entity: Pick<EnrichedEntity, "id" | "type" | "category" | "target" | "tab" | "hoverable"> & { label?: string; note?: string };
+  /** Smaller inline variant used inside running text. */
+  inline?: boolean;
 }
 
 /**
- * UX Pattern 1 — Inline Hover Resolution. Hovering (150 ms) calls Tier 1A and
- * renders the HoverDiagnosticPopover; a skeleton shows instantly so the
- * perceived latency stays inside the 350 ms budget.
+ * An MCP-enriched entity in its provenance colour. Hovering (150 ms) opens the Tier 1A
+ * diagnostic popover and lights up the card the entity spawned; a click expands that
+ * card and scrolls it into focus.
  */
-export function EntityPill({ entityId, entityType, label }: EntityPillProps) {
+export function EntityPill({ entity, inline = false }: EntityPillProps) {
   const [open, setOpen] = useState(false);
   const hover = useWorkbench((s) => s.hover);
-  const entry = useWorkbench((s) => s.hovers[entityId.toLowerCase()]);
+  const setLinked = useWorkbench((s) => s.setLinked);
+  const focusCard = useWorkbench((s) => s.focusCard);
+  const entry = useWorkbench((s) => selectHover(s, entity.id));
+  const hoverable = entity.hoverable !== false;
 
   const { refs, floatingStyles, context } = useFloating({
-    open,
+    open: open && hoverable,
     onOpenChange: setOpen,
     placement: "bottom-start",
     middleware: [offset(6), flip(), shift({ padding: 8 })],
@@ -61,32 +67,41 @@ export function EntityPill({ entityId, entityType, label }: EntityPillProps) {
   ]);
 
   useEffect(() => {
-    if (open) void hover(entityId, entityType);
-  }, [open, entityId, entityType, hover]);
+    if (open && hoverable) void hover(entity.id, entity.type);
+  }, [open, hoverable, entity.id, entity.type, hover]);
 
   useEffect(
     () =>
       onDemo((beat, claim) => {
-        if (beat.kind === "hover" && beat.entityId.toLowerCase() === entityId.toLowerCase() && claim()) setOpen(true);
+        if (beat.kind === "hover" && beat.entityId.toLowerCase() === entity.id.toLowerCase() && claim()) setOpen(true);
         if (beat.kind === "close-popovers") setOpen(false);
       }),
-    [entityId],
+    [entity.id],
   );
 
   const tone: Tone = entry?.popover ? healthTone(entry.popover.status) : "primary";
+  const label = entity.label ?? entity.id;
 
   return (
     <>
       <button
         ref={refs.setReference}
         type="button"
-        {...getReferenceProps()}
-        className={`inline-flex h-5 max-w-full items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 align-middle font-mono text-[11px] text-primary underline decoration-dotted underline-offset-2 hover:bg-primary/20 focus-visible:outline-2 focus-visible:outline-primary ${open ? "bg-primary/20" : ""}`}
+        style={catStyle(entity.category)}
+        {...getReferenceProps({
+          onMouseEnter: () => setLinked({ target: entity.target, category: entity.category }),
+          onMouseLeave: () => setLinked(null),
+          onClick: () => focusCard(entity.target, entity.tab),
+        })}
+        data-entity={entity.id}
+        title={`${entity.id} · click to open its card`}
+        className={`inline-flex max-w-full items-center gap-1 rounded border align-middle font-mono transition-colors hover:brightness-125 focus-visible:outline-2 focus-visible:outline-[var(--cat)] ${CAT_CHIP} ${inline ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-[11.5px]"} ${open ? "brightness-125" : ""}`}
       >
-        <span className="[&>svg]:size-3">{ICON[entityType] ?? <Hash />}</span>
-        <span className="truncate">{label ?? entityId}</span>
+        <span className="shrink-0 [&>svg]:size-3">{ICON[entity.type] ?? <Hash />}</span>
+        <span className="truncate">{label}</span>
+        {entity.note && !inline && <span className="shrink-0 font-sans text-[10px] opacity-75">· {entity.note}</span>}
       </button>
-      {open && (
+      {open && hoverable && (
         <FloatingPortal>
           <div
             ref={refs.setFloating}
@@ -94,7 +109,7 @@ export function EntityPill({ entityId, entityType, label }: EntityPillProps) {
             {...getFloatingProps()}
             className="z-50 w-80 animate-fade-in rounded-lg border border-sky-500/40 bg-[#0B1120]/95 p-3 shadow-[0_24px_60px_rgba(0,0,0,0.9)] ring-1 ring-white/10 backdrop-blur-xl"
           >
-            <HoverPopoverBody entityId={entityId} entityType={entityType} tone={tone} onClose={() => setOpen(false)} />
+            <HoverPopoverBody entityId={entity.id} tone={tone} onClose={() => setOpen(false)} />
           </div>
         </FloatingPortal>
       )}
@@ -102,8 +117,8 @@ export function EntityPill({ entityId, entityType, label }: EntityPillProps) {
   );
 }
 
-function HoverPopoverBody({ entityId, entityType, tone, onClose }: { entityId: string; entityType: EntityType; tone: Tone; onClose: () => void }) {
-  const entry = useWorkbench((s) => s.hovers[entityId.toLowerCase()]);
+function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone: Tone; onClose: () => void }) {
+  const entry = useWorkbench((s) => selectHover(s, entityId));
   if (!entry || entry.status === "loading") {
     return (
       <div className="space-y-2">
@@ -155,17 +170,16 @@ function HoverPopoverBody({ entityId, entityType, tone, onClose }: { entityId: s
       {p.quickActions.length > 0 && (
         <div className="flex flex-wrap gap-1 pt-1">
           {p.quickActions.map((a) => (
-            <QuickActionButton key={a.id} action={a} entityType={entityType} onDone={onClose} />
+            <QuickActionButton key={a.id} action={a} onDone={onClose} />
           ))}
         </div>
       )}
       <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[10px] text-faint">
-        <span>
-          {t.tier} · {PROVIDER_LABEL[t.provider] ?? t.provider} · {t.modelId}
+        <span className="inline-flex items-center gap-1">
+          <Cpu className="size-3" />
+          {t.tier} · {PROVIDER_LABEL[t.provider] ?? t.provider}
         </span>
-        <span className={entry.latencyMs !== undefined && entry.latencyMs <= 350 ? "text-healthy" : "text-warning"}>
-          {entry.latencyMs ?? t.latencyMs} ms · {t.tokensUsed} tok
-        </span>
+        <span>{entry.latencyMs ?? t.latencyMs} ms</span>
       </div>
     </div>
   );
@@ -180,40 +194,42 @@ function FactRow({ label, value, mono, tone }: { label: string; value: string; m
   );
 }
 
-function QuickActionButton({ action, onDone }: { action: QuickAction; entityType: EntityType; onDone: () => void }) {
-  const s = useWorkbench.getState;
+function QuickActionButton({ action, onDone }: { action: QuickAction; onDone: () => void }) {
   const run = () => {
-    const state = s();
+    const state = useWorkbench.getState();
     switch (action.kind) {
-      case "issue-tap":
-        if (action.targetEntityId) void state.issueTap(action.targetEntityId);
-        break;
       case "inspect-policy":
-        if (action.targetEntityId) void state.inspectPolicy(action.targetEntityId);
-        else state.revealComponent("EntraSignInTimeline");
+        // The Conditional Access inspector is the policies tab of the sign-in card.
+        state.focusCard("EntraSignInTimeline", "policies");
         break;
-      case "assign-license":
+      case "stage-license-fix":
         // HITL: the license change only ever runs from the approval drawer, opened on its PowerShell tab.
-        state.openLicenseRemediation(action.targetEntityId?.includes("@") ? action.targetEntityId : undefined);
+        state.focusCard("LicenseDriftCard", "users");
+        state.openRemediation({ tab: "powershell", ...(action.targetEntityId?.includes("@") ? { focusUpn: action.targetEntityId } : {}) });
+        break;
+      case "stage-intune-fix":
+        state.focusCard("IntuneDriftCard", "settings");
+        state.openRemediation({ tab: "powershell" });
         break;
       case "view-diff":
+        state.focusCard("IaCDriftBanner", "nsg");
         state.setDiffOpen(true);
         break;
       case "generate-fix":
-      case "exclude-group-report-only":
-        void state.remediate();
+        state.openRemediation();
         break;
       case "open-sign-in-logs":
-        state.flashComponent("EntraSignInTimeline");
+        state.focusCard("EntraSignInTimeline", "signins");
         break;
       default:
         state.toast({ tone: "info", title: action.label, detail: action.description });
     }
     onDone();
   };
-  const icon = action.kind === "issue-tap" ? <KeyRound /> : action.kind === "inspect-policy" ? <ShieldBan /> : action.kind === "generate-fix" ? <Sparkles /> : undefined;
+  const primary = action.kind === "stage-license-fix" || action.kind === "stage-intune-fix" || action.kind === "generate-fix";
+  const icon = action.kind === "inspect-policy" ? <ShieldBan /> : primary ? <Wrench /> : undefined;
   return (
-    <Button size="xs" variant={action.kind === "generate-fix" ? "meta" : "outline"} icon={icon} onClick={run} title={action.description}>
+    <Button size="xs" variant={primary ? "meta" : "outline"} icon={icon} onClick={run} title={action.description}>
       {action.label}
     </Button>
   );

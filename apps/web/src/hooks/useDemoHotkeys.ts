@@ -1,21 +1,20 @@
 import { useEffect } from "react";
-import { TENANT_IDS } from "@contextpane/catalog";
+import { SCENARIO_IDS } from "@contextpane/catalog";
 import { dispatchDemo } from "@/lib/demo";
 import { useWorkbench } from "@/store";
 
 /**
- * Keyboard-driven demo mode. Every beat of the 3-minute video is reachable
- * without mouse precision. Ignored while typing in inputs.
+ * Keyboard-driven demo mode. Every beat of the video is reachable without mouse
+ * precision. Ignored while typing in inputs.
  */
 export function useDemoHotkeys() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const s = useWorkbench.getState();
-      const requesterUpn = s.context?.ticket.requester.upn;
-      const anchorLine = s.context?.contract.lines.find((l) => l.semanticAnchor)?.lineId ?? "L1";
+      const brief = s.brief;
 
       switch (e.key) {
         case "?":
@@ -26,25 +25,38 @@ export function useDemoHotkeys() {
           s.setDrawerOpen(false);
           s.setDiffOpen(false);
           s.setVoiceOpen(false);
-          s.setSavingsOpen(false);
-          s.setAuditOpen(false);
-          s.closeTap();
-          s.setToolbarLine(null);
+          s.setSystemOpen(false);
           dispatchDemo({ kind: "close-popovers" });
           break;
         case "1":
-          if (requesterUpn) dispatchDemo({ kind: "hover", entityId: requesterUpn });
-          break;
         case "2":
-          s.setToolbarLine(s.toolbarLineId === anchorLine ? null : anchorLine);
-          break;
         case "3":
+        case "4":
+        case "5": {
+          const scenarioId = SCENARIO_IDS[Number(e.key) - 1];
+          if (scenarioId) void s.selectScenario(scenarioId);
+          break;
+        }
+        case "h": {
+          const hero = brief?.entities.find((x) => x.type === "upn" && x.hoverable) ?? brief?.entities.find((x) => x.hoverable);
+          if (hero) dispatchDemo({ kind: "hover", entityId: hero.id });
+          break;
+        }
+        case "m":
+          void s.setMode(s.mode === "ticket" ? "anomaly" : "ticket");
+          break;
+        case "e": {
+          const first = brief?.steps[0];
+          if (first) s.runStep(first);
+          break;
+        }
+        case "d":
           s.setDiffOpen(!s.diffOpen);
           break;
-        case "4":
-          void s.remediate();
+        case "f":
+          s.openRemediation();
           break;
-        case "5":
+        case "x":
           if (s.drawer && s.drawer.approval.state === "pending") {
             s.setDrawerOpen(true);
             void s.approve("approve");
@@ -52,11 +64,6 @@ export function useDemoHotkeys() {
             s.setDrawerOpen(true);
           }
           break;
-        case "6": {
-          const next = TENANT_IDS[(TENANT_IDS.indexOf(s.tenantId) + 1) % TENANT_IDS.length]!;
-          void s.setTenant(next);
-          break;
-        }
         case "p":
           if (s.activeRecipeId) s.unpinRecipe();
           else void s.pinRecipe();
@@ -65,16 +72,16 @@ export function useDemoHotkeys() {
           s.setVoiceOpen(!s.voiceOpen);
           break;
         case "t":
-          s.setSavingsOpen(!s.savingsOpen);
+          s.setSystemOpen(!s.systemOpen, "savings");
+          break;
+        case "a":
+          s.setSystemOpen(!s.systemOpen, "audit");
           break;
         case "r":
           void s.correlate({ fresh: true });
           break;
-        case "a":
-          s.setAuditOpen(!s.auditOpen);
-          break;
         case "7": {
-          const attachment = s.context?.ticket.attachments?.[0];
+          const attachment = brief?.attachments[0];
           if (attachment) void s.extractVision(attachment);
           break;
         }

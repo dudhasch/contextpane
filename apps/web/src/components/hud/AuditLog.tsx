@@ -1,4 +1,4 @@
-import { ExternalLink, FileCheck2, GitBranch, KeyRound, RotateCcw, ShieldCheck, ShieldX, X } from "lucide-react";
+import { ExternalLink, FileCheck2, GitBranch, RotateCcw, ShieldCheck, ShieldX } from "lucide-react";
 import type { AuditActionType, AuditEntry } from "@contextpane/catalog";
 import { fmtMs } from "@/lib/format";
 import { useWorkbench } from "@/store";
@@ -8,7 +8,6 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "remediation-verified": { label: "Pre-flight verified", tone: "primary", icon: <FileCheck2 /> },
   "hitl-approval": { label: "HITL approval", tone: "healthy", icon: <ShieldCheck /> },
   "hitl-rejection": { label: "HITL rejection", tone: "critical", icon: <ShieldX /> },
-  "tap-issued": { label: "TAP issued", tone: "meta", icon: <KeyRound /> },
   "drift-reset": { label: "Demo drift reset", tone: "muted", icon: <RotateCcw /> },
 };
 
@@ -18,27 +17,19 @@ function check(v: boolean | null): { text: string; className: string } {
 }
 
 /** Tier 3 verifiable audit ledger (data/audit-log.json): who ran what, as which identity, verified where. */
-export function AuditPanel() {
-  const open = useWorkbench((s) => s.auditOpen);
+export function AuditLogBody() {
   const entries = useWorkbench((s) => s.audit);
-  const close = () => useWorkbench.getState().setAuditOpen(false);
-  if (!open) return null;
 
   const approvals = entries.filter((e) => e.actionType === "hitl-approval").length;
   const verified = entries.filter((e) => e.modalSandboxVerified).length;
   const live = entries.filter((e) => e.execution === "live-graph").length;
 
   return (
-    <aside className="absolute top-14 right-3 z-30 flex max-h-[calc(100vh-5rem)] w-[560px] animate-fade-in flex-col card shadow-popover">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="size-4 text-healthy" />
-          <span className="text-[13px] font-semibold">Verifiable audit ledger</span>
-          <Pill tone="muted">data/audit-log.json</Pill>
-        </div>
-        <button type="button" onClick={close} className="text-faint hover:text-text" aria-label="Close">
-          <X className="size-3.5" />
-        </button>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-2 flex items-center gap-2">
+        <ShieldCheck className="size-4 text-healthy" />
+        <span className="text-[13px] font-semibold">Verifiable audit ledger</span>
+        <Pill tone="muted">data/audit-log.json</Pill>
       </div>
       <div className="mb-2 flex flex-wrap gap-1.5 text-[11px]">
         <Pill tone="healthy">{approvals} HITL approvals</Pill>
@@ -47,7 +38,7 @@ export function AuditPanel() {
         <span className="ml-auto self-center text-[10px] text-faint">GDAP / delegated identity on every row</span>
       </div>
       {entries.length === 0 ? (
-        <div className="py-6 text-center text-[12px] text-muted">No Tier 3 actions yet. Generate a fix, approve it or issue a TAP.</div>
+        <div className="py-6 text-center text-[12px] text-muted">No Tier 3 actions yet. Stage a fix, approve it or reset the drift.</div>
       ) : (
         <ol className="min-h-0 flex-1 divide-y divide-border-subtle overflow-y-auto rounded-md border border-border-subtle">
           {entries.map((e) => (
@@ -55,7 +46,7 @@ export function AuditPanel() {
           ))}
         </ol>
       )}
-    </aside>
+    </div>
   );
 }
 

@@ -14,7 +14,7 @@ export function HotkeysOverlay() {
           <div className="flex items-center gap-2">
             <Keyboard className="size-4 text-primary" />
             <span className="text-[13px] font-semibold">Demo hotkeys</span>
-            <span className="text-[11px] text-faint">every beat of the 3-minute video, no mouse precision required</span>
+            <span className="text-[11px] text-faint">every demo beat, no mouse precision required</span>
           </div>
           <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-text" aria-label="Close">
             <X className="size-3.5" />
@@ -24,7 +24,7 @@ export function HotkeysOverlay() {
           <tbody>
             {DEMO_HOTKEYS.map((h) => (
               <tr key={h.key} className="border-t border-border-subtle">
-                <td className="w-12 py-1.5">
+                <td className="w-14 py-1.5">
                   <Kbd>{h.key}</Kbd>
                 </td>
                 <td className="py-1.5">{h.label}</td>

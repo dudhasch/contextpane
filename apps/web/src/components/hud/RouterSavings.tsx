@@ -1,4 +1,4 @@
-import { PiggyBank, X } from "lucide-react";
+import { PiggyBank } from "lucide-react";
 import { TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import type { RouterTier } from "@contextpane/catalog";
@@ -30,13 +30,10 @@ function fmtUsd(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-/** Tallies what Tier 0 recipes saved versus a full Tier 2 correlate, per tier. */
-export function RouterSavingsPanel() {
-  const open = useWorkbench((s) => s.savingsOpen);
+/** Tallies what Tier 0 recipes saved versus a full Tier 2 correlate, per tier (System & Audit drawer). */
+export function RouterSavingsBody() {
   const stats = useWorkbench((s) => s.stats);
   const history = useWorkbench((s) => s.telemetryHistory);
-  const close = () => useWorkbench.getState().setSavingsOpen(false);
-  if (!open) return null;
 
   const baseline = stats?.tier2Baseline ?? { tokens: 6200, ms: 4800 };
   const zero = stats?.zeroTokenRequests ?? 0;
@@ -67,16 +64,11 @@ export function RouterSavingsPanel() {
   });
 
   return (
-    <aside className="absolute top-14 right-3 z-30 w-[460px] animate-fade-in card shadow-popover">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <PiggyBank className="size-4 text-primary" />
-          <span className="text-[13px] font-semibold">Router savings</span>
-          <Pill tone="primary">vs Tier 2 · {fmtTokens(baseline.tokens)} tok / {fmtMs(baseline.ms)}</Pill>
-        </div>
-        <button type="button" onClick={close} className="text-faint hover:text-text" aria-label="Close">
-          <X className="size-3.5" />
-        </button>
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <PiggyBank className="size-4 text-primary" />
+        <span className="text-[13px] font-semibold">Router savings</span>
+        <Pill tone="primary">vs Tier 2 · {fmtTokens(baseline.tokens)} tok / {fmtMs(baseline.ms)}</Pill>
       </div>
 
       <div className="grid grid-cols-4 gap-2">
@@ -155,7 +147,7 @@ export function RouterSavingsPanel() {
           ))}
         </div>
       )}
-    </aside>
+    </div>
   );
 }
 

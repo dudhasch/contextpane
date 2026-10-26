@@ -7,8 +7,9 @@ import type {
   HoverDiagnosticPopover,
   Layout,
   RouterTelemetry,
+  ScenarioBrief,
+  ScenarioListItem,
   SteerLayoutArgs,
-  TapIssueResult,
   ViewRecipe,
   VisionExtraction,
 } from "@contextpane/catalog";
@@ -17,88 +18,13 @@ import type {
 /* Response shapes (mirror apps/orchestrator/src/app.ts)                       */
 /* -------------------------------------------------------------------------- */
 
-export interface ErpEntityRef {
-  type: EntityType;
-  id: string;
-  label: string;
-}
+export type ErpAttachment = ScenarioBrief["attachments"][number];
 
-export interface ErpTicket {
-  ticketId: string;
-  tenantId: string;
-  title: string;
-  description: string;
-  severity: "P1" | "P2" | "P3" | "P4";
-  status: string;
-  openedAt: string;
-  updatedAt: string;
-  slaBreachAt: string;
-  requester: { displayName: string; upn: string; role: string };
-  assignedEngineer: string;
-  affectedUpns: string[];
-  affectedGroups: string[];
-  relatedContractId: string;
-  category: string;
-  entities: ErpEntityRef[];
-  infrastructureSpec: string;
-  timeline: Array<{ at: string; actor: string; note: string }>;
-  attachments?: ErpAttachment[];
-}
-
-export interface ErpAttachment {
-  fileName: string;
-  mimeType: string;
-  url: string;
-  uploadedBy: string;
-  uploadedAt: string;
-  sizeBytes: number;
-}
-
-export interface ErpContractLine {
-  lineId: string;
-  description: string;
-  skuPartNumber: string;
-  skuName: string;
-  quantity: number;
-  unitPriceUsd: number;
-  billingCycle: string;
-  entitlementGroup: string | null;
-  semanticAnchor: boolean;
-}
-
-export interface ErpContract {
-  contractId: string;
-  tenantId: string;
-  title: string;
-  startDate: string;
-  endDate: string;
-  slaTier: string;
-  monthlyValueUsd: number;
-  lines: ErpContractLine[];
-  terms: string[];
-}
-
-export interface TenantContextResponse {
-  tenantId: string;
-  ticket: ErpTicket;
-  contract: ErpContract;
-  tenant: { tenantId: string; displayName: string; verifiedDomain: string; entraTenantId: string; slaTier: string; accountManager: string };
-  license: {
-    source: "live-graph" | "seeded-manifest";
-    fallbackReason?: string;
-    data: {
-      entraAssignedCount: number;
-      sku: { skuPartNumber: string; skuName: string };
-      group: { displayName: string };
-      users: Array<{ upn: string; displayName: string; currentSku: string; expectedSku: string; driftStatus: string }>;
-      driftedUsers: Array<{ upn: string; displayName: string }>;
-    };
-  };
-  policies: { source: string; data: Array<{ id: string; displayName: string; state: string; blocks: boolean }> };
-  signIns: { source: string; count: number };
-  drift: { source: "live-azure" | "seeded-manifest"; fallbackReason?: string; summary: string; driftState: string; severity: string };
+export interface BriefResponse {
+  brief: ScenarioBrief;
   gatherLatencyMs: number;
   transport: string;
+  fallbackReasons: string[];
 }
 
 export interface ProgressEvent {
@@ -139,23 +65,16 @@ export interface ApproveResponse {
 export interface ResetDriftResponse {
   ok: boolean;
   latencyMs: number;
-  results: Array<{ tenantId: string; source: "live-graph" | "simulated"; fallbackReason?: string; latencyMs: number; users: string[]; failed: Array<{ upn: string; status: number; error?: string }> }>;
-}
-
-export interface PolicyDetailResponse {
-  source: string;
-  policy: {
-    id: string;
-    displayName: string;
-    state: string;
-    includeGroupNames: string[];
-    excludeGroupNames: string[];
-    targetApps: Array<{ appId: string; displayName: string }>;
-    grant: { operator: string; builtInControls: string[] };
-    blocks: boolean;
-  } & Record<string, unknown>;
-  blockedUpns: string[];
-  blockedSignIns: number;
+  results: Array<{
+    scenarioId: string;
+    tenantId: string;
+    source: "live-graph" | "simulated";
+    fallbackReason?: string;
+    latencyMs: number;
+    summary: string;
+    items: string[];
+    failed: Array<{ id: string; status: number; error?: string }>;
+  }>;
 }
 
 export interface VisionResponse {
@@ -225,21 +144,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<HealthResponse>("/api/health"),
-  tenantContext: (tenantId: string, fresh = false) => request<TenantContextResponse>(`/api/tenants/${tenantId}/context${fresh ? "?fresh=1" : ""}`),
-  hydrate: (recipeId: string, tenantId: string) => request<HydrateResponse>(`/api/recipe/${encodeURIComponent(recipeId)}/hydrate?tenantId=${tenantId}`),
+  scenarios: () => request<{ scenarios: ScenarioListItem[] }>("/api/scenarios"),
+  brief: (scenarioId: string, fresh = false) => request<BriefResponse>(`/api/scenarios/${scenarioId}/brief${fresh ? "?refresh=true" : ""}`),
+  hydrate: (recipeId: string, scenarioId: string) => request<HydrateResponse>(`/api/recipe/${encodeURIComponent(recipeId)}/hydrate?scenarioId=${scenarioId}`),
   recipes: () => request<{ recipes: ViewRecipe[] }>("/api/recipes"),
-  pinRecipe: (body: { name: string; tenantId: string; componentTypes: ComponentType[]; description?: string }) =>
+  pinRecipe: (body: { name: string; scenarioId: string; componentTypes: ComponentType[]; description?: string }) =>
     request<{ recipe: ViewRecipe }>("/api/recipes", { method: "POST", body: JSON.stringify(body) }),
   deleteRecipe: (recipeId: string) => request<{ removed: boolean }>(`/api/recipes/${encodeURIComponent(recipeId)}`, { method: "DELETE" }),
-  hover: (body: { tenantId: string; entityId: string; entityType?: EntityType }) => request<HoverResponse>("/api/hover", { method: "POST", body: JSON.stringify(body) }),
-  correlate: (body: { tenantId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
-  remediate: (body: { tenantId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
+  hover: (body: { scenarioId: string; entityId: string; entityType?: EntityType }) => request<HoverResponse>("/api/hover", { method: "POST", body: JSON.stringify(body) }),
+  correlate: (body: { scenarioId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
+  remediate: (body: { scenarioId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
   approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean }) =>
     request<ApproveResponse>("/api/remediate/approve", { method: "POST", body: JSON.stringify(body) }),
   labState: () => request<{ convergence: Convergence[] }>("/api/lab/state"),
-  resetDrift: (tenantId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(tenantId ? { tenantId } : {}) }),
-  issueTap: (body: { tenantId: string; upn: string }) => request<TapIssueResult>("/api/actions/issue-tap", { method: "POST", body: JSON.stringify(body) }),
-  policy: (tenantId: string, policyId: string) => request<PolicyDetailResponse>(`/api/tenants/${tenantId}/policies/${encodeURIComponent(policyId)}`),
+  resetDrift: (scenarioId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(scenarioId ? { scenarioId } : {}) }),
   visionExtract: (body: { tenantId: string; ticketId: string; fileName: string; imageDataUri: string }) =>
     request<VisionResponse>("/api/vision-extract", { method: "POST", body: JSON.stringify(body) }),
   audit: (limit = 50) => request<{ entries: AuditEntry[]; file: string }>(`/api/audit?limit=${limit}`),

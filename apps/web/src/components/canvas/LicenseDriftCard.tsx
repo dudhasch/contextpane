@@ -1,16 +1,22 @@
-import { BadgeAlert, BadgeCheck } from "lucide-react";
-import type { LicenseDriftCard as Props, Provenance } from "@contextpane/catalog";
-import { fmtUsd } from "@/lib/format";
+import { BadgeCheck, Wrench } from "lucide-react";
+import type { AssignmentState, LicenseDriftCard as Props } from "@contextpane/catalog";
+import { useWorkbench } from "@/store";
+import { Button } from "../ui/Button";
 import { Pill, type Tone } from "../ui/Pill";
-import { CardShell } from "./CardShell";
+import { CardShell, DataTable, Stat } from "./CardShell";
 
-const DRIFT_TONE: Record<string, Tone> = { compliant: "healthy", drifted: "warning", unassigned: "critical" };
+const STATE_TONE: Record<AssignmentState, Tone> = {
+  Active: "healthy",
+  Reclaimed: "healthy",
+  Drifted: "warning",
+  "Error: CountViolation": "critical",
+  Orphaned: "critical",
+};
 
 /**
- * Compact label for long SKU part numbers so the CURRENT / EXPECTED columns
- * never collide: every segment but the last is cut to 4 characters
- * (INFORMATION_PROTECTION_COMPLIANCE → INFO_PROT_COMPLIANCE). The full part
- * number stays in the tooltip.
+ * Compact label for long SKU part numbers so the columns never collide: every
+ * segment but the last is cut to 4 characters (INFORMATION_PROTECTION_COMPLIANCE →
+ * INFO_PROT_COMPLIANCE). The full part number stays in the tooltip.
  */
 export function shortSku(sku: string, max = 16): string {
   if (sku.length <= max) return sku;
@@ -22,100 +28,103 @@ export function shortSku(sku: string, max = 16): string {
   return out.length <= max + 6 ? out : `${out.slice(0, max + 5)}…`;
 }
 
-function SkuBadge({ sku, muted = false }: { sku: string; muted?: boolean }) {
-  const short = shortSku(sku);
+function SkuBadges({ skus, muted = false }: { skus: string; muted?: boolean }) {
+  const list = skus.split(",").map((s) => s.trim());
   return (
-    <span
-      title={sku}
-      className={`inline-block max-w-full rounded border border-slate-700 bg-slate-800/90 px-2 py-0.5 font-mono text-xs whitespace-nowrap ${muted ? "text-muted" : "text-text"}`}
-    >
-      {short}
+    <span className="flex flex-wrap gap-1">
+      {list.map((sku) => (
+        <span key={sku} title={sku} className={`inline-block rounded border border-slate-700 bg-slate-800/90 px-1.5 py-0.5 font-mono text-[11px] whitespace-nowrap ${muted || sku === "NONE" ? "text-muted" : "text-text"}`}>
+          {shortSku(sku)}
+        </span>
+      ))}
     </span>
   );
 }
 
-export function LicenseDriftCardView({ props, provenance, repaired }: { props: Props; provenance: Provenance; repaired?: boolean }) {
-  const missing = props.driftedCount;
+/** License Pool & Assignment card (amber). */
+export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
+  const openRemediation = useWorkbench((s) => s.openRemediation);
+  const remediateStatus = useWorkbench((s) => s.remediateStatus);
+  const open = props.users.filter((u) => u.assignmentState !== "Active" && u.assignmentState !== "Reclaimed");
+  const errors = props.groupErrors.reduce((n, e) => n + e.affectedUsers, 0);
+  const live = props.skuPools.some((p) => p.source === "live-graph");
   return (
     <CardShell
       type="LicenseDriftCard"
-      icon={missing ? <BadgeAlert /> : <BadgeCheck />}
-      title={`${props.skuName} · ${props.skuPartNumber}`}
+      icon={<BadgeCheck />}
+      title={`License Pool & Assignment · ${props.groupName}`}
       state={props.state}
-      statePill={
-        <Pill tone={missing ? "warning" : "healthy"}>
-          {props.entraAssignedCount}/{props.erpBilledCount} Assigned • {missing} Missing
-        </Pill>
+      triggeredBy={triggeredBy}
+      source={live ? "live subscribedSkus" : "pool: fixture"}
+      tabs={[
+        { id: "users", label: "Assignments", badge: props.users.length },
+        { id: "pool", label: "SKU Pools", badge: props.skuPools.length },
+      ]}
+      summary={
+        <div className="space-y-1">
+          <div className="text-[12.5px] leading-snug">{props.headline}</div>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+            {props.skuPools.map((p) => (
+              <Stat key={p.skuPartNumber} label={`${p.skuPartNumber} Pool:`} tone={p.available <= 0 ? "critical" : undefined}>
+                {p.skuPartNumber === props.skuPartNumber || !p.note ? `${p.consumed}/${p.enabled} assigned · ${p.available} available` : p.note}
+              </Stat>
+            ))}
+            <Stat label="Group Errors:" tone={errors ? "critical" : "healthy"}>
+              {props.groupErrors.length ? props.groupErrors.map((e) => `${e.state} (${e.affectedUsers})`).join(", ") : "0"}
+            </Stat>
+          </div>
+        </div>
       }
-      provenance={provenance}
-      repaired={repaired}
-      right={
-        props.burnRateDeltaUsdPerMonth !== undefined && props.burnRateDeltaUsdPerMonth > 0 ? (
-          <Pill tone="critical" title="Billed by the ERP but not delivered in Entra">
-            +{fmtUsd(props.burnRateDeltaUsdPerMonth)}/mo burn
-          </Pill>
-        ) : null
+      primaryAction={
+        open.length > 0 && (
+          <Button size="xs" variant="meta" icon={<Wrench />} loading={remediateStatus === "loading"} onClick={() => openRemediation({ tab: "powershell" })}>
+            Stage License Remediation
+          </Button>
+        )
       }
     >
-      <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-        <span>
-          Group <span className="font-mono text-text">{props.groupName}</span>
-        </span>
-        <span>
-          Contract <span className="font-mono text-text">{props.contractId}</span>
-        </span>
-        {props.monthlyUnitPriceUsd !== undefined && (
-          <span>
-            Unit <span className="font-mono text-text">{fmtUsd(props.monthlyUnitPriceUsd)}/mo</span>
-          </span>
-        )}
-      </div>
-      <div className="overflow-hidden rounded-md border border-border-subtle">
-        <table className="w-full table-fixed text-[11.5px]">
-          <colgroup>
-            <col className="w-[32%]" />
-            <col className="w-[22%]" />
-            <col className="w-[17%]" />
-            <col className="w-[17%]" />
-            <col className="w-[12%]" />
-          </colgroup>
-          <thead className="bg-surface text-[10px] uppercase tracking-wider text-faint">
-            <tr>
-              <th className="px-3 py-1.5 text-left font-medium">User</th>
-              <th className="px-3 py-1.5 text-left font-medium">Role</th>
-              <th className="px-3 py-1.5 text-left font-medium">Current</th>
-              <th className="px-3 py-1.5 text-left font-medium">Expected</th>
-              <th className="px-3 py-1.5 text-right font-medium">Drift</th>
-            </tr>
-          </thead>
-          <tbody>
-            {props.users.map((u) => (
-              <tr key={u.upn} className={`border-t border-border-subtle ${u.driftStatus !== "compliant" ? "bg-warning/5" : ""}`}>
-                <td className="px-3 py-1.5 align-middle">
-                  <div className="flex items-baseline gap-1.5 overflow-hidden whitespace-nowrap" title={u.upn}>
-                    <span className="shrink-0 leading-tight">{u.displayName}</span>
-                    <span className="truncate font-mono text-[10px] text-faint">{u.upn}</span>
-                  </div>
-                </td>
-                <td className="truncate px-3 py-1.5 align-middle text-muted" title={u.jobTitle}>
-                  {u.jobTitle}
-                </td>
-                <td className="px-3 py-1.5 align-middle">
-                  <SkuBadge sku={u.currentSku} />
-                </td>
-                <td className="px-3 py-1.5 align-middle">
-                  <SkuBadge sku={u.expectedSku} muted />
-                </td>
-                <td className="px-3 py-1.5 text-right align-middle">
-                  <Pill tone={DRIFT_TONE[u.driftStatus] ?? "muted"} icon={u.driftStatus === "compliant" ? <BadgeCheck /> : <BadgeAlert />}>
-                    {u.driftStatus}
-                  </Pill>
-                </td>
-              </tr>
+      {(tab) =>
+        tab === "pool" ? (
+          <div className="space-y-2">
+            <DataTable
+              head={["SKU", "Enabled", "Consumed", "Available", "Source"]}
+              rows={props.skuPools.map((p) => [
+                <span title={p.skuName} className="font-mono">
+                  {p.skuPartNumber}
+                </span>,
+                <span className="font-mono">{p.enabled}</span>,
+                <span className="font-mono">{p.consumed}</span>,
+                <span className={`font-mono ${p.available <= 0 ? "text-critical" : "text-healthy"}`}>{p.available}</span>,
+                <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "fixture"}</span>,
+              ])}
+            />
+            {props.groupErrors.map((e) => (
+              <div key={e.groupName + e.skuPartNumber} className="rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[11.5px]">
+                <span className="font-mono text-critical">{e.groupName} · State: Error · {e.state}</span>
+                <div className="text-muted">{e.detail}</div>
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        ) : (
+          <DataTable
+            head={["User", "Account", "Assigned SKU", "Expected SKU", "Path", "Assignment State"]}
+            rows={props.users.map((u) => [
+              <div className="min-w-0" title={u.upn}>
+                <div className="leading-tight">{u.displayName}</div>
+                <div className="truncate font-mono text-[10px] text-faint">{u.upn}</div>
+              </div>,
+              <span className={u.accountEnabled ? "text-text" : "text-warning"}>
+                {u.accountEnabled ? "Enabled" : "Disabled"}
+                {u.lastSignIn && !u.accountEnabled ? <span className="block font-mono text-[10px] text-faint">last {u.lastSignIn.slice(0, 10)}</span> : null}
+              </span>,
+              <SkuBadges skus={u.currentSku} />,
+              <SkuBadges skus={u.expectedSku} muted />,
+              <span className="font-mono text-[11px] whitespace-nowrap text-muted">{u.assignmentPath}</span>,
+              <Pill tone={STATE_TONE[u.assignmentState]}>{u.assignmentState}</Pill>,
+            ])}
+          />
+        )
+      }
     </CardShell>
   );
 }

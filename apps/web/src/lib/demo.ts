@@ -1,13 +1,9 @@
 /**
  * Demo beat bus: hotkeys dispatch beats, components that own the UI for a
- * beat (an entity pill, the contract line) listen and act. Keeps the hotkey
- * layer free of refs into deep component trees.
+ * beat (an entity pill) listen and act. Keeps the hotkey layer free of refs
+ * into deep component trees.
  */
-export type DemoBeat =
-  | { kind: "hover"; entityId: string }
-  | { kind: "toolbar"; lineId: string }
-  | { kind: "codelens-diff" }
-  | { kind: "close-popovers" };
+export type DemoBeat = { kind: "hover"; entityId: string } | { kind: "close-popovers" };
 
 const EVENT = "contextpane:demo";
 
@@ -33,18 +29,19 @@ export function onDemo(handler: (beat: DemoBeat, claim: () => boolean) => void):
 }
 
 export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> = [
-  { key: "1", label: "Hover the affected UPN pill", beat: "UX 1 · Inline Hover Resolution (Tier 1A)" },
-  { key: "2", label: "Select the E5 contract line", beat: "UX 2 · Semantic Floating Toolbar" },
-  { key: "3", label: "Open the IaC drift diff", beat: "UX 3 · CodeLens · View Diff" },
-  { key: "4", label: "Generate Fix & Stage PR", beat: "Tier 3 · muse-wonder + muse-code + sandbox" },
-  { key: "5", label: "Approve & Execute (HITL)", beat: "Human-in-the-Loop approval" },
-  { key: "6", label: "Switch tenant", beat: "Tier 0 · 0-token recipe hydration" },
+  { key: "1-5", label: "Open INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309", beat: "Tickets & tenant anomalies" },
+  { key: "m", label: "Switch Tickets / Tenant Anomalies", beat: "Mode switcher" },
+  { key: "h", label: "Hover the hero entity", beat: "Tier 1A · inline hover diagnostics" },
+  { key: "e", label: "Run step 1 of the resolution plan", beat: "Left pane → card expands" },
+  { key: "d", label: "Open the Terraform diff", beat: "IaC drift" },
+  { key: "f", label: "Stage the fix", beat: "Tier 3 · plan, code, pre-flight, branch" },
+  { key: "x", label: "Approve & Execute (HITL)", beat: "Delegated identity, cards turn emerald" },
   { key: "7", label: "Extract the ticket screenshot", beat: "Tier 2 · Vision (muse-spark-1.3)" },
-  { key: "a", label: "Toggle the audit ledger", beat: "Tier 3 verifiable trail" },
-  { key: "0", label: "Reset demo drift", beat: "Lab users back to SPE_E3 for the next take" },
-  { key: "p", label: "Pin canvas as View Recipe", beat: "Persist layout, 0 tokens on next switch" },
+  { key: "p", label: "Pin canvas as View Recipe", beat: "0 tokens on the next scenario switch" },
   { key: "v", label: "Voice Steer", beat: "Muse Voice Transcribe → layout intent" },
-  { key: "t", label: "Toggle router savings panel", beat: "Tokens / ms saved by Tier 0" },
+  { key: "t", label: "System & Audit · router savings", beat: "Tokens / ms saved by Tier 0" },
+  { key: "a", label: "System & Audit · audit log", beat: "Verifiable trail" },
+  { key: "0", label: "Reset demo drift", beat: "Every scenario back to its drifted state" },
   { key: "r", label: "Re-correlate (fresh)", beat: "Tier 1B/2 forced tool call" },
   { key: "Esc", label: "Close drawers & popovers", beat: "" },
   { key: "?", label: "This overlay", beat: "" },

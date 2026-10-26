@@ -1,4 +1,4 @@
-import { Check, ExternalLink, FileCode2, GitBranch, GitPullRequest, Rocket, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle } from "lucide-react";
+import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitPullRequest, Rocket, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle } from "lucide-react";
 import type { ActionApprovalDrawer as Drawer } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench, type DrawerTab as Tab } from "@/store";
@@ -16,7 +16,11 @@ const VERDICT_TONE: Record<Drawer["verificationStatus"]["verdict"], Tone> = {
   Pending: "muted",
 };
 
-/** HITL remediation drawer — the only place anything can be executed from. */
+/**
+ * HITL remediation drawer, the only place anything can be executed from. Two engineer
+ * workflows side by side: Path A copies the verified script / patch to run in your own
+ * terminal; Path B approves and executes it against the lab through the delegated identity.
+ */
 export function ActionApprovalDrawerSheet() {
   const open = useWorkbench((s) => s.drawerOpen);
   const setOpen = useWorkbench((s) => s.setDrawerOpen);
@@ -31,8 +35,17 @@ export function ActionApprovalDrawerSheet() {
   const tab = useWorkbench((s) => s.drawerTab);
   const setTab = useWorkbench((s) => s.setDrawerTab);
   const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
+  const toast = useWorkbench((s) => s.toast);
   if (!open) return null;
   const prPossible = Boolean(github?.origin && github.ghAuthenticated);
+  const copy = async (text: string, what: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ tone: "healthy", title: `${what} copied`, detail: "Run it with -WhatIf first, then without, as your delegated admin." });
+    } catch (error) {
+      toast({ tone: "warning", title: "Clipboard unavailable", detail: error instanceof Error ? error.message : String(error) });
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-canvas/70" onClick={() => setOpen(false)}>
@@ -40,7 +53,7 @@ export function ActionApprovalDrawerSheet() {
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <Sparkles className="size-4 text-meta" />
           <span className="text-[13px] font-semibold">Action Approval</span>
-          <Pill tone="meta">Tier 3 · muse-wonder + muse-code</Pill>
+          {drawer && <span className="font-mono text-[11px] text-muted">#{drawer.ticketId}</span>}
           <button type="button" onClick={() => setOpen(false)} className="ml-auto text-faint hover:text-text" aria-label="Close">
             <X className="size-4" />
           </button>
@@ -61,9 +74,11 @@ export function ActionApprovalDrawerSheet() {
                 <Pill tone="muted" icon={<Terminal />}>
                   AST {flag(drawer.verificationStatus.astCheckPassed)}
                 </Pill>
-                <Pill tone="muted" icon={<FileCode2 />}>
-                  fmt {flag(drawer.verificationStatus.terraformFmtPassed)} · validate {flag(drawer.verificationStatus.terraformValidatePassed)}
-                </Pill>
+                {drawer.terraformDiff && (
+                  <Pill tone="muted" icon={<FileCode2 />}>
+                    fmt {flag(drawer.verificationStatus.terraformFmtPassed)} · validate {flag(drawer.verificationStatus.terraformValidatePassed)}
+                  </Pill>
+                )}
                 <Pill tone="muted">
                   {drawer.verificationStatus.sandboxProvider} · {fmtMs(drawer.verificationStatus.validationLatencyMs)}
                 </Pill>
@@ -107,23 +122,53 @@ export function ActionApprovalDrawerSheet() {
               </div>
             </div>
 
+            <div className="shrink-0 border-b border-border bg-canvas/40 px-4 py-2.5" data-testid="path-a">
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="rounded bg-primary/15 px-1.5 font-mono text-[10.5px] text-primary">PATH A</span>
+                <span className="text-[12px] font-semibold">Review &amp; Run Manually</span>
+                <span className="text-[11px] text-faint">in your own terminal, as your delegated admin</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button size="sm" variant="outline" icon={<ClipboardCopy />} onClick={() => void copy(drawer.powershellScript, "PowerShell script")}>
+                  Copy PowerShell Script
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Braces />}
+                  onClick={() => void copy(drawer.terraformDiff || drawer.graphPatch, drawer.terraformDiff ? "Terraform diff" : "Graph JSON patch")}
+                  disabled={!drawer.terraformDiff && !drawer.graphPatch}
+                >
+                  {drawer.terraformDiff ? "Copy Terraform Diff" : "Copy Graph JSON Patch"}
+                </Button>
+                {drawer.terraformDiff && drawer.graphPatch && (
+                  <Button size="sm" variant="ghost" icon={<Braces />} onClick={() => void copy(drawer.graphPatch, "Graph JSON patch")}>
+                    Graph JSON
+                  </Button>
+                )}
+                <DryRunBadge drawer={drawer} />
+              </div>
+            </div>
+
             <div className="flex shrink-0 gap-1 border-b border-border px-4 pt-2">
               <TabButton active={tab === "powershell"} onClick={() => setTab("powershell")} icon={<Terminal />} label="PowerShell" />
-              <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform diff" />
+              <TabButton active={tab === "graph"} onClick={() => setTab("graph")} icon={<Braces />} label="Graph JSON" />
+              {drawer.terraformDiff && <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform diff" />}
               <TabButton active={tab === "entities"} onClick={() => setTab("entities")} icon={<Users />} label={`Entities (${drawer.affectedEntities.length})`} />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {tab === "powershell" && focusUpn && (
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted">
-                  <Pill tone="warning">License remediation</Pill>
+                  <Pill tone="warning">License fix</Pill>
                   <span>
-                    Set-MgUserLicense for <span className="font-mono text-text">{focusUpn}</span> runs with the rest of this bundle after approval.
+                    The change for <span className="font-mono text-text">{focusUpn}</span> runs with the rest of this bundle after approval.
                   </span>
                 </div>
               )}
               {tab === "powershell" && <CodeBlock code={drawer.powershellScript} />}
-              {tab === "terraform" && (
+              {tab === "graph" && <CodeBlock code={drawer.graphPatch || "[]"} />}
+              {tab === "terraform" && drawer.terraformDiff && (
                 <CodeBlock code={drawer.terraformDiff} render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="max-h-none" wrap={wrap} className="pt-8" />} />
               )}
               {tab === "entities" && (
@@ -146,7 +191,11 @@ export function ActionApprovalDrawerSheet() {
               )}
             </div>
 
-            <footer className="shrink-0 space-y-2 border-t border-border p-4">
+            <footer className="shrink-0 space-y-2 border-t border-border p-4" data-testid="path-b">
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-healthy/15 px-1.5 font-mono text-[10.5px] text-healthy">PATH B</span>
+                <span className="text-[12px] font-semibold">Approve &amp; Execute in Portal (HITL)</span>
+              </div>
               <div className="flex items-center justify-between text-[11px] text-muted">
                 <span>
                   Delegated identity <span className="font-mono text-text">{drawer.approval.requiredIdentity}</span>
@@ -210,10 +259,21 @@ function flag(v: boolean | null): string {
 function VerificationBadge({ drawer }: { drawer: Drawer }) {
   const v = drawer.verificationStatus;
   const tone = VERDICT_TONE[v.verdict];
-  const label = v.verdict === "Verified Safe" ? "Verified Safe (AST + Terraform Validated)" : v.verdict;
+  const label = v.verdict === "Verified Safe" ? (drawer.terraformDiff ? "Verified Safe (AST + Terraform Validated)" : "Verified Safe (AST Validated)") : v.verdict;
   return (
     <Pill tone={tone} icon={tone === "healthy" ? <ShieldCheck /> : <ShieldAlert />} mono={false} className="font-semibold">
       {label}
+    </Pill>
+  );
+}
+
+/** -WhatIf is a real dry run: SupportsShouldProcess + every mutation inside $PSCmdlet.ShouldProcess (checked statically). */
+function DryRunBadge({ drawer }: { drawer: Drawer }) {
+  const v = drawer.verificationStatus;
+  const ok = v.whatIfSafe === true && v.astCheckPassed !== false;
+  return (
+    <Pill tone={ok ? "healthy" : "warning"} icon={<FlaskConical />} mono={false} title="SupportsShouldProcess declared and every mutating Graph call wrapped in $PSCmdlet.ShouldProcess">
+      {ok ? "Dry-Run (-WhatIf) Verified" : "Dry-Run not verified"}
     </Pill>
   );
 }
