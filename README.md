@@ -17,15 +17,21 @@ verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 
 ## Quick start (works with zero API keys)
 
-Prerequisites: [Bun](https://bun.sh) ≥ 1.2, PowerShell 7, optionally Terraform.
+Prerequisites: [Bun](https://bun.sh) ≥ 1.2, PowerShell 7, optionally Terraform
+(`winget install Oven-sh.Bun Hashicorp.Terraform`).
 
 ```bash
 bun install
 bun run dev
 ```
 
-- Orchestrator: http://localhost:4000 (`GET /api/health`)
-- Workbench: http://localhost:5173
+- Orchestrator: http://127.0.0.1:4000 (`GET /api/health`)
+- Workbench: http://localhost:5173 (Vite proxies `/api` and `/ws` to the orchestrator)
+
+Runtime state lives in `data/` (pinned recipes, remediation bundles) and
+`.contextpane/` (terraform validation workspace, provider cache); both are git-ignored.
+Staged remediations are real local branches named `fix/<ticket>-nsg-drift-<id>` that add
+`demo-iac/remediations/<ticket>/` (script, patch, REMEDIATION.md); nothing is pushed.
 
 With no keys in `.env.local`, every tier falls back to a deterministic local engine that
 hydrates the same catalog components from `demo-iac/demo-lab-manifest.json`. Paste keys
@@ -76,14 +82,19 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 
 | Tier | Endpoint | What happens | Model / provider chain |
 |---|---|---|---|
-| **0** | `GET /api/recipe/:id/hydrate?tenantId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. | — |
+| **0** | `GET /api/recipe/:id/hydrate?tenantId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. Measured: 2–11 ms server time. | — |
 | **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Fireworks `muse-glimmer-30b` → Baseten → Meta API |
-| **1B / 2** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; Zod validates it. | Baseten `meta-models/muse-spark-open-1026` → Meta API `muse-spark-1.3` |
-| **3A / 3B** | `POST /api/remediate` | Synthesises PowerShell + Terraform fix, runs pre-flight verification, stages a git branch, returns `ActionApprovalDrawer`. | Meta API `muse-wonder-1.0` + `muse-code` |
-| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant. | `muse-voice-transcribe` + `muse-spark-open-1026` |
+| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Baseten `meta-models/muse-spark-open-1026` (open weights) |
+| **2** | `POST /api/correlate` | Same call, escalated when Baseten is unavailable. | Meta API `muse-spark-1.3` |
+| **3A / 3B** | `POST /api/remediate` | `muse-wonder` plans, `muse-code` emits the PowerShell + Terraform bundle, pre-flight verifies it (PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`, or the Modal sandbox), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0` + `muse-code` |
+| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe` + `muse-spark-open-1026` |
 
-Every tier records telemetry (tier, provider, model, latency, tokens, fallback chain)
-and broadcasts it over `/ws`, which drives the HUD pills and the *router savings* panel.
+Every provider in a chain is bounded by a timeout and falls through on error, timeout,
+missing key or invalid schema. When no provider answers, the deterministic engine produces
+the same catalog components from the same MCP context and the telemetry reports
+`provider: local`, so the UI never blocks on a model. Every tier records telemetry (tier,
+provider, model, latency, tokens, fallback chain) and broadcasts it over `/ws`, which
+drives the HUD pills and the *router savings* panel.
 
 **Why forced tool calling?** Baseten's `muse-spark-open-1026` supports OpenAI-compatible
 `tools` / `tool_choice` but not `response_format: { type: "json_schema" }`.
@@ -183,9 +194,44 @@ the router to the deterministic engine even when keys are present (demo safety s
 
 ## Demo hotkeys
 
-Press `?` in the workbench for the overlay. `1`–`6` trigger each demo beat
-deterministically (hover, toolbar, CodeLens diff, generate fix, approve, tenant switch),
-`p` pins a recipe, `v` toggles voice steer.
+Press `?` in the workbench for the overlay.
+
+| Key | Beat |
+|---|---|
+| `1` | Hover the affected UPN pill → Tier 1A diagnostic popover |
+| `2` | Select the E5 contract line → semantic floating toolbar (`12/15 Assigned • 3 Missing E5`) |
+| `3` | CodeLens → unified HCL diff, Azure live state vs `demo-iac/main.tf` |
+| `4` | Generate Fix & Stage PR → Tier 3 drawer with verification badge and staged branch |
+| `5` | Approve & Execute via Delegated Identity (HITL) |
+| `6` | Switch tenant (Contoso ↔ Fabrikam); with a pinned recipe this is Tier 0, 0 tokens |
+| `p` | Pin / release the canvas as a View Recipe |
+| `v` | Voice Steer panel (record, or type a command) |
+| `t` | Router savings panel |
+| `r` | Re-correlate with a fresh MCP context |
+| `Esc` | Close everything |
+
+## Verified behaviour (offline, no keys)
+
+`pwsh ./scripts/Test-ContextPaneSmoke.ps1` on the reference machine:
+
+```
+Endpoint                                                   Status Latency(ms) Tier    Provider Schema
+GET /api/health                                            OK              63 -       -        PASS
+GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK       4 (srv 2) Tier 0  local    PASS
+POST /api/hover                                            OK       6 (srv 0) Tier 1A local    PASS
+POST /api/correlate                                        OK       2 (srv 0) Tier 1B local    PASS
+POST /api/voice-steer                                      OK       1 (srv 0) Voice   local    PASS
+POST /api/remediate                                        OK     3034 (srv 981) Tier 3B local  PASS   (AST pass · fmt pass · validate pass · Verified Safe)
+POST /api/approve                                          OK              51 -       -        PASS
+```
+
+The first `/api/remediate` on a machine takes ~30 s while `terraform init` downloads the
+azurerm provider into `.contextpane/tf-validate`; every later run validates in ~0.5 s.
+
+Not yet exercised: the live provider calls (no Meta / Baseten / Fireworks keys were
+available while building), `LIVE_CLOUD_MODE=true` against the seeded tenant, and the
+deployed Modal sandbox. All three paths are typed, timeout-bounded and fall back to the
+deterministic engine on failure.
 
 ---
 
