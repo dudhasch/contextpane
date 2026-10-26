@@ -64,10 +64,24 @@ export interface LiveSignIn {
   appliedPolicies: Array<{ id: string; displayName: string; result: string; enforcedGrantControls: string[] }>;
 }
 
+/**
+ * Graph contexts are per-process (Connect-MgGraph does not persist a token cache
+ * across pwsh invocations), while the Az token cache does. When no Graph context
+ * exists, mint a Graph access token from the cached Az sign-in and hand it to
+ * Connect-MgGraph -AccessToken, so a single `Connect-AzAccount` on the machine is
+ * enough for both MCP servers. Falls through to the original error when neither exists.
+ */
 const REQUIRE_CONTEXT = `
 if (-not (Get-Command Get-MgContext -ErrorAction SilentlyContinue)) { throw 'Microsoft.Graph.Authentication module is not installed.' }
 $ctx = Get-MgContext
-if (-not $ctx) { throw 'No Microsoft Graph context. Run Connect-MgGraph first.' }
+if (-not $ctx -and (Get-Command Get-AzAccessToken -ErrorAction SilentlyContinue)) {
+  try {
+    $azTok = Get-AzAccessToken -ResourceUrl 'https://graph.microsoft.com' -AsSecureString -ErrorAction Stop
+    Connect-MgGraph -AccessToken $azTok.Token -NoWelcome -ErrorAction Stop
+    $ctx = Get-MgContext
+  } catch { $ctx = $null }
+}
+if (-not $ctx) { throw 'No Microsoft Graph context. Run Connect-MgGraph or Connect-AzAccount first.' }
 `;
 
 export async function fetchGroupMembersLive(groupDisplayName: string, timeoutMs: number): Promise<LiveGroupMembersResult> {

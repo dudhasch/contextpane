@@ -28,6 +28,12 @@ export interface GraphResult<T> {
 const LIVE_CAPABLE_TENANTS = new Set(["tenant-contoso-01"]);
 const DEMO_POLICY_PREFIX = "[ContextPane-Demo]";
 const LIVE_TIMEOUT_MS = Number.parseInt(process.env.CTX_GRAPH_TIMEOUT_MS ?? "25000", 10);
+/**
+ * auditLogs/signIns filtered by UPN takes 40-60 s on a tenant with a large sign-in log,
+ * and the lab users never sign in, so the seeded timeline is the expected outcome.
+ * A short budget keeps a live context gather at ~10 s instead of waiting out LIVE_TIMEOUT_MS.
+ */
+const SIGNIN_TIMEOUT_MS = Number.parseInt(process.env.CTX_GRAPH_SIGNIN_TIMEOUT_MS ?? "6000", 10);
 
 async function withSource<T>(
   tenantId: string,
@@ -353,7 +359,7 @@ export const msgraphService = {
         .slice(0, top);
     const live = async (): Promise<SignInSummary[]> => {
       const upns = options.upn ? [options.upn] : tenant.users.map((u) => u.upn);
-      const events = await fetchSignInEventsLive(upns, top, LIVE_TIMEOUT_MS);
+      const events = await fetchSignInEventsLive(upns, top, SIGNIN_TIMEOUT_MS);
       // Lab users never actually sign in to AVD, so an empty live log falls back to the seeded timeline.
       if (events.length === 0) throw new Error("live sign-in log is empty for the lab users");
       return events

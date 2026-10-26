@@ -161,10 +161,16 @@ Each MCP package exposes both a **stdio MCP server** (`src/server.ts`, wired in
 
 Set `LIVE_CLOUD_MODE=true` to have `mcp-msgraph` and `mcp-azure-iac` shell out to
 PowerShell 7 (`Get-MgGroupMember`, `Get-MgUserExtension`,
-`Get-MgIdentityConditionalAccessPolicy`, `Get-AzNetworkSecurityGroup`). You need an
-authenticated `Connect-MgGraph` / `Connect-AzAccount` context in the environment the
-orchestrator runs in. If a live query fails, the server transparently falls back to the
-manifest, so the demo never breaks when Wi-Fi drops.
+`Get-MgIdentityConditionalAccessPolicy`, `Get-AzNetworkSecurityGroup`). One cached
+`Connect-AzAccount` sign-in on the machine is enough: the Az token cache persists across
+processes, and when a spawned `pwsh` has no `Connect-MgGraph` context, `mcp-msgraph` mints a
+Microsoft Graph token with `Get-AzAccessToken -ResourceUrl https://graph.microsoft.com` and
+hands it to `Connect-MgGraph -AccessToken`. If a live query fails or exceeds its budget
+(`CTX_GRAPH_TIMEOUT_MS`, `CTX_AZ_TIMEOUT_MS`, `CTX_GRAPH_SIGNIN_TIMEOUT_MS`), the server
+transparently falls back to the manifest, so the demo never breaks when Wi-Fi drops. The
+sign-in timeline always comes from the manifest in practice: the lab users never sign in,
+and a UPN-filtered `auditLogs/signIns` query takes 40-60 s on a busy tenant, so it gets a
+6 s budget.
 
 Install the Az and Microsoft.Graph submodules first. The script bootstraps
 [ModuleFast](https://github.com/JustinGrote/ModuleFast) by Justin Grote
