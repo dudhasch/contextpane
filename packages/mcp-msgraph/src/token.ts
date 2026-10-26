@@ -60,7 +60,7 @@ export async function getGraphSdkAccessToken(timeoutMs = 30_000): Promise<string
       `
 if (-not (Test-Path (Join-Path $HOME '.mg/mg.authrecord.json'))) { throw 'No persisted Connect-MgGraph sign-in. Run scripts/Connect-ContextPaneGraph.ps1 first.' }
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-if (-not (Get-MgContext)) { Connect-MgGraph ${tenantId ? `-TenantId ${psq(tenantId)} ` : ""}-ContextScope CurrentUser -NoWelcome -ErrorAction Stop }
+if (-not (Get-MgContext)) { Connect-MgGraph ${tenantId ? `-TenantId ${psq(tenantId)} ` : ""}-ContextScope CurrentUser -NoWelcome -DeviceCode -ErrorAction Stop }
 $r = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/organization?$select=id' -OutputType HttpResponseMessage -ErrorAction Stop
 $bearer = $r.RequestMessage.Headers.Authorization.Parameter
 if (-not $bearer) { throw 'The Microsoft Graph session returned no bearer token.' }

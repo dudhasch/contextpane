@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-26T16:32:19Z",
+  "generatedAt": "2026-10-26T22:13:42Z",
   "generatedBy": "scripts/Invoke-SeedContextPaneLab.ps1",
   "liveSeeded": true,
   "notes": "Deterministic fallback for LIVE_CLOUD_MODE=false. scripts/Invoke-SeedContextPaneLab.ps1 rewrites this file with real object IDs after seeding the lab tenant. Contoso Finance lives in the real lab tenant; Fabrikam Legal is manifest-only.",
@@ -53,7 +53,7 @@
             "currentSku": "SPE_E3",
             "driftStatus": "drifted",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-26T16:32:19Z"
+            "lastSyncedAt": "2026-10-26T22:13:42Z"
           }
         },
         {
@@ -72,7 +72,7 @@
             "currentSku": "SPE_E5",
             "driftStatus": "compliant",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-26T16:32:19Z"
+            "lastSyncedAt": "2026-10-26T22:13:42Z"
           }
         },
         {
@@ -91,7 +91,7 @@
             "currentSku": "SPE_E5",
             "driftStatus": "compliant",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-26T16:32:19Z"
+            "lastSyncedAt": "2026-10-26T22:13:42Z"
           }
         },
         {
@@ -110,7 +110,7 @@
             "currentSku": "SPE_E3",
             "driftStatus": "drifted",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-26T16:32:19Z"
+            "lastSyncedAt": "2026-10-26T22:13:42Z"
           }
         },
         {
@@ -129,7 +129,7 @@
             "currentSku": "SPE_E3",
             "driftStatus": "drifted",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-26T16:32:19Z"
+            "lastSyncedAt": "2026-10-26T22:13:42Z"
           }
         }
       ],
@@ -147,9 +147,9 @@
         {
           "id": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
           "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
-          "state": "enabledForReportingButNotEnforced",
+          "state": "enabled",
           "createdDateTime": "2026-10-26T16:32:32Z",
-          "modifiedDateTime": "2026-10-26T16:32:19Z",
+          "modifiedDateTime": "2026-10-26T22:13:42Z",
           "conditions": {
             "users": {
               "includeGroups": [

@@ -187,12 +187,12 @@ function Assert-Module([string[]]$Names) {
 if (-not $SkipGraph) { Assert-Module @('Microsoft.Graph.Authentication', 'Microsoft.Graph.Users', 'Microsoft.Graph.Groups', 'Microsoft.Graph.Identity.SignIns') }
 if (-not $SkipAzure) { Assert-Module @('Az.Accounts', 'Az.Resources', 'Az.Network') }
 
-$seeded = [ordered]@{ users = @(); groups = @{}; policy = $null; nsg = $null }
+$seeded = [ordered]@{ users = @(); groups = [ordered]@{}; policy = $null; nsg = $null }
 
 if (-not $SkipGraph) {
     if (-not (Get-MgContext) -and (Test-Path (Join-Path $HOME '.mg/mg.authrecord.json'))) {
         # Silently reuse the sign-in scripts/Connect-ContextPaneGraph.ps1 persisted to ~/.mg (no prompt).
-        Connect-MgGraph -TenantId $TenantId -ContextScope CurrentUser -NoWelcome -ErrorAction SilentlyContinue
+        Connect-MgGraph -TenantId $TenantId -ContextScope CurrentUser -NoWelcome -ErrorAction SilentlyContinue -DeviceCode
     }
     $mg = Get-MgContext
     if (-not $mg) { throw 'No Microsoft Graph context. Run: pwsh -NoProfile -File ./scripts/Connect-ContextPaneGraph.ps1' }

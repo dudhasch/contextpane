@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { cachedTokenClaims, getAccessToken, getGraphSdkAccessToken, invalidateAccessToken, invalidateGraphSdkAccessToken } from "./token.ts";
 
 /**
@@ -381,6 +384,7 @@ export async function patchLicenseExtensionsLive(upns: string[], fields: Record<
 
 // After a failed Connect-MgGraph mint, requests go straight to the Az token for a while instead of paying a pwsh spawn each.
 let graphSdkRetryAt = 0;
+let graphSdkError = "";
 
 /**
  * Conditional Access writes need Policy.ReadWrite.ConditionalAccess and Intune needs
@@ -388,12 +392,19 @@ let graphSdkRetryAt = 0;
  * either, the persisted Connect-MgGraph sign-in can. Falls back to "az" (and its 403).
  */
 async function delegatedTokenSource(timeoutMs: number): Promise<TokenSource> {
+  // No persisted sign-in: skip the pwsh spawn (and the cooldown), so a fresh sign-in counts at once.
+  if (!existsSync(join(homedir(), ".mg", "mg.authrecord.json"))) {
+    graphSdkError = "no persisted Connect-MgGraph sign-in in ~/.mg";
+    return "az";
+  }
   if (Date.now() < graphSdkRetryAt) return "az";
   try {
     await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000));
     return "graph-sdk";
-  } catch {
+  } catch (error) {
     graphSdkRetryAt = Date.now() + 5 * 60_000;
+    graphSdkError = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 200);
+    console.warn(`[mcp-msgraph] delegated Connect-MgGraph token unavailable, using the Az token for 5 min: ${graphSdkError}`);
     return "az";
   }
 }
@@ -406,7 +417,7 @@ async function delegatedFetch(path: string, init: RequestInit, timeoutMs: number
     return await graphFetch(path, init, timeoutMs, source);
   } catch (error) {
     if (error instanceof GraphHttpError && (error.status === 403 || error.status === 401)) {
-      const hint = source === "az" ? `the Az token lacks the scope; ${SIGN_IN_HINT}` : `the Connect-MgGraph token lacks the scope or role; ${SIGN_IN_HINT}`;
+      const hint = source === "az" ? `the Az token lacks the scope${graphSdkError ? ` (delegated sign-in: ${graphSdkError})` : ""}; ${SIGN_IN_HINT}` : `the Connect-MgGraph token lacks the scope or role; ${SIGN_IN_HINT}`;
       throw new GraphHttpError(error.status, `${error.message.replace(/^Graph HTTP \d+: /, "")} (${hint})`);
     }
     throw error;
