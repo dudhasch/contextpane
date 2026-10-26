@@ -173,6 +173,8 @@ export const config = {
     metaHoverMs: envInt("CTX_META_HOVER_TIMEOUT_MS", 5000),
     /** Muse Glimmer always reasons (budget-capped server-side), so it gets longer than the hosted hover APIs. */
     openWeightHoverMs: envInt("CTX_OPEN_WEIGHT_HOVER_TIMEOUT_MS", 8000),
+    /** Background pre-warm of the hover cache: a cold GPU container plus a full reasoning pass. */
+    openWeightWarmMs: envInt("CTX_OPEN_WEIGHT_WARM_TIMEOUT_MS", 90000),
     correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
@@ -184,6 +186,16 @@ export const config = {
     correlate: envEffort("CTX_META_REASONING_CORRELATE", "low"),
     remediate: envEffort("CTX_META_REASONING_REMEDIATE", "low"),
   },
+  /**
+   * Router tiers the open-weight endpoint serves (hover, catalog, voice). Hover only by default, so a
+   * correlate or voice command never wakes the scale-to-zero GPU; hovers are cached on disk.
+   */
+  /**
+   * Muse Glimmer reasons before it calls the tool and llama-server b11889 does not enforce
+   * --reasoning-budget (a host-pool hover reasoned ~1,100 tokens), so it gets more room than 1500.
+   */
+  openWeightHoverMaxTokens: envInt("CTX_OPEN_WEIGHT_HOVER_MAX_TOKENS", 3000),
+  openWeightTiers: new Set(env("CTX_OPEN_WEIGHT_TIERS", "hover").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)),
   modal: {
     /** On whenever a sandbox URL is set; CTX_MODAL_SANDBOX_ENABLED=false is an explicit opt-out. */
     enabled: envBool("CTX_MODAL_SANDBOX_ENABLED", env("CTX_MODAL_SANDBOX_URL") !== "") && env("CTX_MODAL_SANDBOX_URL") !== "",

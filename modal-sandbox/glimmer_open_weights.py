@@ -3,7 +3,10 @@ Meta's open-weight Muse Glimmer 30B (GGUF, Q4_K_M) on a Modal GPU behind llama.c
 
 Muse Glimmer is self- or partner-hosted, not served on api.meta.ai. This app serves
 meta-models/Muse-Glimmer-30B-GGUF (Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf, 16.8 GB, fits 24 GB VRAM)
-on one L40S with an OpenAI-compatible /v1/chat/completions, and scales to zero after SCALEDOWN_SECONDS.
+on one L40S with an OpenAI-compatible /v1/chat/completions, and scales to zero after SCALEDOWN_SECONDS (2 min).
+Credit guardrails: the weights live in the contextpane-glimmer-weights Volume (pulled once, never per
+container), at most one GPU container runs, and the orchestrator persists every answer to
+data/hover-cache.json so restarts do not wake the GPU.
 The orchestrator calls it first for Tier 1A hovers and Tier 1B catalog hydration and logs
 provider "modal-open-weights"; a local llama-server (scripts/Start-GlimmerOpenWeights.ps1 -Local)
 logs "local-glimmer-30b".
@@ -12,7 +15,8 @@ Model-card facts this follows (huggingface.co/meta-models/Muse-Glimmer-30B-GGUF)
   * llama.cpp build b10353 or newer; older builds do not register the muse-glimmer architecture
   * --jinja is required (the chat template is embedded in the GGUF)
   * reasoning cannot be switched off; --chat-template-kwargs reasoning_strength (low..xhigh) sets how
-    much, --reasoning-budget caps it. Hovers want "low" and a small budget.
+    much, --reasoning-budget is meant to cap it. Hovers want "low" and a small budget; on b11889 the
+    budget was not enforced (a hover reasoned ~1,100 tokens), so the orchestrator also sends max_tokens 3000
   * -c is split across -np slots
 
 Deploy (one-off download of the weights into a Modal Volume, then the server):
@@ -42,7 +46,8 @@ CONTEXT_PER_SLOT = 16384
 REASONING_STRENGTH = os.environ.get("CTX_GLIMMER_REASONING_STRENGTH", "low")
 REASONING_BUDGET = int(os.environ.get("CTX_GLIMMER_REASONING_BUDGET", "256"))
 MIN_LLAMA_BUILD = 10353
-SCALEDOWN_SECONDS = 300
+SCALEDOWN_SECONDS = 120
+MAX_CONTAINERS = 1
 PORT = 8080
 WEIGHTS_DIR = "/weights"
 
@@ -50,10 +55,10 @@ image = (
     # Rolling CUDA build of llama-server; the build number is checked at start-up against MIN_LLAMA_BUILD
     modal.Image.from_registry("ghcr.io/ggml-org/llama.cpp:server-cuda", add_python="3.12")
     .entrypoint([])
-    .pip_install("huggingface_hub[hf_transfer]==0.34.4")
+    # The repo is Xet-backed; hf_xet pulls it in parallel chunks
+    .pip_install("huggingface_hub[hf_xet]==0.34.4")
     .env(
         {
-            "HF_HUB_ENABLE_HF_TRANSFER": "1",
             # Bake the deploy-time choices into the container so the module evaluates identically there
             "CTX_GLIMMER_GGUF": GGUF_FILE,
             "CTX_MODEL_OPEN_WEIGHT_GLIMMER": SERVED_MODEL_NAME,
@@ -64,7 +69,7 @@ image = (
     )
 )
 
-weights = modal.Volume.from_name("contextpane-glimmer-gguf", create_if_missing=True)
+weights = modal.Volume.from_name("contextpane-glimmer-weights", create_if_missing=True)
 
 app = modal.App("contextpane-glimmer", image=image)
 
@@ -88,42 +93,46 @@ def download() -> str:
 def llama_build() -> int:
     proc = subprocess.run(["/app/llama-server", "--version"], capture_output=True, text=True)
     out = proc.stdout + proc.stderr
-    match = re.search(r"version:\s*(\d+)", out)
+    # "version: 0.7.0-dev (build 11889, commit ...)" on current builds, "version: 6123 (...)" on older ones
+    match = re.search(r"\(build (\d+)", out) or re.search(r"version:\s*b?(\d+)\b(?!\.)", out)
     return int(match.group(1)) if match else 0
 
 
-@app.function(
+@app.cls(
     gpu=GPU,
     timeout=60 * 60,
     scaledown_window=SCALEDOWN_SECONDS,
+    max_containers=MAX_CONTAINERS,
     volumes={WEIGHTS_DIR: weights},
     secrets=[modal.Secret.from_name("contextpane-open-weights")],
 )
 @modal.concurrent(max_inputs=SLOTS)
-@modal.web_server(port=PORT, startup_timeout=15 * 60)
-def serve():
-    """Scale-to-zero OpenAI-compatible server: /v1/chat/completions, /v1/models, /health."""
-    build = llama_build()
-    if build < MIN_LLAMA_BUILD:
-        raise RuntimeError(f"llama.cpp build b{build} predates Muse Glimmer support (needs b{MIN_LLAMA_BUILD}+)")
-    model_path = os.path.join(WEIGHTS_DIR, GGUF_FILE)
-    if not os.path.exists(model_path):
-        model_path = ensure_weights()
-    cmd = [
-        "/app/llama-server",
-        "-m", model_path,
-        "-a", SERVED_MODEL_NAME,
-        "-ngl", "99",
-        "-np", str(SLOTS),
-        "-c", str(SLOTS * CONTEXT_PER_SLOT),
-        "--jinja",
-        "--chat-template-kwargs", f'{{"reasoning_strength":"{REASONING_STRENGTH}"}}',
-        "--reasoning-budget", str(REASONING_BUDGET),
-        "--temp", "1.0", "--top-p", "0.95", "--top-k", "64",
-        "--host", "0.0.0.0",
-        "--port", str(PORT),
-    ]  # fmt: skip
-    api_key = os.environ.get("CTX_OPEN_WEIGHT_API_KEY", "")
-    if api_key:
-        cmd += ["--api-key", api_key]
-    subprocess.Popen(cmd)
+class Glimmer:
+    @modal.web_server(port=PORT, startup_timeout=15 * 60, label="contextpane-glimmer-serve")
+    def serve(self):
+        """Scale-to-zero OpenAI-compatible server: /v1/chat/completions, /v1/models, /health."""
+        build = llama_build()
+        if build < MIN_LLAMA_BUILD:
+            raise RuntimeError(f"llama.cpp build b{build} predates Muse Glimmer support (needs b{MIN_LLAMA_BUILD}+)")
+        model_path = os.path.join(WEIGHTS_DIR, GGUF_FILE)
+        if not os.path.exists(model_path):
+            model_path = ensure_weights()
+        cmd = [
+            "/app/llama-server",
+            "-m", model_path,
+            "-a", SERVED_MODEL_NAME,
+            "-ngl", "99",
+            "-np", str(SLOTS),
+            "-c", str(SLOTS * CONTEXT_PER_SLOT),
+            "--jinja",
+            "--chat-template-kwargs", f'{{"reasoning_strength":"{REASONING_STRENGTH}"}}',
+            "--reasoning-budget", str(REASONING_BUDGET),
+            "--temp", "1.0", "--top-p", "0.95", "--top-k", "64",
+            "--host", "0.0.0.0",
+            "--port", str(PORT),
+        ]  # fmt: skip
+        api_key = os.environ.get("CTX_OPEN_WEIGHT_API_KEY", "")
+        if api_key:
+            cmd += ["--api-key", api_key]
+        print(f"llama.cpp b{build}: loading {model_path}")
+        subprocess.Popen(cmd)

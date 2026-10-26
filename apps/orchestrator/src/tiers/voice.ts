@@ -73,7 +73,7 @@ export async function voiceSteer(input: VoiceInput): Promise<VoiceResult> {
   let intent = parseSteerIntent(transcript);
   let intentSource: VoiceResult["intentSource"] = "deterministic";
   const steerSteps: ChainStep[] = [
-    { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey },
+    { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey && config.openWeightTiers.has("voice") },
     { provider: "baseten", modelId: models.basetenSpark, hasKey: providers.baseten.hasKey },
     { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey },
   ];

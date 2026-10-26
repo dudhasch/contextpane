@@ -45,7 +45,10 @@ if ($Target -eq 'Modal') {
     return
 }
 
-$version = [regex]::Match((& $LlamaServer --version 2>&1 | Out-String), 'version:\s*(\d+)')
+$versionText = & $LlamaServer --version 2>&1 | Out-String
+# "version: 0.7.0-dev (build 11889, commit ...)" on current builds, "version: 6123 (...)" on older ones
+$version = [regex]::Match($versionText, '\(build (\d+)')
+if (-not $version.Success) { $version = [regex]::Match($versionText, 'version:\s*b?(\d+)\b(?!\.)') }
 $build = $version.Success ? [int]$version.Groups[1].Value : 0
 if ($build -lt 10353) { throw "llama-server build b$build predates Muse Glimmer support; install llama.cpp b10353 or newer." }
 if (-not (Test-Path (Join-Path $ModelDir $gguf))) {

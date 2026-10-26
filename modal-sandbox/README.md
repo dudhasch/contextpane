@@ -70,9 +70,11 @@ validates the `demo-iac/main.tf` baseline three times on one container and print
 Muse Glimmer is self- or partner-hosted, not served on `api.meta.ai`. `glimmer_open_weights.py`
 serves `meta-models/Muse-Glimmer-30B-GGUF` (`Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf`, 16.8 GB)
 with llama.cpp's `llama-server` (CUDA image, build b10353 or newer is checked at start-up) on one
-L40S, from a Modal Volume, scaling to zero after 5 idle minutes. Per the model card it runs with
+L40S. Per the model card it runs with
 `--jinja`, and because reasoning cannot be switched off it caps it with
-`reasoning_strength: "low"` and `--reasoning-budget 256`. One command creates the token secret,
+`reasoning_strength: "low"` and `--reasoning-budget 256` (b11889 did not enforce the budget in our runs: a
+host-pool hover reasoned ~1,100 tokens, so Glimmer hovers get `max_tokens` 3000,
+`CTX_OPEN_WEIGHT_HOVER_MAX_TOKENS`). One command creates the token secret,
 downloads the weights, deploys and writes the URL and token into `.env.local`:
 
 ```powershell
@@ -80,10 +82,23 @@ pwsh ./scripts/Start-GlimmerOpenWeights.ps1                 # Modal; telemetry p
 pwsh ./scripts/Start-GlimmerOpenWeights.ps1 -Target Local   # llama-server on 127.0.0.1:8080; "local-glimmer-30b"
 ```
 
+Credit guardrails on the Modal target:
+
+- the GGUF is pulled once into the `contextpane-glimmer-weights` Volume, so a scale-up loads it
+  from the Volume instead of re-downloading 17 GB from Hugging Face;
+- the `Glimmer` class scales to zero after 2 idle minutes (`scaledown_window=120`) and is capped at
+  one container (`max_containers=1`, 4 llama-server slots), so a burst queues instead of renting a
+  second L40S;
+- the orchestrator only sends hovers there (`CTX_OPEN_WEIGHT_TIERS=hover`; add `catalog` or `voice`
+  to opt those tiers in) and persists every answer, with its provider, model, latency and tokens, to
+  `data/hover-cache.json`. A restart serves every pill from that file and only calls the GPU for
+  entities it does not hold yet, or for `POST /api/hover?refresh=true`.
+
 The local target needs about 17 GB of VRAM for full offload (`-GpuLayers` lowers it, at a large
 speed cost). Tier 1A hovers then try Glimmer first (`CTX_OPEN_WEIGHT_HOVER_TIMEOUT_MS`, default
-8 s) and Tier 1B layouts likewise, with `chat_template_kwargs.reasoning_strength` derived from the
-tier's reasoning effort; the Meta Model API stays the fallback.
+8 s; the background pre-warm waits for `/health` and allows `CTX_OPEN_WEIGHT_WARM_TIMEOUT_MS`,
+default 90 s), with `chat_template_kwargs.reasoning_strength` derived from the tier's reasoning
+effort; the Meta Model API stays the fallback.
 
 ### Alternative: full precision on vLLM
 

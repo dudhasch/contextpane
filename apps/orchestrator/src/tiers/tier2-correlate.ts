@@ -52,7 +52,7 @@ Rules:
 
 function chainSteps(): ChainStep[] {
   return [
-    { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey, tier: "Tier 1B" },
+    { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey && config.openWeightTiers.has("catalog"), tier: "Tier 1B" },
     { provider: "baseten", modelId: models.basetenSpark, hasKey: providers.baseten.hasKey, tier: "Tier 1B" },
     { provider: "meta", modelId: models.metaCatalog, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
     { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey, tier: "Tier 2" },

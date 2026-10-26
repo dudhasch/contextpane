@@ -14,6 +14,7 @@ build/
 
 # runtime state
 data/recipes.json
+data/hover-cache.json
 data/remediations/
 data/router-debug.jsonl
 data/test-voice-command.*

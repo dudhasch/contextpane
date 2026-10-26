@@ -7,7 +7,7 @@ import { gatherContext } from "./mcp/context.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
 import { telemetry } from "./telemetry.ts";
-import { warmHoverCache } from "./tiers/tier1-hover.ts";
+import { persistedHoverCount, warmHoverCache } from "./tiers/tier1-hover.ts";
 
 /**
  * Bun entrypoint: Hono HTTP app + WebSocket telemetry feed on /ws.
@@ -49,9 +49,11 @@ const keyed = Object.values(providers).filter((p) => p.hasKey).map((p) => p.id);
 console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
 console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
 console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
+if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json`);
 
 // Warm-up, all in the background: wake the Modal sandbox, mint the Graph/ARM tokens and
-// gather the context for every tenant, resolve the Meta model ids, then pre-fetch every hover.
+// gather the context for every tenant, resolve the Meta model ids, then pre-fetch every hover
+// that data/hover-cache.json does not already hold (tenants one after another, so the GPU sees at most 3).
 const warmStarted = performance.now();
 warmModalSandbox("startup");
 const contexts = Promise.all(Object.keys(TENANT_REGISTRY).map((tenantId) => gatherContext(tenantId).catch(() => null)));
@@ -67,6 +69,12 @@ const metaModels = config.forceLocal
 void Promise.all([contexts, metaModels]).then(async ([gathered]) => {
   const live = gathered.filter((c) => c && c.sourcesUsed.msgraph !== "seeded-manifest").length;
   console.log(`  [warm] MCP context for ${gathered.filter(Boolean).length} tenants (${live} live) in ${Math.round(performance.now() - warmStarted)} ms`);
-  const hovers = await warmHoverCache("tenant-contoso-01");
-  if (hovers) console.log(`  [warm] ${hovers.warmed}/${hovers.total} ticket hovers cached in ${Math.round(performance.now() - warmStarted)} ms`);
+  for (const tenantId of Object.keys(TENANT_REGISTRY)) {
+    const hovers = await warmHoverCache(tenantId);
+    if (hovers) {
+      console.log(
+        `  [warm] ${tenantId}: ${hovers.warmed}/${hovers.total} hovers cached (${hovers.generated} generated) at ${Math.round(performance.now() - warmStarted)} ms`,
+      );
+    }
+  }
 });
