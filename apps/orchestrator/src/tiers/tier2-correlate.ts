@@ -65,6 +65,12 @@ function chainSteps(): ChainStep[] {
  * deterministic hydrator for the same component before Zod validation. This roughly
  * halves the output tokens of a layout.
  */
+const VERBATIM_PROPS: Partial<Record<ComponentType, string[]>> = {
+  LicenseDriftCard: ["users"],
+  EntraSignInTimeline: ["events"],
+  IaCDriftBanner: ["hclDiff"],
+};
+
 function fillVerbatimProps(raw: unknown, ctx: CorrelationContext): unknown {
   const components = (raw as { components?: unknown })?.components;
   if (!Array.isArray(components)) return raw;
@@ -75,7 +81,11 @@ function fillVerbatimProps(raw: unknown, ctx: CorrelationContext): unknown {
       const reference = c?.type ? buildComponent(c.type, ctx, zero) : null;
       if (!reference || !c.props || typeof c.props !== "object") return c;
       const props = { ...c.props };
-      for (const [key, value] of Object.entries(reference.props)) if (props[key] === undefined || props[key] === null) props[key] = value;
+      const verbatim = VERBATIM_PROPS[reference.type] ?? [];
+      // Verbatim MCP data always comes from the hydrator (the model sometimes sends "" instead of omitting it).
+      for (const [key, value] of Object.entries(reference.props)) {
+        if (verbatim.includes(key) || props[key] === undefined || props[key] === null) props[key] = value;
+      }
       return { ...c, props };
     }),
   };
