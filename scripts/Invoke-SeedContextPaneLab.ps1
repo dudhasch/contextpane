@@ -17,6 +17,8 @@
     Requires an existing delegated Connect-MgGraph context with
       User.ReadWrite.All, Group.ReadWrite.All, Policy.ReadWrite.ConditionalAccess, Directory.ReadWrite.All
     and a Connect-AzAccount context on the target subscription. Supports -WhatIf.
+    Missing Az / Microsoft.Graph submodules are reported with the ModuleFast one-liner
+    (scripts/Install-ContextPaneModules.ps1); pass -InstallMissingModules to have them installed on the spot.
 
     The script is scoped to the demo objects only: it never touches users, groups or policies it did not name.
 
@@ -36,7 +38,9 @@ param(
     [switch]$SkipGraph,
     [switch]$SkipAzure,
     [string]$ManifestPath,
-    [string]$TerraformPath
+    [string]$TerraformPath,
+    # Install any missing Az / Microsoft.Graph submodule via scripts/Install-ContextPaneModules.ps1 (ModuleFast) before running.
+    [switch]$InstallMissingModules
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,8 +77,17 @@ function New-RandomPassword {
 # Module + context checks (only for the parts that actually run)
 # ---------------------------------------------------------------------------
 function Assert-Module([string[]]$Names) {
-    $missing = $Names | Where-Object { -not (Get-Module -ListAvailable -Name $_) }
-    if ($missing) { throw "Missing PowerShell modules: $($missing -join ', '). Install with: Install-Module $($missing -join ',') -Scope CurrentUser" }
+    $missing = @($Names | Where-Object { -not (Get-Module -ListAvailable -Name $_) })
+    if ($missing.Count -gt 0) {
+        $installer = Join-Path $PSScriptRoot 'Install-ContextPaneModules.ps1'
+        if ($InstallMissingModules) {
+            Write-Step "Installing missing modules via ModuleFast: $($missing -join ', ')"
+            & pwsh -NoProfile -NonInteractive -File $installer -Modules $missing
+            if ($LASTEXITCODE -ne 0) { throw "Install-ContextPaneModules.ps1 exited with $LASTEXITCODE; modules still missing: $($missing -join ', ')" }
+        } else {
+            throw "Missing PowerShell modules: $($missing -join ', '). Install them in seconds with ModuleFast: pwsh -NoProfile -File $installer   (or re-run this script with -InstallMissingModules)"
+        }
+    }
     foreach ($n in $Names) { Import-Module $n -ErrorAction Stop }
 }
 if (-not $SkipGraph) { Assert-Module @('Microsoft.Graph.Authentication', 'Microsoft.Graph.Users', 'Microsoft.Graph.Groups', 'Microsoft.Graph.Identity.SignIns') }

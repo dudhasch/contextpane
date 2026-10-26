@@ -69,6 +69,8 @@ against a tenant without an explicit human click.
 - Model Context Protocol (`@modelcontextprotocol/sdk`) for the three tool servers.
 - Microsoft Graph PowerShell SDK and Az PowerShell for live cloud mode.
 - Terraform CLI for IaC validation. Modal for the optional remote sandbox.
+- ModuleFast by Justin Grote (MIT) bootstraps the Az / Microsoft.Graph module install
+  (`scripts/Install-ContextPaneModules.ps1`); GitHub CLI (`gh`) for publishing and Tier 3 PRs.
 - Bun, Hono, Vite, React 19, Tailwind v4, Zod.
 
 ## Contact

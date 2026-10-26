@@ -21,7 +21,7 @@ import { buildRemediationBundle } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext } from "../mcp/context.ts";
 import { runLocalPreflight } from "../preflight/local.ts";
 import { modalConfigured, runModalPreflight } from "../preflight/modal.ts";
-import { stageRemediationBranch } from "../preflight/staging.ts";
+import { openPullRequest, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { remediationStore } from "../store/remediations.ts";
@@ -269,6 +269,37 @@ export interface ApproveInput {
   remediationId: string;
   approvedBy?: string;
   decision?: "approve" | "reject";
+  /** Push the staged branch and `gh pr create` (defaults to CTX_GH_PR_ON_APPROVE). */
+  openPullRequest?: boolean;
+}
+
+function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log: string[]): string {
+  const v = drawer.verificationStatus;
+  return [
+    `## ${drawer.title}`,
+    "",
+    drawer.summary,
+    "",
+    `**Ticket:** ${drawer.ticketId} · **Tenant:** ${drawer.tenantId} · **Remediation:** ${drawer.remediationId}`,
+    "",
+    "### Pre-flight",
+    "",
+    `- Verdict: **${v.verdict}** (${v.sandboxProvider}, ${v.validationLatencyMs} ms)`,
+    `- PowerShell AST: ${fmt(v.astCheckPassed)} · terraform fmt: ${fmt(v.terraformFmtPassed)} · terraform validate: ${fmt(v.terraformValidatePassed)}`,
+    ...v.findings.map((f) => `- ${f}`),
+    "",
+    "### Approval",
+    "",
+    `- Approved by **${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity}** at ${drawer.approval.approvedAt ?? "n/a"} → \`${state}\``,
+    ...log.map((l) => `- ${l}`),
+    "",
+    "### Affected entities",
+    "",
+    ...drawer.affectedEntities.map((e) => `- \`${e.type}\` ${e.id}: ${e.change}`),
+    "",
+    `_Synthesised by ContextPane Tier 3 (${drawer.synthesizedBy.planner} → ${drawer.synthesizedBy.coder}, ${drawer.synthesizedBy.provider}); human approval recorded before this PR was opened._`,
+    "",
+  ].join("\n");
 }
 
 export async function approve(input: ApproveInput): Promise<ActionApprovalDrawer & { executionLog: string[] }> {
@@ -312,10 +343,22 @@ export async function approve(input: ApproveInput): Promise<ActionApprovalDrawer
     log.push("Offline mode: approval recorded, execution simulated (no Graph context). Branch stays staged for the PR.");
   }
 
-  const updated: ActionApprovalDrawer = {
+  let updated: ActionApprovalDrawer = {
     ...drawer,
     approval: { ...drawer.approval, state, approvedBy: input.approvedBy ?? drawer.approval.requiredIdentity, approvedAt: now },
   };
+
+  /* ---- optional: real GitHub PR on the staged branch ---- */
+  if (input.openPullRequest ?? config.github.prOnApprove) {
+    if (updated.staging) {
+      const pr = await openPullRequest(updated.staging, pullRequestBody(updated, state, log));
+      log.push(...pr.log);
+      updated = { ...updated, staging: pr.staging };
+    } else {
+      log.push("No staged branch to open a PR from");
+    }
+  }
+
   remediationStore.save(updated);
   return { ...updated, executionLog: log };
 }

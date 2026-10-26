@@ -216,6 +216,8 @@ export const StagingInfoSchema = z.object({
   filesChanged: z.array(z.string()),
   worktreePath: z.string().optional(),
   prTitle: z.string(),
+  pushed: z.boolean().default(false).describe("True once the branch was pushed to remote origin"),
+  prUrl: z.string().url().nullable().default(null).describe("GitHub pull request opened via gh pr create on approval, if any"),
 });
 export type StagingInfo = z.infer<typeof StagingInfoSchema>;
 

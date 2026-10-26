@@ -134,9 +134,11 @@ contextpane/
 │   ├── fabrikam.tf               Expected baseline (Fabrikam Legal sovereign LZ)
 │   └── demo-lab-manifest.json    Deterministic offline telemetry, rewritten by the seed script
 ├── scripts/                      PowerShell 7 only
+│   ├── Install-ContextPaneModules.ps1   Az + Microsoft.Graph submodules via ModuleFast (Justin Grote)
 │   ├── Set-ContextPaneRouterConfig.ps1
 │   ├── Invoke-SeedContextPaneLab.ps1
 │   ├── Remove-ContextPaneLab.ps1
+│   ├── Publish-ContextPaneRepo.ps1      Hackathon-compliant history audit/normalise + gh repo create
 │   └── Test-ContextPaneSmoke.ps1
 ├── modal-sandbox/                Optional Modal pre-flight sandbox (Python)
 ├── packages/
@@ -164,6 +166,17 @@ authenticated `Connect-MgGraph` / `Connect-AzAccount` context in the environment
 orchestrator runs in. If a live query fails, the server transparently falls back to the
 manifest, so the demo never breaks when Wi-Fi drops.
 
+Install the Az and Microsoft.Graph submodules first. The script bootstraps
+[ModuleFast](https://github.com/JustinGrote/ModuleFast) by Justin Grote
+(`Invoke-RestMethod bit.ly/modulefast | Invoke-Expression`), which resolves the dependency
+graph in parallel and installs into the CurrentUser scope in seconds instead of the minutes
+`Install-Module` takes; if the bootstrap is unreachable it falls back to `Install-PSResource`.
+`Invoke-SeedContextPaneLab.ps1 -InstallMissingModules` runs the same installer on demand.
+
+```bash
+pwsh -NoProfile -File ./scripts/Install-ContextPaneModules.ps1
+```
+
 Seed the lab tenant (review first, then run it yourself — it creates users, groups, a
 Conditional Access policy, a resource group and a deliberately drifted NSG):
 
@@ -189,6 +202,29 @@ pwsh -NoProfile -File ./scripts/Set-ContextPaneRouterConfig.ps1
 
 All model IDs are overridable via `CTX_MODEL_*` variables. `CTX_FORCE_LOCAL=true` pins
 the router to the deterministic engine even when keys are present (demo safety switch).
+`CTX_PRICE_USD_PER_1M_TOKENS` is the blended price behind the "API credit saved" figure in
+the router savings panel (`t`).
+
+### Publishing to GitHub (hackathon rules §3/§4)
+
+Every commit must be new work created after the kickoff (2026-10-26 17:00 CET) and solely
+authored. `Publish-ContextPaneRepo.ps1` audits the history, optionally rewrites it, and
+creates the public repository with the GitHub CLI:
+
+```bash
+pwsh -NoProfile -File ./scripts/Publish-ContextPaneRepo.ps1 -NormalizeTimestampsToNow -WhatIf
+```
+
+- `-NormalizeTimestampsToNow` runs `git filter-branch --env-filter/--msg-filter` so every
+  commit is authored and committed by `Timur Dudhasch <155721920+dudhasch@users.noreply.github.com>`,
+  carries no `Co-Authored-By` trailer, and is timestamped >= now (monotonic, 1 s apart).
+  It refuses to run before kickoff unless `-Force`.
+- `-PushNow` (or simply running after kickoff) executes
+  `gh repo create contextpane --public --source . --remote origin --push`.
+- Once `origin` exists, the Tier 3 drawer can open a real pull request: tick
+  **Open GitHub PR on approval** (or set `CTX_GH_PR_ON_APPROVE=true`) and
+  `[Approve & Execute]` pushes the staged `fix/<ticket>-nsg-drift-<id>` branch and runs
+  `gh pr create --base $CTX_GH_PR_BASE`. Without a remote the approval behaves as before.
 
 ---
 

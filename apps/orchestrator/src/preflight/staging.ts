@@ -124,6 +124,8 @@ export async function stageRemediationBranch(bundle: StagingBundle): Promise<{ s
         filesChanged: files,
         worktreePath: worktreeDir,
         prTitle: bundle.title,
+        pushed: false,
+        prUrl: null,
       },
       findings,
     };
@@ -134,6 +136,89 @@ export async function stageRemediationBranch(bundle: StagingBundle): Promise<{ s
     await git(["worktree", "remove", "--force", worktreeDir], REPO_ROOT);
     rmSync(worktreeDir, { recursive: true, force: true });
     await git(["worktree", "prune"], REPO_ROOT);
+  }
+}
+
+/* ------------------------------ GitHub (gh CLI) ----------------------------- */
+
+export interface GitHubStatus {
+  origin: string | null;
+  ghInstalled: boolean;
+  ghAuthenticated: boolean;
+  account: string | null;
+  prOnApprove: boolean;
+  prBase: string;
+}
+
+let githubStatusCache: { at: number; value: GitHubStatus } | null = null;
+
+function run(command: string, args: string[], cwd: string, timeoutMs = 20_000): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise) => {
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => (stdout += d));
+    child.stderr.on("data", (d: string) => (stderr += d));
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolvePromise({ code: null, stdout, stderr: stderr + err.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolvePromise({ code, stdout: stdout.trim(), stderr: stderr.trim() });
+    });
+  });
+}
+
+/** Is there a remote origin and an authenticated gh CLI? Cached for 60 s; `gh auth status` is slow-ish. */
+export async function githubStatus(fresh = false): Promise<GitHubStatus> {
+  if (!fresh && githubStatusCache && Date.now() - githubStatusCache.at < 60_000) return githubStatusCache.value;
+  const origin = await git(["remote", "get-url", "origin"], REPO_ROOT);
+  const auth = await run("gh", ["auth", "status"], REPO_ROOT, 15_000);
+  const combined = `${auth.stdout}\n${auth.stderr}`;
+  const account = /account (\S+)/.exec(combined)?.[1] ?? null;
+  const value: GitHubStatus = {
+    origin: origin.code === 0 && origin.stdout ? origin.stdout : null,
+    ghInstalled: auth.code !== null && !/not recognized|not found|ENOENT/i.test(auth.stderr),
+    ghAuthenticated: auth.code === 0,
+    account,
+    prOnApprove: config.github.prOnApprove,
+    prBase: config.github.prBase,
+  };
+  githubStatusCache = { at: Date.now(), value };
+  return value;
+}
+
+/**
+ * Push a staged branch and open a real pull request with `gh pr create`.
+ * Only ever called from the HITL approve endpoint, only when the operator
+ * opted in, and only when a remote origin plus gh auth exist.
+ */
+export async function openPullRequest(staging: StagingInfo, body: string): Promise<{ staging: StagingInfo; log: string[] }> {
+  const log: string[] = [];
+  const status = await githubStatus(true);
+  if (!status.origin) return { staging, log: ["No remote origin: run scripts/Publish-ContextPaneRepo.ps1 first; PR skipped"] };
+  if (!status.ghAuthenticated) return { staging, log: ["gh CLI is not authenticated (gh auth login); PR skipped"] };
+  if (staging.prUrl) return { staging, log: [`PR already open: ${staging.prUrl}`] };
+
+  const push = await git(["push", "-u", "origin", `${staging.branchName}:${staging.branchName}`], REPO_ROOT, 60_000);
+  if (push.code !== 0) return { staging, log: [`git push failed: ${push.stderr || push.stdout}`] };
+  log.push(`Pushed ${staging.branchName} to ${status.origin}`);
+
+  const bodyFile = join(config.stagingDir, `${staging.branchName.replace(/[\\/]/g, "_")}.pr.md`);
+  mkdirSync(config.stagingDir, { recursive: true });
+  writeFileSync(bodyFile, body, "utf8");
+  try {
+    const pr = await run("gh", ["pr", "create", "--head", staging.branchName, "--base", config.github.prBase, "--title", staging.prTitle, "--body-file", bodyFile], REPO_ROOT, 60_000);
+    const url = /https:\/\/github\.com\/\S+\/pull\/\d+/.exec(`${pr.stdout}\n${pr.stderr}`)?.[0] ?? null;
+    if (pr.code !== 0 && !url) return { staging: { ...staging, pushed: true }, log: [...log, `gh pr create failed: ${pr.stderr || pr.stdout}`] };
+    log.push(url ? `Pull request opened: ${url}` : "gh pr create finished without a URL");
+    return { staging: { ...staging, pushed: true, prUrl: url }, log };
+  } finally {
+    rmSync(bodyFile, { force: true });
   }
 }
 

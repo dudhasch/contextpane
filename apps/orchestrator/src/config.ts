@@ -59,6 +59,10 @@ const envInt = (key: string, fallback: number): number => {
   const n = Number.parseInt(env(key), 10);
   return Number.isFinite(n) ? n : fallback;
 };
+const envFloat = (key: string, fallback: number): number => {
+  const n = Number.parseFloat(env(key));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
 
 /* -------------------------------------------------------------------------- */
 /* Provider + model configuration                                              */
@@ -128,6 +132,15 @@ export const config = {
   },
   stagingDir: resolve(REPO_ROOT, env("CTX_STAGING_DIR", ".contextpane/staging")),
   dataDir: join(REPO_ROOT, "data"),
+  github: {
+    /** Push the staged fix/* branch and run `gh pr create` when a remediation is approved (needs remote origin + gh auth). */
+    prOnApprove: envBool("CTX_GH_PR_ON_APPROVE", false),
+    prBase: env("CTX_GH_PR_BASE", "main"),
+  },
+  pricing: {
+    /** Blended assumption used only for the "API credit saved" metric in the router savings panel. */
+    usdPer1MTokens: envFloat("CTX_PRICE_USD_PER_1M_TOKENS", 1.0),
+  },
   lab: {
     tenantId: env("CTX_LAB_TENANT_ID", "4cc41c20-8b01-40a3-93c6-b4f1e846f6ea"),
     subscriptionId: env("CTX_LAB_SUBSCRIPTION_ID", "20505597-043c-4742-a884-42dc3f621aef"),
@@ -151,5 +164,7 @@ export function describeConfig() {
     models,
     modalSandbox: { enabled: config.modal.enabled, configured: config.modal.url !== "" },
     timeouts: config.timeouts,
+    github: config.github,
+    pricing: config.pricing,
   };
 }

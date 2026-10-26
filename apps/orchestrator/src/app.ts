@@ -14,7 +14,7 @@ import {
 import { config, describeConfig, providers } from "./config.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext } from "./mcp/context.ts";
-import { listStagedBranches } from "./preflight/staging.ts";
+import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
 import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
 import { telemetry } from "./telemetry.ts";
@@ -51,8 +51,9 @@ function wantsSse(c: { req: { header: (name: string) => string | undefined; quer
 /* ---------------------------------- health --------------------------------- */
 
 app.get("/api/health", async (c) => {
-  const mcp = await sources.status();
+  const [mcp, github] = await Promise.all([sources.status(), githubStatus()]);
   return c.json({
+    github,
     ok: true,
     service: "contextpane-orchestrator",
     version: "0.1.0",
@@ -219,6 +220,7 @@ const ApproveBodySchema = z.object({
   remediationId: z.string().min(1),
   approvedBy: z.string().optional(),
   decision: z.enum(["approve", "reject"]).optional(),
+  openPullRequest: z.boolean().optional(),
 });
 
 app.post("/api/approve", async (c) => {
