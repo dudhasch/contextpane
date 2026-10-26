@@ -16,7 +16,10 @@ import { config } from "../config.ts";
 
 export interface PreflightInput {
   powershellScript: string;
+  /** Empty when the fix has no IaC part; the Terraform checks are then not applicable (null). */
   terraformDiff: string;
+  /** Cmdlets the script must contain (lower-case); defaults to set-mguserlicense. */
+  requiredCommands?: string[];
   /** Rendered live state the diff must apply to */
   actualHcl: string;
   /** Rendered baseline the patched result must equal */
@@ -64,8 +67,47 @@ function exec(command: string, args: string[], options: { cwd?: string; timeoutM
 }
 
 const ALLOWED_VERBS = new Set(["Get", "Set", "Update", "New", "Add", "Connect", "Select", "Where", "ForEach", "Write", "Out", "Test", "ConvertTo", "ConvertFrom", "Format", "Measure", "Sort", "Group", "Start", "Import", "Compare", "Join", "Split"]);
+/** Narrow exceptions to the verb allow-list: each is a scoped, reversible Graph operation. */
+const ALLOWED_COMMANDS = new Set(["remove-mggroupmemberbyref", "invoke-mglicenseuser", "invoke-mggraphrequest", "sync-mgdevicemanagementmanageddevice"]);
 const FORBIDDEN_COMMANDS = ["invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod", "set-executionpolicy"];
-const REQUIRED_COMMANDS = ["set-mguserlicense"];
+const DEFAULT_REQUIRED_COMMANDS = ["set-mguserlicense"];
+
+/** Mutating cmdlets: each must run inside $PSCmdlet.ShouldProcess for -WhatIf to be a real dry run. */
+const MUTATING = /\b(Set-Mg\w+|Update-Mg\w+|New-Mg\w+|Remove-Mg\w+|Add-Mg\w+|Invoke-MgLicenseUser|Sync-Mg\w+|Invoke-MgGraphRequest\s+-Method\s+'?(POST|PATCH|PUT|DELETE))/i;
+
+/**
+ * Static -WhatIf proof: the script declares SupportsShouldProcess and every mutating Graph
+ * call sits inside an `if ($PSCmdlet.ShouldProcess(...)) { ... }` block (brace-tracked).
+ */
+export function checkWhatIfSafety(script: string): { safe: boolean; unguarded: string[] } {
+  if (!/SupportsShouldProcess/.test(script)) return { safe: false, unguarded: ["SupportsShouldProcess not declared"] };
+  const unguarded: string[] = [];
+  const guards: number[] = [];
+  let depth = 0;
+  let inBlockComment = false;
+  for (const raw of script.split("\n")) {
+    // Skip <# ... #> help blocks and whole-line comments; a '#' inside a string ('#microsoft.graph...') is code.
+    if (inBlockComment || /^\s*<#/.test(raw)) {
+      inBlockComment = !raw.includes("#>");
+      continue;
+    }
+    if (/^\s*#/.test(raw)) continue;
+    const line = raw;
+    const guardAt = line.search(/\$PSCmdlet\.ShouldProcess\(/);
+    const call = MUTATING.exec(line);
+    if (call && guards.length === 0 && !(guardAt >= 0 && guardAt < (call.index ?? 0))) unguarded.push(call[1]!);
+    for (const ch of line) {
+      if (ch === "{") {
+        depth++;
+        if (guardAt >= 0 && guards.at(-1) !== depth) guards.push(depth);
+      } else if (ch === "}") {
+        if (guards.at(-1) === depth) guards.pop();
+        depth--;
+      }
+    }
+  }
+  return { safe: unguarded.length === 0, unguarded: [...new Set(unguarded)] };
+}
 
 interface AstReport {
   parseErrors: string[];
@@ -73,7 +115,7 @@ interface AstReport {
   supportsShouldProcess: boolean;
 }
 
-export async function checkPowerShellAst(script: string, timeoutMs = 20_000): Promise<{ passed: boolean | null; findings: string[]; commands: string[] }> {
+export async function checkPowerShellAst(script: string, timeoutMs = 20_000, requiredCommands = DEFAULT_REQUIRED_COMMANDS): Promise<{ passed: boolean | null; findings: string[]; commands: string[] }> {
   const dir = mkdtempSync(join(tmpdir(), "ctx-preflight-"));
   const file = join(dir, "remediation.ps1");
   writeFileSync(file, script, "utf8");
@@ -110,10 +152,10 @@ try {
     for (const e of report.parseErrors) findings.push(`AST parse error: ${e}`);
     const lower = report.commands.map((c) => c.toLowerCase());
     for (const forbidden of FORBIDDEN_COMMANDS) if (lower.includes(forbidden)) findings.push(`Forbidden command: ${forbidden}`);
-    for (const required of REQUIRED_COMMANDS) if (!lower.includes(required)) findings.push(`Expected command missing: ${required}`);
+    for (const required of requiredCommands) if (!lower.includes(required)) findings.push(`Expected command missing: ${required}`);
     for (const cmd of report.commands) {
       const verb = cmd.split("-")[0] ?? cmd;
-      if (cmd.includes("-") && !ALLOWED_VERBS.has(verb)) findings.push(`Verb outside allow-list: ${cmd}`);
+      if (cmd.includes("-") && !ALLOWED_VERBS.has(verb) && !ALLOWED_COMMANDS.has(cmd.toLowerCase())) findings.push(`Verb outside allow-list: ${cmd}`);
     }
     if (!report.supportsShouldProcess) findings.push("Script does not declare SupportsShouldProcess (-WhatIf unsupported)");
     const passed = report.parseErrors.length === 0 && !findings.some((f) => f.startsWith("Forbidden") || f.startsWith("Expected command missing"));
@@ -130,6 +172,7 @@ export async function checkTerraform(
   timeoutMs = 25_000,
 ): Promise<{ fmtPassed: boolean | null; validatePassed: boolean | null; findings: string[] }> {
   const findings: string[] = [];
+  if (!input.terraformDiff.trim()) return { fmtPassed: null, validatePassed: null, findings };
   let patched: string | false = false;
   try {
     patched = applyPatch(input.actualHcl, input.terraformDiff);
@@ -184,16 +227,19 @@ export async function checkTerraform(
 
 export async function runLocalPreflight(input: PreflightInput): Promise<VerificationStatus> {
   const started = performance.now();
-  const [ast, tf] = await Promise.all([checkPowerShellAst(input.powershellScript), checkTerraform(input)]);
+  const [ast, tf] = await Promise.all([checkPowerShellAst(input.powershellScript, 20_000, input.requiredCommands), checkTerraform(input)]);
   const findings = [...ast.findings, ...tf.findings];
   const hardFail = ast.passed === false || tf.fmtPassed === false || tf.validatePassed === false;
-  const skipped = ast.passed === null || tf.fmtPassed === null || tf.validatePassed === null;
+  // A fix without an IaC part has no Terraform checks to skip.
+  const hasIac = input.terraformDiff.trim() !== "";
+  const skipped = ast.passed === null || (hasIac && (tf.fmtPassed === null || tf.validatePassed === null));
   return {
     verdict: hardFail ? "Verification Failed" : skipped || findings.length ? "Verified With Warnings" : "Verified Safe",
     astCheckPassed: ast.passed,
     terraformFmtPassed: tf.fmtPassed,
     terraformValidatePassed: tf.validatePassed,
     sandboxProvider: "local-pwsh",
+    whatIfSafe: null,
     validationLatencyMs: Math.round(performance.now() - started),
     findings,
   };

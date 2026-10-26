@@ -3,18 +3,24 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import {
-  COMPONENT_TYPES,
+  CANVAS_COMPONENT_TYPES,
   EntityTypeSchema,
+  SCENARIO_IDS,
+  SCENARIO_REGISTRY,
   TENANT_REGISTRY,
   ViewRecipeSchema,
+  isScenarioId,
   isTenantId,
   type ComponentType,
   type RouterTelemetry,
+  type ScenarioId,
+  type ScenarioListItem,
 } from "@contextpane/catalog";
-import { getManifestTenant, msgraphService } from "@contextpane/mcp-msgraph";
 import { config, describeConfig, providers } from "./config.ts";
+import { buildScenarioBrief } from "./local/brief.ts";
+import { applyScenarioState } from "./local/lab.ts";
 import { sources } from "./mcp/clients.ts";
-import { gatherContext, invalidateContext } from "./mcp/context.ts";
+import { gatherContext, invalidateContext, resolveScenarioId } from "./mcp/context.ts";
 import { metaModelsResolved } from "./router/meta-models.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
@@ -55,6 +61,12 @@ app.onError((error, c) => {
 });
 
 const TenantIdSchema = z.string().refine(isTenantId, { message: `tenantId must be one of ${Object.keys(TENANT_REGISTRY).join(", ")}` });
+const ScenarioIdSchema = z.string().refine(isScenarioId, { message: `scenarioId must be one of ${SCENARIO_IDS.join(", ")}` });
+
+/** Every scenario endpoint takes scenarioId; an older tenantId selects that tenant's ticket scenario. */
+function scenarioOf(body: { scenarioId?: string; tenantId?: string }): ScenarioId {
+  return body.scenarioId ? ScenarioIdSchema.parse(body.scenarioId) as ScenarioId : resolveScenarioId(body.tenantId ? TenantIdSchema.parse(body.tenantId) : "INC-4092");
+}
 
 /** ?refresh=true (or the older ?fresh=1) bypasses the context and hover caches. */
 function wantsRefresh(c: { req: { query: (name: string) => string | undefined } }): boolean {
@@ -86,38 +98,44 @@ app.get("/api/health", async (c) => {
 app.get("/api/config", (c) => c.json(describeConfig()));
 app.get("/api/mcp/status", async (c) => c.json(await sources.status()));
 
-/* --------------------------------- tenants --------------------------------- */
+/* -------------------------------- scenarios -------------------------------- */
 
 app.get("/api/tenants", (c) => c.json({ tenants: Object.values(TENANT_REGISTRY) }));
 
-app.get("/api/tenants/:tenantId/context", async (c) => {
-  const tenantId = TenantIdSchema.parse(c.req.param("tenantId"));
-  const ctx = await gatherContext(tenantId, { fresh: wantsRefresh(c) });
-  return c.json({
-    tenantId,
-    ticket: ctx.erp.ticket,
-    contract: ctx.erp.contract,
-    tenant: ctx.erp.tenant,
-    license: { source: ctx.license.source, fallbackReason: ctx.license.fallbackReason, data: ctx.license.data },
-    policies: { source: ctx.policies.source, data: ctx.policies.data },
-    signIns: { source: ctx.signIns.source, count: ctx.signIns.data.length },
-    drift: { source: ctx.drift.source, fallbackReason: ctx.drift.fallbackReason, summary: ctx.drift.data.summary, driftState: ctx.drift.data.driftState, severity: ctx.drift.data.severity },
-    gatherLatencyMs: ctx.gatherLatencyMs,
-    transport: ctx.transport,
+/** Tickets and tenant anomalies for the mode switcher; resolved = approved since the last drift reset. */
+app.get("/api/scenarios", (c) => {
+  const scenarios: ScenarioListItem[] = SCENARIO_IDS.map((scenarioId) => {
+    const entry = SCENARIO_REGISTRY[scenarioId];
+    return {
+      scenarioId,
+      kind: entry.kind,
+      tenantId: entry.tenantId,
+      tenantName: TENANT_REGISTRY[entry.tenantId].displayName,
+      title: entry.title,
+      resolved: Boolean(convergenceStore.get(scenarioId)),
+    };
   });
+  return c.json({ scenarios });
 });
 
-app.post("/api/tenants/:tenantId/refresh", (c) => {
-  invalidateContext(c.req.param("tenantId"));
+/** Left pane: summary & resolution plan, MCP-enriched entities by provenance colour, ticket or anomaly text. */
+app.get("/api/scenarios/:scenarioId/brief", async (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const ctx = await gatherContext(scenarioId, { fresh: wantsRefresh(c) });
+  return c.json({ brief: buildScenarioBrief(ctx), gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, fallbackReasons: ctx.fallbackReasons });
+});
+
+app.post("/api/scenarios/:scenarioId/refresh", (c) => {
+  invalidateContext(ScenarioIdSchema.parse(c.req.param("scenarioId")));
   return c.json({ ok: true });
 });
 
 /* -------------------------------- Tier 0 ----------------------------------- */
 
 app.get("/api/recipe/:recipeId/hydrate", async (c) => {
-  const tenantId = TenantIdSchema.parse(c.req.query("tenantId") ?? "tenant-contoso-01");
-  const result = await hydrateRecipe(c.req.param("recipeId"), tenantId, { fresh: wantsRefresh(c) });
-  void warmHoverCache(tenantId);
+  const scenarioId = scenarioOf({ scenarioId: c.req.query("scenarioId"), tenantId: c.req.query("tenantId") });
+  const result = await hydrateRecipe(c.req.param("recipeId"), scenarioId, { fresh: wantsRefresh(c) });
+  void warmHoverCache(scenarioId);
   return c.json(result);
 });
 
@@ -135,7 +153,8 @@ const PinRecipeSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(240).optional(),
   tenantId: z.string().optional(),
-  componentTypes: z.array(z.enum(COMPONENT_TYPES)).min(1).max(8),
+  scenarioId: z.string().optional(),
+  componentTypes: z.array(z.enum(CANVAS_COMPONENT_TYPES)).min(1).max(8),
   hotkey: z.string().max(1).optional(),
 });
 
@@ -147,9 +166,9 @@ app.post("/api/recipes", async (c) => {
   const recipe = recipeStore.save({
     recipeId,
     name: body.name,
-    description: body.description ?? `Pinned from ${body.tenantId ?? "canvas"}`,
-    createdFromTenantId: body.tenantId ?? null,
-    pinnedComponents: body.componentTypes.map((type, order) => ({ type, order, collapsed: false, options: {} })),
+    description: body.description ?? `Pinned from ${body.scenarioId ?? body.tenantId ?? "canvas"}`,
+    createdFromTenantId: body.tenantId ?? (body.scenarioId && isScenarioId(body.scenarioId) ? SCENARIO_REGISTRY[body.scenarioId].tenantId : null),
+    pinnedComponents: body.componentTypes.map((type, order) => ({ type, order, collapsed: true, options: {} })),
     mcpBindings: base.mcpBindings.filter((b) => (body.componentTypes as ComponentType[]).includes(b.component)),
     ...(body.hotkey ? { hotkey: body.hotkey } : {}),
   });
@@ -172,7 +191,8 @@ app.delete("/api/recipes/:recipeId", (c) => {
 /* -------------------------------- Tier 1A ---------------------------------- */
 
 const HoverBodySchema = z.object({
-  tenantId: TenantIdSchema.default("tenant-contoso-01"),
+  scenarioId: z.string().optional(),
+  tenantId: z.string().optional(),
   entityId: z.string().min(1),
   entityType: EntityTypeSchema.optional(),
   fresh: z.boolean().optional(),
@@ -180,33 +200,43 @@ const HoverBodySchema = z.object({
 
 app.post("/api/hover", async (c) => {
   const body = HoverBodySchema.parse(await c.req.json());
-  const result = await hover({ ...body, fresh: body.fresh || wantsRefresh(c) });
+  const result = await hover({
+    scenarioId: scenarioOf(body),
+    entityId: body.entityId,
+    ...(body.entityType ? { entityType: body.entityType } : {}),
+    fresh: body.fresh || wantsRefresh(c),
+  });
   return c.json(result);
 });
 
 /* ------------------------------ Tier 1B / 2 -------------------------------- */
 
 const CorrelateBodySchema = z.object({
-  tenantId: TenantIdSchema.default("tenant-contoso-01"),
+  scenarioId: z.string().optional(),
+  tenantId: z.string().optional(),
   fresh: z.boolean().optional(),
-  components: z.array(z.enum(COMPONENT_TYPES)).optional(),
+  components: z.array(z.enum(CANVAS_COMPONENT_TYPES)).optional(),
 });
 
 app.post("/api/correlate", async (c) => {
   const parsed = CorrelateBodySchema.parse(await c.req.json().catch(() => ({})));
-  const body = { ...parsed, fresh: parsed.fresh || wantsRefresh(c) };
+  const body = {
+    scenarioId: scenarioOf(parsed),
+    fresh: parsed.fresh || wantsRefresh(c),
+    ...(parsed.components ? { components: parsed.components as ComponentType[] } : {}),
+  };
   // A correlate is the "ticket opened" moment: wake the Modal sandbox now and pre-fetch every hover once it is done.
   warmModalSandbox("correlate");
   if (!wantsSse(c)) {
     const result = await correlate(body);
-    void warmHoverCache(body.tenantId);
+    void warmHoverCache(body.scenarioId);
     return c.json(result);
   }
   return streamSSE(c, async (stream) => {
     const send = (event: string, data: unknown) => stream.writeSSE({ event, data: JSON.stringify(data) });
     try {
       const result = await correlate(body, (p: ProgressEvent) => void send("progress", p));
-      void warmHoverCache(body.tenantId);
+      void warmHoverCache(body.scenarioId);
       await send("result", result);
     } catch (error) {
       await send("error", { error: error instanceof Error ? error.message : String(error) });
@@ -217,12 +247,14 @@ app.post("/api/correlate", async (c) => {
 /* -------------------------------- Tier 3 ----------------------------------- */
 
 const RemediateBodySchema = z.object({
-  tenantId: TenantIdSchema.default("tenant-contoso-01"),
+  scenarioId: z.string().optional(),
+  tenantId: z.string().optional(),
   fresh: z.boolean().optional(),
 });
 
 app.post("/api/remediate", async (c) => {
-  const body = RemediateBodySchema.parse(await c.req.json().catch(() => ({})));
+  const parsed = RemediateBodySchema.parse(await c.req.json().catch(() => ({})));
+  const body = { scenarioId: scenarioOf(parsed), ...(parsed.fresh !== undefined ? { fresh: parsed.fresh } : {}) };
   if (!wantsSse(c)) return c.json(await remediate(body));
   return streamSSE(c, async (stream) => {
     const send = (event: string, data: unknown) => stream.writeSSE({ event, data: JSON.stringify(data) });
@@ -265,91 +297,44 @@ app.get("/api/staging/branches", async (c) => c.json({ branches: await listStage
 
 app.get("/api/lab/state", (c) => c.json({ convergence: convergenceStore.all() }));
 
-const ResetDriftBodySchema = z.object({ tenantId: TenantIdSchema.optional() });
+const ResetDriftBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional() });
 
 /**
- * Restores the drifted demo state between video takes: the drifted users' open
- * extensions go back to SPE_E3 / Drift_Missing_E5_SKU in one Graph $batch and the
- * in-memory remediation state is cleared. No seed script, no model call.
+ * Restores the drifted demo state between video takes, per scenario: the license
+ * extensions go back to their drifted values, the [ContextPane-Demo] Conditional Access
+ * and Intune objects back to their drifted configuration, and the in-memory convergence
+ * is cleared. No seed script, no model call. Without a scenario every scenario is reset.
  */
 app.post("/api/lab/reset-drift", async (c) => {
   const started = performance.now();
   const body = ResetDriftBodySchema.parse(await c.req.json().catch(() => ({})));
-  const tenantIds = body.tenantId ? [body.tenantId] : Object.keys(TENANT_REGISTRY);
-  const results = [];
-  for (const tenantId of tenantIds) {
-    const upns = getManifestTenant(tenantId).users.filter((u) => u.driftStatus !== "compliant").map((u) => u.upn);
-    // The canvas reverts on this push at once; the Graph write (~1 s for an extension PATCH) lands behind it.
-    convergenceStore.clear(tenantId);
-    const write = await msgraphService.setLicenseExtensionState(tenantId, upns, "drifted");
-    invalidateContext(tenantId);
-    const failed = write.results.filter((r) => !r.ok);
-    results.push({ tenantId, source: write.source, fallbackReason: write.fallbackReason, latencyMs: write.latencyMs, users: upns, failed });
-    auditLedger.append({
-      tenantId,
-      ticketId: TENANT_REGISTRY[tenantId as keyof typeof TENANT_REGISTRY].ticketId,
-      actionType: "drift-reset",
-      delegatedIdentity: config.lab.delegatedIdentity,
-      modalSandboxVerified: false,
-      astPass: null,
-      tfValidatePass: null,
-      gitBranch: null,
-      prUrl: null,
-      latencyMs: write.latencyMs,
-      execution: write.source === "live-graph" && !failed.length ? "live-graph" : "simulated",
-      detail: `${upns.length} users → SPE_E3 / Drift_Missing_E5_SKU${write.fallbackReason ? ` (${write.fallbackReason})` : ""}`,
-    });
-  }
+  const scenarioIds: ScenarioId[] = body.scenarioId || body.tenantId ? [scenarioOf(body)] : [...SCENARIO_IDS];
+  const results = await Promise.all(
+    scenarioIds.map(async (scenarioId) => {
+      const tenantId = SCENARIO_REGISTRY[scenarioId].tenantId;
+      // The canvas reverts on this push at once; the Graph writes land behind it.
+      convergenceStore.clear(scenarioId, tenantId);
+      const write = await applyScenarioState(scenarioId, "drifted");
+      invalidateContext(scenarioId);
+      const failed = write.results.filter((r) => !r.ok);
+      auditLedger.append({
+        tenantId,
+        ticketId: scenarioId,
+        actionType: "drift-reset",
+        delegatedIdentity: config.lab.delegatedIdentity,
+        modalSandboxVerified: false,
+        astPass: null,
+        tfValidatePass: null,
+        gitBranch: null,
+        prUrl: null,
+        latencyMs: write.latencyMs,
+        execution: write.source === "live-graph" && !failed.length ? "live-graph" : "simulated",
+        detail: `${write.summary}${write.fallbackReason ? ` (${write.fallbackReason.slice(0, 160)})` : ""}`.slice(0, 300),
+      });
+      return { scenarioId, tenantId, source: write.source, fallbackReason: write.fallbackReason, latencyMs: write.latencyMs, summary: write.summary, items: write.results.map((r) => r.id), failed };
+    }),
+  );
   return c.json({ ok: results.every((r) => r.failed.length === 0), latencyMs: Math.round(performance.now() - started), results });
-});
-
-/* ------------------------------ hover actions ------------------------------ */
-
-const IssueTapBodySchema = z.object({
-  tenantId: TenantIdSchema.default("tenant-contoso-01"),
-  upn: z.string().min(3).max(200),
-});
-
-/** [Issue TAP] — only for the tenant's demo users, never an arbitrary account. */
-app.post("/api/actions/issue-tap", async (c) => {
-  const body = IssueTapBodySchema.parse(await c.req.json());
-  const user = getManifestTenant(body.tenantId).users.find((u) => u.upn.toLowerCase() === body.upn.toLowerCase());
-  if (!user) return c.json({ error: `${body.upn} is not a demo user of ${body.tenantId}` }, 400);
-  const tap = await msgraphService.issueTemporaryAccessPass(body.tenantId, user.upn);
-  const entry = auditLedger.append({
-    tenantId: body.tenantId,
-    ticketId: TENANT_REGISTRY[body.tenantId].ticketId,
-    actionType: "tap-issued",
-    delegatedIdentity: config.lab.delegatedIdentity,
-    modalSandboxVerified: false,
-    astPass: null,
-    tfValidatePass: null,
-    gitBranch: null,
-    prUrl: null,
-    latencyMs: tap.latencyMs,
-    execution: tap.source === "live-graph" ? "live-graph" : "simulated",
-    detail: `TAP for ${user.upn} · ${tap.lifetimeInMinutes} min · ${tap.isUsableOnce ? "one-time" : "multi-use"}${tap.fallbackReason ? ` · fallback: ${tap.fallbackReason.slice(0, 120)}` : ""}`,
-  });
-  telemetry.record({
-    requestId: telemetry.nextRequestId("t0"),
-    endpoint: "/api/actions/issue-tap",
-    tier: "Tier 0",
-    provider: "local",
-    modelId: "deterministic",
-    latencyMs: tap.latencyMs,
-    tokensUsed: { ...ZERO_USAGE },
-    fallbackChain: [],
-    tenantId: body.tenantId,
-  });
-  return c.json({ ...tap, auditId: entry.id });
-});
-
-/** [Inspect CA Policy] — the full policy as the MCP server reports it, plus the sign-ins it blocked. */
-app.get("/api/tenants/:tenantId/policies/:policyId", async (c) => {
-  const tenantId = TenantIdSchema.parse(c.req.param("tenantId"));
-  const result = await sources.msgraph.getPolicyDiagnostic(tenantId, c.req.param("policyId"));
-  if (!result.data.policy) return c.json({ error: "policy not found" }, 404);
-  return c.json({ source: result.source, policy: result.data.policy, blockedUpns: result.data.blockedUpns, blockedSignIns: result.data.blockedSignIns.length });
 });
 
 /* --------------------------------- vision ---------------------------------- */
@@ -414,13 +399,13 @@ app.get("/", (c) =>
     service: "contextpane-orchestrator",
     endpoints: [
       "GET  /api/health",
-      "GET  /api/recipe/:recipeId/hydrate?tenantId=",
+      "GET  /api/scenarios · GET /api/scenarios/:scenarioId/brief",
+      "GET  /api/recipe/:recipeId/hydrate?scenarioId=",
       "POST /api/hover",
       "POST /api/correlate  (Accept: text/event-stream for progress)",
       "POST /api/remediate  (Accept: text/event-stream for progress)",
       "POST /api/remediate/approve  (alias POST /api/approve)",
       "POST /api/lab/reset-drift · GET /api/lab/state",
-      "POST /api/actions/issue-tap · GET /api/tenants/:tenantId/policies/:policyId",
       "POST /api/vision-extract",
       "GET  /api/audit",
       "POST /api/voice-steer",

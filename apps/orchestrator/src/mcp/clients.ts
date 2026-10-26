@@ -1,11 +1,15 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { azureIacService, type IacResult, type NsgDrift, type TerraformBaseline } from "@contextpane/mcp-azure-iac";
+import { azureIacService, type AvdEstate, type IacResult, type NsgDrift, type TerraformBaseline } from "@contextpane/mcp-azure-iac";
 import { erpService, type ErpTenantContext } from "@contextpane/mcp-erp";
 import {
   msgraphService,
   type CaPolicySummary,
+  type CaPosture,
   type GraphResult,
+  type IntuneDrift,
+  type IntuneScenarioKey,
+  type LicenseInventory,
   type LicenseState,
   type SignInSummary,
   type UserDiagnostic,
@@ -30,6 +34,9 @@ export interface McpDataSources {
   };
   msgraph: {
     getLicenseState(tenantId: string): Promise<GraphResult<LicenseState>>;
+    getLicenseInventory(tenantId: string, scenarioId?: string): Promise<GraphResult<LicenseInventory>>;
+    getCaPosture(tenantId: string): Promise<GraphResult<CaPosture>>;
+    getIntuneDrift(key: IntuneScenarioKey): Promise<GraphResult<IntuneDrift>>;
     getConditionalAccessPolicies(tenantId: string): Promise<GraphResult<CaPolicySummary[]>>;
     getSignInEvents(tenantId: string, options?: { upn?: string; top?: number }): Promise<GraphResult<SignInSummary[]>>;
     getUserDiagnostic(tenantId: string, upn: string): Promise<GraphResult<UserDiagnostic>>;
@@ -38,6 +45,7 @@ export interface McpDataSources {
   };
   azure: {
     getNsgDrift(tenantId: string): Promise<IacResult<NsgDrift>>;
+    getAvdEstate(tenantId: string): Promise<IacResult<AvdEstate>>;
     getResourceDiagnostic(tenantId: string, resourceName: string): Promise<ResourceDiagnostic>;
     getTerraformBaseline(tenantId: string): Promise<TerraformBaseline>;
   };
@@ -53,6 +61,9 @@ export const inProcessSources: McpDataSources = {
   },
   msgraph: {
     getLicenseState: (t) => msgraphService.getLicenseState(t),
+    getLicenseInventory: (t, s) => msgraphService.getLicenseInventory(t, s),
+    getCaPosture: (t) => msgraphService.getCaPosture(t),
+    getIntuneDrift: (k) => msgraphService.getIntuneDrift(k),
     getConditionalAccessPolicies: (t) => msgraphService.getConditionalAccessPolicies(t),
     getSignInEvents: (t, o) => msgraphService.getSignInEvents(t, o),
     getUserDiagnostic: (t, upn) => msgraphService.getUserDiagnostic(t, upn),
@@ -61,6 +72,7 @@ export const inProcessSources: McpDataSources = {
   },
   azure: {
     getNsgDrift: (t) => azureIacService.getNsgDrift(t),
+    getAvdEstate: (t) => azureIacService.getAvdEstate(t),
     getResourceDiagnostic: (t, r) => azureIacService.getResourceDiagnostic(t, r),
     getTerraformBaseline: async (t) => azureIacService.getTerraformBaseline(t),
   },
@@ -69,8 +81,8 @@ export const inProcessSources: McpDataSources = {
       transport: "in-process",
       servers: [
         { name: "contextpane-erp", ok: true, tools: 7 },
-        { name: "contextpane-msgraph", ok: true, tools: 9 },
-        { name: "contextpane-azure-iac", ok: true, tools: 7 },
+        { name: "contextpane-msgraph", ok: true, tools: 12 },
+        { name: "contextpane-azure-iac", ok: true, tools: 8 },
       ],
     };
   },
@@ -150,6 +162,9 @@ export const stdioSources: McpDataSources = {
   },
   msgraph: {
     getLicenseState: (tenantId) => pool.call("contextpane-msgraph", "get_license_state", { tenantId }),
+    getLicenseInventory: (tenantId, scenarioId) => pool.call("contextpane-msgraph", "get_license_inventory", { tenantId, ...(scenarioId ? { scenarioId } : {}) }),
+    getCaPosture: (tenantId) => pool.call("contextpane-msgraph", "get_ca_posture", { tenantId }),
+    getIntuneDrift: (scenarioId) => pool.call("contextpane-msgraph", "get_intune_drift", { scenarioId }),
     getConditionalAccessPolicies: (tenantId) => pool.call("contextpane-msgraph", "get_conditional_access_policies", { tenantId }),
     getSignInEvents: (tenantId, options) => pool.call("contextpane-msgraph", "get_sign_in_events", { tenantId, ...options }),
     getUserDiagnostic: (tenantId, upn) => pool.call("contextpane-msgraph", "get_user_diagnostic", { tenantId, upn }),
@@ -158,6 +173,7 @@ export const stdioSources: McpDataSources = {
   },
   azure: {
     getNsgDrift: (tenantId) => pool.call("contextpane-azure-iac", "get_nsg_drift", { tenantId }),
+    getAvdEstate: (tenantId) => pool.call("contextpane-azure-iac", "get_avd_estate", { tenantId }),
     getResourceDiagnostic: (tenantId, resourceName) => pool.call("contextpane-azure-iac", "get_resource_diagnostic", { tenantId, resourceName }),
     getTerraformBaseline: (tenantId) => pool.call("contextpane-azure-iac", "get_terraform_baseline", { tenantId }),
   },

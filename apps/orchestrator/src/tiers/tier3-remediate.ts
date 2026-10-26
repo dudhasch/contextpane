@@ -6,7 +6,7 @@ import { z } from "zod";
 import {
   ActionApprovalDrawerSchema,
   RemediationBundleArgsSchema,
-  TENANT_REGISTRY,
+  SCENARIO_REGISTRY,
   formatIssues,
   getRemediationBundleToolDefinition,
   parseToolArguments,
@@ -17,14 +17,14 @@ import {
   type OpenAIFunctionTool,
   type RemediationBundleArgs,
   type RouterTelemetry,
-  type TenantId,
+  type ScenarioId,
   type VerificationStatus,
 } from "@contextpane/catalog";
-import { msgraphService } from "@contextpane/mcp-msgraph";
 import { config, models, providers } from "../config.ts";
-import { buildRemediationBundle } from "../local/remediate.ts";
-import { contextForModel, gatherContext, invalidateContext, type CorrelationContext } from "../mcp/context.ts";
-import { runLocalPreflight } from "../preflight/local.ts";
+import { applyScenarioState } from "../local/lab.ts";
+import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.ts";
+import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
+import { checkWhatIfSafety, runLocalPreflight } from "../preflight/local.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { githubRepoUrl, openPullRequest, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
@@ -36,7 +36,8 @@ import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
 
 export interface RemediateInput {
-  tenantId: string;
+  /** Scenario id (INC-4092, ANOM-CA-204, ...); a tenant id selects its ticket scenario. */
+  scenarioId: string;
   fresh?: boolean;
 }
 
@@ -64,7 +65,7 @@ const PLAN_TOOL: OpenAIFunctionTool = {
 };
 
 const PLANNER_PROMPT = `You are ContextPane's remediation planner (Tier 3A) for a managed service provider.
-Given the correlated escalation context, produce an ordered plan that (1) fixes license drift with Set-MgUserLicense, (2) neutralises the blocking Conditional Access policy safely by excluding the entitlement group and moving the policy to report-only with Update-MgIdentityConditionalAccessPolicy, and (3) reconciles Azure NSG drift back to the Terraform baseline (remove rogue rules, restore tags).
+Given the correlated scenario context (a customer ticket or a proactive tenant anomaly) and the reference summary, produce an ordered plan that fixes exactly what the context shows: license drift or orphaned seats (Set-MgUserLicense, Invoke-MgLicenseUser), Conditional Access drift (Update-MgIdentityConditionalAccessPolicy), Intune policy drift or conflicts (Settings Catalog / device configuration assignments, device sync) and Azure NSG drift (back to the Terraform baseline).
 Each step, rollback and risk is one sentence of at most 200 characters; name the cmdlet and the entity, not the full parameter list.
 Respond only through emit_remediation_plan. Never plan destructive actions (no user/group/resource deletion).`;
 
@@ -77,26 +78,24 @@ function clipPlanText(raw: unknown): unknown {
 }
 
 const CODER_PROMPT = `You are ContextPane's remediation coder (Tier 3B). Produce the exact artefacts a human will approve:
-1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use Set-MgUserLicense for every drifted user and Update-MgIdentityConditionalAccessPolicy for the policy change, wrap mutations in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs.
-2. terraformDiff: a unified diff (---/+++ headers, @@ hunks) that transforms the live NSG state into the Terraform baseline. A reference diff is supplied; reproduce it exactly unless it is wrong.
+1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use every cmdlet listed in requiredCommands, wrap every mutation in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs.
+2. terraformDiff: only when the reference bundle has one, a unified diff (---/+++ headers, @@ hunks) that transforms the live NSG state into the Terraform baseline; reproduce the reference exactly unless it is wrong. Otherwise an empty string.
 Use only identifiers from the context. A deterministic reference bundle is supplied: match its cmdlets and entities, improve clarity where useful. Respond only through emit_remediation_bundle.`;
 
 function metaStep(modelId: string): ChainStep {
   return { provider: "meta", modelId, hasKey: providers.meta.hasKey };
 }
 
-function bundleIsSound(bundle: RemediationBundleArgs, reference: RemediationBundleArgs): string[] {
+function bundleIsSound(bundle: RemediationBundleArgs, plan: RemediationPlan): string[] {
   const issues: string[] = [];
-  const ps = bundle.powershellScript;
-  if (!/Set-MgUserLicense/i.test(ps)) issues.push("powershellScript lacks Set-MgUserLicense");
-  if (/Update-MgIdentityConditionalAccessPolicy/i.test(reference.powershellScript) && !/Update-MgIdentityConditionalAccessPolicy/i.test(ps)) {
-    issues.push("powershellScript lacks Update-MgIdentityConditionalAccessPolicy");
-  }
-  if (!/^---\s/m.test(bundle.terraformDiff) || !/^\+\+\+\s/m.test(bundle.terraformDiff) || !/^@@/m.test(bundle.terraformDiff)) {
+  const reference = plan.bundle;
+  const ps = bundle.powershellScript.toLowerCase();
+  for (const cmd of plan.requiredCommands) if (!ps.includes(cmd)) issues.push(`powershellScript lacks ${cmd}`);
+  if (reference.terraformDiff && (!/^---\s/m.test(bundle.terraformDiff) || !/^\+\+\+\s/m.test(bundle.terraformDiff) || !/^@@/m.test(bundle.terraformDiff))) {
     issues.push("terraformDiff is not a unified diff");
   }
   for (const e of reference.affectedEntities.filter((x) => x.type === "upn")) {
-    if (!ps.includes(e.id)) issues.push(`powershellScript does not mention ${e.id}`);
+    if (!ps.includes(e.id.toLowerCase())) issues.push(`powershellScript does not mention ${e.id}`);
   }
   return issues;
 }
@@ -114,10 +113,11 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   // The sandbox container boots while muse-wonder plans and codes, so the pre-flight below starts warm.
   warmModalSandbox("remediate");
   report("mcp:start", "Refreshing MCP context");
-  const ctx = await gatherContext(input.tenantId, { fresh: input.fresh ?? true });
-  report("mcp:done", `Context ready (${ctx.gatherLatencyMs} ms)`, { sources: ctx.sourcesUsed });
+  const ctx = await gatherContext(input.scenarioId, { fresh: input.fresh ?? true });
+  report("mcp:done", `Context ready (${ctx.gatherLatencyMs} ms)`, { sources: ctx.sourcesUsed, scenarioId: ctx.scenarioId });
 
-  const reference = buildRemediationBundle(ctx);
+  const plan = buildRemediationPlan(ctx);
+  const reference = plan.bundle;
   let bundle: RemediationBundleArgs = reference;
   let usage: TokenUsage = { ...ZERO_USAGE };
   let provider: RouterTelemetry["provider"] = "local";
@@ -145,12 +145,12 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       return { plan: parsed.data, usage: result.usage };
     });
     chain.push(...planOutcome.chain);
-    let plan: PlanArgs | null = null;
+    let modelPlan: PlanArgs | null = null;
     if (planOutcome.result) {
-      plan = planOutcome.result.plan;
+      modelPlan = planOutcome.result.plan;
       usage = addUsage(usage, planOutcome.result.usage);
       planner = models.metaWonder;
-      report("plan:done", `Plan: ${plan.steps.length} steps`, { steps: plan.steps });
+      report("plan:done", `Plan: ${modelPlan.steps.length} steps`, { steps: modelPlan.steps });
     } else {
       report("plan:fallback", "Planner unavailable → deterministic plan");
     }
@@ -167,8 +167,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           {
             role: "user",
             content: JSON.stringify({
-              plan: plan ?? { steps: ["Follow the deterministic reference bundle"] },
-              context: { ...model, azureNsgDrift: { ...model.azureNsgDrift } },
+              plan: modelPlan ?? { steps: ["Follow the deterministic reference bundle"] },
+              requiredCommands: plan.requiredCommands,
+              context: model,
               referenceBundle: reference,
             }),
           },
@@ -178,9 +179,10 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       );
       const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
       if (!parsed.success) throw new InvalidSchemaError("bundle failed validation", formatIssues(parsed.error));
-      const issues = bundleIsSound(parsed.data, reference);
+      const issues = bundleIsSound(parsed.data, plan);
       if (issues.length) throw new InvalidSchemaError("bundle failed structural checks", issues);
-      return { bundle: parsed.data, usage: result.usage };
+      // The IaC diff and the Graph request bodies stay the deterministic ones: they are what the pre-flight and the lab write verify.
+      return { bundle: { ...parsed.data, terraformDiff: reference.terraformDiff, graphPatch: reference.graphPatch }, usage: result.usage };
     });
     chain.push(...codeOutcome.chain);
     if (codeOutcome.result) {
@@ -204,8 +206,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   const preflightInput = {
     powershellScript: bundle.powershellScript,
     terraformDiff: bundle.terraformDiff,
-    actualHcl: ctx.drift.data.actualHcl,
-    expectedHcl: ctx.drift.data.expectedHcl,
+    actualHcl: ctx.drift?.data.actualHcl ?? "",
+    expectedHcl: ctx.drift?.data.expectedHcl ?? "",
+    requiredCommands: plan.requiredCommands,
   };
   let verification: VerificationStatus;
   if (modalConfigured()) {
@@ -214,14 +217,22 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       await modalWarm();
       verification = await runModalPreflight(preflightInput);
     } catch (error) {
-      report("preflight:fallback", `Modal sandbox failed (${error instanceof Error ? error.message : String(error)}) → local pre-flight`);
+      const reason = error instanceof Error ? error.message : String(error);
+      report("preflight:fallback", `Modal sandbox failed (${reason}) → local pre-flight`);
       verification = await runLocalPreflight(preflightInput);
-      verification.findings.unshift("Modal sandbox unavailable; validated locally instead");
+      verification.findings.unshift(
+        /HTTP 400/.test(reason) && !bundle.terraformDiff
+          ? "Modal sandbox needs a redeploy for fixes without Terraform; validated locally"
+          : "Modal sandbox unavailable; validated locally instead",
+      );
     }
   } else {
-    report("preflight:start", "Pre-flight: PowerShell AST parse + terraform fmt/validate (local)");
+    report("preflight:start", `Pre-flight: PowerShell AST parse${bundle.terraformDiff ? " + terraform fmt/validate" : ""} (local)`);
     verification = await runLocalPreflight(preflightInput);
   }
+  const whatIf = checkWhatIfSafety(bundle.powershellScript);
+  verification.whatIfSafe = whatIf.safe;
+  if (!whatIf.safe) verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
   report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
 
   /* ---- stage PR branch ---- */
@@ -231,11 +242,12 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     tenantName: ctx.erp.tenant.displayName,
     remediationId,
     title: bundle.title,
-    prTitle: canonicalPrTitle(ctx.tenantId, ctx.ticketId, ctx.erp.tenant.displayName),
+    prTitle: canonicalPrTitle(ctx.scenarioId, ctx.erp.tenant.displayName),
     summary: bundle.summary,
     powershellScript: bundle.powershellScript,
     terraformDiff: bundle.terraformDiff,
-    terraformFile: ctx.drift.data.terraformFile,
+    graphPatch: bundle.graphPatch,
+    terraformFile: ctx.drift?.data.terraformFile ?? "",
     verificationSummary: `${verification.verdict} · AST ${fmt(verification.astCheckPassed)} · terraform fmt ${fmt(verification.terraformFmtPassed)} · terraform validate ${fmt(verification.terraformValidatePassed)} · ${verification.sandboxProvider} · ${verification.validationLatencyMs} ms`,
   });
   if (stagingFindings.length) verification.findings.push(...stagingFindings);
@@ -252,6 +264,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     synthesizedBy: { planner, coder, provider },
     powershellScript: bundle.powershellScript,
     terraformDiff: bundle.terraformDiff,
+    graphPatch: bundle.graphPatch,
     affectedEntities: bundle.affectedEntities,
     verificationStatus: verification,
     staging,
@@ -276,7 +289,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     latencyMs,
     tokensUsed: usage,
     fallbackChain: chain,
-    tenantId: input.tenantId,
+    tenantId: ctx.tenantId,
   });
   report("complete", `Remediation ${remediationId} ready for approval`, { remediationId, verdict: verification.verdict, branch: staging?.branchName ?? null });
   return { drawer, telemetry: event };
@@ -314,10 +327,10 @@ export interface ApproveInput {
   openPullRequest?: boolean;
 }
 
-/** One PR title per ticket, so the canonical branch keeps one PR however often the demo runs. */
-export function canonicalPrTitle(tenantId: string, ticketId: string, tenantName: string): string {
-  const scope = TENANT_REGISTRY[tenantId as TenantId]?.remediationScope ?? "infrastructure drift & license state";
-  return `fix(${ticketId}): remediate ${tenantName} ${scope} [ContextPane Tier 3]`;
+/** One PR title per scenario, so the canonical branch keeps one PR however often the demo runs. */
+export function canonicalPrTitle(scenarioId: string, tenantName: string): string {
+  const scope = SCENARIO_REGISTRY[scenarioId as ScenarioId]?.remediationScope ?? "infrastructure drift & license state";
+  return `fix(${scenarioId}): remediate ${tenantName} ${scope} [ContextPane Tier 3]`;
 }
 
 interface TerraformDiffSummary {
@@ -378,84 +391,104 @@ function ms(v: number | undefined): string {
 
 export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log: string[], ctx: CorrelationContext | null, repoUrl: string | null): string {
   const v = drawer.verificationStatus;
-  const registry = TENANT_REGISTRY[drawer.tenantId as TenantId];
-  const tenantName = ctx?.erp.tenant.displayName ?? registry?.displayName ?? drawer.tenantId;
-  const contractId = ctx?.erp.contract.contractId ?? registry?.contractId ?? "n/a";
+  const registry = SCENARIO_REGISTRY[drawer.ticketId as ScenarioId];
+  const tenantName = ctx?.erp.tenant.displayName ?? drawer.tenantId;
+  const ticket = ctx?.erp.ticket ?? null;
+  const contractId = ctx?.erp.contract.contractId ?? "n/a";
   const files = drawer.staging?.filesChanged ?? [];
   const link = (path: string | undefined) =>
     path ? (repoUrl && drawer.staging ? `[\`${path}\`](${repoUrl}/blob/${drawer.staging.branchName}/${path})` : `\`${path}\``) : null;
   const scriptPath = files.find((f) => f.endsWith(".ps1"));
   const patchPath = files.find((f) => f.endsWith(".patch"));
+  const graphPath = files.find((f) => f.endsWith(".json"));
   const readmePath = files.find((f) => f.endsWith(".md"));
   const upns = drawer.affectedEntities.filter((e) => e.type === "upn");
   const policies = drawer.affectedEntities.filter((e) => e.type === "policy");
+  const devices = drawer.affectedEntities.filter((e) => e.type === "device");
+  const hasIac = drawer.terraformDiff.trim() !== "";
   const nsg = summarizeTerraformDiff(drawer.terraformDiff);
-  const nsgName = ctx?.drift.data.resourceName ?? drawer.affectedEntities.find((e) => e.type === "resource")?.id.split("/")[0] ?? "the NSG";
+  const nsgName = ctx?.drift?.data.resourceName ?? drawer.affectedEntities.find((e) => e.type === "resource")?.id.split("/")[0] ?? "the NSG";
 
-  const correlation: string[] = [];
-  if (ctx) {
-    const t = ctx.erp.ticket;
+  const correlation: string[] = ["| | |", "|---|---|"];
+  if (ticket && ctx) {
     const c = ctx.erp.contract;
-    const lic = ctx.license.data;
-    const line = c.lines.find((l) => l.skuPartNumber === lic.sku.skuPartNumber) ?? c.lines.find((l) => l.semanticAnchor);
-    const policy = ctx.policies.data.find((p) => policies.some((e) => e.id.toLowerCase() === p.id.toLowerCase()));
+    const lic = ctx.license?.data;
+    const line = c.lines.find((l) => l.skuPartNumber === lic?.sku.skuPartNumber) ?? c.lines.find((l) => l.semanticAnchor);
+    const policy = ctx.policies?.data.find((p) => policies.some((e) => e.id.toLowerCase() === p.id.toLowerCase()));
     correlation.push(
-      "| | |",
-      "|---|---|",
-      `| **ERP ticket** | **#${t.ticketId}** · ${t.severity} · ${t.title} · SLA breach ${t.slaBreachAt} |`,
-      `| **Contract** | **#${c.contractId}** · ${c.title} · ${c.slaTier} SLA |`,
-      `| **Requester** | ${t.requester.displayName} (\`${t.requester.upn}\`), ${t.requester.role} |`,
+      `| **ERP ticket** | **#${ticket.ticketId}** · ${ticket.title} |`,
+      `| **Contract** | **#${c.contractId}** · ${c.title} |`,
+      `| **Requester** | ${ticket.requester.displayName} (\`${ticket.requester.upn}\`), ${ticket.requester.role} |`,
       ...(line ? [`| **Entitlement** | ${line.quantity} × ${line.skuName} (\`${line.skuPartNumber}\`)${line.entitlementGroup ? ` via \`${line.entitlementGroup}\`` : ""} |`] : []),
-      `| **License drift** | ${upns.length} user${upns.length === 1 ? "" : "s"} billed for ${lic.sku.skuPartNumber} but not assigned it |`,
+      ...(upns.length && lic ? [`| **License drift** | ${upns.length} user${upns.length === 1 ? "" : "s"} entitled to ${lic.sku.skuPartNumber} but not assigned it |`] : []),
       ...(policy ? [`| **Blocking CA policy** | ${policy.displayName} (\`${policy.id}\`, ${policy.state}) |`] : []),
-      `| **NSG drift** | \`${nsgName}\` (${ctx.drift.data.terraformFile}) |`,
+      ...(ctx.intune ? [`| **Intune** | ${ctx.intune.data.errorCode ? `\`${ctx.intune.data.errorCode}\` · ` : ""}${ctx.intune.data.affectedDeviceCount} device(s) affected |`] : []),
+      ...(ctx.drift ? [`| **NSG drift** | \`${nsgName}\` (${ctx.drift.data.terraformFile}) |`] : []),
     );
   } else {
-    correlation.push(`**#${drawer.ticketId}** × **#${contractId}** · ${tenantName}`);
+    correlation.push(
+      `| **Tenant anomaly** | **#${drawer.ticketId}** · ${registry?.title ?? drawer.title} |`,
+      `| **Tenant** | ${tenantName} (\`${ctx?.erp.tenant.verifiedDomain ?? drawer.tenantId}\`) |`,
+      `| **Detected from** | ${ctx?.license ? "Graph subscribedSkus + licenseAssignmentStates" : ctx?.caPosture ? "Conditional Access policies + directory audit logs" : "Intune configurationPolicies + device state summaries"} |`,
+    );
   }
 
+  const changes: string[] = [];
+  for (const e of upns) changes.push(`- ${/reclaim/i.test(e.change) ? "`Set-MgUserLicense -RemoveLicenses`" : /CountViolation/i.test(e.change) ? "`Invoke-MgLicenseUser`" : "`Set-MgUserLicense`"} · ${e.id}: ${e.change}`);
+  for (const e of policies) changes.push(`- ${ctx?.intune ? "Intune" : "`Update-MgIdentityConditionalAccessPolicy`"} · \`${e.id}\`: ${e.change}`);
+  if (devices.length) changes.push(`- \`Sync-MgDeviceManagementManagedDevice\` · ${devices.length} device(s): ${devices.map((d) => d.id).join(", ")}`);
+
   return [
-    `## #${drawer.ticketId} × #${contractId} · ${tenantName}`,
+    `## #${drawer.ticketId}${ticket ? ` × #${contractId}` : ""} · ${tenantName}`,
     "",
     drawer.summary,
     "",
     "> Staged by **ContextPane Tier 3** and opened only after a human approved it in the Action Approval drawer.",
     "> The pipeline never runs the PowerShell itself (`CTX_ALLOW_EXECUTE=false`); it is here for review and a manual, delegated run.",
     "",
-    "### Ticket × contract correlation",
+    `### ${ticket ? "Ticket × contract correlation" : "Detected anomaly"}`,
     "",
     ...correlation,
     "",
-    "### Modal cloud sandbox pre-flight",
+    "### Pre-flight",
     "",
     "| Check | Result | Time in sandbox |",
     "|---|---|---|",
     `| PowerShell AST parse + cmdlet allow-list | ${check(v.astCheckPassed)} | ${ms(v.checkLatencyMs?.powershellAst)} |`,
-    `| \`terraform fmt -check\` | ${check(v.terraformFmtPassed)} | ${ms(v.checkLatencyMs?.terraformFmt)} |`,
-    `| \`terraform validate\` (diff applied to the live NSG state) | ${check(v.terraformValidatePassed)} | ${ms(v.checkLatencyMs?.terraformValidate)} |`,
+    `| \`-WhatIf\` dry run (every mutation inside \`ShouldProcess\`) | ${check(v.whatIfSafe)} | static |`,
+    ...(hasIac
+      ? [
+          `| \`terraform fmt -check\` | ${check(v.terraformFmtPassed)} | ${ms(v.checkLatencyMs?.terraformFmt)} |`,
+          `| \`terraform validate\` (diff applied to the live NSG state) | ${check(v.terraformValidatePassed)} | ${ms(v.checkLatencyMs?.terraformValidate)} |`,
+        ]
+      : []),
     `| **Verdict: ${v.verdict}** | \`${v.sandboxProvider}\` | ${ms(v.sandboxLatencyMs)} in the container · ${ms(v.validationLatencyMs)} round trip |`,
     ...(v.findings.length ? ["", ...v.findings.map((f) => `- ${f}`)] : []),
     "",
-    `### Infrastructure drift reconciled on \`${nsgName}\``,
-    "",
-    ...nsg.removedRules.map((r) => {
-      const traffic = [r.direction, r.access, r.protocol && r.port ? `${r.protocol.toUpperCase()}/${r.port}` : null, r.source ? `from \`${r.source}\`` : null].filter(Boolean).join(" ");
-      const detail = [r.priority ? `priority ${r.priority}` : null, traffic || null].filter(Boolean).join(", ");
-      return `- Removed rogue rule **\`${r.name}\`**${detail ? ` (${detail})` : ""}`;
-    }),
-    ...nsg.tagChanges.map((t) =>
-      t.from && t.to ? `- Restored tag \`${t.key} = "${t.to}"\` (was \`"${t.from}"\`)` : t.to ? `- Added tag \`${t.key} = "${t.to}"\`` : `- Removed out-of-band tag \`${t.key} = "${t.from}"\``,
-    ),
-    ...(patchPath ? [`- Unified diff: ${link(patchPath)}`] : []),
-    "",
-    "### Identity & licensing remediation (PowerShell)",
+    ...(hasIac
+      ? [
+          `### Infrastructure drift reconciled on \`${nsgName}\``,
+          "",
+          ...nsg.removedRules.map((r) => {
+            const traffic = [r.direction, r.access, r.protocol && r.port ? `${r.protocol.toUpperCase()}/${r.port}` : null, r.source ? `from \`${r.source}\`` : null].filter(Boolean).join(" ");
+            const detail = [r.priority ? `priority ${r.priority}` : null, traffic || null].filter(Boolean).join(", ");
+            return `- Removed rogue rule **\`${r.name}\`**${detail ? ` (${detail})` : ""}`;
+          }),
+          ...nsg.tagChanges.map((t) =>
+            t.from && t.to ? `- Restored tag \`${t.key} = "${t.to}"\` (was \`"${t.from}"\`)` : t.to ? `- Added tag \`${t.key} = "${t.to}"\`` : `- Removed out-of-band tag \`${t.key} = "${t.from}"\``,
+          ),
+          ...(patchPath ? [`- Unified diff: ${link(patchPath)}`] : []),
+          "",
+        ]
+      : []),
+    "### Microsoft Graph changes (PowerShell)",
     "",
     ...(scriptPath ? [`Script: ${link(scriptPath)}`, ""] : []),
-    ...upns.map((e) => `- \`Set-MgUserLicense\` · ${e.id}: ${e.change}`),
-    ...policies.map((e) => `- \`Update-MgIdentityConditionalAccessPolicy\` · \`${e.id}\`: ${e.change}`),
+    ...changes,
+    ...(graphPath ? ["", `Graph request bodies: ${link(graphPath)}`] : []),
     "",
     "```powershell",
-    "Connect-MgGraph -Scopes User.ReadWrite.All, Group.Read.All, Policy.Read.All, Policy.ReadWrite.ConditionalAccess",
+    "Connect-MgGraph -TenantId <tenant> -Scopes <scopes listed in the script header>",
     ...(scriptPath ? [`pwsh -NoProfile -File ./${scriptPath} -WhatIf   # dry run`, `pwsh -NoProfile -File ./${scriptPath}           # execute as the delegated identity`] : []),
     "```",
     ...(readmePath ? ["", `Runbook: ${link(readmePath)}`] : []),
@@ -466,7 +499,7 @@ export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log
     `- Remediation \`${drawer.remediationId}\`${drawer.staging?.commitSha ? ` · commit \`${drawer.staging.commitSha.slice(0, 7)}\`` : ""}`,
     ...log.map((l) => `- ${l}`),
     "",
-    `_Synthesised by ContextPane Tier 3 (${drawer.synthesizedBy.planner} → ${drawer.synthesizedBy.coder}, ${drawer.synthesizedBy.provider}). Every run force-updates this ticket's branch, so this PR always shows the latest approved remediation._`,
+    `_Synthesised by ContextPane Tier 3 (${drawer.synthesizedBy.planner} → ${drawer.synthesizedBy.coder}, ${drawer.synthesizedBy.provider}). Every run force-updates this scenario's branch, so this PR always shows the latest approved remediation._`,
     "",
   ].join("\n");
 }
@@ -496,24 +529,28 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     throw new Error("Cannot approve a bundle whose pre-flight verification failed");
   }
 
-  const upns = drawer.affectedEntities.filter((e) => e.type === "upn").map((e) => e.id);
+  const scenarioId = resolveScenarioId(drawer.ticketId);
   const wantPullRequest = input.openPullRequest ?? config.github.prOnApprove;
-  // The PR body quotes the ticket and contract; read them before the Graph write invalidates the context.
-  const prContext = wantPullRequest ? await gatherContext(drawer.tenantId).catch(() => null) : null;
+  // The PR body quotes the ticket and the convergence names the users: read both before the Graph write invalidates the context.
+  const before = await gatherContext(scenarioId).catch(() => null);
+  const plan = before ? buildRemediationPlan(before) : null;
+  const remediatedUpns = plan?.remediatedUpns ?? drawer.affectedEntities.filter((e) => e.type === "upn").map((e) => e.id);
+  const reclaimedUpns = plan?.reclaimedUpns ?? [];
   let state: ActionApprovalDrawer["approval"]["state"] = "approved";
   let execution: Convergence["execution"] = "simulated";
+  let writeSummary = "";
   if (config.liveCloudMode) {
     if (config.allowExecute) {
       log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
       const script = await runApprovedScript(drawer);
       log.push(...script.log);
     }
-    // The lab models each user's license in the com.contextpane.licenseState open extension; one Graph $batch flips it.
-    const write = await msgraphService.setLicenseExtensionState(drawer.tenantId, upns, "remediated");
+    const write = await applyScenarioState(scenarioId, "remediated", remediatedUpns);
     const failed = write.results.filter((r) => !r.ok);
+    writeSummary = write.summary;
     if (write.source === "live-graph") {
-      log.push(`Graph $batch: ${write.results.length - failed.length}/${write.results.length} users → SPE_E5 / Compliant in ${write.latencyMs} ms`);
-      for (const f of failed) log.push(`  ${f.upn}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
+      log.push(`Graph: ${write.summary} in ${write.latencyMs} ms`);
+      for (const f of failed) log.push(`  ${f.id}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
       if (!failed.length) {
         state = "executed";
         execution = "live-graph";
@@ -522,7 +559,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       log.push(`Graph write simulated (${write.fallbackReason})`);
       state = "simulated";
     }
-    invalidateContext(drawer.tenantId);
+    invalidateContext(scenarioId);
   } else {
     state = "simulated";
     log.push("Offline mode: approval recorded, execution simulated (no Graph context). Branch stays staged for the PR.");
@@ -536,7 +573,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   /* ---- optional: real GitHub PR on the staged branch ---- */
   if (wantPullRequest) {
     if (updated.staging) {
-      const pr = await openPullRequest(updated.staging, pullRequestBody(updated, state, log, prContext, await githubRepoUrl()));
+      const pr = await openPullRequest(updated.staging, pullRequestBody(updated, state, log, before, await githubRepoUrl()));
       log.push(...pr.log);
       updated = { ...updated, staging: pr.staging };
     } else {
@@ -547,6 +584,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   remediationStore.save(updated);
   const latencyMs = Math.round(performance.now() - started);
   const convergence: Convergence = {
+    scenarioId,
     tenantId: updated.tenantId,
     remediationId: updated.remediationId,
     ticketId: updated.ticketId,
@@ -555,7 +593,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     prUrl: updated.staging?.prUrl ?? null,
     gitBranch: updated.staging?.branchName ?? null,
     execution,
-    remediatedUpns: upns,
+    remediatedUpns,
+    reclaimedUpns,
   };
   convergenceStore.set(convergence);
   log.push(`Canvas converged via notifications/resources/updated (Tier 0, 0 tokens) · ${latencyMs} ms end to end`);
@@ -565,7 +604,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     delegatedIdentity: updated.approval.approvedBy ?? updated.approval.requiredIdentity,
     latencyMs,
     execution,
-    detail: `${state} · ${upns.length} users → SPE_E5${updated.staging?.prUrl ? " · PR opened" : ""}`,
+    detail: `${state} · ${writeSummary || updated.title}${updated.staging?.prUrl ? " · PR opened" : ""}`.slice(0, 300),
   });
   telemetry.record({
     requestId: telemetry.nextRequestId("t0"),

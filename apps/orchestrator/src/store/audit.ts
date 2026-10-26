@@ -5,9 +5,9 @@ import { config } from "../config.ts";
 import { workbenchEvents } from "../events.ts";
 
 /**
- * Tier 3 verifiable audit ledger: every pre-flight verification, HITL decision,
- * TAP issuance and demo reset, appended to data/audit-log.json (newest last) and
- * broadcast to the workbench. Entries never hold a secret (no TAP codes).
+ * Tier 3 verifiable audit ledger: every pre-flight verification, HITL decision
+ * and demo reset, appended to data/audit-log.json (newest last) and broadcast to
+ * the workbench. Entries never hold a secret or a token.
  */
 class AuditLedger {
   private file = join(config.dataDir, "audit-log.json");

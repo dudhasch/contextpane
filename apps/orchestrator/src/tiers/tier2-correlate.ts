@@ -12,8 +12,7 @@ import {
   type RouterTelemetry,
 } from "@contextpane/catalog";
 import { config, models, providerFor, providers } from "../config.ts";
-import { DEFAULT_COMPONENT_ORDER, buildComponent } from "../local/hydrate.ts";
-import { buildLayout } from "../local/hydrate.ts";
+import { buildComponent, buildLayout, scenarioComponents } from "../local/hydrate.ts";
 import { contextForModel, gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
@@ -21,7 +20,8 @@ import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
 
 export interface CorrelateInput {
-  tenantId: string;
+  /** Scenario id (INC-4092, ANOM-LIC-101, ...); a tenant id selects its ticket scenario. */
+  scenarioId: string;
   fresh?: boolean;
   components?: ComponentType[];
 }
@@ -33,21 +33,19 @@ export interface CorrelateResult {
     gatherLatencyMs: number;
     transport: string;
     sources: CorrelationContext["sourcesUsed"];
+    scenarioId: string;
     fallbackReasons: string[];
   };
 }
 
-const SYSTEM_PROMPT = `You are ContextPane's correlation engine for a managed service provider operating Microsoft 365, Entra ID and Azure for its customers.
-You receive an ERP escalation ticket and contract together with live Entra license state, Conditional Access policies, sign-in events and Azure NSG drift against the Terraform baseline.
+const SYSTEM_PROMPT = `You are ContextPane's correlation engine for a managed service provider operating Microsoft 365, Entra ID, Intune and Azure for its customers.
+You receive one scenario (a customer ticket or a proactive tenant anomaly) with the MCP context it needs: license pools and assignments, Conditional Access policies and sign-ins, Intune policy drift, Azure NSG drift.
 Your job: hydrate the operator's canvas by calling hydrate_contextpane_layout exactly once.
 Rules:
-- Emit the components in this order: TenantSummaryHeader, LicenseDriftCard, EntraSignInTimeline, IaCDriftBanner.
-- Fill every prop strictly from the supplied context. Copy identifiers (UPNs, policy names, rule names, tag values, error codes) verbatim.
-- driftedCount = erpBilledCount - entraAssignedCount, never negative. Mark users drifted when currentSku != expectedSku.
-- In EntraSignInTimeline, highlight the failing sign-ins of the ticket requester and set rootCause to the AADSTS code, blocking policy and target app.
-- In IaCDriftBanner, copy tagDrift and rogueSecurityRules from azureNsgDrift and write a one-line summary beginning with "State: DRIFT DETECTED" or "State: IN SYNC".
-- Leave out LicenseDriftCard.users, EntraSignInTimeline.events and IaCDriftBanner.hclDiff: the orchestrator copies them verbatim from the MCP data.
-- providerTelemetry inside TenantSummaryHeader may be left as zeros; the orchestrator overwrites it.
+- Emit exactly the components listed in requestedComponents, in that order.
+- Fill every prop strictly from the supplied context. Copy identifiers (UPNs, policy names, rule names, setting names, error codes) verbatim.
+- Each card's headline is one technical line an engineer can act on (no SLA, cost or marketing language).
+- Leave out LicenseDriftCard.users, EntraSignInTimeline.events and .policies, IntuneDriftCard.devices and .settings, and IaCDriftBanner.hclDiff: the orchestrator copies them verbatim from the MCP data.
 - Never output prose, markdown or components outside the catalog.`;
 
 function chainSteps(): ChainStep[] {
@@ -66,19 +64,19 @@ function chainSteps(): ChainStep[] {
  * halves the output tokens of a layout.
  */
 const VERBATIM_PROPS: Partial<Record<ComponentType, string[]>> = {
-  LicenseDriftCard: ["users"],
-  EntraSignInTimeline: ["events"],
-  IaCDriftBanner: ["hclDiff"],
+  LicenseDriftCard: ["users", "skuPools", "groupErrors"],
+  EntraSignInTimeline: ["events", "policies"],
+  IntuneDriftCard: ["devices", "settings", "policies"],
+  IaCDriftBanner: ["hclDiff", "hostPool", "azurePolicies"],
 };
 
 function fillVerbatimProps(raw: unknown, ctx: CorrelationContext): unknown {
   const components = (raw as { components?: unknown })?.components;
   if (!Array.isArray(components)) return raw;
-  const zero = { tier: "Tier 1B" as const, provider: "local" as const, modelId: "deterministic", latencyMs: 0, tokensUsed: 0 };
   return {
     ...(raw as Record<string, unknown>),
     components: components.map((c: { type?: ComponentType; props?: Record<string, unknown> }) => {
-      const reference = c?.type ? buildComponent(c.type, ctx, zero) : null;
+      const reference = c?.type ? buildComponent(c.type, ctx) : null;
       if (!reference || !c.props || typeof c.props !== "object") return c;
       const props = { ...c.props };
       const verbatim = VERBATIM_PROPS[reference.type] ?? [];
@@ -86,7 +84,8 @@ function fillVerbatimProps(raw: unknown, ctx: CorrelationContext): unknown {
       for (const [key, value] of Object.entries(reference.props)) {
         if (verbatim.includes(key) || props[key] === undefined || props[key] === null) props[key] = value;
       }
-      return { ...c, props };
+      // Provenance links are the orchestrator's, never the model's.
+      return { ...c, triggeredBy: reference.triggeredBy, props };
     }),
   };
 }
@@ -107,30 +106,31 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
   const report = progressReporter(sink);
 
   report("mcp:start", "Querying mcp-erp, mcp-msgraph, mcp-azure-iac in parallel");
-  const ctx = await gatherContext(input.tenantId, { fresh: input.fresh ?? false });
-  const fallbackReasons = [ctx.license.fallbackReason, ctx.policies.fallbackReason, ctx.signIns.fallbackReason, ctx.drift.fallbackReason].filter(
-    (r): r is string => Boolean(r),
-  );
+  const ctx = await gatherContext(input.scenarioId, { fresh: input.fresh ?? false });
+  const fallbackReasons = ctx.fallbackReasons;
   report("mcp:done", `MCP context gathered in ${ctx.gatherLatencyMs} ms`, {
     latencyMs: ctx.gatherLatencyMs,
     transport: ctx.transport,
     sources: ctx.sourcesUsed,
-    users: ctx.license.data.users.length,
-    signIns: ctx.signIns.data.length,
-    policies: ctx.policies.data.length,
-    driftState: ctx.drift.data.driftState,
+    scenarioId: ctx.scenarioId,
   });
+  const scenarioCards = scenarioComponents(ctx);
   if (sink) {
-    // First paint: the header and live source badges render from MCP data while the model correlates.
-    const firstPaint = buildLayout(
-      ctx,
-      { tier: "Tier 0", provider: "local", modelId: "mcp-first-paint", latencyMs: ctx.gatherLatencyMs, tokensUsed: 0, fallbackChain: [], validated: true, repaired: [] },
-      { components: ["TenantSummaryHeader"] },
-    );
-    report("mcp_ready", "TenantSummaryHeader painted from live MCP data", { layout: firstPaint, sources: ctx.sourcesUsed });
+    // First paint: the compact cards render from the MCP data while the model correlates.
+    const firstPaint = buildLayout(ctx, {
+      tier: "Tier 0",
+      provider: "local",
+      modelId: "mcp-first-paint",
+      latencyMs: ctx.gatherLatencyMs,
+      tokensUsed: 0,
+      fallbackChain: [],
+      validated: true,
+      repaired: [],
+    });
+    report("mcp_ready", `${firstPaint.components.length} cards painted from MCP data`, { layout: firstPaint, sources: ctx.sourcesUsed });
   }
 
-  const wanted = input.components ?? DEFAULT_COMPONENT_ORDER;
+  const wanted = (input.components ?? scenarioCards).filter((t) => scenarioCards.includes(t));
   const steps = chainSteps();
   let usage: TokenUsage = ZERO_USAGE;
   let provider: RouterTelemetry["provider"] = "local";
@@ -148,8 +148,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       tenantId: ctx.tenantId,
       ticketId: ctx.ticketId,
       requestedComponents: wanted,
-      // The diff body is copied in by the orchestrator, so the model never needs to read it either.
-      context: { ...modelContext, azureNsgDrift: { ...modelContext.azureNsgDrift, hclDiff: undefined } },
+      context: modelContext,
     };
     const outcome = await runChain(
       steps,
@@ -200,17 +199,15 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
 
   let layout: Layout;
   if (modelComponents) {
-    const telemetryProps = { tier, provider, modelId, latencyMs: latencySoFar, tokensUsed: usage.total };
     const byType = new Map<ComponentType, LayoutComponent>();
     for (const c of modelComponents) if (!byType.has(c.type)) byType.set(c.type, c);
     const components: LayoutComponent[] = [];
     for (const type of wanted) {
       const fromModel = byType.get(type);
       if (fromModel) {
-        if (fromModel.type === "TenantSummaryHeader") fromModel.props.providerTelemetry = telemetryProps;
         components.push(fromModel);
       } else {
-        const rebuilt = buildComponent(type, ctx, telemetryProps);
+        const rebuilt = buildComponent(type, ctx);
         if (rebuilt) {
           components.push(rebuilt);
           repaired.push(rebuilt.id);
@@ -218,7 +215,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       }
     }
     layout = LayoutSchema.parse({
-      layoutId: `layout-${ctx.tenantId}-${Date.now().toString(36)}`,
+      layoutId: `layout-${ctx.scenarioId.toLowerCase()}-${Date.now().toString(36)}`,
       tenantId: ctx.tenantId,
       ticketId: ctx.ticketId,
       components,
@@ -242,7 +239,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
     latencyMs,
     tokensUsed: usage,
     fallbackChain: chain,
-    tenantId: input.tenantId,
+    tenantId: ctx.tenantId,
   });
   report("complete", `Layout ready: ${layout.components.length} components via ${tier} (${provider}/${modelId}) in ${latencyMs} ms`, {
     components: layout.components.map((c) => c.type),
@@ -255,6 +252,6 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
   return {
     layout,
     telemetry: event,
-    context: { gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, sources: ctx.sourcesUsed, fallbackReasons },
+    context: { gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, sources: ctx.sourcesUsed, fallbackReasons, scenarioId: ctx.scenarioId },
   };
 }

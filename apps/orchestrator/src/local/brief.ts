@@ -1,0 +1,350 @@
+import {
+  SCENARIO_REGISTRY,
+  type CanvasComponentType,
+  type EnrichedEntity,
+  type ResolutionStep,
+  type ScenarioBrief,
+  type ScenarioSignal,
+} from "@contextpane/catalog";
+import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY } from "@contextpane/mcp-msgraph";
+import type { CorrelationContext } from "../mcp/context.ts";
+
+/**
+ * The left pane, deterministically: what the issue is (summary), what MCP enriched
+ * (entities, colour-coded by provenance) and the exact steps that resolve it. Every
+ * number comes from the gathered context, so a remediated tenant reads as such.
+ */
+
+const DEMO_PREFIX = "[ContextPane-Demo] ";
+const short = (name: string) => name.replace(DEMO_PREFIX, "");
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function entity(
+  id: string,
+  type: EnrichedEntity["type"],
+  category: EnrichedEntity["category"],
+  target: CanvasComponentType,
+  extra: Partial<Pick<EnrichedEntity, "label" | "tab" | "note" | "hoverable">> = {},
+): EnrichedEntity {
+  return { id, label: extra.label ?? short(id), type, category, target, hoverable: extra.hoverable ?? true, ...(extra.tab ? { tab: extra.tab } : {}), ...(extra.note ? { note: extra.note } : {}) };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Entities                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export function scenarioEntities(ctx: CorrelationContext): EnrichedEntity[] {
+  switch (ctx.scenarioId) {
+    case "INC-4092": {
+      const lic = ctx.license?.data;
+      const drifted = lic?.users.filter((u) => u.assignmentState !== "Active") ?? [];
+      const blocking = ctx.policies?.data.find((p) => p.blocks);
+      const d = ctx.drift?.data;
+      return [
+        entity("SPE_E5", "sku", "licensing", "LicenseDriftCard", { note: "expected" }),
+        entity("SPE_E3", "sku", "licensing", "LicenseDriftCard", { note: drifted.length ? `${drifted.length} users` : "released" }),
+        entity(lic?.groupName ?? "SG-Contoso-Finance-AVD", "group", "licensing", "LicenseDriftCard", { tab: "users" }),
+        ...drifted.slice(0, 3).map((u) => entity(u.upn, "upn", "identity", "EntraSignInTimeline", { label: u.displayName, tab: "signins" })),
+        entity("AADSTS53003", "errorCode", "identity", "EntraSignInTimeline", { tab: "signins" }),
+        ...(blocking ? [entity(blocking.displayName, "policy", "identity", "EntraSignInTimeline", { tab: "policies" })] : []),
+        entity("vdpool-contoso-fin-01", "resource", "azure", "IaCDriftBanner", { tab: "hostpool" }),
+        ...(d ? [entity(d.resourceName, "resource", "azure", "IaCDriftBanner", { tab: "nsg", note: d.rogueSecurityRules.length ? `${d.rogueSecurityRules.length} rogue rule` : "in sync" })] : []),
+        ...(ctx.avd ? [entity("Azure Policy: rg-contoso-avd-prod", "resource", "azure", "IaCDriftBanner", { label: "Azure Policy", tab: "policies", hoverable: false, note: `${ctx.avd.data.azurePolicies.filter((p) => p.compliance === "NonCompliant").length} non-compliant` })] : []),
+      ];
+    }
+    case "INC-4099": {
+      const intune = ctx.intune?.data;
+      const blocking = ctx.policies?.data.find((p) => p.grant.builtInControls.includes("compliantDevice"));
+      return [
+        entity("0x87D1FDE8", "errorCode", "intune", "IntuneDriftCard", { tab: "settings" }),
+        entity("Fabrikam-Legacy-BitLocker-DeviceConfig", "policy", "intune", "IntuneDriftCard", { tab: "settings", note: "conflicting" }),
+        entity("Fabrikam-EndpointSecurity-DiskEncryption", "policy", "intune", "IntuneDriftCard", { tab: "settings", note: "golden" }),
+        entity("Fabrikam-Win11-Compliance", "policy", "intune", "IntuneDriftCard", { tab: "devices" }),
+        entity("SG-Fabrikam-Win11-Devices", "group", "intune", "IntuneDriftCard", { tab: "devices", note: intune ? `${intune.affectedDeviceCount} NonCompliant` : undefined }),
+        entity("grady.archie.legal@fabrikamlegal.onmicrosoft.com", "upn", "identity", "EntraSignInTimeline", { label: "Grady Archie", tab: "signins" }),
+        entity("AADSTS53000", "errorCode", "identity", "EntraSignInTimeline", { tab: "signins" }),
+        ...(blocking ? [entity(blocking.displayName, "policy", "identity", "EntraSignInTimeline", { tab: "policies" })] : []),
+      ];
+    }
+    case "ANOM-LIC-101": {
+      const users = ctx.license?.data.users ?? [];
+      return [
+        entity("SPE_E5", "sku", "licensing", "LicenseDriftCard", { note: poolNote(ctx, "SPE_E5") }),
+        entity("Microsoft_365_Copilot", "sku", "licensing", "LicenseDriftCard", { label: "Copilot", note: poolNote(ctx, "Microsoft_365_Copilot") }),
+        entity("CountViolation", "errorCode", "licensing", "LicenseDriftCard", { tab: "users", note: ctx.license?.data.groupErrors.length ? "2 users" : "cleared" }),
+        entity(LICENSE_ANOMALY.groupName, "group", "licensing", "LicenseDriftCard", { tab: "users" }),
+        ...users.map((u) =>
+          entity(u.upn, "upn", "licensing", "LicenseDriftCard", { label: u.displayName, tab: "users", note: u.accountEnabled ? u.assignmentState === "Active" ? "active" : "CountViolation" : u.assignmentState === "Reclaimed" ? "reclaimed" : "disabled" }),
+        ),
+      ];
+    }
+    case "ANOM-CA-204": {
+      const policies = ctx.caPosture?.data.policies ?? [];
+      return [
+        ...policies.map((p) => entity(p.displayName, "policy", "identity", "EntraSignInTimeline", { tab: "policies", note: p.drift.length ? (p.state === "enabled" ? "exclusion missing" : "Report-Only") : "in sync" })),
+        entity(CA_POSTURE.breakGlassGroup, "group", "identity", "EntraSignInTimeline", { tab: "policies" }),
+        entity(CA_POSTURE.breakGlassAccount, "upn", "identity", "EntraSignInTimeline", { label: "bg-admin-01", tab: "policies" }),
+        entity("Legacy auth (IMAP4 / SMTP)", "setting", "identity", "EntraSignInTimeline", { tab: "signins", hoverable: false, note: `${ctx.caPosture?.data.legacySignIns.length ?? 0} in 24 h` }),
+        entity(`ext-maint-02@${CA_POSTURE.breakGlassAccount.split("@")[1]}`, "upn", "identity", "EntraSignInTimeline", { label: "ext-maint-02", tab: "policies", note: "changed both" }),
+      ];
+    }
+    case "ANOM-INT-309": {
+      const intune = ctx.intune?.data;
+      return [
+        entity("Intune-Win11-ASR-Baseline", "policy", "intune", "IntuneDriftCard", { tab: "settings" }),
+        entity("9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2", "setting", "intune", "IntuneDriftCard", { label: "ASR: LSASS credential stealing", tab: "settings" }),
+        entity("Win11-Firewall-MDM", "policy", "intune", "IntuneDriftCard", { tab: "settings", note: "duplicate" }),
+        entity("EndpointSecurity-Firewall-Prod", "policy", "intune", "IntuneDriftCard", { tab: "settings", note: "golden" }),
+        entity("SG-All-Workstations", "group", "intune", "IntuneDriftCard", { tab: "devices", note: intune ? `${intune.affectedDeviceCount} in Conflict` : undefined }),
+      ];
+    }
+  }
+}
+
+function poolNote(ctx: CorrelationContext, sku: string): string | undefined {
+  const p = ctx.license?.data.skuPools.find((x) => x.skuPartNumber === sku);
+  return p ? `${p.consumed}/${p.enabled}` : undefined;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Summary & resolution plan                                                   */
+/* -------------------------------------------------------------------------- */
+
+function step(
+  id: string,
+  category: ResolutionStep["category"],
+  title: string,
+  detail: string,
+  target: CanvasComponentType,
+  action: ResolutionStep["action"],
+  tab?: string,
+): ResolutionStep {
+  return { id, category, title, detail: detail.slice(0, 220), target, action, ...(tab ? { tab } : {}) };
+}
+
+function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: ResolutionStep[] } {
+  switch (ctx.scenarioId) {
+    case "INC-4092": {
+      const lic = ctx.license?.data;
+      const drifted = lic?.users.filter((u) => u.assignmentState !== "Active") ?? [];
+      const blocking = ctx.policies?.data.find((p) => p.blocks);
+      const d = ctx.drift?.data;
+      const rogue = d?.rogueSecurityRules[0];
+      const group = lic?.groupName ?? "SG-Contoso-Finance-AVD";
+      return {
+        summary: drifted.length
+          ? `${plural(drifted.length, "Finance user")} in ${group} still hold SPE_E3 instead of SPE_E5 and remain in the legacy block group, so '${short(blocking?.displayName ?? "Block AVD")}' rejects Azure Virtual Desktop with AADSTS53003.${rogue ? ` Separately, a vendor left ${rogue.ruleName} (${rogue.protocol.toUpperCase()}/${rogue.port} from ${rogue.source}) open on ${d!.resourceName}.` : ""}`
+          : `All ${group} members hold SPE_E5; the AVD sign-in block and the NSG drift are the remaining checks.`,
+        steps: [
+          step("license", "licensing", "License Upgrade", `Upgrade ${plural(drifted.length, "user")} in ${group} from SPE_E3 to SPE_E5 (Set-MgUserLicense).`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
+          step(
+            "ca",
+            "identity",
+            "Conditional Access",
+            `Remove the migrated users from legacy block policy '${short(blocking?.displayName ?? "[ContextPane-Demo] Block AVD")}' (exclude ${group}, report-only).`,
+            "EntraSignInTimeline",
+            { label: "Inspect Policy", kind: "inspect" },
+            "policies",
+          ),
+          step(
+            "nsg",
+            "azure",
+            "Host Pool & NSG Drift",
+            rogue ? `Remove rogue rule ${rogue.ruleName} (${rogue.protocol.toUpperCase()}/${rogue.port}) on ${d!.resourceName} and restore the Terraform tags.` : `${d?.resourceName ?? "The NSG"} matches demo-iac/main.tf.`,
+            "IaCDriftBanner",
+            { label: "View Diff & Fix", kind: "view-diff" },
+            "nsg",
+          ),
+        ],
+      };
+    }
+    case "INC-4099": {
+      const intune = ctx.intune?.data;
+      const n = intune?.affectedDeviceCount ?? 0;
+      return {
+        summary: n
+          ? `The legacy Fabrikam-Legacy-BitLocker-DeviceConfig profile conflicts with the Endpoint Security disk encryption baseline (XTS-AES 128 vs 256, prompt vs silent), so silent BitLocker fails with 0x87D1FDE8 on ${plural(n, "device")}. After the 7-day grace period they turned NonCompliant and 'Require compliant device' now blocks Office 365 with AADSTS53000.`
+          : "The conflicting legacy BitLocker profile is unassigned; the devices encrypted and report Compliant again.",
+        steps: [
+          step("conflict", "intune", "Policy Conflict", "Unassign Fabrikam-Legacy-BitLocker-DeviceConfig from SG-Fabrikam-Win11-Devices so only the golden disk encryption baseline applies.", "IntuneDriftCard", { label: "View Conflict & Fix", kind: "stage-fix" }, "settings"),
+          step("compliance", "intune", "Device Compliance", `Sync the ${plural(n || 6, "device")}: BitLocker encrypts silently and Fabrikam-Win11-Compliance re-evaluates them to Compliant.`, "IntuneDriftCard", { label: "Inspect Devices", kind: "inspect" }, "devices"),
+          step("ca", "identity", "Conditional Access", "No policy change: 'Require compliant device' lets Outlook and Teams through once the devices are compliant (AADSTS53000 clears).", "EntraSignInTimeline", { label: "Inspect Sign-Ins", kind: "inspect" }, "signins"),
+        ],
+      };
+    }
+    case "ANOM-LIC-101": {
+      const inv = ctx.license?.data;
+      const orphaned = inv?.users.filter((u) => u.assignmentState === "Orphaned") ?? [];
+      const failed = inv?.users.filter((u) => u.assignmentState === "Error: CountViolation") ?? [];
+      const e5 = inv?.skuPools.find((p) => p.skuPartNumber === "SPE_E5");
+      const copilot = orphaned.filter((u) => u.currentSku.includes("Copilot")).length;
+      return {
+        summary:
+          orphaned.length || failed.length
+            ? `${LICENSE_ANOMALY.groupName} cannot assign SPE_E5 to ${plural(failed.length, "new hire")} (CountViolation, ${e5?.consumed}/${e5?.enabled} seats consumed) while ${plural(orphaned.length, "disabled account")} still hold SPE_E5${copilot ? ` and ${copilot} Microsoft 365 Copilot` : ""} through overlapping Direct + Group assignments.`
+            : `Seats reclaimed: ${LICENSE_ANOMALY.groupName} assigns SPE_E5 to every member with ${e5?.available ?? 0} seat(s) to spare and no new purchase.`,
+        steps: [
+          step("reclaim", "licensing", "Reclaim Seats", `Remove SPE_E5${copilot ? " and Copilot" : ""} from ${plural(orphaned.length || 3, "disabled account")} (Set-MgUserLicense) and drop them from ${LICENSE_ANOMALY.groupName} (Remove-MgGroupMemberByRef).`, "LicenseDriftCard", { label: "Stage License Fix", kind: "stage-fix" }, "users"),
+          step("reprocess", "licensing", "Reprocess Group Licensing", `Run Invoke-MgLicenseUser for the ${plural(failed.length || 2, "CountViolation member")} so they resolve to Active with 0 new purchases.`, "LicenseDriftCard", { label: "Inspect Assignments", kind: "inspect" }, "users"),
+          step("pool", "licensing", "Verify Pool", "Confirm SPE_E5 shows available seats again and the group reports no licensing errors.", "LicenseDriftCard", { label: "Inspect Pool", kind: "inspect" }, "pool"),
+        ],
+      };
+    }
+    case "ANOM-CA-204": {
+      const posture = ctx.caPosture?.data;
+      const drifted = posture?.policies.filter((p) => p.drift.length) ?? [];
+      const legacy = posture?.legacySignIns.length ?? 0;
+      return {
+        summary: drifted.length
+          ? `CA-001-Require-PhishingResistant-MFA-Admins was edited out-of-band and no longer excludes ${CA_POSTURE.breakGlassGroup} (break-glass lockout risk), and CA-004-Block-Legacy-Auth was left in Report-Only after a maintenance window while ${legacy} legacy IMAP/SMTP sign-ins went through in 24 h.`
+          : "Both Conditional Access policies match the golden baseline: break-glass excluded, legacy authentication blocked.",
+        steps: [
+          step("breakglass", "identity", "Break-Glass Exclusion", `Restore the ${CA_POSTURE.breakGlassGroup} exclusion on CA-001-Require-PhishingResistant-MFA-Admins.`, "EntraSignInTimeline", { label: "Inspect Policy", kind: "inspect" }, "policies"),
+          step("legacy", "identity", "Enforce Legacy Auth Block", "Flip CA-004-Block-Legacy-Auth from enabledForReportingButNotEnforced to enabled (Update-MgIdentityConditionalAccessPolicy).", "EntraSignInTimeline", { label: "Stage CA Fix", kind: "stage-fix" }, "policies"),
+          step("verify", "identity", "Verify Sign-Ins", `Check the ${legacy} legacy sign-ins (3 from an unfamiliar ASN) and that bg-admin-01 stays excluded.`, "EntraSignInTimeline", { label: "Inspect Sign-Ins", kind: "inspect" }, "signins"),
+        ],
+      };
+    }
+    case "ANOM-INT-309": {
+      const intune = ctx.intune?.data;
+      const asr = intune?.settings.find((s) => s.settingId === "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2");
+      const n = intune?.affectedDeviceCount ?? 0;
+      return {
+        summary: intune && !intune.resolved
+          ? `Intune-Win11-ASR-Baseline drifted from the golden Git baseline: the LSASS credential-stealing ASR rule was weakened from Block to ${asr?.live ?? "Audit"} in the portal. Win11-Firewall-MDM duplicates EndpointSecurity-Firewall-Prod on SG-All-Workstations with a conflicting EnableFirewall value, so ${plural(n, "device")} report Conflict.`
+          : "The ASR baseline and firewall policies match the golden Git baseline and no device reports a conflict.",
+        steps: [
+          step("asr", "intune", "ASR Baseline Drift", "Patch Intune-Win11-ASR-Baseline: LSASS credential-stealing rule Audit → Block (Settings Catalog, golden baseline).", "IntuneDriftCard", { label: "View Diff & Fix", kind: "view-diff" }, "settings"),
+          step("firewall", "intune", "Firewall Conflict", "Unassign the duplicate legacy Win11-Firewall-MDM profile from SG-All-Workstations.", "IntuneDriftCard", { label: "Stage Intune Fix", kind: "stage-fix" }, "settings"),
+          step("sync", "intune", "Device Re-evaluation", `Sync the ${plural(n || 11, "device")} so they re-report EnableFirewall = True and clear the Conflict state.`, "IntuneDriftCard", { label: "Inspect Devices", kind: "inspect" }, "devices"),
+        ],
+      };
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Anomaly narrative                                                            */
+/* -------------------------------------------------------------------------- */
+
+function anomalyBody(ctx: CorrelationContext): { title: string; origin: string; body: string; signals: ScenarioSignal[]; openedAt: string } {
+  switch (ctx.scenarioId) {
+    case "ANOM-LIC-101": {
+      const inv = ctx.license?.data;
+      const e5 = inv?.skuPools.find((p) => p.skuPartNumber === "SPE_E5");
+      const copilot = inv?.skuPools.find((p) => p.skuPartNumber === "Microsoft_365_Copilot");
+      const orphaned = inv?.users.filter((u) => !u.accountEnabled && u.assignmentState === "Orphaned") ?? [];
+      return {
+        title: "License CountViolation & orphaned seats on disabled accounts",
+        origin: "Detected from Graph subscribedSkus + users/licenseAssignmentStates",
+        openedAt: "2026-10-26T06:05:00Z",
+        body:
+          `Group-based licensing on ${LICENSE_ANOMALY.groupName} reports State: Error · CountViolation for SPE_E5: ${e5?.consumed ?? 15}/${e5?.enabled ?? 15} seats are consumed. ` +
+          `${plural(orphaned.length, "offboarded account")} (accountEnabled: false, last sign-in >90 days ago) still hold SPE_E5` +
+          `${copilot ? ` and Microsoft_365_Copilot` : ""} through overlapping Direct + Group assignment paths.`,
+        signals: [
+          { label: "Group licensing error", value: inv?.groupErrors[0]?.detail ?? "none", category: "licensing", source: "GET /groups/{id}?$select=licenseProcessingState" },
+          { label: "SPE_E5 pool", value: e5 ? `${e5.consumed}/${e5.enabled} consumed · ${e5.available} available` : "n/a", category: "licensing", source: "GET /subscribedSkus" },
+          { label: "Disabled holders", value: orphaned.map((u) => u.displayName).join(", ") || "none", category: "licensing", source: "GET /users?$filter=accountEnabled eq false" },
+        ],
+      };
+    }
+    case "ANOM-CA-204": {
+      const audit = ctx.caPosture?.data.auditEvents ?? [];
+      return {
+        title: "Conditional Access drift & missing break-glass exclusion",
+        origin: "Detected from Entra ID Conditional Access policy state + directory audit logs",
+        openedAt: audit[audit.length - 1]?.at ?? "2026-10-26T06:00:00Z",
+        body:
+          `${short(CA_POSTURE.policies[0]!.displayName)} was modified out-of-band and no longer excludes ${CA_POSTURE.breakGlassGroup} (${CA_POSTURE.breakGlassAccount}). ` +
+          `${short(CA_POSTURE.policies[1]!.displayName)} is still enabledForReportingButNotEnforced after a maintenance window while legacy IMAP/SMTP sign-ins continue.`,
+        signals: [
+          ...audit.map((a) => ({ label: `${a.activity} · ${a.at.slice(5, 16).replace("T", " ")}Z`, value: `${a.actor}: ${a.detail}`.slice(0, 240), category: "identity" as const, source: "GET /auditLogs/directoryAudits" })),
+          { label: "Legacy sign-ins (24 h)", value: `${ctx.caPosture?.data.legacySignIns.length ?? 0} IMAP4 / SMTP AUTH successes, 3 from AS 60729 (NL)`, category: "identity", source: "GET /auditLogs/signIns?$filter=clientAppUsed" },
+        ],
+      };
+    }
+    case "ANOM-INT-309": {
+      const n = ctx.intune?.data.affectedDeviceCount ?? 0;
+      return {
+        title: "Intune security baseline & ASR policy drift vs golden baseline",
+        origin: "Detected from Intune configurationPolicies + deviceConfigurationDeviceStateSummaries",
+        openedAt: "2026-10-26T05:40:00Z",
+        body:
+          "In Intune-Win11-ASR-Baseline the ASR rule 'Block credential stealing from Windows local security authority subsystem (lsass.exe)' (9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2) was weakened from Block to Audit in the portal, compared to the golden Git configuration. " +
+          `Win11-Firewall-MDM and EndpointSecurity-Firewall-Prod both target SG-All-Workstations with conflicting EnableFirewall values; ${plural(n, "device")} report Conflict.`,
+        signals: [
+          { label: "Setting drift", value: "ASR LSASS rule · golden Block · live Audit", category: "intune", source: "GET /beta/deviceManagement/configurationPolicies/{id}/settings" },
+          { label: "Assignment conflict", value: `EnableFirewall · ${plural(n, "device")} in Conflict`, category: "intune", source: "GET /deviceManagement/deviceConfigurationDeviceStateSummaries" },
+          { label: "Golden source", value: INTUNE_SCENARIOS["ANOM-INT-309"].goldenSource, category: "intune", source: "Git" },
+        ],
+      };
+    }
+    default:
+      return { title: SCENARIO_REGISTRY[ctx.scenarioId].title, origin: "", body: "", signals: [], openedAt: ctx.gatheredAt };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Brief                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
+  const { tenant, contract, ticket } = ctx.erp;
+  const { summary, steps } = summaryAndSteps(ctx);
+  const base = {
+    scenarioId: ctx.scenarioId,
+    kind: ctx.kind,
+    tenantId: ctx.tenantId,
+    tenantName: tenant.displayName,
+    verifiedDomain: tenant.verifiedDomain,
+    summary: summary.slice(0, 400),
+    steps,
+    entities: scenarioEntities(ctx).slice(0, 24),
+    sources: ctx.sourcesUsed,
+  };
+  if (ticket) {
+    return {
+      ...base,
+      title: ticket.title,
+      status: ticket.status,
+      openedAt: ticket.openedAt,
+      origin: `PSA ticket · ${ticket.category}`,
+      body: ticket.description,
+      signals: [],
+      requester: ticket.requester,
+      contract: {
+        contractId: contract.contractId,
+        title: contract.title,
+        lines: contract.lines.map((l) => ({ description: l.description, skuPartNumber: l.skuPartNumber, quantity: l.quantity })),
+        terms: contract.terms,
+      },
+      infrastructureSpec: ticket.infrastructureSpec,
+      timeline: ticket.timeline,
+      attachments: ticket.attachments ?? [],
+    };
+  }
+  const a = anomalyBody(ctx);
+  return {
+    ...base,
+    title: a.title,
+    status: "Detected",
+    openedAt: a.openedAt,
+    origin: a.origin,
+    body: a.body,
+    signals: a.signals,
+    requester: null,
+    contract: null,
+    infrastructureSpec: null,
+    timeline: [],
+    attachments: [],
+  };
+}
+
+/** Entity ids that spawned a card, for its "Triggered by" badge. */
+export function triggeredBy(ctx: CorrelationContext, type: CanvasComponentType): string[] {
+  return scenarioEntities(ctx)
+    .filter((e) => e.target === type)
+    .map((e) => e.id)
+    .slice(0, 8);
+}

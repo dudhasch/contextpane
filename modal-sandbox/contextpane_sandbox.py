@@ -168,7 +168,7 @@ def timed(fn, *args):
     return result, int((time.time() - started) * 1000)
 
 
-def check_powershell(ast_server: PwshAstServer, script: str) -> tuple[bool | None, list[str]]:
+def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None) -> tuple[bool | None, list[str]]:
     report = ast_server.parse(script)
     if report is None:
         return None, ["PowerShell AST check timed out"]
@@ -179,7 +179,7 @@ def check_powershell(ast_server: PwshAstServer, script: str) -> tuple[bool | Non
     for bad in FORBIDDEN:
         if bad in lowered:
             findings.append(f"Forbidden command: {bad}")
-    for req in REQUIRED:
+    for req in required if required is not None else REQUIRED:
         if req not in lowered:
             findings.append(f"Expected command missing: {req}")
     if not report.get("supportsShouldProcess"):
@@ -309,13 +309,16 @@ class Sandbox:
         started = time.time()
         findings: list[str] = []
         timings: dict[str, int] = {}
-        ast_future = self.pool.submit(timed, check_powershell, self.ast, payload.get("powershellScript", ""))
+        required = {c.lower() for c in payload["requiredCommands"]} if isinstance(payload.get("requiredCommands"), list) else None
+        ast_future = self.pool.submit(timed, check_powershell, self.ast, payload.get("powershellScript", ""), required)
 
         fmt_passed: bool | None = None
         validate_passed: bool | None = None
+        has_iac = bool(payload.get("terraformDiff", "").strip())
         try:
-            patched = apply_unified_diff(payload.get("actualHcl", ""), payload.get("terraformDiff", ""))
-            if patched is None:
+            # Conditional Access, Intune and licensing fixes carry no Terraform diff: those checks are not applicable.
+            patched = apply_unified_diff(payload.get("actualHcl", ""), payload.get("terraformDiff", "")) if has_iac else None
+            if has_iac and patched is None:
                 fmt_passed = False
                 findings.append("Unified diff does not apply cleanly to the live NSG state")
         except ValueError as exc:
@@ -336,7 +339,7 @@ class Sandbox:
 
         (ast_passed, ast_findings), timings["powershellAst"] = ast_future.result()
         return {
-            "VerifiedSafe": ast_passed is True and fmt_passed is True and validate_passed is True,
+            "VerifiedSafe": ast_passed is True and (not has_iac or (fmt_passed is True and validate_passed is True)),
             "astCheckPassed": ast_passed,
             "terraformFmtPassed": fmt_passed,
             "terraformValidatePassed": validate_passed,
@@ -355,8 +358,8 @@ class Sandbox:
             raise HTTPException(status_code=401, detail="invalid sandbox token")
         if payload.get("warmup"):
             return {"ok": True, "warmed": True, "bootMs": self.boot_ms, "sandboxProvider": SANDBOX_PROVIDER}
-        if not payload.get("powershellScript") or not payload.get("terraformDiff"):
-            raise HTTPException(status_code=400, detail="powershellScript and terraformDiff are required")
+        if not payload.get("powershellScript"):
+            raise HTTPException(status_code=400, detail="powershellScript is required")
         return self.verify_bundle(payload)
 
     @modal.method()

@@ -10,7 +10,7 @@ export type WorkbenchEvent =
   | {
       type: "resources/updated";
       method: "notifications/resources/updated";
-      params: { uri: string; tenantId: string; state: "remediated" | "drifted"; convergence: Convergence | null };
+      params: { uri: string; scenarioId: string; tenantId: string; state: "remediated" | "drifted"; convergence: Convergence | null };
     };
 
 type Listener = (event: WorkbenchEvent) => void;

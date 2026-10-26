@@ -75,6 +75,7 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
         terraformDiff: input.terraformDiff,
         actualHcl: input.actualHcl,
         expectedHcl: input.expectedHcl,
+        ...(input.requiredCommands ? { requiredCommands: input.requiredCommands } : {}),
       }),
       signal: controller.signal,
     });
@@ -84,13 +85,15 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
     console.log(`  [modal] pre-flight round trip ${Math.round(performance.now() - started)} ms (sandbox ${json.validationLatencyMs ?? "?"} ms)`);
     const findings = json.findings ?? [];
     const hardFail = json.astCheckPassed === false || json.terraformFmtPassed === false || json.terraformValidatePassed === false;
-    const skipped = json.astCheckPassed === null || json.terraformFmtPassed === null || json.terraformValidatePassed === null;
+    const hasIac = input.terraformDiff.trim() !== "";
+    const skipped = json.astCheckPassed === null || (hasIac && (json.terraformFmtPassed === null || json.terraformValidatePassed === null));
     return {
       verdict: hardFail ? "Verification Failed" : skipped || findings.length ? "Verified With Warnings" : "Verified Safe",
       astCheckPassed: json.astCheckPassed,
       terraformFmtPassed: json.terraformFmtPassed,
       terraformValidatePassed: json.terraformValidatePassed,
       sandboxProvider: "modal-cloud-sandbox",
+      whatIfSafe: null,
       validationLatencyMs: Math.round(performance.now() - started),
       findings,
       ...(typeof json.validationLatencyMs === "number" ? { sandboxLatencyMs: Math.round(json.validationLatencyMs) } : {}),

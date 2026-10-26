@@ -1,6 +1,6 @@
 import { createBunWebSocket } from "hono/bun";
 import type { ServerWebSocket } from "bun";
-import { TENANT_REGISTRY, type RouterTelemetry } from "@contextpane/catalog";
+import { SCENARIO_IDS, type RouterTelemetry } from "@contextpane/catalog";
 import { app } from "./app.ts";
 import { config, describeConfig, providers } from "./config.ts";
 import { workbenchEvents } from "./events.ts";
@@ -58,11 +58,12 @@ console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemet
 if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json${hoverCacheSeeded ? " (seeded from data/hover-cache.seed.json)" : ""}`);
 
 // Warm-up, all in the background: wake the Modal sandbox, mint the Graph/ARM tokens and
-// gather the context for every tenant, resolve the Meta model ids, then pre-fetch every hover
-// that data/hover-cache.json does not already hold (tenants one after another, so the GPU sees at most 3).
+// gather the context for every scenario, resolve the Meta model ids, then pre-fetch every hover
+// that data/hover-cache.json does not already hold (scenarios one after another; misses go to the
+// hosted chain, so the warm-up never wakes the open-weight GPU).
 const warmStarted = performance.now();
 warmModalSandbox("startup");
-const contexts = Promise.all(Object.keys(TENANT_REGISTRY).map((tenantId) => gatherContext(tenantId).catch(() => null)));
+const contexts = Promise.all(SCENARIO_IDS.map((scenarioId) => gatherContext(scenarioId).catch(() => null)));
 const metaModels = config.forceLocal
   ? Promise.resolve()
   : resolveMetaModels()
@@ -73,13 +74,13 @@ const metaModels = config.forceLocal
       })
       .catch((error) => console.warn(`  [meta] model check skipped: ${error instanceof Error ? error.message : String(error)}`));
 void Promise.all([contexts, metaModels]).then(async ([gathered]) => {
-  const live = gathered.filter((c) => c && c.sourcesUsed.msgraph !== "seeded-manifest").length;
-  console.log(`  [warm] MCP context for ${gathered.filter(Boolean).length} tenants (${live} live) in ${Math.round(performance.now() - warmStarted)} ms`);
-  for (const tenantId of Object.keys(TENANT_REGISTRY)) {
-    const hovers = await warmHoverCache(tenantId);
+  const live = gathered.filter((c) => c && Object.values(c.sourcesUsed).some((s) => s.startsWith("live"))).length;
+  console.log(`  [warm] MCP context for ${gathered.filter(Boolean).length} scenarios (${live} with live sources) in ${Math.round(performance.now() - warmStarted)} ms`);
+  for (const scenarioId of SCENARIO_IDS) {
+    const hovers = await warmHoverCache(scenarioId);
     if (hovers) {
       console.log(
-        `  [warm] ${tenantId}: ${hovers.warmed}/${hovers.total} hovers cached (${hovers.generated} generated) at ${Math.round(performance.now() - warmStarted)} ms`,
+        `  [warm] ${scenarioId}: ${hovers.warmed}/${hovers.total} hovers cached (${hovers.generated} generated) at ${Math.round(performance.now() - warmStarted)} ms`,
       );
     }
   }

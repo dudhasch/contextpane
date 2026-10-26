@@ -23,7 +23,10 @@ export interface StagingBundle {
   prTitle: string;
   summary: string;
   powershellScript: string;
+  /** Empty when the fix has no IaC part; no patch file is written then. */
   terraformDiff: string;
+  /** Graph request bodies (JSON) the fix sends; empty to skip. */
+  graphPatch?: string;
   terraformFile: string;
   verificationSummary: string;
 }
@@ -94,9 +97,12 @@ async function stageNow(bundle: StagingBundle): Promise<{ staging: StagingInfo |
     mkdirSync(absDir, { recursive: true });
     const scriptFile = join(relDir, `Invoke-Remediate-${bundle.ticketId}.ps1`);
     const patchFile = join(relDir, "nsg-drift.patch");
+    const graphFile = join(relDir, "graph-requests.json");
     const readmeFile = join(relDir, "REMEDIATION.md");
+    const hasIac = bundle.terraformDiff.trim() !== "";
     writeFileSync(join(worktreeDir, scriptFile), bundle.powershellScript, "utf8");
-    writeFileSync(join(worktreeDir, patchFile), bundle.terraformDiff.endsWith("\n") ? bundle.terraformDiff : bundle.terraformDiff + "\n", "utf8");
+    if (hasIac) writeFileSync(join(worktreeDir, patchFile), bundle.terraformDiff.endsWith("\n") ? bundle.terraformDiff : bundle.terraformDiff + "\n", "utf8");
+    if (bundle.graphPatch?.trim()) writeFileSync(join(worktreeDir, graphFile), bundle.graphPatch.endsWith("\n") ? bundle.graphPatch : bundle.graphPatch + "\n", "utf8");
     writeFileSync(
       join(worktreeDir, readmeFile),
       [
@@ -117,10 +123,9 @@ async function stageNow(bundle: StagingBundle): Promise<{ staging: StagingInfo |
         `pwsh -NoProfile -File ./${scriptFile.replace(/\\/g, "/")}           # execute (delegated identity)`,
         "```",
         "",
-        "```bash",
-        `terraform -chdir=demo-iac plan   # reconciles ${bundle.terraformFile} against Azure (removes rogue rules, restores tags)`,
-        "```",
-        "",
+        ...(hasIac
+          ? ["```bash", `terraform -chdir=demo-iac plan   # reconciles ${bundle.terraformFile} against Azure (removes rogue rules, restores tags)`, "```", ""]
+          : []),
         "_Staged by ContextPane Tier 3. Human approval required before execution._",
         "",
       ].join("\n"),

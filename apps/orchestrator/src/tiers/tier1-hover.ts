@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   HoverDiagnosticArgsSchema,
   HoverDiagnosticPopoverSchema,
+  QuickActionKindSchema,
   formatIssues,
   getHoverDiagnosticToolDefinition,
   parseToolArguments,
@@ -12,14 +13,16 @@ import {
   type RouterTelemetry,
 } from "@contextpane/catalog";
 import { config, models, providerFor, providers } from "../config.ts";
+import { scenarioEntities } from "../local/brief.ts";
 import { buildHoverDiagnostic, inferEntityType } from "../local/hover.ts";
-import { gatherContext, type CorrelationContext } from "../mcp/context.ts";
+import { gatherContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 
 export interface HoverInput {
-  tenantId: string;
+  /** Scenario id (INC-4092, ANOM-CA-204, ...); a tenant id selects its ticket scenario. */
+  scenarioId: string;
   entityId: string;
   entityType?: EntityType;
   /** Bypass the hover cache and refresh the MCP context. */
@@ -36,11 +39,16 @@ export interface HoverResult {
 // Measured on the Meta API: this wording drew ~100 fewer reasoning tokens than an explicit "refine" instruction.
 const SYSTEM_PROMPT = `You are ContextPane's inline diagnostic engine for Microsoft 365 / Entra ID / Azure escalations at a managed service provider.
 You receive one hovered entity plus verified context. A deterministic diagnostic is included as ground truth.
-Rules: respond only through emit_hover_diagnostic; use only facts present in the context; the headline is one line an MSP engineer can act on, naming the blocking policy and the license gap.`;
+Rules: respond only through emit_hover_diagnostic; use only facts present in the context; the headline is one line an MSP engineer can act on, naming the blocking policy, the license gap or the drifted setting.`;
 
-function chainSteps(): ChainStep[] {
+/**
+ * The Tier 1A chain. The open-weight GPU is scale-to-zero: it is only ever woken by an
+ * explicit refresh (?refresh=true), never by a cache miss, so a new scenario's pills are
+ * answered by the hosted Meta step and the L40S stays asleep.
+ */
+function chainSteps(options: { wakeGpu?: boolean } = {}): ChainStep[] {
   return [
-    { provider: providers.openWeight.id, modelId: models.openWeightGlimmer, hasKey: providers.openWeight.hasKey && config.openWeightTiers.has("hover") },
+    { provider: providers.openWeight.id, modelId: models.openWeightGlimmer, hasKey: providers.openWeight.hasKey && config.openWeightTiers.has("hover") && options.wakeGpu === true },
     { provider: "fireworks", modelId: models.fireworksGlimmer, hasKey: providers.fireworks.hasKey },
     { provider: "baseten", modelId: models.basetenGlimmer, hasKey: providers.baseten.hasKey },
     { provider: "meta", modelId: models.metaHover, hasKey: providers.meta.hasKey },
@@ -69,7 +77,15 @@ interface CachedHover {
  */
 const HOVER_CACHE_FILE = join(config.dataDir, "hover-cache.json");
 const HOVER_SEED_FILE = join(config.dataDir, "hover-cache.seed.json");
-const hoverKey = (tenantId: string, entityId: string) => `${tenantId}|${entityId.toLowerCase()}`;
+const hoverKey = (scope: string, entityId: string) => `${scope}|${entityId.toLowerCase()}`;
+
+/**
+ * Cache scope of a scenario. INC-4092 keeps its tenant id, so the tracked Glimmer answers
+ * in data/hover-cache.seed.json stay valid; every other scenario has its own scope.
+ */
+export function hoverScope(scenarioId: string): string {
+  return scenarioId === "INC-4092" ? "tenant-contoso-01" : scenarioId;
+}
 /** Set when data/hover-cache.json was created from the seed at this start-up. */
 export let hoverCacheSeeded = false;
 const hoverCache = loadHoverCache();
@@ -89,7 +105,13 @@ function loadHoverCache(): Map<string, CachedHover> {
   if (!existsSync(HOVER_CACHE_FILE)) return new Map();
   try {
     const file = JSON.parse(readFileSync(HOVER_CACHE_FILE, "utf8")) as { entries?: Record<string, CachedHover> };
-    return new Map(Object.entries(file.entries ?? {}).filter(([, e]) => HoverDiagnosticArgsSchema.safeParse(e.args).success));
+    // Quick actions are always rebuilt from the scenario context, so an answer cached with a retired action kind stays usable.
+    const knownKinds = new Set<string>(QuickActionKindSchema.options);
+    return new Map(
+      Object.entries(file.entries ?? {})
+        .map(([k, e]) => [k, { ...e, args: { ...e.args, quickActions: (e.args?.quickActions ?? []).filter((a) => knownKinds.has(a.kind)) } }] as const)
+        .filter(([, e]) => HoverDiagnosticArgsSchema.safeParse(e.args).success),
+    );
   } catch (error) {
     console.warn(`  [hover] ignoring unreadable ${HOVER_CACHE_FILE}: ${error instanceof Error ? error.message : String(error)}`);
     return new Map();
@@ -121,63 +143,64 @@ process.on("exit", () => {
   if (saveTimer) writeHoverCache();
 });
 
-/** The provider a hover is generated by when every step answers; cached answers from it are reused. */
+/** The provider a cache miss is answered by (never the scale-to-zero GPU). */
 function preferredProvider(): RouterTelemetry["provider"] | undefined {
   return config.forceLocal ? undefined : chainSteps().find((s) => s.hasKey)?.provider;
 }
 
-/** Muse Glimmer answers rank first in the Tier 1A chain, so they are served even without a GPU endpoint configured. */
-const OPEN_WEIGHT_PROVIDERS = new Set<string>(["modal-open-weights", "runpod", "local-glimmer-30b"]);
-
-function cachedHover(tenantId: string, entityId: string): CachedHover | undefined {
+/** Any cached model answer is served (Muse Glimmer ones included without a GPU configured); ?refresh=true regenerates it. */
+function cachedHover(scope: string, entityId: string): CachedHover | undefined {
   if (config.forceLocal) return undefined;
-  const cached = hoverCache.get(hoverKey(tenantId, entityId));
-  return cached && (cached.provider === preferredProvider() || OPEN_WEIGHT_PROVIDERS.has(cached.provider)) ? cached : undefined;
+  return hoverCache.get(hoverKey(scope, entityId));
+}
+
+/**
+ * Facts, quick actions, status and the error translation always come from the
+ * deterministic diagnostic of the current context; the model contributes the headline,
+ * and only while its verdict still matches (a remediated user gets the fresh headline).
+ */
+function withGroundTruth(model: HoverDiagnosticArgs, truth: HoverDiagnosticArgs): HoverDiagnosticArgs {
+  return { ...truth, headline: model.status === truth.status ? model.headline : truth.headline };
 }
 
 /** Only what this entity's popover can use: the deterministic diagnostic already carries the rest. */
 function hoverContext(ctx: CorrelationContext, entityId: string, entityType: EntityType) {
   const id = entityId.toLowerCase();
-  const signIns = ctx.signIns.data.filter((e) => e.upn.toLowerCase() === id || e.errorCodeLabel?.toLowerCase() === id || e.blockingPolicyId === entityId);
+  const signIns = (ctx.signIns?.data ?? []).filter((e) => e.upn.toLowerCase() === id || e.errorCodeLabel?.toLowerCase() === id || e.blockingPolicyId === entityId);
   return {
-    ticket: { ticketId: ctx.erp.ticket.ticketId, title: ctx.erp.ticket.title },
-    sku: { expected: ctx.license.data.sku.skuPartNumber, legacy: ctx.license.data.sku.legacySkuPartNumber, drifted: ctx.license.data.driftedUsers.length },
-    user: entityType === "upn" ? (ctx.license.data.users.find((u) => u.upn.toLowerCase() === id) ?? null) : undefined,
-    policies: ctx.policies.data.map((p) => ({ id: p.id, displayName: p.displayName, state: p.state, blocks: p.blocks, includeGroupNames: p.includeGroupNames })),
-    signIns: (signIns.length ? signIns : ctx.signIns.data.filter((e) => e.status === "failure")).slice(-3).map((e) => ({
-      at: e.timestamp,
-      upn: e.upn,
-      app: e.appDisplayName,
-      status: e.status,
-      code: e.errorCodeLabel,
-      blockedBy: e.blockingPolicyName,
-    })),
-    nsgDrift:
-      entityType === "resource"
-        ? { summary: ctx.drift.data.summary, rogueSecurityRules: ctx.drift.data.rogueSecurityRules, tagDrift: ctx.drift.data.tagDrift }
-        : undefined,
+    scenario: { scenarioId: ctx.scenarioId, title: ctx.erp.ticket?.title ?? ctx.scenarioId },
+    user: entityType === "upn" ? (ctx.license?.data.users.find((u) => u.upn.toLowerCase() === id) ?? null) : undefined,
+    groups: entityType === "upn" ? (ctx.groupsByUpn.get(id) ?? []) : undefined,
+    skuPools: ctx.license?.data.skuPools,
+    policies: ctx.policies?.data.map((p) => ({ id: p.id, displayName: p.displayName, state: p.state, blocks: p.blocks, includeGroupNames: p.includeGroupNames })),
+    caDrift: ctx.caPosture?.data.policies.map((p) => ({ displayName: p.displayName, state: p.state, drift: p.drift })),
+    intuneSettings: ctx.intune?.data.settings,
+    signIns: signIns.slice(-3).map((e) => ({ at: e.timestamp, upn: e.upn, app: e.appDisplayName, status: e.status, code: e.errorCodeLabel, blockedBy: e.blockingPolicyName })),
+    nsgDrift: entityType === "resource" && ctx.drift ? { summary: ctx.drift.data.summary, rogueSecurityRules: ctx.drift.data.rogueSecurityRules, tagDrift: ctx.drift.data.tagDrift } : undefined,
   };
 }
 
 /**
- * Tier 1A — inline hover. Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or locally) when
- * CTX_OPEN_WEIGHT_BASE_URL is set, otherwise the Meta Model API as a first-class
- * route; Fireworks and Baseten slot in ahead of Meta only when their keys exist.
- * Model answers are cached per (tenant, entity) and pre-fetched for every pill
- * of the ticket (warmHoverCache); the deterministic fallback keeps the popover
- * under the 350 ms budget when no provider answers.
+ * Tier 1A — inline hover. Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or locally) on an
+ * explicit refresh, otherwise the Meta Model API as a first-class route; Fireworks and Baseten slot in
+ * ahead of Meta only when their keys exist. Model headlines are cached per (scenario, entity) and
+ * pre-fetched for every pill of the scenario (warmHoverCache); facts and actions always come from the
+ * deterministic diagnostic, which also answers alone when no provider does.
  */
 export async function hover(input: HoverInput): Promise<HoverResult> {
   const started = performance.now();
   const requestId = telemetry.nextRequestId("t1a");
+  const scenarioId = resolveScenarioId(input.scenarioId);
+  const scope = hoverScope(scenarioId);
   const entityType = input.entityType ?? inferEntityType(input.entityId);
-  const cached = input.fresh ? undefined : cachedHover(input.tenantId, input.entityId);
+  const cached = input.fresh ? undefined : cachedHover(scope, input.entityId);
   if (cached) {
     const modelId = `${cached.modelId} (cached)`;
+    const ctx = await gatherContext(scenarioId);
     const latencyMs = Math.round(performance.now() - started);
     return {
       popover: HoverDiagnosticPopoverSchema.parse({
-        ...cached.args,
+        ...withGroundTruth(cached.args, buildHoverDiagnostic(ctx, { entityId: input.entityId, entityType })),
         latencyBudgetMs: 350,
         providerTelemetry: { tier: "Tier 1A", provider: cached.provider, modelId, latencyMs, tokensUsed: 0 },
       }),
@@ -190,11 +213,11 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
         latencyMs,
         tokensUsed: ZERO_USAGE,
         fallbackChain: [],
-        tenantId: input.tenantId,
+        tenantId: ctx.tenantId,
       }),
     };
   }
-  const ctx = await gatherContext(input.tenantId, { fresh: input.fresh ?? false });
+  const ctx = await gatherContext(scenarioId, { fresh: input.fresh ?? false });
   const deterministic = buildHoverDiagnostic(ctx, { entityId: input.entityId, entityType });
 
   let args: HoverDiagnosticArgs = deterministic;
@@ -203,7 +226,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
   let modelId = "deterministic";
   let chain: RouterTelemetry["fallbackChain"] = [];
 
-  const steps = chainSteps();
+  const steps = chainSteps({ wakeGpu: input.fresh === true });
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const tool = getHoverDiagnosticToolDefinition();
     const userPayload = {
@@ -249,13 +272,13 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
     });
     chain = outcome.chain;
     if (outcome.result && outcome.winner) {
-      args = { ...outcome.result.args, entityId: input.entityId, entityType };
+      args = withGroundTruth({ ...outcome.result.args, entityId: input.entityId, entityType }, deterministic);
       usage = outcome.result.usage;
       provider = outcome.winner.provider;
       modelId = outcome.winner.modelId;
       // A fallback answer (Glimmer timed out on an interactive refresh) never replaces a cached Glimmer one.
-      if (provider === preferredProvider() || !cachedHover(input.tenantId, input.entityId)) {
-        hoverCache.set(hoverKey(input.tenantId, input.entityId), {
+      if (provider === preferredProvider() || provider === providers.openWeight.id || !cachedHover(scope, input.entityId)) {
+        hoverCache.set(hoverKey(scope, input.entityId), {
           generatedAt: new Date().toISOString(),
           provider,
           modelId,
@@ -285,7 +308,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
     latencyMs,
     tokensUsed: usage,
     fallbackChain: chain,
-    tenantId: input.tenantId,
+    tenantId: ctx.tenantId,
   });
   return { popover, telemetry: event };
 }
@@ -308,81 +331,39 @@ async function withWarmSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-let openWeightReady: Promise<boolean> | null = null;
-
-/**
- * Waits until llama-server answers /health (200 once the GGUF is on the GPU). On a
- * scaled-to-zero Modal deployment the first probe boots the L40S container.
- */
-function awaitOpenWeightEndpoint(): Promise<boolean> {
-  openWeightReady ??= (async () => {
-    const started = performance.now();
-    const health = `${providers.openWeight.baseUrl.replace(/\/$/, "").replace(/\/v1$/, "")}/health`;
-    const deadline = Date.now() + 15 * 60_000;
-    while (Date.now() < deadline) {
-      const status = await fetch(health, { signal: AbortSignal.timeout(120_000) })
-        .then((r) => r.status)
-        .catch(() => 0);
-      if (status === 200) {
-        console.log(`  [hover] ${providers.openWeight.label} ready in ${Math.round(performance.now() - started)} ms`);
-        return true;
-      }
-      await Bun.sleep(2000);
-    }
-    console.warn(`  [hover] ${providers.openWeight.label} not healthy after 15 min; hovers fall through the chain`);
-    return false;
-  })().finally(() => {
-    openWeightReady = null;
-  });
-  return openWeightReady;
-}
-
-/** Every entity the ticket pane and canvas render as a hoverable pill, hero entities first. */
+/** Every entity the left pane and canvas render as a hoverable pill, hero entities first. */
 function hoverTargets(ctx: CorrelationContext): Array<{ entityId: string; entityType: EntityType }> {
-  const ticket = ctx.erp.ticket;
-  const lastFailure = ctx.signIns.data.filter((e) => e.status === "failure").at(-1);
   const all: Array<{ entityId: string; entityType: EntityType }> = [
-    ...ticket.affectedUpns.slice(0, 1).map((entityId) => ({ entityId, entityType: "upn" as const })),
-    ...ticket.affectedGroups.slice(0, 1).map((entityId) => ({ entityId, entityType: "group" as const })),
-    ...(lastFailure?.errorCodeLabel ? [{ entityId: lastFailure.errorCodeLabel, entityType: "errorCode" as const }] : []),
-    ...ticket.entities.map((e) => ({ entityId: e.id, entityType: e.type as EntityType })),
-    ...ticket.affectedGroups.map((entityId) => ({ entityId, entityType: "group" as const })),
-    ...ticket.affectedUpns.map((entityId) => ({ entityId, entityType: "upn" as const })),
-    ...ctx.license.data.users.map((u) => ({ entityId: u.upn, entityType: "upn" as const })),
-    ...ctx.signIns.data.flatMap((e) => (e.errorCodeLabel ? [{ entityId: e.errorCodeLabel, entityType: "errorCode" as const }] : [])),
-    { entityId: ctx.drift.data.resourceName, entityType: "resource" as const },
+    ...scenarioEntities(ctx)
+      .filter((e) => e.hoverable)
+      .map((e) => ({ entityId: e.id, entityType: e.type })),
+    ...(ctx.erp.ticket?.affectedUpns ?? []).map((entityId) => ({ entityId, entityType: "upn" as const })),
+    ...(ctx.license?.data.users ?? []).map((u) => ({ entityId: u.upn, entityType: "upn" as const })),
   ];
   const seen = new Set<string>();
   return all.filter((t) => t.entityId && !seen.has(t.entityId.toLowerCase()) && seen.add(t.entityId.toLowerCase()));
 }
 
 /**
- * Pre-fetch a popover for every hoverable pill of the ticket (all users, the groups,
- * the AADSTS codes, the NSG and host pool), hero entities first, a few at a time in
- * the background so a hover anywhere in the workbench is served from the cache.
+ * Pre-fetch a headline for every hoverable pill of the scenario, hero entities first, a
+ * few at a time in the background, so a hover anywhere in the workbench is served from
+ * the cache. Misses go to the hosted chain: a warm-up never wakes the open-weight GPU.
  */
-export async function warmHoverCache(tenantId: string): Promise<{ warmed: number; generated: number; total: number } | undefined> {
-  const preferred = preferredProvider();
-  if (warming.has(tenantId) || !preferred) return undefined;
-  warming.add(tenantId);
+export async function warmHoverCache(scenarioOrTenant: string): Promise<{ warmed: number; generated: number; total: number } | undefined> {
+  const scenarioId = resolveScenarioId(scenarioOrTenant);
+  const scope = hoverScope(scenarioId);
+  if (warming.has(scope) || !preferredProvider()) return undefined;
+  warming.add(scope);
   try {
-    const ctx = await gatherContext(tenantId);
+    const ctx = await gatherContext(scenarioId);
     const targets = hoverTargets(ctx);
-    const missing = targets.filter((t) => !cachedHover(tenantId, t.entityId));
-    // Everything is already on disk: do not wake the GPU.
-    if (missing.length && preferred === providers.openWeight.id) await awaitOpenWeightEndpoint();
-    // Second pass for answers that came back malformed or from a fallback provider (Glimmer occasionally emits broken JSON).
+    const missing = targets.filter((t) => !cachedHover(scope, t.entityId));
+    // Second pass for answers that came back malformed.
     for (let attempt = 0; attempt < 2; attempt++) {
-      await Promise.all(
-        missing
-          .filter((t) => !cachedHover(tenantId, t.entityId))
-          .map((t) =>
-            withWarmSlot(() => hover({ tenantId, ...t, openWeightTimeoutMs: config.timeouts.openWeightWarmMs })).catch(() => undefined),
-          ),
-      );
+      await Promise.all(missing.filter((t) => !cachedHover(scope, t.entityId)).map((t) => withWarmSlot(() => hover({ scenarioId, ...t })).catch(() => undefined)));
     }
-    return { warmed: targets.filter((t) => cachedHover(tenantId, t.entityId)).length, generated: missing.length, total: targets.length };
+    return { warmed: targets.filter((t) => cachedHover(scope, t.entityId)).length, generated: missing.length, total: targets.length };
   } finally {
-    warming.delete(tenantId);
+    warming.delete(scope);
   }
 }
