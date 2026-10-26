@@ -73,8 +73,12 @@ if (-not $Force -and -not $WhatIfPreference) {
 }
 
 if (-not $SkipGraph) {
+    if (-not (Get-MgContext) -and (Test-Path (Join-Path $HOME '.mg/mg.authrecord.json'))) {
+        # Silently reuse the sign-in scripts/Connect-ContextPaneGraph.ps1 persisted to ~/.mg (no prompt).
+        Connect-MgGraph -TenantId $TenantId -ContextScope CurrentUser -NoWelcome -ErrorAction SilentlyContinue
+    }
     $mg = Get-MgContext
-    if (-not $mg) { throw 'No Microsoft Graph context. Run Connect-MgGraph first.' }
+    if (-not $mg) { throw 'No Microsoft Graph context. Run: pwsh -NoProfile -File ./scripts/Connect-ContextPaneGraph.ps1' }
     if ($mg.TenantId -ne $TenantId) { throw "Graph context is tenant $($mg.TenantId); expected $TenantId." }
 
     Write-Step 'Conditional Access'

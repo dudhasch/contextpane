@@ -23,7 +23,8 @@
 
     The signed-in account also needs a role that may change Conditional Access (Conditional Access
     Administrator or Security Administrator) and Intune configuration (Intune Administrator).
-    Invoke-SeedContextPaneLab.ps1 runs this script before it seeds the anomaly objects. Supports -WhatIf.
+    Invoke-SeedContextPaneLab.ps1 and Remove-ContextPaneLab.ps1 reuse the persisted sign-in silently,
+    so run this once before them. Supports -WhatIf.
 
 .EXAMPLE
     pwsh -NoProfile -File ./scripts/Connect-ContextPaneGraph.ps1

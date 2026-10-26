@@ -190,8 +190,12 @@ if (-not $SkipAzure) { Assert-Module @('Az.Accounts', 'Az.Resources', 'Az.Networ
 $seeded = [ordered]@{ users = @(); groups = @{}; policy = $null; nsg = $null }
 
 if (-not $SkipGraph) {
+    if (-not (Get-MgContext) -and (Test-Path (Join-Path $HOME '.mg/mg.authrecord.json'))) {
+        # Silently reuse the sign-in scripts/Connect-ContextPaneGraph.ps1 persisted to ~/.mg (no prompt).
+        Connect-MgGraph -TenantId $TenantId -ContextScope CurrentUser -NoWelcome -ErrorAction SilentlyContinue
+    }
     $mg = Get-MgContext
-    if (-not $mg) { throw 'No Microsoft Graph context. Run: Connect-MgGraph -TenantId <id> -Scopes User.ReadWrite.All,Group.ReadWrite.All,Policy.ReadWrite.ConditionalAccess,Directory.ReadWrite.All' }
+    if (-not $mg) { throw 'No Microsoft Graph context. Run: pwsh -NoProfile -File ./scripts/Connect-ContextPaneGraph.ps1' }
     if ($mg.TenantId -ne $TenantId) { throw "Graph context is tenant $($mg.TenantId); expected $TenantId. Re-run Connect-MgGraph -TenantId $TenantId." }
     $missing = @('User.ReadWrite.All', 'Group.ReadWrite.All', 'Policy.ReadWrite.ConditionalAccess') + $(if ($SkipIntune) { @() } else { @('DeviceManagementConfiguration.ReadWrite.All') }) | Where-Object { $mg.Scopes -notcontains $_ }
     if ($missing) { Write-Warning "Graph context is missing scopes: $($missing -join ', '). Creation calls may fail." }
