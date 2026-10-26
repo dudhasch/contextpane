@@ -1,0 +1,118 @@
+{
+  "scenarioId": "INC-4092",
+  "tenantId": "tenant-contoso-01",
+  "remediationId": "rem-mvpup9b1-pyxr",
+  "mode": "break-glass",
+  "appliedAt": "2026-10-26T22:51:43.334Z",
+  "appliedBy": "cloudadmin@c4a8shili.onmicrosoft.com",
+  "outcome": "executed",
+  "declaredIn": [
+    "demo-iac/main.tf:L43-L84"
+  ],
+  "live": {
+    "source": "live-graph",
+    "summary": "3/3 users → SPE_E5 / Compliant · NSG (ARM): delete Allow-Temp-RDP-Diagnostic-Drift, tags",
+    "results": [
+      {
+        "id": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+        "ok": true,
+        "status": 204
+      },
+      {
+        "id": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+        "ok": true,
+        "status": 204
+      },
+      {
+        "id": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+        "ok": true,
+        "status": 204
+      },
+      {
+        "id": "nsg delete Allow-Temp-RDP-Diagnostic-Drift",
+        "ok": true,
+        "status": 202
+      },
+      {
+        "id": "nsg tags",
+        "ok": true,
+        "status": 200
+      }
+    ]
+  },
+  "graphRequests": [
+    {
+      "method": "POST",
+      "url": "/users/lynne.robins.contoso@c4a8shili.onmicrosoft.com/assignLicense",
+      "body": {
+        "addLicenses": [
+          {
+            "skuId": "<SPE_E5 skuId>"
+          }
+        ],
+        "removeLicenses": [
+          "<SPE_E3 skuId>"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/users/diego.siciliani.contoso@c4a8shili.onmicrosoft.com/assignLicense",
+      "body": {
+        "addLicenses": [
+          {
+            "skuId": "<SPE_E5 skuId>"
+          }
+        ],
+        "removeLicenses": [
+          "<SPE_E3 skuId>"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/users/patti.fernandez.contoso@c4a8shili.onmicrosoft.com/assignLicense",
+      "body": {
+        "addLicenses": [
+          {
+            "skuId": "<SPE_E5 skuId>"
+          }
+        ],
+        "removeLicenses": [
+          "<SPE_E3 skuId>"
+        ]
+      }
+    },
+    {
+      "method": "PATCH",
+      "url": "/identity/conditionalAccess/policies/d09ae604-4c06-4769-ad01-20ec8efa18ad",
+      "body": {
+        "state": "enabledForReportingButNotEnforced",
+        "conditions": {
+          "users": {
+            "excludeGroups": [
+              "<SG-Contoso-Finance-AVD id>"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "arm": {
+    "resource": "/subscriptions/20505597-043c-4742-a884-42dc3f621aef/resourceGroups/rg-contoso-avd-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-contoso-avd-hostpool-01",
+    "terraformBlock": "demo-iac/main.tf:L43-L84",
+    "source": "live-azure",
+    "operations": [
+      {
+        "op": "delete Allow-Temp-RDP-Diagnostic-Drift",
+        "ok": true,
+        "status": 202
+      },
+      {
+        "op": "tags",
+        "ok": true,
+        "status": 200
+      }
+    ]
+  }
+}
