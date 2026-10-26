@@ -1,8 +1,8 @@
 /** Renders a unified diff with semantic line colouring. */
-export function DiffView({ diff, maxHeight = "max-h-96" }: { diff: string; maxHeight?: string }) {
+export function DiffView({ diff, maxHeight = "max-h-96", wrap = false, className = "" }: { diff: string; maxHeight?: string; wrap?: boolean; className?: string }) {
   const lines = diff.replace(/\r\n/g, "\n").split("\n");
   return (
-    <pre className={`overflow-auto rounded-md border border-border-subtle bg-canvas p-2 font-mono text-[11px] leading-[1.55] ${maxHeight}`}>
+    <pre className={`overflow-auto rounded-md border border-border-subtle bg-canvas p-2 font-mono text-[11px] leading-[1.55] ${maxHeight} ${className}`}>
       {lines.map((line, i) => {
         const cls = line.startsWith("+++") || line.startsWith("---")
           ? "diff-line-meta"
@@ -14,7 +14,7 @@ export function DiffView({ diff, maxHeight = "max-h-96" }: { diff: string; maxHe
                 ? "diff-line-del"
                 : "text-muted";
         return (
-          <div key={i} className={`${cls} px-1 whitespace-pre`}>
+          <div key={i} className={`${cls} px-1 ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
             {line || " "}
           </div>
         );

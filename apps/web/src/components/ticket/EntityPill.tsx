@@ -88,7 +88,12 @@ export function EntityPill({ entityId, entityType, label }: EntityPillProps) {
       </button>
       {open && (
         <FloatingPortal>
-          <div ref={refs.setFloating} style={floatingStyles} {...getFloatingProps()} className="z-50 w-80 animate-fade-in rounded-lg border border-border bg-elevated p-3 shadow-popover">
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            {...getFloatingProps()}
+            className="z-50 w-80 animate-fade-in rounded-lg border border-sky-500/40 bg-[#0B1120]/95 p-3 shadow-[0_24px_60px_rgba(0,0,0,0.9)] ring-1 ring-white/10 backdrop-blur-xl"
+          >
             <HoverPopoverBody entityId={entityId} entityType={entityType} tone={tone} onClose={() => setOpen(false)} />
           </div>
         </FloatingPortal>

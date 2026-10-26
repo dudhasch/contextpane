@@ -40,10 +40,14 @@ export function VoiceSteerPanel() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const autoCloseRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
-    else stopRecording(false);
+    if (open) {
+      window.clearTimeout(autoCloseRef.current);
+      inputRef.current?.focus();
+    } else stopRecording(false);
+    return () => window.clearTimeout(autoCloseRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -54,6 +58,9 @@ export function VoiceSteerPanel() {
       await voiceSteer({ ...(command.trim() ? { text: command.trim() } : {}), ...(audio ? { audioBase64: audio.base64, mimeType: audio.mimeType } : {}) });
       setText("");
       setLiveTranscript("");
+      // collapse 600 ms after the command landed so the panel never hides the top-right of the canvas during recording
+      window.clearTimeout(autoCloseRef.current);
+      autoCloseRef.current = window.setTimeout(() => useWorkbench.getState().setVoiceOpen(false), 600);
     } catch (error) {
       useWorkbench.getState().toast({ tone: "critical", title: "Voice steer failed", detail: error instanceof Error ? error.message : String(error) });
     } finally {

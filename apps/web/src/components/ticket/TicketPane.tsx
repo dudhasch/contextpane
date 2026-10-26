@@ -210,10 +210,15 @@ function ContractLine({ line }: { line: ErpContractLine }) {
       <button
         type="button"
         onClick={() => setToolbarLine(open ? null : line.lineId)}
-        className={`flex w-full items-baseline justify-between gap-2 rounded px-1.5 py-1 text-left text-[12px] transition-colors ${open ? "bg-primary/12 ring-1 ring-primary/40" : "hover:bg-surface"}`}
-        title="Click to open the semantic toolbar (2)"
+        // a drag-select over the line must also pop the toolbar (the click may not fire when the mouse-up lands elsewhere)
+        onMouseUp={() => {
+          const sel = window.getSelection();
+          if (!open && sel && !sel.isCollapsed && sel.toString().trim().length > 0) setToolbarLine(line.lineId);
+        }}
+        className={`flex w-full cursor-pointer items-baseline justify-between gap-2 rounded px-1.5 py-1 text-left text-[12px] transition-colors ${open ? "bg-primary/12 ring-1 ring-primary/40" : "hover:bg-surface"}`}
+        title="Click or select to open the semantic toolbar (2)"
       >
-        <span className="underline decoration-primary/40 decoration-dotted underline-offset-2">{line.description}</span>
+        <span className="border-b border-dashed border-amber-400/60 pb-px">{line.description}</span>
         <span className="font-mono text-[11px] text-faint">
           {line.quantity}× {fmtUsd(line.unitPriceUsd)}
         </span>

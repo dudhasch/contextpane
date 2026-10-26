@@ -1,9 +1,10 @@
-import { Check, FileCode2, GitBranch, Rocket, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle } from "lucide-react";
+import { Check, ExternalLink, FileCode2, GitBranch, GitPullRequest, Rocket, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import type { ActionApprovalDrawer as Drawer } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
+import { CodeBlock } from "../ui/CodeBlock";
 import { Pill, type Tone } from "../ui/Pill";
 import { DiffView } from "./DiffView";
 import { ProgressRail } from "./ProgressRail";
@@ -26,8 +27,12 @@ export function ActionApprovalDrawerSheet() {
   const progress = useWorkbench((s) => s.remediateProgress);
   const approve = useWorkbench((s) => s.approve);
   const approveLog = useWorkbench((s) => s.approveLog);
+  const github = useWorkbench((s) => s.health?.github);
+  const openPr = useWorkbench((s) => s.openPrOnApprove);
+  const setOpenPr = useWorkbench((s) => s.setOpenPrOnApprove);
   const [tab, setTab] = useState<Tab>("powershell");
   if (!open) return null;
+  const prPossible = Boolean(github?.origin && github.ghAuthenticated);
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-canvas/70" onClick={() => setOpen(false)}>
@@ -72,9 +77,24 @@ export function ActionApprovalDrawerSheet() {
               )}
               <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                 {drawer.staging ? (
-                  <Pill tone="primary" icon={<GitBranch />} title={drawer.staging.filesChanged.join("\n")}>
-                    {drawer.staging.branchName} @ {shortSha(drawer.staging.commitSha)} · {drawer.staging.filesChanged.length} files
-                  </Pill>
+                  <>
+                    <Pill tone="primary" icon={<GitBranch />} title={drawer.staging.filesChanged.join("\n")}>
+                      {drawer.staging.branchName} @ {shortSha(drawer.staging.commitSha)} · {drawer.staging.filesChanged.length} files
+                    </Pill>
+                    {drawer.staging.prUrl && (
+                      <a
+                        href={drawer.staging.prUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-6 items-center gap-1.5 rounded-pill border border-healthy/40 bg-healthy/12 px-2 font-mono text-[11px] leading-none whitespace-nowrap text-healthy hover:bg-healthy/20"
+                        title={drawer.staging.prUrl}
+                      >
+                        <GitPullRequest className="size-3" />
+                        PR {drawer.staging.prUrl.split("/pull/")[1] ? `#${drawer.staging.prUrl.split("/pull/")[1]}` : "opened"}
+                        <ExternalLink className="size-3" />
+                      </a>
+                    )}
+                  </>
                 ) : (
                   <Pill tone="warning" icon={<GitBranch />}>
                     PR staging skipped
@@ -94,10 +114,10 @@ export function ActionApprovalDrawerSheet() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {tab === "powershell" && (
-                <pre className="overflow-auto rounded-md border border-border-subtle bg-canvas p-3 font-mono text-[11px] leading-[1.55] text-text whitespace-pre">{drawer.powershellScript}</pre>
+              {tab === "powershell" && <CodeBlock code={drawer.powershellScript} />}
+              {tab === "terraform" && (
+                <CodeBlock code={drawer.terraformDiff} render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="max-h-none" wrap={wrap} className="pt-8" />} />
               )}
-              {tab === "terraform" && <DiffView diff={drawer.terraformDiff} maxHeight="max-h-none" />}
               {tab === "entities" && (
                 <ul className="divide-y divide-border-subtle rounded-md border border-border-subtle">
                   {drawer.affectedEntities.map((e) => (
@@ -125,6 +145,27 @@ export function ActionApprovalDrawerSheet() {
                 </span>
                 <ApprovalState drawer={drawer} />
               </div>
+              {drawer.approval.state === "pending" && (
+                <label
+                  className={`flex items-center gap-2 text-[11px] ${prPossible ? "text-muted" : "text-faint"}`}
+                  title={
+                    prPossible
+                      ? `git push origin ${drawer.staging?.branchName ?? "fix/*"} + gh pr create --base ${github?.prBase ?? "main"}`
+                      : "Needs a remote origin and an authenticated gh CLI: run scripts/Publish-ContextPaneRepo.ps1 first"
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-primary"
+                    checked={openPr && prPossible}
+                    disabled={!prPossible || !drawer.staging}
+                    onChange={(e) => setOpenPr(e.target.checked)}
+                  />
+                  <GitPullRequest className="size-3.5" />
+                  Open GitHub PR on approval via <span className="font-mono">gh pr create</span>
+                  {github?.origin ? <span className="truncate font-mono text-faint">({github.origin.replace(/^https:\/\/github\.com\//, "")})</span> : <span className="font-mono text-faint">(no remote origin)</span>}
+                </label>
+              )}
               {drawer.approval.state === "pending" ? (
                 <div className="flex gap-2">
                   <Button variant="danger" size="md" icon={<XCircle />} onClick={() => void approve("reject")}>

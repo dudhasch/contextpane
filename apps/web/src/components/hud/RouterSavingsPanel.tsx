@@ -4,9 +4,33 @@ import { useWorkbench } from "@/store";
 import type { RouterTier } from "@contextpane/catalog";
 import { Dot, Pill, TONE_DOT, TONE_TEXT, type Tone } from "../ui/Pill";
 
-const TIER_ORDER: RouterTier[] = ["Tier 0", "Tier 1A", "Tier 1B", "Tier 2", "Tier 3A", "Tier 3B", "Voice"];
+/** Fallback when the orchestrator has not sent a price yet (mirrors CTX_PRICE_USD_PER_1M_TOKENS default). */
+const DEFAULT_USD_PER_1M_TOKENS = 1.0;
 
-/** Tallies what Tier 0 recipes saved versus a full Tier 2 correlate. */
+interface TierRow {
+  key: string;
+  tiers: RouterTier[];
+  label: string;
+  route: string;
+  tone: Tone;
+}
+
+/** The five routing tiers a judge should see, always, even before a tier has served a request. */
+const TIER_ROWS: TierRow[] = [
+  { key: "t0", tiers: ["Tier 0"], label: "Tier 0: Recipe / SSE", route: "0 tokens · MCP hydrate", tone: "primary" },
+  { key: "t1a", tiers: ["Tier 1A"], label: "Tier 1A: Hover", route: "Fireworks • muse-glimmer-30b", tone: "healthy" },
+  { key: "t1b", tiers: ["Tier 1B"], label: "Tier 1B: Catalog", route: "Baseten • muse-spark-open-1026", tone: "meta" },
+  { key: "t2", tiers: ["Tier 2"], label: "Tier 2: Correlation", route: "Meta • muse-spark-1.3", tone: "meta" },
+  { key: "t3", tiers: ["Tier 3A", "Tier 3B"], label: "Tier 3: Remediation", route: "Meta • muse-wonder + muse-code + Modal", tone: "warning" },
+];
+
+function fmtUsd(n: number): string {
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+/** Tallies what Tier 0 recipes saved versus a full Tier 2 correlate, per tier. */
 export function RouterSavingsPanel() {
   const open = useWorkbench((s) => s.savingsOpen);
   const stats = useWorkbench((s) => s.stats);
@@ -17,12 +41,25 @@ export function RouterSavingsPanel() {
   const baseline = stats?.tier2Baseline ?? { tokens: 6200, ms: 4800 };
   const zero = stats?.zeroTokenRequests ?? 0;
   const saved = stats?.estimatedSavings ?? { tokens: 0, ms: 0 };
+  const pricePer1M = stats?.pricing?.usdPer1MTokens ?? DEFAULT_USD_PER_1M_TOKENS;
+  const usdSaved = saved.usd ?? (saved.tokens / 1_000_000) * pricePer1M;
   const total = stats?.totalRequests ?? 0;
   const spent = stats?.totalTokens ?? 0;
   const pct = total ? Math.round((zero / total) * 100) : 0;
 
+  const rows = TIER_ROWS.map((row) => {
+    const parts = row.tiers.map((t) => stats?.tiers[t]).filter((s): s is NonNullable<typeof s> => Boolean(s));
+    const requests = parts.reduce((n, s) => n + s.requests, 0);
+    const totalLatency = parts.reduce((n, s) => n + s.avgLatencyMs * s.requests, 0);
+    const tokens = parts.reduce((n, s) => n + s.totalTokens, 0);
+    const byProvider: Record<string, number> = {};
+    for (const s of parts) for (const [p, n] of Object.entries(s.byProvider)) byProvider[p] = (byProvider[p] ?? 0) + n;
+    return { ...row, requests, avgMs: requests ? Math.round(totalLatency / requests) : 0, tokens, byProvider };
+  });
+  const voice = stats?.tiers["Voice"];
+
   return (
-    <aside className="absolute top-14 right-3 z-30 w-[380px] animate-fade-in card shadow-popover">
+    <aside className="absolute top-14 right-3 z-30 w-[460px] animate-fade-in card shadow-popover">
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <PiggyBank className="size-4 text-primary" />
@@ -34,10 +71,11 @@ export function RouterSavingsPanel() {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
-        <Stat label="0-token requests" value={`${zero}`} sub={`${pct}% of ${total}`} tone="primary" />
+      <div className="grid grid-cols-4 gap-2">
+        <Stat label="0-token req" value={`${zero}`} sub={`${pct}% of ${total}`} tone="primary" />
         <Stat label="Tokens saved" value={fmtTokens(saved.tokens)} sub={`${fmtTokens(spent)} spent`} tone="healthy" />
         <Stat label="Latency saved" value={fmtMs(saved.ms)} sub="cumulative" tone="healthy" />
+        <Stat label="API credit saved" value={fmtUsd(usdSaved)} sub={`@ $${pricePer1M.toFixed(2)}/1M tok`} tone="healthy" title="Estimated: tokens saved × blended price (CTX_PRICE_USD_PER_1M_TOKENS)" />
       </div>
 
       <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-surface">
@@ -48,48 +86,58 @@ export function RouterSavingsPanel() {
       <table className="mt-3 w-full text-[11px]">
         <thead className="text-faint">
           <tr>
-            <th className="py-1 text-left font-medium">Tier</th>
+            <th className="py-1 text-left font-medium">Tier · route</th>
             <th className="py-1 text-right font-medium">Req</th>
             <th className="py-1 text-right font-medium">Avg ms</th>
             <th className="py-1 text-right font-medium">Tokens</th>
-            <th className="py-1 text-left font-medium pl-2">Providers</th>
+            <th className="py-1 pl-2 text-left font-medium">Served by</th>
           </tr>
         </thead>
-        <tbody className="font-mono">
-          {TIER_ORDER.filter((t) => stats?.tiers[t]).map((t) => {
-            const row = stats!.tiers[t]!;
-            return (
-              <tr key={t} className="border-t border-border-subtle">
-                <td className="py-1">
-                  <span className="flex items-center gap-1.5">
-                    <Dot tone={TIER_COLOR[t] as Tone} />
-                    {t}
-                  </span>
-                </td>
-                <td className="py-1 text-right">{row.requests}</td>
-                <td className="py-1 text-right">{row.avgLatencyMs}</td>
-                <td className="py-1 text-right">{fmtTokens(row.totalTokens)}</td>
-                <td className="py-1 pl-2 text-muted">
-                  {Object.entries(row.byProvider)
-                    .map(([p, n]) => `${p}×${n}`)
-                    .join(" ")}
-                </td>
-              </tr>
-            );
-          })}
-          {!stats?.tiers || Object.keys(stats.tiers).length === 0 ? (
-            <tr>
-              <td colSpan={5} className="py-2 text-center text-faint">
-                no requests yet
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} className={`border-t border-border-subtle ${r.requests === 0 ? "text-faint" : ""}`}>
+              <td className="py-1 pr-2">
+                <span className="flex items-center gap-1.5">
+                  <Dot tone={r.tone} />
+                  <span className="font-medium text-text">{r.label}</span>
+                </span>
+                <span className="block pl-3.5 font-mono text-[10px] text-faint">{r.route}</span>
+              </td>
+              <td className="py-1 text-right font-mono">{r.requests}</td>
+              <td className="py-1 text-right font-mono">{r.requests ? r.avgMs : "–"}</td>
+              <td className="py-1 text-right font-mono">{r.requests ? fmtTokens(r.tokens) : "–"}</td>
+              <td className="py-1 pl-2 font-mono text-muted">
+                {Object.entries(r.byProvider)
+                  .map(([p, n]) => `${p}×${n}`)
+                  .join(" ") || "–"}
               </td>
             </tr>
-          ) : null}
+          ))}
+          {voice && (
+            <tr className="border-t border-border-subtle">
+              <td className="py-1 pr-2">
+                <span className="flex items-center gap-1.5">
+                  <Dot tone="meta" />
+                  <span className="font-medium text-text">Voice steer</span>
+                </span>
+                <span className="block pl-3.5 font-mono text-[10px] text-faint">muse-voice-transcribe → muse-spark</span>
+              </td>
+              <td className="py-1 text-right font-mono">{voice.requests}</td>
+              <td className="py-1 text-right font-mono">{voice.avgLatencyMs}</td>
+              <td className="py-1 text-right font-mono">{fmtTokens(voice.totalTokens)}</td>
+              <td className="py-1 pl-2 font-mono text-muted">
+                {Object.entries(voice.byProvider)
+                  .map(([p, n]) => `${p}×${n}`)
+                  .join(" ")}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
 
       {history.length > 0 && (
         <div className="mt-3 flex h-8 items-end gap-0.5" title="last requests: bar = latency, colour = tier">
-          {history.slice(-32).map((e) => (
+          {history.slice(-40).map((e) => (
             <div
               key={e.requestId}
               className={`flex-1 rounded-sm ${TONE_DOT[TIER_COLOR[e.tier] as Tone]}`}
@@ -103,12 +151,12 @@ export function RouterSavingsPanel() {
   );
 }
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: Tone }) {
+function Stat({ label, value, sub, tone, title }: { label: string; value: string; sub: string; tone: Tone; title?: string }) {
   return (
-    <div className="rounded-md border border-border-subtle bg-surface p-2">
-      <div className="text-[10px] text-faint uppercase tracking-wider">{label}</div>
-      <div className={`font-mono text-lg leading-tight ${TONE_TEXT[tone]}`}>{value}</div>
-      <div className="text-[10px] text-muted">{sub}</div>
+    <div className="rounded-md border border-border-subtle bg-surface p-2" title={title}>
+      <div className="truncate text-[10px] uppercase tracking-wider text-faint">{label}</div>
+      <div className={`truncate font-mono text-lg leading-tight ${TONE_TEXT[tone]}`}>{value}</div>
+      <div className="truncate text-[10px] text-muted">{sub}</div>
     </div>
   );
 }

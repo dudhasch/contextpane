@@ -77,6 +77,8 @@ interface WorkbenchState {
   toolbarLineId: string | null;
   highlightComponent: ComponentType | null;
   toasts: Toast[];
+  /** Tick in the drawer: push the staged branch and `gh pr create` on approval (needs remote origin + gh auth). */
+  openPrOnApprove: boolean;
 
   /* actions */
   boot(): Promise<void>;
@@ -100,6 +102,9 @@ interface WorkbenchState {
   setVoiceOpen(open: boolean): void;
   setToolbarLine(lineId: string | null): void;
   flashComponent(type: ComponentType | null): void;
+  /** Smooth-scroll a canvas card into view and pulse-highlight it. */
+  revealComponent(type: ComponentType): void;
+  setOpenPrOnApprove(value: boolean): void;
   toast(toast: Omit<Toast, "id">): void;
   dismissToast(id: number): void;
 }
@@ -139,6 +144,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   toolbarLineId: null,
   highlightComponent: null,
   toasts: [],
+  openPrOnApprove: false,
 
   async boot() {
     telemetryDisposer?.();
@@ -147,7 +153,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       onHello: (stats, recent) => set({ stats, telemetryHistory: recent, telemetry: recent.at(-1) ?? get().telemetry }),
       onEvent: (event, stats) => set((s) => ({ telemetry: event, stats, telemetryHistory: [...s.telemetryHistory.slice(-49), event] })),
     });
-    api.health().then((health) => set({ health })).catch(() => set({ health: null }));
+    api
+      .health()
+      .then((health) => set({ health, openPrOnApprove: Boolean(health.github?.prOnApprove && health.github.origin && health.github.ghAuthenticated) }))
+      .catch(() => set({ health: null }));
     await Promise.all([get().loadRecipes(), get().loadContext()]);
     await get().correlate();
   },
@@ -213,7 +222,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       (t): t is ComponentType => t !== "HoverDiagnosticPopover" && t !== "ActionApprovalDrawer",
     );
     const tenant = TENANT_REGISTRY[tenantId];
-    const recipeName = name ?? `${tenant.displayName} triage · ${componentTypes.length} pinned`;
+    // The banner renders the pinned count itself, so the name must not carry it (otherwise "· 4 pinned · 4 pinned").
+    const recipeName = name ?? `${tenant.displayName} triage`;
     try {
       const { recipe } = await api.pinRecipe({ name: recipeName, tenantId, componentTypes, description: `Pinned from ${tenant.ticketId}` });
       await get().loadRecipes();
@@ -262,13 +272,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const { drawer } = get();
     if (!drawer) return;
     try {
-      const result: ApproveResponse = await api.approve({ remediationId: drawer.remediationId, decision, approvedBy: drawer.approval.requiredIdentity });
+      const result: ApproveResponse = await api.approve({
+        remediationId: drawer.remediationId,
+        decision,
+        approvedBy: drawer.approval.requiredIdentity,
+        ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove } : {}),
+      });
       const { executionLog, ...updated } = result.drawer;
       set({ drawer: updated, approveLog: executionLog });
       get().toast({
         tone: decision === "reject" ? "warning" : "healthy",
         title: decision === "reject" ? "Remediation rejected" : `Approved · ${updated.approval.state}`,
-        detail: executionLog[0],
+        detail: updated.staging?.prUrl ?? executionLog[0],
       });
     } catch (error) {
       get().toast({ tone: "critical", title: "Approval failed", detail: error instanceof Error ? error.message : String(error) });
@@ -325,6 +340,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ highlightComponent });
     if (highlightComponent) window.setTimeout(() => set((s) => (s.highlightComponent === highlightComponent ? { highlightComponent: null } : {})), 1600);
   },
+  revealComponent: (type) => {
+    if (get().filter && !get().filter!.includes(type)) get().setFilter(null);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`canvas-${type}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      get().flashComponent(type);
+    });
+  },
+  setOpenPrOnApprove: (openPrOnApprove) => set({ openPrOnApprove }),
   toast: (toast) => {
     const id = ++toastSeq;
     set((s) => ({ toasts: [...s.toasts.slice(-3), { ...toast, id }] }));

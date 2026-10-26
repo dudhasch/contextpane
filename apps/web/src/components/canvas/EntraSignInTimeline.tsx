@@ -1,12 +1,29 @@
-import { KeyRound, LogIn, ShieldBan, ShieldCheck, Sparkles } from "lucide-react";
-import type { EntraSignInTimeline as Props, Provenance, QuickAction } from "@contextpane/catalog";
+import { ChevronDown, ChevronUp, KeyRound, LogIn, ShieldBan, ShieldCheck, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
+import type { EntraSignInTimeline as Props, Provenance, QuickAction, SignInEvent } from "@contextpane/catalog";
 import { fmtTimeUtc } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Dot, Pill, type Tone } from "../ui/Pill";
 import { CardShell } from "./CardShell";
 
+/** Events shown before "show more": every highlighted one plus the nearest context, so the fourth canvas card stays above the fold. */
+const COLLAPSED_EVENTS = 4;
+
+function collapseEvents(events: SignInEvent[]): SignInEvent[] {
+  if (events.length <= COLLAPSED_EVENTS) return events;
+  const keep = new Set(events.filter((e) => e.isHighlighted).map((e) => e.id));
+  for (const e of events) {
+    if (keep.size >= COLLAPSED_EVENTS) break;
+    keep.add(e.id);
+  }
+  return events.filter((e) => keep.has(e.id));
+}
+
 export function EntraSignInTimelineCard({ props, provenance, repaired }: { props: Props; provenance: Provenance; repaired?: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  const events = useMemo(() => (showAll ? props.events : collapseEvents(props.events)), [props.events, showAll]);
+  const hidden = props.events.length - events.length;
   return (
     <CardShell
       type="EntraSignInTimeline"
@@ -22,57 +39,72 @@ export function EntraSignInTimelineCard({ props, provenance, repaired }: { props
       }
     >
       {props.rootCause && (
-        <div className="mb-2.5 flex flex-wrap items-center gap-2 rounded-md border border-critical/30 bg-critical/8 px-2.5 py-2 text-[12px]">
+        <div className="mb-2 flex items-center gap-x-2 rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[12px]" title={props.rootCause.explanation}>
           <ShieldBan className="size-4 shrink-0 text-critical" />
           <Pill tone="critical">{props.rootCause.errorCodeLabel}</Pill>
           <span className="text-muted">→</span>
-          <span className="font-mono">{props.rootCause.targetApp}</span>
+          <span className="shrink-0 font-mono">{props.rootCause.targetApp}</span>
           {props.rootCause.policyName && (
             <>
-              <span className="text-muted">blocked by</span>
-              <span className="font-mono text-critical">{props.rootCause.policyName}</span>
+              <span className="shrink-0 text-muted">blocked by</span>
+              <span className="truncate font-mono text-critical">{props.rootCause.policyName}</span>
             </>
           )}
-          <span className="basis-full text-[11px] text-muted">{props.rootCause.explanation}</span>
+          <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted 2xl:inline">· {props.rootCause.explanation}</span>
         </div>
       )}
 
       <ol className="relative ml-2 border-l border-border-subtle pl-4">
-        {props.events.map((e) => {
+        {events.map((e) => {
           const tone: Tone = e.status === "failure" ? "critical" : e.status === "interrupted" ? "warning" : "healthy";
           return (
-            <li key={e.id} className={`relative mb-2 last:mb-0 ${e.isHighlighted ? "" : "opacity-85"}`}>
+            <li key={e.id} className={`relative mb-1 last:mb-0 ${e.isHighlighted ? "" : "opacity-85"}`}>
               <span className="absolute -left-[21px] top-1.5">
                 <Dot tone={tone} pulse={e.isHighlighted} />
               </span>
-              <div className={`rounded-md border px-2.5 py-1.5 text-[11.5px] ${e.isHighlighted ? "border-critical/40 bg-critical/8" : "border-border-subtle bg-surface"}`}>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="font-mono text-faint">{fmtTimeUtc(e.timestamp)}</span>
-                  <span className="font-medium">{e.displayName}</span>
+              {/* one line per event; the full detail line only for the events that explain the ticket, the rest carry it in the tooltip */}
+              <div
+                className={`rounded-md border px-2.5 py-0.5 text-[11.5px] ${e.isHighlighted ? "border-critical/40 bg-critical/8" : "border-border-subtle bg-surface"}`}
+                title={`${e.appId} · ${e.clientApp} · ${e.location} · ${e.ipAddress} · ${e.deviceName} (${e.deviceCompliant === false ? "non-compliant" : "compliant"})${e.blockingPolicyName ? ` · CA: ${e.blockingPolicyName}` : ""}`}
+              >
+                <div className="flex items-center gap-x-2">
+                  <span className="shrink-0 font-mono text-faint">{fmtTimeUtc(e.timestamp)}</span>
+                  <span className="shrink-0 font-medium">{e.displayName}</span>
                   <span className="text-muted">→</span>
-                  <span className="font-mono">{e.appDisplayName}</span>
-                  <span className="ml-auto flex items-center gap-1">
+                  <span className="truncate font-mono">{e.appDisplayName}</span>
+                  {!e.isHighlighted && (
+                    <span className="hidden truncate text-[10.5px] text-faint xl:inline">
+                      {e.clientApp} · {e.location} · {e.deviceName}
+                    </span>
+                  )}
+                  <span className="ml-auto flex shrink-0 items-center gap-1">
                     {e.errorCodeLabel ? <Pill tone="critical">{e.errorCodeLabel}</Pill> : <Pill tone="healthy" icon={<ShieldCheck />}>success</Pill>}
                   </span>
                 </div>
-                <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10.5px] text-faint">
-                  <span className="font-mono">{e.appId}</span>
-                  <span>{e.clientApp}</span>
-                  <span>{e.location}</span>
-                  <span className="font-mono">{e.ipAddress}</span>
-                  <span>
-                    {e.deviceName} · {e.deviceCompliant === false ? <span className="text-warning">non-compliant</span> : "compliant"}
-                  </span>
-                  {e.blockingPolicyName && <span className="text-critical">CA: {e.blockingPolicyName}</span>}
-                </div>
+                {e.isHighlighted && (
+                  <div className="mt-0.5 flex gap-x-3 overflow-hidden text-[10.5px] whitespace-nowrap text-faint">
+                    <span>{e.clientApp}</span>
+                    <span>{e.location}</span>
+                    <span className="font-mono">{e.ipAddress}</span>
+                    <span>
+                      {e.deviceName} · {e.deviceCompliant === false ? <span className="text-warning">non-compliant</span> : "compliant"}
+                    </span>
+                    {e.blockingPolicyName && <span className="truncate text-critical">CA: {e.blockingPolicyName}</span>}
+                  </div>
+                )}
               </div>
             </li>
           );
         })}
       </ol>
 
-      {props.microActions.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
+      {(props.microActions.length > 0 || hidden > 0 || showAll) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {(hidden > 0 || showAll) && (
+            <Button size="xs" variant="ghost" icon={showAll ? <ChevronUp /> : <ChevronDown />} onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Show fewer" : `${hidden} more event${hidden === 1 ? "" : "s"}`}
+            </Button>
+          )}
           {props.microActions.map((a) => (
             <MicroAction key={a.id} action={a} />
           ))}

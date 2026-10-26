@@ -57,7 +57,7 @@
   background: var(--color-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
-  padding: 12px;
+  padding: 10px 12px;
 }
 
 /* opacity only: floating-ui positions popovers with an inline transform, so the
@@ -86,6 +86,18 @@
     box-shadow: 0 0 0 6px transparent;
   }
 }
+/* card pulse-highlight when a header pill or quick action reveals it */
+@keyframes cp-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--flash-color, var(--color-primary)) 75%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 8px color-mix(in oklab, var(--flash-color, var(--color-primary)) 20%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
 @keyframes cp-pulse-dot {
   0%,
   100% {
@@ -104,6 +116,9 @@
 }
 @utility animate-flash {
   animation: cp-flash 300ms var(--ease-ops) both;
+}
+@utility animate-pulse-ring {
+  animation: cp-pulse-ring 700ms var(--ease-ops) 2 both;
 }
 @utility animate-pulse-dot {
   animation: cp-pulse-dot 1.2s ease-in-out infinite;

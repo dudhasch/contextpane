@@ -97,7 +97,12 @@ class TelemetryBus {
       totalRequests,
       totalTokens,
       zeroTokenRequests: this.savings.zeroTokenRequests,
-      estimatedSavings: { tokens: this.savings.tokens, ms: this.savings.ms },
+      estimatedSavings: {
+        tokens: this.savings.tokens,
+        ms: this.savings.ms,
+        usd: Math.round((this.savings.tokens / 1_000_000) * config.pricing.usdPer1MTokens * 10_000) / 10_000,
+      },
+      pricing: config.pricing,
       tier2Baseline: this.tier2Baseline,
       tiers,
       subscribers: this.listeners.size,

@@ -1,4 +1,4 @@
-import { LayoutGrid, Pin } from "lucide-react";
+import { LayoutGrid, Pin, X } from "lucide-react";
 import type { LayoutComponent } from "@contextpane/catalog";
 import { useWorkbench, visibleComponents } from "@/store";
 import { Pill } from "../ui/Pill";
@@ -25,25 +25,30 @@ export function GenUICanvas() {
   const recipe = recipes.find((r) => r.recipeId === activeRecipeId);
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto px-3 py-2">
       {status === "loading" && <ProgressRail events={progress} title={activeRecipeId ? `Hydrating recipe (Tier 0)` : "Correlating ticket (Tier 1B/2)"} busy />}
       {status === "error" && <div className="card border-critical/40 text-sm text-critical">Canvas error: {error}</div>}
       {(filter || recipe) && (
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-          {recipe && (
-            <Pill tone="primary" icon={<Pin />}>
-              {recipe.name} · {recipe.pinnedComponents.length} pinned · 0 tokens
+          {recipe && layout && (
+            <Pill tone="primary" icon={<Pin />} title={recipe.description}>
+              {recipe.name} • {components.length} components pinned • {layout.provenance.tokensUsed} LLM tokens • {layout.provenance.latencyMs}ms
             </Pill>
           )}
           {filter && (
-            <>
-              <Pill tone="meta" icon={<LayoutGrid />}>
-                voice filter: {filter.join(", ")}
-              </Pill>
-              <button type="button" className="text-primary hover:underline" onClick={() => setFilter(null)}>
-                clear
+            <span className="inline-flex h-6 items-center gap-1.5 rounded-pill border border-meta/40 bg-meta/12 pr-1 pl-2 font-mono text-[11px] leading-none whitespace-nowrap text-meta">
+              <LayoutGrid className="size-3 shrink-0" />
+              <span className="truncate">voice filter: {filter.join(", ")}</span>
+              <button
+                type="button"
+                onClick={() => setFilter(null)}
+                aria-label="Clear voice filter"
+                title="Clear voice filter"
+                className="grid size-4 place-items-center rounded-full text-meta/80 hover:bg-meta/25 hover:text-text"
+              >
+                <X className="size-3" />
               </button>
-            </>
+            </span>
           )}
         </div>
       )}

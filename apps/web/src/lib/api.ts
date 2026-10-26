@@ -133,7 +133,8 @@ export interface TelemetryStats {
   totalRequests: number;
   totalTokens: number;
   zeroTokenRequests: number;
-  estimatedSavings: { tokens: number; ms: number };
+  estimatedSavings: { tokens: number; ms: number; usd?: number };
+  pricing?: { usdPer1MTokens: number };
   tier2Baseline: { tokens: number; ms: number };
   tiers: Record<string, { requests: number; avgLatencyMs: number; totalTokens: number; byProvider: Record<string, number> }>;
   subscribers: number;
@@ -146,6 +147,7 @@ export interface HealthResponse {
   forceLocal: boolean;
   providers: Array<{ id: string; label: string; hasKey: boolean }>;
   mcp: { transport: string; servers: Array<{ name: string; ok: boolean; tools?: number }> };
+  github?: { origin: string | null; ghInstalled: boolean; ghAuthenticated: boolean; account: string | null; prOnApprove: boolean; prBase: string };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -188,7 +190,7 @@ export const api = {
   hover: (body: { tenantId: string; entityId: string; entityType?: EntityType }) => request<HoverResponse>("/api/hover", { method: "POST", body: JSON.stringify(body) }),
   correlate: (body: { tenantId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
   remediate: (body: { tenantId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
-  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject" }) =>
+  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean }) =>
     request<ApproveResponse>("/api/approve", { method: "POST", body: JSON.stringify(body) }),
   voiceSteer: (body: { tenantId?: string; text?: string; audioBase64?: string; mimeType?: string }) =>
     request<VoiceResponse>("/api/voice-steer", { method: "POST", body: JSON.stringify(body) }),

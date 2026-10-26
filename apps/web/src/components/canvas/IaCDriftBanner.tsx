@@ -29,7 +29,7 @@ export function IaCDriftBannerCard({ props, provenance, repaired }: { props: Pro
         </Pill>
       }
     >
-      <div className="mb-2 flex flex-wrap gap-x-3 text-[11px] text-muted">
+      <div className="mb-1.5 flex flex-wrap gap-x-3 text-[11px] text-muted">
         <span>
           RG <span className="font-mono text-text">{props.resourceGroup}</span>
         </span>
@@ -96,7 +96,7 @@ export function IaCDriftBannerCard({ props, provenance, repaired }: { props: Pro
         </div>
       </div>
 
-      <div className="mt-2.5 flex items-center gap-1.5">
+      <div className="mt-2 flex items-center gap-1.5">
         <Button size="xs" variant="outline" icon={<GitCompareArrows />} onClick={() => setShowDiff((v) => !v)}>
           {showDiff ? "Hide diff" : "View Diff"}
         </Button>

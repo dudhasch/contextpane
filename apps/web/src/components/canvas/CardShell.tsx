@@ -26,9 +26,9 @@ export function CardShell({ type, icon, title, state, statePill, provenance, rep
       id={`canvas-${type}`}
       data-component={type}
       style={{ ["--flash-color" as string]: "var(--color-primary)" }}
-      className={`card animate-fade-in ${flashing ? "animate-flash ring-1 ring-primary" : ""}`}
+      className={`card scroll-mt-2 animate-fade-in ${flashing ? "animate-pulse-ring ring-1 ring-primary" : ""}`}
     >
-      <header className="mb-2.5 flex items-center gap-2">
+      <header className="mb-2 flex items-center gap-2">
         <span className="text-primary [&>svg]:size-4">{icon}</span>
         <h3 className="text-[13px] font-semibold">{title}</h3>
         {statePill ?? (state ? <Pill tone={tone}>{state}</Pill> : null)}
