@@ -41,7 +41,7 @@ function chainSteps(): ChainStep[] {
     { provider: providers.openWeight.id, modelId: models.openWeightGlimmer, hasKey: providers.openWeight.hasKey },
     { provider: "fireworks", modelId: models.fireworksGlimmer, hasKey: providers.fireworks.hasKey },
     { provider: "baseten", modelId: models.basetenGlimmer, hasKey: providers.baseten.hasKey },
-    { provider: "meta", modelId: models.metaGlimmer, hasKey: providers.meta.hasKey },
+    { provider: "meta", modelId: models.metaHover, hasKey: providers.meta.hasKey },
   ];
 }
 
@@ -89,9 +89,25 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
           { role: "user", content: JSON.stringify(userPayload) },
         ],
         tool,
-        { timeoutMs: config.timeouts.hoverMs, temperature: 0, maxTokens: 1200 },
+        {
+          timeoutMs: step.provider === "meta" ? config.timeouts.metaHoverMs : config.timeouts.hoverMs,
+          temperature: 0,
+          maxTokens: 1500,
+          reasoningEffort: config.reasoning.hover,
+        },
       );
-      const parsed = HoverDiagnosticArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
+      const raw = parseToolArguments(result.argumentsRaw);
+      let parsed = HoverDiagnosticArgsSchema.safeParse(raw);
+      // One malformed field (e.g. errorCodeTranslation sent as a string) should not cost the whole popover:
+      // swap the failing top-level fields for the deterministic ones and validate again.
+      if (!parsed.success && raw && typeof raw === "object") {
+        const repaired: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+        for (const issue of parsed.error.issues) {
+          const key = issue.path[0];
+          if (typeof key === "string") repaired[key] = (deterministic as Record<string, unknown>)[key];
+        }
+        parsed = HoverDiagnosticArgsSchema.safeParse(repaired);
+      }
       if (!parsed.success) throw new InvalidSchemaError("hover diagnostic failed validation", formatIssues(parsed.error));
       return { args: parsed.data, usage: result.usage };
     });

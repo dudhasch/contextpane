@@ -9,8 +9,8 @@
     all the orchestrator runs every tier on the deterministic local engine, so the demo works offline.
 
     Primary stack (first-class with only a Meta key and the Modal sandbox):
-      Meta Model API   https://api.meta.ai/v1   muse-glimmer-30b (1A), muse-spark-1.3-contributor (1B),
-                                                muse-spark-1.3 (2), muse-wonder-1.0 + muse-code (3A), muse-voice-transcribe
+      Meta Model API   https://api.meta.ai/v1   muse-spark-1.3 (1A, 1B, 2), muse-wonder-1.0 (3A; muse-code when served),
+                                                muse-voice-transcribe-1.0
       Modal            Tier 3B pre-flight sandbox web endpoint; optional vLLM muse-glimmer-30b (open weights)
       RunPod           optional vLLM muse-glimmer-30b pod (scripts/Start-RunPodGlimmer.ps1)
     Optional drop-in overrides when their keys arrive:
@@ -140,7 +140,7 @@ $config['CTX_MODAL_SANDBOX_ENABLED'] = if ($config['CTX_MODAL_SANDBOX_URL']) { '
 
 $openWeightUrl = @($config['CTX_OPEN_WEIGHT_BASE_URL'], $config['MODAL_INFERENCE_BASE_URL'], $config['RUNPOD_VLLM_BASE_URL']) | Where-Object { $_ } | Select-Object -First 1
 $summary = [pscustomobject]@{
-    'Meta Model API'  = "$($config['META_API_BASE_URL'])  key=$(Protect-Secret $config['META_API_KEY'])  glimmer=$($config['CTX_MODEL_META_GLIMMER']) catalog=$($config['CTX_MODEL_META_SPARK_CONTRIBUTOR']) spark=$($config['CTX_MODEL_META_SPARK']) wonder=$($config['CTX_MODEL_META_WONDER']) code=$($config['CTX_MODEL_META_CODE'])"
+    'Meta Model API'  = "$($config['META_API_BASE_URL'])  key=$(Protect-Secret $config['META_API_KEY'])  hover=$($config['CTX_MODEL_META_HOVER']) catalog=$($config['CTX_MODEL_META_CATALOG']) spark=$($config['CTX_MODEL_META_SPARK']) wonder=$($config['CTX_MODEL_META_WONDER']) code=$($config['CTX_MODEL_META_CODE'])"
     'Modal sandbox'   = "enabled=$($config['CTX_MODAL_SANDBOX_ENABLED']) url=$($config['CTX_MODAL_SANDBOX_URL']) token=$(Protect-Secret $config['CTX_MODAL_SANDBOX_TOKEN'])"
     'Open weights'    = "$(if ($openWeightUrl) { $openWeightUrl } else { '(not set: Tier 1A/1B use the Meta API)' })  model=$($config['CTX_MODEL_OPEN_WEIGHT_GLIMMER'])  key=$(Protect-Secret $config['CTX_OPEN_WEIGHT_API_KEY'])"
     'Baseten'         = "$($config['BASETEN_BASE_URL'])  key=$(Protect-Secret $config['BASETEN_API_KEY'])  spark=$($config['CTX_MODEL_BASETEN_SPARK'])  (optional override)"

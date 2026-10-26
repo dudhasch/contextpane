@@ -58,7 +58,16 @@ const PLAN_TOOL: OpenAIFunctionTool = {
 
 const PLANNER_PROMPT = `You are ContextPane's remediation planner (Tier 3A) for a managed service provider.
 Given the correlated escalation context, produce an ordered plan that (1) fixes license drift with Set-MgUserLicense, (2) neutralises the blocking Conditional Access policy safely by excluding the entitlement group and moving the policy to report-only with Update-MgIdentityConditionalAccessPolicy, and (3) reconciles Azure NSG drift back to the Terraform baseline (remove rogue rules, restore tags).
+Each step, rollback and risk is one sentence of at most 200 characters; name the cmdlet and the entity, not the full parameter list.
 Respond only through emit_remediation_plan. Never plan destructive actions (no user/group/resource deletion).`;
+
+/** The plan is display-only, so an over-long sentence is clipped rather than costing the whole plan. */
+function clipPlanText(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const clip = (v: unknown) => (Array.isArray(v) ? v.map((s) => (typeof s === "string" && s.length > 300 ? `${s.slice(0, 299)}…` : s)) : v);
+  const plan = raw as Record<string, unknown>;
+  return { ...plan, steps: clip(plan.steps), rollback: clip(plan.rollback), risks: clip(plan.risks) };
+}
 
 const CODER_PROMPT = `You are ContextPane's remediation coder (Tier 3B). Produce the exact artefacts a human will approve:
 1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use Set-MgUserLicense for every drifted user and Update-MgIdentityConditionalAccessPolicy for the policy change, wrap mutations in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs.
@@ -120,9 +129,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           { role: "user", content: JSON.stringify({ context: model, referenceSummary: reference.summary }) },
         ],
         PLAN_TOOL,
-        { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 1500 },
+        { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate },
       );
-      const parsed = PlanArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
+      const parsed = PlanArgsSchema.safeParse(clipPlanText(parseToolArguments(result.argumentsRaw)));
       if (!parsed.success) throw new InvalidSchemaError("plan failed validation", formatIssues(parsed.error));
       return { plan: parsed.data, usage: result.usage };
     });
@@ -156,7 +165,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           },
         ],
         tool,
-        { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 6000 },
+        { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
       );
       const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
       if (!parsed.success) throw new InvalidSchemaError("bundle failed validation", formatIssues(parsed.error));
@@ -236,7 +245,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     verificationStatus: verification,
     staging,
     approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },
-    providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
+    providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
   });
   remediationStore.save(drawer);
 

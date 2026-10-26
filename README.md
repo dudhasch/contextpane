@@ -9,8 +9,8 @@ ContextPane takes a commercial ERP escalation ticket, correlates it live against
 (licenses, Conditional Access, sign-in logs) and Azure (NSG drift vs. Terraform), and
 renders the answer as **Zod-validated UI components, never chat prose**. A 4-tier compute
 router makes sure the cheapest possible path answers each request: a pinned View Recipe
-costs **0 tokens and <150 ms**, an inline hover costs one `muse-glimmer-30b` call, and
-only an explicit *Generate Fix* click escalates to `muse-wonder` + `muse-code` with a
+costs **0 tokens and <150 ms**, an inline hover costs one `muse-glimmer-30b` / `muse-spark-1.3` call, and
+only an explicit *Generate Fix* click escalates to `muse-wonder-1.0` with a
 verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 
 ---
@@ -60,10 +60,10 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 ┌────────────────────────── apps/orchestrator (:4000) ─────────────────────────┐
 │                          4-Tier Meta Model Router                            │
 │  Tier 0  recipe hydrate    0 tokens   in-process MCP binding      <150 ms    │
-│  Tier 1A hover             Modal/RunPod vLLM → Meta API (muse-glimmer-30b)   │
-│  Tier 1B catalog           Modal/RunPod vLLM → Meta spark-1.3-contributor    │
+│  Tier 1A hover             glimmer-30b on Modal/RunPod → Meta spark-1.3      │
+│  Tier 1B catalog           glimmer-30b on Modal/RunPod → Meta spark-1.3      │
 │  Tier 2  correlate         Meta API muse-spark-1.3 (escalation)              │
-│  Tier 3A/3B remediate      Meta API muse-wonder-1.0 + muse-code              │
+│  Tier 3A/3B remediate      Meta API muse-wonder-1.0 (muse-code if served)    │
 │          └─ pre-flight: Modal sandbox → pwsh AST + terraform fmt/validate    │
 │          └─ stage: git worktree branch fix/<ticket>-nsg-drift                │
 │  Voice   voice-steer       muse-voice-transcribe → intent → layout filter    │
@@ -84,11 +84,11 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 | Tier | Endpoint | What happens | Model / provider chain |
 |---|---|---|---|
 | **0** | `GET /api/recipe/:id/hydrate?tenantId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. Measured: 2–11 ms server time. | — |
-| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight `muse-glimmer-30b` on Modal / RunPod vLLM → Meta API `muse-glimmer-30b` |
-| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Open-weight vLLM on Modal / RunPod → Meta API `muse-spark-1.3-contributor` |
-| **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` |
-| **3A / 3B** | `POST /api/remediate` | `muse-wonder` plans, `muse-code` emits the PowerShell + Terraform bundle, pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0` + `muse-code`, Modal `validate_remediation` |
-| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe` + `muse-spark-1.3` |
+| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight `muse-glimmer-30b` on Modal / RunPod vLLM → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`) |
+| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Open-weight vLLM on Modal / RunPod → Meta API `muse-spark-1.3` (`minimal`) |
+| **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
+| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
+| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe-1.0` + `muse-spark-1.3` |
 
 **Primary stack: Meta Model API + Modal.** A `META_API_KEY` alone (plus the optional Modal
 sandbox URL) is a complete, first-class configuration: providers without a key are left out
@@ -281,10 +281,40 @@ POST /api/approve                                          OK              51 - 
 The first `/api/remediate` on a machine takes ~30 s while `terraform init` downloads the
 azurerm provider into `.contextpane/tf-validate`; every later run validates in ~0.5 s.
 
-Not yet exercised: the live provider calls (no Meta / Baseten / Fireworks keys were
-available while building), `LIVE_CLOUD_MODE=true` against the seeded tenant, and the
-deployed Modal sandbox. All three paths are typed, timeout-bounded and fall back to the
-deterministic engine on failure.
+## Verified behaviour (live: Meta Model API + seeded lab tenant)
+
+Same smoke test with `META_API_KEY` set and `LIVE_CLOUD_MODE=true` against
+`c4a8shili.onmicrosoft.com`:
+
+```
+Endpoint                                                   Status       Latency(ms) Tier    Provider Model           Tokens Schema
+GET /api/health                                            OK                    60 -       -        -                    0 PASS
+GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK     11176 (srv 11169) Tier 0  local    deterministic        0 PASS
+POST /api/hover                                            OK     15166 (srv 15156) Tier 1A meta     muse-spark-1.3    4154 PASS
+POST /api/hover                                            OK       8704 (srv 8702) Tier 1A meta     muse-spark-1.3    3751 PASS
+POST /api/correlate                                        OK     14715 (srv 14711) Tier 1B meta     muse-spark-1.3   12796 PASS
+POST /api/voice-steer                                      OK             2 (srv 0) Voice   local    deterministic        0 PASS
+POST /api/remediate                                        OK     22982 (srv 22974) Tier 3B meta     muse-wonder-1.0  13357 PASS
+POST /api/approve                                          OK                  3143 -       -        -                    0 PASS
+GET /api/telemetry/stats                                   OK                     1 -       -        -                    0 PASS
+```
+
+The model calls themselves take ~2 s (hover), ~7-8 s (layout) and ~14 s (plan + bundle);
+the rest of each latency is the live Graph/Az gather, whose sign-in query always spends its
+6 s budget before falling back to the seeded timeline. What the live Meta Model API taught
+the router:
+
+- It only accepts `tool_choice: "auto"`; a named function choice is HTTP 400. The client
+  sends `"auto"` with the single tool and an explicit "call this tool" instruction to Meta,
+  and downgrades any other provider the first time it returns that 400.
+- `muse-spark-1.3` and `muse-wonder-1.0` are reasoning models: reasoning tokens count against
+  `max_tokens` (a 6000-token cap once ended mid-preamble with `finish_reason: length`), so
+  every tier sends `reasoning_effort` (`CTX_META_REASONING_*`) and leaves headroom.
+- `muse-glimmer-30b` and `muse-code` are not served, and the voice model is
+  `muse-voice-transcribe-1.0`; the startup `GET /models` check swaps in the stand-ins.
+
+Not yet exercised: the deployed Modal sandbox and open-weight endpoints, and audio
+transcription. All are typed, timeout-bounded and fall back on failure.
 
 ---
 

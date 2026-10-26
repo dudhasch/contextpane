@@ -15,6 +15,7 @@ build/
 # runtime state
 data/recipes.json
 data/remediations/
+data/router-debug.jsonl
 .contextpane/
 *.log
 

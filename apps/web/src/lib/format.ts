@@ -53,12 +53,12 @@ export const TIER_COLOR: Record<RouterTier, string> = {
 /** How each tier routes on the Meta Model API + Modal stack (HUD tier pill and router savings panel). */
 export const TIER_ROUTE: Record<RouterTier, { label: string; route: string }> = {
   "Tier 0": { label: "Tier 0 · Recipe / SSE", route: "0 tokens · Local" },
-  "Tier 1A": { label: "Tier 1A · Hover", route: "muse-glimmer-30b · Meta / Modal" },
-  "Tier 1B": { label: "Tier 1B · Catalog", route: "muse-spark-1.3-contributor · Meta / Modal" },
+  "Tier 1A": { label: "Tier 1A · Hover", route: "muse-glimmer-30b · Modal → muse-spark-1.3 · Meta" },
+  "Tier 1B": { label: "Tier 1B · Catalog", route: "muse-glimmer-30b · Modal → muse-spark-1.3 · Meta" },
   "Tier 2": { label: "Tier 2 · Correlate", route: "muse-spark-1.3 · Meta API" },
-  "Tier 3A": { label: "Tier 3 · Remediate", route: "muse-wonder + muse-code · Modal Verified" },
-  "Tier 3B": { label: "Tier 3 · Remediate", route: "muse-wonder + muse-code · Modal Verified" },
-  Voice: { label: "Voice · Steer", route: "muse-voice-transcribe → muse-spark · Meta API" },
+  "Tier 3A": { label: "Tier 3 · Remediate", route: "muse-wonder-1.0 · Meta · Modal Verified" },
+  "Tier 3B": { label: "Tier 3 · Remediate", route: "muse-wonder-1.0 · Meta · Modal Verified" },
+  Voice: { label: "Voice · Steer", route: "muse-voice-transcribe-1.0 → muse-spark-1.3 · Meta API" },
 };
 
 export function tierRouteLabel(tier: RouterTier): string {

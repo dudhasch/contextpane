@@ -21,7 +21,7 @@ export class InvalidSchemaError extends Error {
     message: string,
     public readonly issues: string[],
   ) {
-    super(message);
+    super(issues.length ? `${message}: ${issues.slice(0, 3).join("; ")}` : message);
     this.name = "InvalidSchemaError";
   }
 }

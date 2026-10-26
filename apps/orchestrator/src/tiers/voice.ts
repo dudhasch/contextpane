@@ -81,7 +81,7 @@ export async function voiceSteer(input: VoiceInput): Promise<VoiceResult> {
           { role: "user", content: JSON.stringify({ transcript, currentTenantId: input.tenantId ?? null, deterministicGuess: intent }) },
         ],
         tool,
-        { timeoutMs: config.timeouts.voiceMs, temperature: 0, maxTokens: 400 },
+        { timeoutMs: config.timeouts.voiceMs, temperature: 0, maxTokens: 1200, reasoningEffort: "minimal" },
       );
       const parsed = SteerLayoutArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
       if (!parsed.success) throw new InvalidSchemaError("steer intent failed validation", formatIssues(parsed.error));

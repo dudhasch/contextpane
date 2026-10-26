@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import type { RouterTelemetry } from "@contextpane/catalog";
 import { app } from "./app.ts";
 import { config, describeConfig, providers } from "./config.ts";
+import { resolveMetaModels } from "./router/meta-models.ts";
 import { telemetry } from "./telemetry.ts";
 
 /**
@@ -45,3 +46,13 @@ const keyed = Object.values(providers).filter((p) => p.hasKey).map((p) => p.id);
 console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
 console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
 console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
+
+if (!config.forceLocal) {
+  resolveMetaModels()
+    .then((r) => {
+      if (!r) return;
+      for (const s of r.substituted) console.log(`  [meta] ${s.configured} is not served → ${s.using}`);
+      if (r.missing.length) console.warn(`  [meta] not served and no stand-in: ${r.missing.join(", ")}`);
+    })
+    .catch((error) => console.warn(`  [meta] model check skipped: ${error instanceof Error ? error.message : String(error)}`));
+}

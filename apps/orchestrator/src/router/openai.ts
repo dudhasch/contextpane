@@ -1,5 +1,10 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { OpenAIFunctionTool } from "@contextpane/catalog";
-import type { ProviderConfig } from "../config.ts";
+import { config, type ProviderConfig } from "../config.ts";
+
+/** CTX_ROUTER_DEBUG=1 appends every model answer (no headers, no keys) to data/router-debug.jsonl. */
+const DEBUG_DIR = config.dataDir;
 
 /**
  * Minimal OpenAI-compatible chat client with forced function calling.
@@ -66,10 +71,26 @@ function authHeader(provider: ProviderConfig): Record<string, string> {
   return provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {};
 }
 
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
 export interface ChatOptions {
   timeoutMs: number;
   temperature?: number;
+  /** Includes reasoning tokens on reasoning models, so leave headroom above the visible answer. */
   maxTokens?: number;
+  /** Sent to the Meta Model API only (muse-spark / muse-wonder are reasoning models). */
+  reasoningEffort?: ReasoningEffort;
+}
+
+/**
+ * Providers that reject a named tool_choice. The Meta Model API only accepts
+ * `"auto"` (HTTP 400 otherwise); any other provider answering that way is added
+ * on its first 400 and served with `"auto"` from then on.
+ */
+const autoToolChoiceOnly = new Set<string>(["meta"]);
+
+function rejectsNamedToolChoice(error: unknown): boolean {
+  return error instanceof ProviderHttpError && error.status === 400 && /tool_choice/i.test(error.message);
 }
 
 export async function chatWithForcedTool(
@@ -83,23 +104,36 @@ export async function chatWithForcedTool(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const started = performance.now();
-  try {
+  const post = async (named: boolean): Promise<Response> => {
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeader(provider) },
       body: JSON.stringify({
         model,
-        messages,
+        // With "auto" the single tool is still the only way to answer; say so explicitly.
+        messages: named ? messages : [...messages, { role: "system", content: `Answer by calling the ${tool.function.name} tool exactly once. Do not reply with text.` }],
         tools: [tool],
-        tool_choice: { type: "function", function: { name: tool.function.name } },
+        tool_choice: named ? { type: "function", function: { name: tool.function.name } } : "auto",
         temperature: options.temperature ?? 0.1,
         max_tokens: options.maxTokens ?? 4096,
+        ...(provider.id === "meta" && options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
         stream: false,
       }),
       signal: controller.signal,
     });
-    const latencyMs = Math.round(performance.now() - started);
     if (!response.ok) throw new ProviderHttpError(provider.id, response.status, await response.text());
+    return response;
+  };
+  try {
+    let response: Response;
+    try {
+      response = await post(!autoToolChoiceOnly.has(provider.id));
+    } catch (error) {
+      if (autoToolChoiceOnly.has(provider.id) || !rejectsNamedToolChoice(error)) throw error;
+      autoToolChoiceOnly.add(provider.id);
+      response = await post(false);
+    }
+    const latencyMs = Math.round(performance.now() - started);
     const json = (await response.json()) as ChatCompletionResponse;
     const choice = json.choices?.[0];
     const call = choice?.message?.tool_calls?.[0]?.function;
@@ -109,6 +143,13 @@ export async function chatWithForcedTool(
     if (!argumentsRaw && choice?.message?.content) {
       argumentsRaw = choice.message.content;
       toolName = tool.function.name;
+    }
+    if (process.env.CTX_ROUTER_DEBUG) {
+      mkdirSync(DEBUG_DIR, { recursive: true });
+      appendFileSync(
+        join(DEBUG_DIR, "router-debug.jsonl"),
+        `${JSON.stringify({ at: new Date().toISOString(), provider: provider.id, model, tool: tool.function.name, toolName, finishReason: choice?.finish_reason ?? null, usage: json.usage, latencyMs, argumentsRaw })}\n`,
+      );
     }
     if (!argumentsRaw) throw new Error(`${provider.id}: response contained no tool call`);
     return {

@@ -59,6 +59,11 @@ const envInt = (key: string, fallback: number): number => {
   const n = Number.parseInt(env(key), 10);
   return Number.isFinite(n) ? n : fallback;
 };
+const EFFORTS = ["minimal", "low", "medium", "high"] as const;
+const envEffort = (key: string, fallback: (typeof EFFORTS)[number]): (typeof EFFORTS)[number] => {
+  const v = env(key).toLowerCase();
+  return (EFFORTS as readonly string[]).includes(v) ? (v as (typeof EFFORTS)[number]) : fallback;
+};
 const envFloat = (key: string, fallback: number): number => {
   const n = Number.parseFloat(env(key));
   return Number.isFinite(n) && n >= 0 ? n : fallback;
@@ -133,11 +138,14 @@ export const models = {
   basetenGlimmer: env("CTX_MODEL_BASETEN_GLIMMER", "muse-glimmer-30b"),
   metaSpark: env("CTX_MODEL_META_SPARK", "muse-spark-1.3"),
   metaSparkContributor: env("CTX_MODEL_META_SPARK_CONTRIBUTOR", "muse-spark-1.3-contributor"),
+  /** Tier 1B on the Meta API. muse-spark-1.3 at minimal effort hydrates the layout in ~8 s; -contributor needs ~22 s. */
+  metaCatalog: env("CTX_MODEL_META_CATALOG", "muse-spark-1.3"),
   metaWonder: env("CTX_MODEL_META_WONDER", "muse-wonder-1.0"),
   metaCode: env("CTX_MODEL_META_CODE", "muse-code"),
-  metaGlimmer: env("CTX_MODEL_META_GLIMMER", "muse-glimmer-30b"),
-  metaVoice: env("CTX_MODEL_META_VOICE", "muse-voice-transcribe"),
-} as const;
+  /** Tier 1A on the Meta API (muse-glimmer-30b is open-weight only, not served there). */
+  metaHover: env("CTX_MODEL_META_HOVER", "muse-spark-1.3"),
+  metaVoice: env("CTX_MODEL_META_VOICE", "muse-voice-transcribe-1.0"),
+};
 
 export const config = {
   port: envInt("CTX_ORCHESTRATOR_PORT", 4000),
@@ -148,9 +156,18 @@ export const config = {
   mcpTransport: (env("CTX_MCP_TRANSPORT", "in-process") === "stdio" ? "stdio" : "in-process") as "in-process" | "stdio",
   timeouts: {
     hoverMs: envInt("CTX_HOVER_TIMEOUT_MS", 2500),
+    /** The Meta Model API's reasoning models answer a hover in ~1.5-2.5 s even at reasoning_effort=minimal. */
+    metaHoverMs: envInt("CTX_META_HOVER_TIMEOUT_MS", 5000),
     correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
+  },
+  /** reasoning_effort per tier on the Meta Model API (minimal | low | medium | high). */
+  reasoning: {
+    hover: envEffort("CTX_META_REASONING_HOVER", "minimal"),
+    catalog: envEffort("CTX_META_REASONING_CATALOG", "minimal"),
+    correlate: envEffort("CTX_META_REASONING_CORRELATE", "low"),
+    remediate: envEffort("CTX_META_REASONING_REMEDIATE", "low"),
   },
   modal: {
     /** On whenever a sandbox URL is set; CTX_MODAL_SANDBOX_ENABLED=false is an explicit opt-out. */

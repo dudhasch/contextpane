@@ -53,7 +53,7 @@ function chainSteps(): ChainStep[] {
   return [
     { provider: providers.openWeight.id, modelId: models.openWeightCatalog, hasKey: providers.openWeight.hasKey, tier: "Tier 1B" },
     { provider: "baseten", modelId: models.basetenSpark, hasKey: providers.baseten.hasKey, tier: "Tier 1B" },
-    { provider: "meta", modelId: models.metaSparkContributor, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
+    { provider: "meta", modelId: models.metaCatalog, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
     { provider: "meta", modelId: models.metaSpark, hasKey: providers.meta.hasKey, tier: "Tier 2" },
   ];
 }
@@ -62,9 +62,10 @@ function chainSteps(): ChainStep[] {
  * Tier 1B / Tier 2 — ticket correlation and layout hydration.
  * Promise.all over the 3 MCP servers → forced hydrate_contextpane_layout.
  * Tier 1B (catalog hydration): open-weight vLLM on Modal / RunPod, Baseten
- * muse-spark-open-1026 when keyed, then Meta API muse-spark-1.3-contributor.
- * Tier 2 (cross-MCP correlation): Meta API muse-spark-1.3 when Tier 1B fails or
- * returns an invalid layout. Last resort is deterministic AST hydration. Every
+ * muse-spark-open-1026 when keyed, then Meta API CTX_MODEL_META_CATALOG
+ * (muse-spark-1.3 at minimal reasoning effort).
+ * Tier 2 (cross-MCP correlation): Meta API muse-spark-1.3 at low effort when
+ * Tier 1B fails or returns an invalid layout. Last resort is deterministic AST hydration. Every
  * component is Zod-validated and any gap is repaired locally.
  */
 export async function correlate(input: CorrelateInput, sink?: ProgressSink): Promise<CorrelateResult> {
@@ -113,7 +114,12 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
             { role: "user", content: JSON.stringify(payload) },
           ],
           tool,
-          { timeoutMs: config.timeouts.correlateMs, temperature: 0, maxTokens: 6000 },
+          {
+            timeoutMs: config.timeouts.correlateMs,
+            temperature: 0,
+            maxTokens: 12000,
+            reasoningEffort: step.tier === "Tier 2" ? config.reasoning.correlate : config.reasoning.catalog,
+          },
         );
         const raw = parseToolArguments(result.argumentsRaw);
         const parsed = HydrateLayoutArgsSchema.safeParse(raw);
