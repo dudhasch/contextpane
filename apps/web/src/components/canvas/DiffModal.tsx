@@ -1,5 +1,5 @@
 import { GitCompareArrows, ShieldAlert, Wrench, X } from "lucide-react";
-import type { RogueSecurityRule } from "@contextpane/catalog";
+import { formatSourceRef, type RogueSecurityRule } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { CodeBlock } from "../ui/CodeBlock";
@@ -27,7 +27,9 @@ export function DiffModal() {
   const setOpen = useWorkbench((s) => s.setDiffOpen);
   const layout = useWorkbench((s) => s.layout);
   const remediate = useWorkbench((s) => s.remediate);
+  const card = useWorkbench((s) => s.diffCard);
   if (!open) return null;
+  if (card === "EntraSignInTimeline" || card === "IntuneDriftCard") return <BaselineDiffModal card={card} />;
   const banner = layout?.components.find((c) => c.type === "IaCDriftBanner");
   const props = banner?.type === "IaCDriftBanner" ? banner.props : null;
   const exposed = props ? exposedRules(props.rogueSecurityRules) : [];
@@ -49,8 +51,8 @@ export function DiffModal() {
         {props && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <Pill tone="muted">azure-live (−)</Pill>
-            <Pill tone="muted">
-              {props.terraformFile} @ {props.gitBranch} (+)
+            <Pill tone="muted" title="Terraform resource block the live NSG drifted from">
+              {props.sourceRef ? formatSourceRef(props.sourceRef) : props.terraformFile} @ {props.gitBranch} (+)
             </Pill>
             <Pill tone={props.state === "critical" ? "critical" : "warning"} icon={<GitCompareArrows />}>
               {props.driftState === "drift-detected" ? "DRIFT DETECTED" : "IN SYNC"}
@@ -80,6 +82,70 @@ export function DiffModal() {
             <CodeBlock code={props.hclDiff} render={(wrap) => <DiffView diff={props.hclDiff} maxHeight="max-h-[62vh]" wrap={wrap} className="pt-8" />} />
           ) : (
             <div className="text-sm text-muted">No IaC component on the canvas yet.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * CodeLens → golden baseline: the live Conditional Access / Intune configuration (−) against
+ * the golden-tenant JSON in this repository (+), with the drifted lines named on top.
+ */
+function BaselineDiffModal({ card }: { card: "EntraSignInTimeline" | "IntuneDriftCard" }) {
+  const setOpen = useWorkbench((s) => s.setDiffOpen);
+  const layout = useWorkbench((s) => s.layout);
+  const remediate = useWorkbench((s) => s.remediate);
+  const component = layout?.components.find((c) => c.type === card);
+  const props = component?.type === "EntraSignInTimeline" || component?.type === "IntuneDriftCard" ? component.props : null;
+  const rows =
+    component?.type === "EntraSignInTimeline"
+      ? component.props.policies.flatMap((p) => p.drift.map((d) => ({ name: `${p.displayName.replace("[ContextPane-Demo] ", "")} · ${d.field}`, golden: d.expected, live: d.actual, ref: d.sourceRef })))
+      : component?.type === "IntuneDriftCard"
+        ? component.props.settings.filter((s) => s.status !== "in-sync").map((s) => ({ name: s.settingName, golden: s.golden, live: s.live, ref: s.sourceRef }))
+        : [];
+  const diff = props?.baselineDiff ?? "";
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-canvas/70 backdrop-blur-[2px]" onClick={() => setOpen(false)}>
+      <div className="w-[900px] max-w-[95vw] animate-fade-in card shadow-popover" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2">
+          <GitCompareArrows className="size-4 shrink-0 text-primary" />
+          <h2 className="min-w-0 truncate text-base font-semibold whitespace-nowrap">{card === "IntuneDriftCard" ? "Intune vs golden baseline" : "Conditional Access vs golden baseline"}</h2>
+          <button type="button" onClick={() => setOpen(false)} className="ml-auto shrink-0 text-faint hover:text-text" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Pill tone="muted">tenant-live (−)</Pill>
+          <Pill tone="muted">{props?.sourceRef ? `${formatSourceRef(props.sourceRef)} @ ${props.sourceRef.ref}` : "golden-tenant/"} (+)</Pill>
+          <Pill tone={diff ? "warning" : "healthy"} icon={<GitCompareArrows />}>
+            {diff ? `${rows.length} DRIFTED` : "IN SYNC"}
+          </Pill>
+          {diff && (
+            <Button size="sm" variant="meta" icon={<Wrench />} className="ml-auto" onClick={() => { setOpen(false); void remediate(); }}>
+              Generate Fix &amp; Stage PR
+            </Button>
+          )}
+        </div>
+        {rows.length > 0 && (
+          <ul className="mt-3 space-y-0.5 rounded-md border border-border-subtle px-3 py-2 text-[11.5px]">
+            {rows.map((r) => (
+              <li key={r.name} className="flex items-baseline gap-2">
+                <span className="min-w-0 truncate">{r.name}</span>
+                <span className="shrink-0 font-mono text-critical">{r.live}</span>
+                <span className="shrink-0 text-faint">≠</span>
+                <span className="shrink-0 font-mono text-healthy">{r.golden}</span>
+                {r.ref && <span className="ml-auto shrink-0 font-mono text-[10.5px] text-faint" title={r.ref.file}>{formatSourceRef({ ...r.ref, file: r.ref.file.split("/").pop()! })}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-3">
+          {diff ? (
+            <CodeBlock code={diff} render={(wrap) => <DiffView diff={diff} maxHeight="max-h-[56vh]" wrap={wrap} className="pt-8" />} />
+          ) : (
+            <div className="text-sm text-muted">The live configuration matches the golden baseline.</div>
           )}
         </div>
       </div>

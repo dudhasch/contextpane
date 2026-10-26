@@ -160,6 +160,49 @@ async function stageNow(bundle: StagingBundle): Promise<{ staging: StagingInfo |
   }
 }
 
+/**
+ * Emergency break-glass: after the live write, commit the state it produced on top of the
+ * remediation's staged commit, on the same canonical fix/* branch, so Git records exactly
+ * what the hotfix changed and the PR (when one is opened) carries both commits.
+ */
+export function reconcileStagedBranch(staging: StagingInfo, files: Array<{ path: string; content: string }>, message: string): Promise<{ staging: StagingInfo; log: string[] }> {
+  const next = stagingQueue.then(() => reconcileNow(staging, files, message));
+  stagingQueue = next.catch(() => {});
+  return next;
+}
+
+async function reconcileNow(staging: StagingInfo, files: Array<{ path: string; content: string }>, message: string): Promise<{ staging: StagingInfo; log: string[] }> {
+  const worktreeDir = join(config.stagingDir, `${staging.branchName.replace(/[\\/]/g, "_")}-reconcile`);
+  mkdirSync(config.stagingDir, { recursive: true });
+  if (existsSync(worktreeDir)) {
+    await git(["worktree", "remove", "--force", worktreeDir], REPO_ROOT);
+    rmSync(worktreeDir, { recursive: true, force: true });
+  }
+  await git(["worktree", "prune"], REPO_ROOT);
+  try {
+    // Build on this remediation's own commit, even if a later run has moved the branch since.
+    await must(["worktree", "add", "-B", staging.branchName, worktreeDir, staging.commitSha ?? staging.branchName], REPO_ROOT);
+    for (const f of files) {
+      mkdirSync(join(worktreeDir, f.path, ".."), { recursive: true });
+      writeFileSync(join(worktreeDir, f.path), f.content.endsWith("\n") ? f.content : `${f.content}\n`, "utf8");
+    }
+    await must(["add", "-A"], worktreeDir);
+    await must(["commit", "-q", "-m", message], worktreeDir);
+    const sha = await must(["rev-parse", "HEAD"], worktreeDir);
+    const changed = (await must(["show", "--name-only", "--format=", "HEAD"], worktreeDir)).split("\n").filter(Boolean);
+    return {
+      staging: { ...staging, commitSha: sha, filesChanged: [...new Set([...staging.filesChanged, ...changed])] },
+      log: [`Reconcile commit ${sha.slice(0, 7)} on ${staging.branchName}: ${changed.join(", ")}`],
+    };
+  } catch (error) {
+    return { staging, log: [`Reconcile commit failed: ${error instanceof Error ? error.message : String(error)}`] };
+  } finally {
+    await git(["worktree", "remove", "--force", worktreeDir], REPO_ROOT);
+    rmSync(worktreeDir, { recursive: true, force: true });
+    await git(["worktree", "prune"], REPO_ROOT);
+  }
+}
+
 /* ------------------------------ GitHub (gh CLI) ----------------------------- */
 
 export interface GitHubStatus {

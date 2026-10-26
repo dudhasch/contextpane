@@ -10,9 +10,10 @@
     GET /api/audit and GET /api/telemetry/stats for one scenario, then prints a formatted table with
     status, latency, router tier/provider and a schema verdict.
 
-    With LIVE_CLOUD_MODE=true the approval writes the scenario's lab objects (license extension,
-    Conditional Access or Intune); the reset-drift check right after it puts them back, so a run
-    leaves the lab drifted.
+    With LIVE_CLOUD_MODE=true a -Mode break-glass approval writes the scenario's lab objects (license
+    extension, Conditional Access, Intune, and INC-4092's NSG over ARM) and commits a reconcile
+    commit on the fix branch; the reset-drift check right after it puts them back, so a run leaves
+    the lab drifted. -Mode gitops writes nothing live and re-runs the pre-flight instead.
 
     Schema checks mirror packages/catalog: component types must be inside the allow-list, every
     component carries an id + props, the scenario's cards are all present, hover popovers carry
@@ -33,6 +34,9 @@ param(
     [string]$BaseUrl = $(if ($env:CTX_ORCHESTRATOR_URL) { $env:CTX_ORCHESTRATOR_URL } else { 'http://127.0.0.1:4000' }),
     [ValidateSet('INC-4092', 'INC-4099', 'ANOM-LIC-101', 'ANOM-CA-204', 'ANOM-INT-309')]
     [string]$ScenarioId = 'INC-4092',
+    # break-glass: live write + reconcile commit + convergence. gitops: no live write, pre-flight re-run, approval.state 'staged'.
+    [ValidateSet('break-glass', 'gitops')]
+    [string]$Mode = 'break-glass',
     [switch]$SkipRemediate,
     [int]$TimeoutSec = 180
 )
@@ -186,8 +190,21 @@ $null = Invoke-Check -Name correlate -Method POST -Path '/api/correlate' -Body @
     foreach ($t in $ScenarioCards[$ScenarioId]) { if ($types -notcontains $t) { $i += "missing $t" } }
     foreach ($c in $r.layout.components | Where-Object { $ScenarioCards[$ScenarioId] -contains $_.type }) {
         if (@($c.triggeredBy).Count -lt 1) { $i += "$($c.type) has no triggeredBy" }
+        foreach ($ptr in $c.dataPtrs.PSObject.Properties.Value) { if ($ptr -notlike "ptr://$($ScenarioId.ToLower())/*") { $i += "$($c.type) pointer $ptr" } }
+        if (@($c.dataPtrs.PSObject.Properties).Count -lt 1) { $i += "$($c.type) has no dataPtrs" }
+        # Line provenance: the NSG block, the CA-204 golden policy, the Intune golden setting.
+        if (($c.type -in 'IaCDriftBanner', 'IntuneDriftCard' -or $ScenarioId -eq 'ANOM-CA-204') -and $c.props.sourceRef.startLine -lt 1) { $i += "$($c.type) has no sourceRef" }
     }
+    if ($r.context.dataPlane -and @($r.context.dataPlane.rejected).Count) { $i += "model pointers replaced: $($r.context.dataPlane.rejected -join '; ')" }
     if (-not $r.layout.provenance.validated -and $r.layout.provenance.repaired.Count -eq 0) { $i += 'provenance.validated false without repair' }
+    $i
+}
+
+$null = Invoke-Check -Name dataplane -Method GET -Path "/api/dataplane/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    if (@($r.datasets).Count -lt 1) { $i += 'no datasets published' }
+    foreach ($d in $r.datasets) { if ($d.aggregates.PSObject.Properties.Name -contains 'upn') { $i += "$($d.ptr) aggregates upn" } }
     $i
 }
 
@@ -237,13 +254,21 @@ if (-not $SkipRemediate) {
     if ($rem) {
         $v = $rem.drawer.verificationStatus
         Write-Host "  pre-flight: $($v.verdict)  ast=$($v.astCheckPassed) whatIf=$($v.whatIfSafe) fmt=$($v.terraformFmtPassed) validate=$($v.terraformValidatePassed) sandbox=$($v.sandboxProvider) $($v.validationLatencyMs)ms  branch=$($rem.drawer.staging.branchName)" -ForegroundColor DarkGray
-        $null = Invoke-Check -Name approve -Method POST -Path '/api/remediate/approve' -Body @{ remediationId = $rem.drawer.remediationId } -Schema {
+        $null = Invoke-Check -Name "approve:$Mode" -Method POST -Path '/api/remediate/approve' -Body @{ remediationId = $rem.drawer.remediationId; mode = $Mode } -Schema {
             param($r)
             $i = @()
-            if ($r.drawer.approval.state -notin @('approved', 'simulated', 'executed')) { $i += "approval.state $($r.drawer.approval.state)" }
-            if (-not $r.convergence) { $i += 'no convergence pushed' }
-            elseif ($r.convergence.scenarioId -ne $ScenarioId) { $i += "convergence for $($r.convergence.scenarioId)" }
-            elseif ($ScenarioId -eq 'INC-4092' -and @($r.convergence.remediatedUpns).Count -lt 1) { $i += 'convergence lists no users' }
+            if ($r.drawer.approval.mode -ne $Mode) { $i += "approval.mode $($r.drawer.approval.mode)" }
+            if ($Mode -eq 'gitops') {
+                if ($r.drawer.approval.state -ne 'staged') { $i += "approval.state $($r.drawer.approval.state) != staged" }
+                if ($r.convergence) { $i += 'GitOps must not converge the canvas' }
+                if (-not ($r.drawer.executionLog -match '^Pre-flight re-run')) { $i += 'no pre-flight re-run' }
+            } else {
+                if ($r.drawer.approval.state -notin @('approved', 'simulated', 'executed')) { $i += "approval.state $($r.drawer.approval.state)" }
+                if (-not ($r.drawer.staging.filesChanged -match 'reconciled-state\.json$')) { $i += 'no reconcile commit' }
+                if (-not $r.convergence) { $i += 'no convergence pushed' }
+                elseif ($r.convergence.scenarioId -ne $ScenarioId) { $i += "convergence for $($r.convergence.scenarioId)" }
+                elseif ($ScenarioId -eq 'INC-4092' -and @($r.convergence.remediatedUpns).Count -lt 1) { $i += 'convergence lists no users' }
+            }
             $i
         }
         $null = Invoke-Check -Name reset -Method POST -Path '/api/lab/reset-drift' -Body @{ scenarioId = $ScenarioId } -Schema {

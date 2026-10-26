@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTwoFilesPatch } from "diff";
-import type { AzurePolicyState, HostPool, RogueSecurityRule, Severity, TagDrift } from "@contextpane/catalog";
+import type { AzurePolicyState, HostPool, RogueSecurityRule, Severity, SourceRef, TagDrift } from "@contextpane/catalog";
 import { parseNsgResources, renderNsgHcl, ruleSignature, type NsgRule, type NsgState, type ParsedNsg } from "./hcl.ts";
-import { fetchAzContextLive, fetchNsgLive } from "./live.ts";
+import { deleteNsgRuleLive, fetchAzContextLive, fetchNsgLive, patchNsgTagsLive, putNsgRuleLive } from "./live.ts";
 import { getManifestAzure, getManifestTenant, isLiveCloudMode, resolveIacDir, type ManifestAzureEstate, type ManifestAzureTenant } from "./shared.ts";
 
 export type IacSource = "live-azure" | "seeded-manifest";
@@ -19,6 +19,8 @@ export interface IacResult<T> {
 
 const LIVE_CAPABLE_TENANTS = new Set(["tenant-contoso-01"]);
 const LIVE_TIMEOUT_MS = Number.parseInt(process.env.CTX_AZ_TIMEOUT_MS ?? "25000", 10);
+/** One ARM write including its long-running operation (NSG rule PUT/DELETE take a few seconds). */
+const WRITE_TIMEOUT_MS = 60_000;
 
 async function withSource<T>(tenantId: string, live: () => Promise<T>, fallback: () => T): Promise<IacResult<T>> {
   const started = performance.now();
@@ -58,7 +60,7 @@ type AzureTenant = ManifestAzureTenant & { azure: ManifestAzureEstate };
 export function getTerraformBaseline(tenant: AzureTenant): TerraformBaseline {
   const dir = resolveIacDir();
   const file = join(dir, tenant.azure.terraformFile);
-  const content = readFileSync(file, "utf8");
+  const content = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   const nsg = parseNsgResources(content).find((n) => n.name === tenant.azure.nsg.name);
   if (!nsg) throw new Error(`NSG ${tenant.azure.nsg.name} not found in ${tenant.azure.terraformFile}`);
   return { file, relativePath: `demo-iac/${tenant.azure.terraformFile}`, content, nsg };
@@ -89,6 +91,8 @@ export interface NsgDrift {
   subscriptionId: string;
   gitBranch: string;
   terraformFile: string;
+  /** Where the drifted resource is declared: the NSG resource block in the .tf file. */
+  sourceRef: SourceRef;
   driftState: "in-sync" | "drift-detected";
   tagDrift: TagDrift[];
   rogueSecurityRules: RogueSecurityRule[];
@@ -196,6 +200,7 @@ export function computeDrift(tenantId: string, tenant: AzureTenant, expected: Pa
     subscriptionId: tenant.subscriptionId,
     gitBranch: tenant.azure.gitBranch,
     terraformFile: baselinePath,
+    sourceRef: { file: baselinePath, ...expected.lines, ref: tenant.azure.gitBranch },
     driftState: hasDrift ? "drift-detected" : "in-sync",
     tagDrift,
     rogueSecurityRules: rogue,
@@ -244,6 +249,58 @@ export const azureIacService = {
     const baseline = getTerraformBaseline(tenant);
     const state = await azureIacService.getNsgState(tenantId);
     return { ...state, data: computeDrift(tenantId, tenant, baseline.nsg, state.data, baseline.relativePath) };
+  },
+
+  /**
+   * Break-glass write behind Approve (state "remediated"): the live NSG is put back to the
+   * Terraform baseline (rogue rules deleted, missing ones re-created, tags restored).
+   * Reset Drift ("drifted") re-asserts the seeded drift from demo-lab-manifest.json.
+   * Writes run one after another; ARM serialises operations on one NSG anyway.
+   */
+  async setNsgState(tenantId: string, state: "remediated" | "drifted"): Promise<NsgWriteResult> {
+    const started = performance.now();
+    const tenant = getManifestAzure(tenantId);
+    const { resourceGroup } = tenant.azure;
+    const nsgName = tenant.azure.nsg.name;
+    const baseline = getTerraformBaseline(tenant);
+    const target: NsgState = state === "remediated" ? baseline.nsg : manifestNsgState(tenant);
+    const done = (source: NsgWriteResult["source"], results: NsgWriteResult["results"], fallbackReason?: string): NsgWriteResult => ({
+      source,
+      latencyMs: Math.round(performance.now() - started),
+      results,
+      ...(fallbackReason ? { fallbackReason } : {}),
+    });
+    if (!isLiveCloudMode()) return done("simulated", [], "LIVE_CLOUD_MODE=false");
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return done("simulated", [], `${tenantId} is manifest-only`);
+    let live: NsgState;
+    try {
+      live = await fetchNsgLive(resourceGroup, nsgName, tenant.subscriptionId, LIVE_TIMEOUT_MS);
+    } catch (error) {
+      return done("simulated", [], error instanceof Error ? error.message : String(error));
+    }
+    const targetByName = new Map(target.rules.map((r) => [r.name, r]));
+    const liveByName = new Map(live.rules.map((r) => [r.name, r]));
+    const ops: Array<{ id: string; run: () => Promise<number> }> = [];
+    if (state === "remediated") {
+      for (const r of live.rules.filter((x) => !targetByName.has(x.name))) {
+        ops.push({ id: `delete ${r.name}`, run: () => deleteNsgRuleLive(tenant.subscriptionId, resourceGroup, nsgName, r.name, WRITE_TIMEOUT_MS) });
+      }
+    }
+    for (const r of target.rules.filter((x) => !liveByName.has(x.name) || ruleSignature(liveByName.get(x.name)!) !== ruleSignature(x))) {
+      ops.push({ id: `put ${r.name}`, run: () => putNsgRuleLive(tenant.subscriptionId, resourceGroup, nsgName, r, WRITE_TIMEOUT_MS) });
+    }
+    if (JSON.stringify(Object.entries(live.tags).sort()) !== JSON.stringify(Object.entries(target.tags).sort())) {
+      ops.push({ id: "tags", run: () => patchNsgTagsLive(tenant.subscriptionId, resourceGroup, nsgName, target.tags, WRITE_TIMEOUT_MS) });
+    }
+    const results: NsgWriteResult["results"] = [];
+    for (const op of ops) {
+      try {
+        results.push({ id: op.id, ok: true, status: await op.run() });
+      } catch (error) {
+        results.push({ id: op.id, ok: false, status: 0, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return done("live-azure", results);
   },
 
   async getResourceInventory(tenantId: string) {
@@ -343,6 +400,14 @@ export const azureIacService = {
     };
   },
 };
+
+/** Outcome of an NSG write: one row per ARM operation (rule delete / put, tag update). */
+export interface NsgWriteResult {
+  source: "live-azure" | "simulated";
+  fallbackReason?: string;
+  latencyMs: number;
+  results: Array<{ id: string; ok: boolean; status: number; error?: string }>;
+}
 
 export interface AvdEstate {
   hostPool: HostPool;

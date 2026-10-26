@@ -1,6 +1,6 @@
-import { ChevronDown, CircleCheckBig, Link2 } from "lucide-react";
+import { ChevronDown, CircleCheckBig, FileCode2, Link2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { CATEGORY_META, type CanvasComponentType, type HealthState } from "@contextpane/catalog";
+import { CATEGORY_META, formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
 import { healthTone } from "@/lib/format";
 import { CAT_CHIP, CAT_TEXT, cardCategory, catStyle } from "@/lib/provenance";
 import { selectConvergence, useWorkbench } from "@/store";
@@ -25,6 +25,8 @@ interface CardShellProps {
   primaryAction?: ReactNode;
   /** Where the data came from (live tenant read or fixture). */
   source?: string;
+  /** Git line provenance of the drifted resource or baseline rule; the badge opens the card's diff. */
+  codeLens?: SourceRef | null;
   tabs: CardTab[];
   children: (tab: string) => ReactNode;
 }
@@ -45,7 +47,8 @@ const shortId = (id: string) => (id.includes("@") ? id.split("@")[0]! : id.repla
  * colour of the left-pane entities that spawned it), compact by default, tabs on
  * expand, a coloured ring while a linked entity is hovered, emerald once remediated.
  */
-export function CardShell({ type, icon, title, state, triggeredBy, summary, primaryAction, source, tabs, children }: CardShellProps) {
+export function CardShell({ type, icon, title, state, triggeredBy, summary, primaryAction, source, codeLens, tabs, children }: CardShellProps) {
+  const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
   const expanded = useExpanded(type);
   const toggle = useWorkbench((s) => s.toggleExpanded);
   const activeTab = useWorkbench((s) => s.cardTab[type]);
@@ -73,7 +76,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
     >
       <header className="flex items-center gap-2">
         <span className={`[&>svg]:size-4 ${converged ? "text-healthy" : CAT_TEXT}`}>{icon}</span>
-        <h3 className="truncate text-[13px] font-semibold">{title}</h3>
+        <h3 className="max-w-[50%] shrink-0 truncate text-[13px] font-semibold">{title}</h3>
         {converged ? (
           <Pill tone="healthy" icon={<CircleCheckBig />} title={`${convergence!.remediationId} · ${convergence!.execution} · converged ${convergence!.convergedAt.slice(11, 19)}Z, 0 LLM tokens`}>
             Compliant / Resolved
@@ -90,6 +93,18 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
               <Link2 className="size-3 shrink-0" />
               <span className="truncate">Triggered by: {triggeredBy.slice(0, 2).map(shortId).join(", ")}{triggeredBy.length > 2 ? ` +${triggeredBy.length - 2}` : ""}</span>
             </span>
+          )}
+          {codeLens && (
+            <button
+              type="button"
+              data-testid="codelens"
+              onClick={() => setDiffOpen(true, type)}
+              title={`${formatSourceRef(codeLens)} @ ${codeLens.ref}: open the diff`}
+              className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-border-subtle px-1.5 font-mono text-[10px] text-faint hover:border-border hover:text-text"
+            >
+              <FileCode2 className="size-3 shrink-0" />
+              <span className="truncate">{formatSourceRef({ ...codeLens, file: codeLens.file.split("/").slice(-2).join("/") })}</span>
+            </button>
           )}
           {source && <span className="shrink-0 font-mono text-[10px] text-faint">{source}</span>}
         </div>

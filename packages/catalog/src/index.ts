@@ -8,3 +8,5 @@ export * from "./tenants.ts";
 export * from "./scenarios.ts";
 export * from "./validate.ts";
 export * from "./actions.ts";
+export * from "./dataplane.ts";
+export * from "./sourceref.ts";

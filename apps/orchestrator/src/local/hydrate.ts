@@ -1,6 +1,9 @@
 import {
+  DATASETS,
   LayoutComponentSchema,
   SCENARIO_REGISTRY,
+  dataPtr,
+  datasetsFor,
   isCanvasComponentType,
   lookupAadsts,
   type CaPolicyInspector,
@@ -159,6 +162,9 @@ export function buildEntraSignInTimeline(ctx: CorrelationContext): EntraSignInTi
     policies: ctx.policies.data.slice(0, 6).map((p) => inspectTicketPolicy(ctx, p, blockedCount(p))),
     microActions: microActions.slice(0, 6),
     state: focusFailure?.blockingPolicyName ? "critical" : failures.length ? "warning" : "healthy",
+    // Ticket policies have no golden-tenant file; only the baseline anomaly carries a CodeLens.
+    sourceRef: null,
+    baselineDiff: "",
   };
 }
 
@@ -186,6 +192,8 @@ function buildCaPostureTimeline(ctx: CorrelationContext): EntraSignInTimeline {
       ...(drifted.length ? [{ id: "generate-fix", label: "Stage CA Fix", kind: "generate-fix" as const, description: "Restore the break-glass exclusion and enforce CA-004", destructive: false }] : []),
     ],
     state: missingExclusion ? "critical" : drifted.length ? "warning" : "healthy",
+    sourceRef: drifted.flatMap((p) => p.drift).find((d) => d.sourceRef)?.sourceRef ?? posture.policies.find((p) => p.sourceRef)?.sourceRef ?? null,
+    baselineDiff: posture.baselineDiff,
   };
 }
 
@@ -217,6 +225,9 @@ export function buildIntuneDriftCard(ctx: CorrelationContext): IntuneDriftCard |
     affectedDeviceCount: d.affectedDeviceCount,
     comparedAgainst: ctx.intune!.source === "live-graph" ? "live-graph" : "fixture",
     state: d.resolved ? "healthy" : drifted.some((s) => s.severity === "critical") || d.affectedDeviceCount > 0 ? "critical" : "warning",
+    // CodeLens: the first setting out of line with the golden baseline (the first one at all once in sync).
+    sourceRef: (d.settings.find((s) => s.status !== "in-sync" && s.sourceRef) ?? d.settings.find((s) => s.sourceRef))?.sourceRef ?? null,
+    baselineDiff: d.baselineDiff,
   };
 }
 
@@ -243,6 +254,7 @@ export function buildIaCDriftBanner(ctx: CorrelationContext): IaCDriftBanner | n
     azurePolicies: ctx.avd?.data.azurePolicies ?? [],
     state: d.severity === "critical" ? "critical" : d.driftState === "drift-detected" ? "warning" : "healthy",
     comparedAgainst: ctx.drift.source === "live-azure" ? "live-azure" : "seeded-manifest",
+    sourceRef: d.sourceRef,
   };
 }
 
@@ -252,22 +264,24 @@ export function buildComponent(type: ComponentType, ctx: CorrelationContext): La
   if (!isCanvasComponentType(type)) return null;
   const id = `${type.replace(/[A-Z]/g, (c, i) => (i ? "-" : "") + c.toLowerCase())}-${ctx.scenarioId.toLowerCase()}`;
   const trigger = triggeredBy(ctx, type);
+  // Each row-set prop records the ptr:// it is bound from (see local/dataplane.ts).
+  const dataPtrs = Object.fromEntries(datasetsFor(type).map((k) => [DATASETS[k].prop, dataPtr(ctx.scenarioId, k)]));
   switch (type) {
     case "LicenseDriftCard": {
       const props = buildLicenseDriftCard(ctx);
-      return props ? { type, id, triggeredBy: trigger, props } : null;
+      return props ? { type, id, triggeredBy: trigger, dataPtrs, props } : null;
     }
     case "EntraSignInTimeline": {
       const props = buildEntraSignInTimeline(ctx);
-      return props ? { type, id, triggeredBy: trigger, props } : null;
+      return props ? { type, id, triggeredBy: trigger, dataPtrs, props } : null;
     }
     case "IntuneDriftCard": {
       const props = buildIntuneDriftCard(ctx);
-      return props ? { type, id, triggeredBy: trigger, props } : null;
+      return props ? { type, id, triggeredBy: trigger, dataPtrs, props } : null;
     }
     case "IaCDriftBanner": {
       const props = buildIaCDriftBanner(ctx);
-      return props ? { type, id, triggeredBy: trigger, props } : null;
+      return props ? { type, id, triggeredBy: trigger, dataPtrs, props } : null;
     }
   }
 }

@@ -9,6 +9,8 @@ import {
   ProviderTelemetrySchema,
   QuickActionSchema,
   SeveritySchema,
+  SourceRefSchema,
+  ExecutionModeSchema,
 } from "./primitives.ts";
 
 /* -------------------------------------------------------------------------- */
@@ -97,6 +99,7 @@ export const PolicyDriftSchema = z.object({
   expected: z.string().describe("Golden baseline value"),
   actual: z.string().describe("Live tenant value"),
   severity: SeveritySchema,
+  sourceRef: SourceRefSchema.optional().describe("Lines of the golden baseline that declare the expected value"),
 });
 export type PolicyDrift = z.infer<typeof PolicyDriftSchema>;
 
@@ -117,6 +120,7 @@ export const CaPolicyInspectorSchema = z.object({
   fixedState: CaPolicyStateSchema.optional(),
   fixedExcludeGroups: z.array(z.string()).max(10).optional(),
   modifiedDateTime: z.string().nullable().default(null),
+  sourceRef: SourceRefSchema.optional().describe("Golden baseline file of the policy, when it has one"),
 });
 export type CaPolicyInspector = z.infer<typeof CaPolicyInspectorSchema>;
 
@@ -137,6 +141,8 @@ export const EntraSignInTimelineSchema = z.object({
   policies: z.array(CaPolicyInspectorSchema).max(6).default([]),
   microActions: z.array(QuickActionSchema).max(6),
   state: HealthStateSchema,
+  sourceRef: SourceRefSchema.nullable().default(null).describe("CodeLens: golden-baseline lines of the first drifted policy setting"),
+  baselineDiff: z.string().default("").describe("Unified diff, live policy (-) vs golden baseline file (+); empty without baseline drift"),
 });
 export type EntraSignInTimeline = z.infer<typeof EntraSignInTimelineSchema>;
 
@@ -162,6 +168,7 @@ export const IntuneSettingDriftSchema = z.object({
   live: z.string().describe("Value Graph reports for the tenant"),
   status: z.enum(["drifted", "conflict", "in-sync"]),
   severity: SeveritySchema,
+  sourceRef: SourceRefSchema.optional().describe("Lines of the golden baseline that declare the setting"),
 });
 export type IntuneSettingDrift = z.infer<typeof IntuneSettingDriftSchema>;
 
@@ -187,6 +194,8 @@ export const IntuneDriftCardSchema = z.object({
   affectedDeviceCount: z.number().int().nonnegative(),
   comparedAgainst: z.enum(["live-graph", "fixture"]),
   state: HealthStateSchema,
+  sourceRef: SourceRefSchema.nullable().default(null).describe("CodeLens: golden-baseline lines of the first drifted or conflicting setting"),
+  baselineDiff: z.string().default("").describe("Unified diff, live Intune configuration (-) vs golden baseline files (+)"),
 });
 export type IntuneDriftCard = z.infer<typeof IntuneDriftCardSchema>;
 
@@ -266,6 +275,7 @@ export const IaCDriftBannerSchema = z.object({
   azurePolicies: z.array(AzurePolicyStateSchema).max(8).default([]),
   state: HealthStateSchema,
   comparedAgainst: z.enum(["live-azure", "seeded-manifest"]),
+  sourceRef: SourceRefSchema.nullable().default(null).describe("CodeLens: lines of the drifted resource block in the Terraform baseline"),
 });
 export type IaCDriftBanner = z.infer<typeof IaCDriftBannerSchema>;
 
@@ -354,7 +364,8 @@ export const ActionApprovalDrawerSchema = z.object({
   verificationStatus: VerificationStatusSchema,
   staging: StagingInfoSchema.nullable(),
   approval: z.object({
-    state: z.enum(["pending", "approved", "rejected", "executed", "simulated"]),
+    state: z.enum(["pending", "approved", "rejected", "executed", "simulated", "staged"]).describe("staged: approved as Pure GitOps, nothing written live"),
+    mode: ExecutionModeSchema.nullable().default(null).describe("How the approval landed; null until approved"),
     requiredIdentity: z.string().describe("Delegated identity that will execute, e.g. cloudadmin@..."),
     approvedBy: z.string().nullable().default(null),
     approvedAt: IsoTimestampSchema.nullable().default(null),

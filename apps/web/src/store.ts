@@ -13,6 +13,7 @@ import {
   type ComponentType,
   type Convergence,
   type EntityType,
+  type ExecutionMode,
   type HoverDiagnosticPopover,
   type Layout,
   type ProvenanceCategory,
@@ -118,6 +119,8 @@ interface WorkbenchState {
 
   /* ui */
   diffOpen: boolean;
+  /** The card whose diff the modal shows: the NSG HCL diff or a golden-baseline JSON diff. */
+  diffCard: CanvasComponentType | null;
   systemOpen: boolean;
   systemTab: SystemTab;
   hotkeysOpen: boolean;
@@ -132,6 +135,8 @@ interface WorkbenchState {
   toasts: Toast[];
   /** Tick in the drawer: push the staged branch and `gh pr create` on approval (needs remote origin + gh auth). */
   openPrOnApprove: boolean;
+  /** Drawer switch: Emergency Break-Glass (live write + reconcile commit) or Pure GitOps (PR only). */
+  executionMode: ExecutionMode;
 
   /* actions */
   boot(): Promise<void>;
@@ -151,7 +156,8 @@ interface WorkbenchState {
   applyIntent(intent: SteerLayoutArgs): Promise<void>;
   setFilter(filter: ComponentType[] | null): void;
   setDrawerOpen(open: boolean): void;
-  setDiffOpen(open: boolean): void;
+  /** Opens the diff of one card (default: the first card on the canvas that has one). */
+  setDiffOpen(open: boolean, card?: CanvasComponentType): void;
   setSystemOpen(open: boolean, tab?: SystemTab): void;
   setHotkeysOpen(open: boolean): void;
   setVoiceOpen(open: boolean): void;
@@ -166,6 +172,7 @@ interface WorkbenchState {
   /** Opens the approval drawer for the scenario on screen (generates the fix first when needed). */
   openRemediation(options?: { tab?: DrawerTab; focusUpn?: string }): void;
   setOpenPrOnApprove(value: boolean): void;
+  setExecutionMode(mode: ExecutionMode): void;
   applyConvergence(scenarioId: string, convergence: Convergence | null): void;
   resetDrift(): Promise<void>;
   loadAudit(): Promise<void>;
@@ -216,6 +223,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   health: null,
 
   diffOpen: false,
+  diffCard: null,
   systemOpen: false,
   systemTab: "savings",
   hotkeysOpen: false,
@@ -227,6 +235,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   stepsDone: {},
   toasts: [],
   openPrOnApprove: false,
+  executionMode: "break-glass",
 
   async boot() {
     telemetryDisposer?.();
@@ -375,7 +384,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ remediateStatus: "loading", remediateProgress: [], drawerOpen: true, approveLog: [] });
     try {
       const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) => set((s) => ({ remediateProgress: [...s.remediateProgress, event] })));
-      set({ drawer: result.drawer, remediateStatus: "ready" });
+      // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
+      set({ drawer: result.drawer, remediateStatus: "ready", executionMode: SCENARIO_REGISTRY[scenarioId].kind === "ticket" ? "break-glass" : "gitops" });
     } catch (error) {
       set({ remediateStatus: "error" });
       get().toast({ tone: "critical", title: "Remediation failed", detail: error instanceof Error ? error.message : String(error) });
@@ -390,12 +400,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         remediationId: drawer.remediationId,
         decision,
         approvedBy: drawer.approval.requiredIdentity,
-        ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove } : {}),
+        ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode } : {}),
       });
       const { executionLog, ...updated } = result.drawer;
       set({ drawer: updated, approveLog: executionLog });
       if (decision === "reject" || !result.convergence) {
-        get().toast({ tone: decision === "reject" ? "warning" : "healthy", title: decision === "reject" ? "Remediation rejected" : `Approved · ${updated.approval.state}`, detail: executionLog[0] });
+        const prUrl = updated.staging?.prUrl;
+        get().toast({
+          tone: decision === "reject" ? "warning" : "healthy",
+          title: decision === "reject" ? "Remediation rejected" : updated.approval.state === "staged" ? `Staged for the pipeline · ${updated.ticketId}` : `Approved · ${updated.approval.state}`,
+          detail: executionLog.find((l) => l.startsWith("Pre-flight re-run")) ?? executionLog[0],
+          ...(prUrl ? { href: prUrl, hrefLabel: `GitHub PR #${prUrl.split("/pull/")[1] ?? ""}` } : {}),
+        });
         return;
       }
       const c = result.convergence;
@@ -463,7 +479,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   setFilter: (filter) => set({ filter }),
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
-  setDiffOpen: (diffOpen) => set({ diffOpen }),
+  setDiffOpen(diffOpen, card) {
+    if (!diffOpen) return set({ diffOpen });
+    const withDiff = (get().layout?.components ?? []).find((c) =>
+      c.type === "IaCDriftBanner" ? Boolean(c.props.hclDiff) : (c.type === "EntraSignInTimeline" || c.type === "IntuneDriftCard") && Boolean(c.props.baselineDiff),
+    );
+    set({ diffOpen, diffCard: card ?? (withDiff && isCanvasComponentType(withDiff.type) ? withDiff.type : null) });
+  },
   setSystemOpen: (systemOpen, tab) => {
     set(tab ? { systemOpen, systemTab: tab } : { systemOpen });
     if (systemOpen && (tab ?? get().systemTab) === "audit") void get().loadAudit();
@@ -506,6 +528,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     else void get().remediate();
   },
   setOpenPrOnApprove: (openPrOnApprove) => set({ openPrOnApprove }),
+  setExecutionMode: (executionMode) => set({ executionMode }),
 
   applyConvergence(scenarioId, convergence) {
     if (!isScenarioId(scenarioId)) return;

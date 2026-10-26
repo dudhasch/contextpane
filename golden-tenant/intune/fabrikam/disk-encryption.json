@@ -1,0 +1,22 @@
+{
+  "name": "Fabrikam-EndpointSecurity-DiskEncryption",
+  "kind": "Endpoint Security",
+  "platforms": "windows10",
+  "settings": {
+    "device_vendor_msft_bitlocker_requiredeviceencryption": "enabled",
+    "device_vendor_msft_bitlocker_encryptionmethodbydrivetype": "xts-aes-256",
+    "device_vendor_msft_bitlocker_allowwarningforotherdiskencryption": "block"
+  },
+  "compliance": {
+    "Fabrikam-Win11-Compliance": {
+      "requireBitLocker": true,
+      "gracePeriodDays": 7
+    }
+  },
+  "assignments": {
+    "Fabrikam-EndpointSecurity-DiskEncryption": [
+      "SG-Fabrikam-Win11-Devices"
+    ],
+    "Fabrikam-Legacy-BitLocker-DeviceConfig": []
+  }
+}

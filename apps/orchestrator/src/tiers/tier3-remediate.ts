@@ -10,10 +10,12 @@ import {
   formatIssues,
   getRemediationBundleToolDefinition,
   parseToolArguments,
+  formatSourceRef,
   zodToToolParameters,
   type ActionApprovalDrawer,
   type AuditEntry,
   type Convergence,
+  type ExecutionMode,
   type OpenAIFunctionTool,
   type RemediationBundleArgs,
   type RouterTelemetry,
@@ -21,12 +23,12 @@ import {
   type VerificationStatus,
 } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
-import { applyScenarioState } from "../local/lab.ts";
+import { applyScenarioState, type LabWriteOutcome } from "../local/lab.ts";
 import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { checkWhatIfSafety, runLocalPreflight } from "../preflight/local.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
-import { githubRepoUrl, openPullRequest, stageRemediationBranch } from "../preflight/staging.ts";
+import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { auditLedger } from "../store/audit.ts";
@@ -203,37 +205,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   }
 
   /* ---- pre-flight ---- */
-  const preflightInput = {
-    powershellScript: bundle.powershellScript,
-    terraformDiff: bundle.terraformDiff,
-    actualHcl: ctx.drift?.data.actualHcl ?? "",
-    expectedHcl: ctx.drift?.data.expectedHcl ?? "",
-    requiredCommands: plan.requiredCommands,
-  };
-  let verification: VerificationStatus;
-  if (modalConfigured()) {
-    report("preflight:start", "Pre-flight in Modal sandbox");
-    try {
-      await modalWarm();
-      verification = await runModalPreflight(preflightInput);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      report("preflight:fallback", `Modal sandbox failed (${reason}) → local pre-flight`);
-      verification = await runLocalPreflight(preflightInput);
-      verification.findings.unshift(
-        /HTTP 400/.test(reason) && !bundle.terraformDiff
-          ? "Modal sandbox needs a redeploy for fixes without Terraform; validated locally"
-          : "Modal sandbox unavailable; validated locally instead",
-      );
-    }
-  } else {
-    report("preflight:start", `Pre-flight: PowerShell AST parse${bundle.terraformDiff ? " + terraform fmt/validate" : ""} (local)`);
-    verification = await runLocalPreflight(preflightInput);
-  }
-  const whatIf = checkWhatIfSafety(bundle.powershellScript);
-  verification.whatIfSafe = whatIf.safe;
-  if (!whatIf.safe) verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
-  report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
+  const verification = await preflight(bundle, ctx, plan, report);
 
   /* ---- stage PR branch ---- */
   report("stage:start", "Staging remediation on a git branch");
@@ -295,6 +267,107 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   return { drawer, telemetry: event };
 }
 
+/**
+ * The verifiable pre-flight: PowerShell AST parse + cmdlet allow-list and, for bundles with
+ * IaC, terraform fmt/validate on the diff applied to the live state. In the warm Modal
+ * sandbox when configured, locally otherwise. Runs at remediation time, and again on a
+ * Pure GitOps approval against the context of that moment.
+ */
+async function preflight(
+  bundle: Pick<RemediationBundleArgs, "powershellScript" | "terraformDiff">,
+  ctx: CorrelationContext,
+  plan: RemediationPlan,
+  report: (step: string, message: string, data?: Record<string, unknown>) => void,
+): Promise<VerificationStatus> {
+  const input = {
+    powershellScript: bundle.powershellScript,
+    terraformDiff: bundle.terraformDiff,
+    actualHcl: ctx.drift?.data.actualHcl ?? "",
+    expectedHcl: ctx.drift?.data.expectedHcl ?? "",
+    requiredCommands: plan.requiredCommands,
+  };
+  let verification: VerificationStatus;
+  if (modalConfigured()) {
+    report("preflight:start", "Pre-flight in Modal sandbox");
+    try {
+      await modalWarm();
+      verification = await runModalPreflight(input);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      report("preflight:fallback", `Modal sandbox failed (${reason}) → local pre-flight`);
+      verification = await runLocalPreflight(input);
+      verification.findings.unshift(
+        /HTTP 400/.test(reason) && !bundle.terraformDiff
+          ? "Modal sandbox needs a redeploy for fixes without Terraform; validated locally"
+          : "Modal sandbox unavailable; validated locally instead",
+      );
+    }
+  } else {
+    report("preflight:start", `Pre-flight: PowerShell AST parse${bundle.terraformDiff ? " + terraform fmt/validate" : ""} (local)`);
+    verification = await runLocalPreflight(input);
+  }
+  const whatIf = checkWhatIfSafety(bundle.powershellScript);
+  verification.whatIfSafe = whatIf.safe;
+  if (!whatIf.safe) verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
+  report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
+  return verification;
+}
+
+/** Lines in this repository that declare what the fix converges to (Terraform block, golden-tenant JSON). */
+function declaredIn(ctx: CorrelationContext | null): string[] {
+  if (!ctx) return [];
+  const refs = [
+    ctx.drift?.data.sourceRef,
+    ...(ctx.caPosture?.data.policies.flatMap((p) => p.drift.map((d) => d.sourceRef)) ?? []),
+    ...(ctx.intune?.data.settings.filter((s) => s.status !== "in-sync").map((s) => s.sourceRef) ?? []),
+  ];
+  return [...new Set(refs.filter((r): r is NonNullable<typeof r> => Boolean(r)).map(formatSourceRef))];
+}
+
+/**
+ * The JSON a break-glass approval commits next to the staged bundle: what was written
+ * live (Graph request bodies, ARM operations, per-object results) and which lines of the
+ * repository declare the state it converged to, so merging the PR leaves Git and the
+ * tenant in agreement.
+ */
+function reconciledState(drawer: ActionApprovalDrawer, write: LabWriteOutcome | null, ctx: CorrelationContext | null) {
+  let graphRequests: unknown = [];
+  try {
+    graphRequests = drawer.graphPatch.trim() ? JSON.parse(drawer.graphPatch) : [];
+  } catch {
+    graphRequests = drawer.graphPatch;
+  }
+  return {
+    scenarioId: drawer.ticketId,
+    tenantId: drawer.tenantId,
+    remediationId: drawer.remediationId,
+    mode: "break-glass",
+    appliedAt: drawer.approval.approvedAt,
+    appliedBy: drawer.approval.approvedBy,
+    outcome: drawer.approval.state,
+    declaredIn: declaredIn(ctx),
+    live: write
+      ? {
+          source: write.source,
+          ...(write.fallbackReason ? { fallbackReason: write.fallbackReason } : {}),
+          summary: write.summary,
+          results: write.results.map((r) => ({ id: r.id, ok: r.ok, status: r.status })),
+        }
+      : { source: "simulated", summary: "LIVE_CLOUD_MODE=false: nothing written live" },
+    graphRequests,
+    ...(write?.arm
+      ? {
+          arm: {
+            resource: ctx?.drift?.data.resourceId ?? null,
+            terraformBlock: ctx?.drift ? formatSourceRef(ctx.drift.data.sourceRef) : null,
+            source: write.arm.source,
+            operations: write.arm.results.map((r) => ({ op: r.id, ok: r.ok, status: r.status })),
+          },
+        }
+      : {}),
+  };
+}
+
 /** The verification fields every audit entry about a remediation carries. */
 function verificationProof(drawer: ActionApprovalDrawer): Pick<AuditEntry, "tenantId" | "ticketId" | "modalSandboxVerified" | "astPass" | "tfValidatePass" | "gitBranch" | "prUrl"> {
   const v = drawer.verificationStatus;
@@ -325,6 +398,12 @@ export interface ApproveInput {
   decision?: "approve" | "reject";
   /** Push the staged branch and `gh pr create` (defaults to CTX_GH_PR_ON_APPROVE). */
   openPullRequest?: boolean;
+  /**
+   * break-glass (default): write the live Graph/ARM resource now, then commit the matching
+   * state to the fix/* branch. gitops: write nothing live; re-run the pre-flight and leave
+   * deployment to the PR pipeline.
+   */
+  mode?: ExecutionMode;
 }
 
 /** One PR title per scenario, so the canonical branch keeps one PR however often the demo runs. */
@@ -398,10 +477,16 @@ export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log
   const files = drawer.staging?.filesChanged ?? [];
   const link = (path: string | undefined) =>
     path ? (repoUrl && drawer.staging ? `[\`${path}\`](${repoUrl}/blob/${drawer.staging.branchName}/${path})` : `\`${path}\``) : null;
+  // demo-iac/main.tf:L43-L84 → the same lines on GitHub (#L43-L84).
+  const lineLink = (ref: string) => {
+    const [path, lines] = ref.split(":");
+    return repoUrl && drawer.staging ? `[\`${ref}\`](${repoUrl}/blob/${drawer.staging.branchName}/${path}#${lines})` : `\`${ref}\``;
+  };
   const scriptPath = files.find((f) => f.endsWith(".ps1"));
   const patchPath = files.find((f) => f.endsWith(".patch"));
-  const graphPath = files.find((f) => f.endsWith(".json"));
+  const graphPath = files.find((f) => f.endsWith("graph-requests.json"));
   const readmePath = files.find((f) => f.endsWith(".md"));
+  const reconciledPath = files.find((f) => f.endsWith("reconciled-state.json"));
   const upns = drawer.affectedEntities.filter((e) => e.type === "upn");
   const policies = drawer.affectedEntities.filter((e) => e.type === "policy");
   const devices = drawer.affectedEntities.filter((e) => e.type === "device");
@@ -493,8 +578,12 @@ export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log
     "```",
     ...(readmePath ? ["", `Runbook: ${link(readmePath)}`] : []),
     "",
+    ...(declaredIn(ctx).length ? ["### Declared in", "", ...declaredIn(ctx).map((r) => `- ${lineLink(r)}`), ""] : []),
     "### Approval & audit",
     "",
+    drawer.approval.mode === "gitops"
+      ? "- 🔀 **Pure GitOps**: nothing was written to Graph or ARM. Merging this PR is the deployment."
+      : `- ⚡ **Emergency Break-Glass**: the live resources were changed on approval; the reconcile commit on this branch records the state they were left in${reconciledPath ? ` (${link(reconciledPath)})` : ""}.`,
     `- Approved by **${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity}** at ${drawer.approval.approvedAt ?? "n/a"} → \`${state}\``,
     `- Remediation \`${drawer.remediationId}\`${drawer.staging?.commitSha ? ` · commit \`${drawer.staging.commitSha.slice(0, 7)}\`` : ""}`,
     ...log.map((l) => `- ${l}`),
@@ -530,6 +619,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   }
 
   const scenarioId = resolveScenarioId(drawer.ticketId);
+  const mode: ExecutionMode = input.mode ?? "break-glass";
   const wantPullRequest = input.openPullRequest ?? config.github.prOnApprove;
   // The PR body quotes the ticket and the convergence names the users: read both before the Graph write invalidates the context.
   const before = await gatherContext(scenarioId).catch(() => null);
@@ -539,36 +629,67 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let state: ActionApprovalDrawer["approval"]["state"] = "approved";
   let execution: Convergence["execution"] = "simulated";
   let writeSummary = "";
-  if (config.liveCloudMode) {
-    if (config.allowExecute) {
-      log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
-      const script = await runApprovedScript(drawer);
-      log.push(...script.log);
-    }
-    const write = await applyScenarioState(scenarioId, "remediated", remediatedUpns);
-    const failed = write.results.filter((r) => !r.ok);
-    writeSummary = write.summary;
-    if (write.source === "live-graph") {
-      log.push(`Graph: ${write.summary} in ${write.latencyMs} ms`);
-      for (const f of failed) log.push(`  ${f.id}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
-      if (!failed.length) {
-        state = "executed";
-        execution = "live-graph";
+  let write: LabWriteOutcome | null = null;
+  let verification = drawer.verificationStatus;
+
+  if (mode === "break-glass") {
+    log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
+    if (config.liveCloudMode) {
+      if (config.allowExecute) {
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
+        const script = await runApprovedScript(drawer);
+        log.push(...script.log);
       }
+      write = await applyScenarioState(scenarioId, "remediated", remediatedUpns);
+      const failed = write.results.filter((r) => !r.ok);
+      writeSummary = write.summary;
+      if (write.source === "live-graph") {
+        log.push(`Graph${write.arm ? " + ARM" : ""}: ${write.summary} in ${write.latencyMs} ms`);
+        for (const f of failed) log.push(`  ${f.id}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
+        if (!failed.length) {
+          state = "executed";
+          execution = "live-graph";
+        }
+      } else {
+        log.push(`Graph write simulated (${write.fallbackReason})`);
+        state = "simulated";
+      }
+      invalidateContext(scenarioId);
     } else {
-      log.push(`Graph write simulated (${write.fallbackReason})`);
       state = "simulated";
+      log.push("Offline mode: approval recorded, execution simulated (no Graph context). Branch stays staged for the PR.");
     }
-    invalidateContext(scenarioId);
   } else {
-    state = "simulated";
-    log.push("Offline mode: approval recorded, execution simulated (no Graph context). Branch stays staged for the PR.");
+    // Pure GitOps: nothing live changes; the warm sandbox re-checks the bundle against the state of this moment.
+    log.push("🔀 Pure GitOps: no Graph or ARM write; the pipeline deploys the staged patch once the PR merges");
+    if (before && plan) {
+      verification = await preflight(drawer, before, plan, () => {});
+      log.push(
+        `Pre-flight re-run: ${verification.verdict} · AST ${fmt(verification.astCheckPassed)}${drawer.terraformDiff ? ` · terraform validate ${fmt(verification.terraformValidatePassed)}` : ""} · ${verification.sandboxProvider} · ${verification.validationLatencyMs} ms`,
+      );
+    }
+    if (verification.verdict === "Verification Failed") throw new Error("Pre-flight re-run failed; nothing staged for the pipeline");
+    state = "staged";
+    execution = "simulated";
+    writeSummary = "GitOps: patch staged for the pipeline";
   }
 
   let updated: ActionApprovalDrawer = {
     ...drawer,
-    approval: { ...drawer.approval, state, approvedBy: input.approvedBy ?? drawer.approval.requiredIdentity, approvedAt: now },
+    verificationStatus: verification,
+    approval: { ...drawer.approval, state, mode, approvedBy: input.approvedBy ?? drawer.approval.requiredIdentity, approvedAt: now },
   };
+
+  /* ---- break-glass: commit what the hotfix changed, so Git does not drift behind the tenant ---- */
+  if (mode === "break-glass" && updated.staging) {
+    const reconciled = await reconcileStagedBranch(
+      updated.staging,
+      [{ path: `demo-iac/remediations/${drawer.ticketId}/reconciled-state.json`, content: JSON.stringify(reconciledState(updated, write, before), null, 2) }],
+      `chore(${drawer.ticketId}): reconcile break-glass hotfix into Git\n\nApplied live by ${updated.approval.approvedBy} at ${now} (${state}).\n${writeSummary}\nDeclared in: ${declaredIn(before).join(", ") || "n/a"}`,
+    );
+    log.push(...reconciled.log);
+    updated = { ...updated, staging: reconciled.staging };
+  }
 
   /* ---- optional: real GitHub PR on the staged branch ---- */
   if (wantPullRequest) {
@@ -579,31 +700,40 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     } else {
       log.push("No staged branch to open a PR from");
     }
+  } else {
+    log.push(`PR not requested: ${updated.staging?.branchName ?? "the fix branch"} stays local`);
   }
 
   remediationStore.save(updated);
   const latencyMs = Math.round(performance.now() - started);
-  const convergence: Convergence = {
-    scenarioId,
-    tenantId: updated.tenantId,
-    remediationId: updated.remediationId,
-    ticketId: updated.ticketId,
-    convergedAt: new Date().toISOString(),
-    latencyMs,
-    prUrl: updated.staging?.prUrl ?? null,
-    gitBranch: updated.staging?.branchName ?? null,
-    execution,
-    remediatedUpns,
-    reclaimedUpns,
-  };
-  convergenceStore.set(convergence);
-  log.push(`Canvas converged via notifications/resources/updated (Tier 0, 0 tokens) · ${latencyMs} ms end to end`);
+  // Only a live write converges the canvas; a staged GitOps patch leaves the drift visible until the pipeline runs.
+  const convergence: Convergence | null =
+    mode === "break-glass"
+      ? {
+          scenarioId,
+          tenantId: updated.tenantId,
+          remediationId: updated.remediationId,
+          ticketId: updated.ticketId,
+          convergedAt: new Date().toISOString(),
+          latencyMs,
+          prUrl: updated.staging?.prUrl ?? null,
+          gitBranch: updated.staging?.branchName ?? null,
+          execution,
+          remediatedUpns,
+          reclaimedUpns,
+        }
+      : null;
+  if (convergence) {
+    convergenceStore.set(convergence);
+    log.push(`Canvas converged via notifications/resources/updated (Tier 0, 0 tokens) · ${latencyMs} ms end to end`);
+  }
   auditLedger.append({
     ...verificationProof(updated),
     actionType: "hitl-approval",
     delegatedIdentity: updated.approval.approvedBy ?? updated.approval.requiredIdentity,
     latencyMs,
-    execution,
+    execution: mode === "gitops" ? "none" : execution,
+    executionMode: mode,
     detail: `${state} · ${writeSummary || updated.title}${updated.staging?.prUrl ? " · PR opened" : ""}`.slice(0, 300),
   });
   telemetry.record({

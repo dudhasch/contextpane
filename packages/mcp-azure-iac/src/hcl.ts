@@ -8,6 +8,8 @@
  * canonical shape so the unified diff is line-stable.
  */
 
+import { lineRangeOfSpan, type LineRange } from "@contextpane/catalog";
+
 export interface NsgRule {
   name: string;
   priority: number;
@@ -103,6 +105,8 @@ function resolveValue(raw: string | undefined, locals: Record<string, Record<str
 
 export interface ParsedNsg extends NsgState {
   terraformLabel: string;
+  /** Lines of the resource block in the .tf file, for line provenance (main.tf:L43-L84). */
+  lines: LineRange;
 }
 
 /** Extract every azurerm_network_security_group from a Terraform source string. */
@@ -143,6 +147,7 @@ export function parseNsgResources(source: string): ParsedNsg[] {
     });
     result.push({
       terraformLabel: label,
+      lines: lineRangeOfSpan(source, block.start, block.end),
       name: attrs.name ?? label,
       resourceGroup: resolveValue(attrs.resource_group_name, locals, resourceGroups),
       location: resolveValue(attrs.location, locals, resourceGroups),

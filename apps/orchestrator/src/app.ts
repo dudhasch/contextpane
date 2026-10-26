@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   CANVAS_COMPONENT_TYPES,
   EntityTypeSchema,
+  ExecutionModeSchema,
   SCENARIO_IDS,
   SCENARIO_REGISTRY,
   TENANT_REGISTRY,
@@ -18,6 +19,7 @@ import {
 } from "@contextpane/catalog";
 import { config, describeConfig, providers } from "./config.ts";
 import { buildScenarioBrief } from "./local/brief.ts";
+import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
 import { applyScenarioState } from "./local/lab.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext, resolveScenarioId } from "./mcp/context.ts";
@@ -123,6 +125,19 @@ app.get("/api/scenarios/:scenarioId/brief", async (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
   const ctx = await gatherContext(scenarioId, { fresh: wantsRefresh(c) });
   return c.json({ brief: buildScenarioBrief(ctx), gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, fallbackReasons: ctx.fallbackReasons });
+});
+
+/** The ptr:// data plane: a scenario's dataset descriptors (what the model sees), and one pointer's rows. */
+app.get("/api/dataplane/:scenarioId", async (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const snapshot = publishDataPlane(await gatherContext(scenarioId));
+  return c.json({ scenarioId, gatheredAt: snapshot.gatheredAt, bytes: snapshot.bytes, datasets: snapshot.descriptors });
+});
+
+app.get("/api/dataplane", (c) => {
+  const ptr = c.req.query("ptr") ?? "";
+  const hit = resolveDataPtr(ptr);
+  return hit.found ? c.json({ ptr, descriptor: hit.descriptor, rows: hit.value }) : c.json({ error: `'${ptr}' is not published; gather its scenario first` }, 404);
 });
 
 app.post("/api/scenarios/:scenarioId/refresh", (c) => {
@@ -280,9 +295,14 @@ const ApproveBodySchema = z.object({
   approvedBy: z.string().optional(),
   decision: z.enum(["approve", "reject"]).optional(),
   openPullRequest: z.boolean().optional(),
+  mode: ExecutionModeSchema.optional(),
 });
 
-/** HITL approval: live Graph writes in LIVE_CLOUD_MODE, optional PR, then a zero-token canvas convergence push. */
+/**
+ * HITL approval. break-glass: live Graph/ARM writes in LIVE_CLOUD_MODE, a reconcile commit on the
+ * fix branch, then a zero-token canvas convergence push. gitops: no live write, a fresh pre-flight,
+ * nothing converges. Either way a PR is opened only when openPullRequest is true.
+ */
 const approveHandler = async (c: Context) => {
   const body = ApproveBodySchema.parse(await c.req.json());
   const { convergence, ...drawer } = await approve(body);

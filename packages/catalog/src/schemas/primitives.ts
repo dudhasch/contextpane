@@ -94,3 +94,40 @@ export type ProvenanceCategory = z.infer<typeof ProvenanceCategorySchema>;
 export const IsoTimestampSchema = z
   .string()
   .describe("ISO-8601 timestamp, UTC, e.g. 2026-10-26T08:02:41Z");
+
+/**
+ * Data-plane pointer: ptr://<scenario>/<plane>/<dataset>. The orchestrator keeps the raw
+ * MCP rows behind it; prompts carry only the pointer and an aggregate descriptor, and the
+ * rows are bound into the layout on the data plane before it reaches the client.
+ */
+export const DataPtrSchema = z
+  .string()
+  .regex(/^ptr:\/\/[a-z0-9-]+\/(entra|intune|iac)\/[a-z0-9-]+$/, "expected ptr://<scenario>/<entra|intune|iac>/<dataset>")
+  .describe("Data-plane pointer, e.g. ptr://inc-4092/entra/users. Copy it verbatim from the dataset descriptor.");
+export type DataPtr = z.infer<typeof DataPtrSchema>;
+
+/** What the model emits in place of a row set: the pointer, never the rows. */
+export const DataPtrRefSchema = z.object({ dataPtr: DataPtrSchema });
+export type DataPtrRef = z.infer<typeof DataPtrRefSchema>;
+
+/** Where a drifted resource or a golden-baseline rule is declared in the repository. */
+export const SourceRefSchema = z.object({
+  file: z.string().describe("Repo-relative path, e.g. demo-iac/main.tf"),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive(),
+  ref: z.string().default("main").describe("Git ref the lines were read from"),
+});
+export type SourceRef = z.infer<typeof SourceRefSchema>;
+
+/** CodeLens label: demo-iac/main.tf:L43-L84 (or :L7 for one line). */
+export function formatSourceRef(ref: Pick<SourceRef, "file" | "startLine" | "endLine">): string {
+  return `${ref.file}:L${ref.startLine}${ref.endLine !== ref.startLine ? `-L${ref.endLine}` : ""}`;
+}
+
+/**
+ * How an approved fix lands. break-glass: write the live Graph/ARM resource now, then
+ * commit the matching state to the canonical fix/* branch. gitops: change nothing live;
+ * stage the patch, re-run the sandbox pre-flight and leave deployment to the pipeline.
+ */
+export const ExecutionModeSchema = z.enum(["break-glass", "gitops"]);
+export type ExecutionMode = z.infer<typeof ExecutionModeSchema>;

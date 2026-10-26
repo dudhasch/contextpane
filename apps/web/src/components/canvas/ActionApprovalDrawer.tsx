@@ -1,5 +1,5 @@
-import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitPullRequest, Rocket, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle } from "lucide-react";
-import type { ActionApprovalDrawer as Drawer } from "@contextpane/catalog";
+import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle, Zap } from "lucide-react";
+import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench, type DrawerTab as Tab } from "@/store";
 import { Button } from "../ui/Button";
@@ -19,7 +19,8 @@ const VERDICT_TONE: Record<Drawer["verificationStatus"]["verdict"], Tone> = {
 /**
  * HITL remediation drawer, the only place anything can be executed from. Two engineer
  * workflows side by side: Path A copies the verified script / patch to run in your own
- * terminal; Path B approves and executes it against the lab through the delegated identity.
+ * terminal; Path B approves it, either as an Emergency Break-Glass (live write through the
+ * delegated identity + reconcile commit) or as Pure GitOps (staged PR + sandbox plan only).
  */
 export function ActionApprovalDrawerSheet() {
   const open = useWorkbench((s) => s.drawerOpen);
@@ -36,6 +37,7 @@ export function ActionApprovalDrawerSheet() {
   const setTab = useWorkbench((s) => s.setDrawerTab);
   const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
   const toast = useWorkbench((s) => s.toast);
+  const mode = useWorkbench((s) => s.executionMode);
   if (!open) return null;
   const prPossible = Boolean(github?.origin && github.ghAuthenticated);
   const copy = async (text: string, what: string) => {
@@ -194,8 +196,23 @@ export function ActionApprovalDrawerSheet() {
             <footer className="shrink-0 space-y-2 border-t border-border p-4" data-testid="path-b">
               <div className="flex items-center gap-2">
                 <span className="rounded bg-healthy/15 px-1.5 font-mono text-[10.5px] text-healthy">PATH B</span>
-                <span className="text-[12px] font-semibold">Approve &amp; Execute in Portal (HITL)</span>
+                <span className="text-[12px] font-semibold">Approve in Portal (HITL)</span>
               </div>
+              <ExecutionModeSwitch drawer={drawer} />
+              <p className="text-[11px] leading-snug text-muted" data-testid="mode-detail">
+                {mode === "break-glass" ? (
+                  <>
+                    Writes the live {drawer.terraformDiff ? "Graph and ARM resources" : "Graph objects"} now as the delegated identity, then commits the resulting state to{" "}
+                    <span className="font-mono text-text">{drawer.staging?.branchName ?? "the fix branch"}</span>
+                    {openPr && prPossible ? " and updates the PR" : ""}.
+                  </>
+                ) : (
+                  <>
+                    Nothing changes live. Re-runs the {drawer.verificationStatus.sandboxProvider === "modal-cloud-sandbox" ? "warm Modal" : "local"} pre-flight ({drawer.terraformDiff ? "terraform validate + " : ""}pwsh AST) and stages{" "}
+                    <span className="font-mono text-text">{drawer.staging?.branchName ?? "the fix branch"}</span> for the pipeline{openPr && prPossible ? " via the PR" : ""}.
+                  </>
+                )}
+              </p>
               <div className="flex items-center justify-between text-[11px] text-muted">
                 <span>
                   Delegated identity <span className="font-mono text-text">{drawer.approval.requiredIdentity}</span>
@@ -231,23 +248,67 @@ export function ActionApprovalDrawerSheet() {
                   <Button
                     variant="healthy"
                     size="md"
-                    icon={<Rocket />}
+                    icon={mode === "break-glass" ? <Zap /> : <GitMerge />}
                     className="flex-1"
                     disabled={drawer.verificationStatus.verdict === "Verification Failed"}
                     onClick={() => void approve("approve")}
                   >
-                    Approve &amp; Execute via Delegated Identity
+                    {mode === "break-glass" ? "Approve · Execute Live & Reconcile" : "Approve · Stage for Pipeline"}
                   </Button>
                 </div>
               ) : (
                 <Button variant="outline" size="md" icon={<Check />} className="w-full" disabled>
-                  {drawer.approval.state === "rejected" ? "Rejected" : `Approved · ${drawer.approval.state}`}
+                  {drawer.approval.state === "rejected" ? "Rejected" : `Approved · ${drawer.approval.state}${drawer.approval.mode ? ` · ${MODE_LABEL[drawer.approval.mode]}` : ""}`}
                 </Button>
               )}
             </footer>
           </>
         )}
       </aside>
+    </div>
+  );
+}
+
+const MODE_LABEL: Record<ExecutionMode, string> = { "break-glass": "Emergency Break-Glass", gitops: "Pure GitOps" };
+
+/**
+ * How the approval lands. Break-glass mutates the live resource now and auto-reconciles Git;
+ * GitOps only stages the patch and the sandbox plan for the pipeline. Locked once approved.
+ */
+function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
+  const selected = useWorkbench((s) => s.executionMode);
+  const setMode = useWorkbench((s) => s.setExecutionMode);
+  const locked = drawer.approval.state !== "pending";
+  const current = locked ? (drawer.approval.mode ?? selected) : selected;
+  const options: Array<{ id: ExecutionMode; icon: React.ReactNode; label: string; hint: string }> = [
+    { id: "break-glass", icon: <Zap />, label: MODE_LABEL["break-glass"], hint: "Direct API + Auto-Reconcile PR" },
+    { id: "gitops", icon: <GitMerge />, label: MODE_LABEL.gitops, hint: "Stage PR & Modal Plan Only" },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Execution mode" className="grid grid-cols-2 gap-1 rounded-md border border-border bg-canvas/60 p-0.5" data-testid="execution-mode">
+      {options.map((o) => {
+        const active = o.id === current;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            data-mode={o.id}
+            disabled={locked}
+            onClick={() => setMode(o.id)}
+            className={`flex min-w-0 items-center gap-2 rounded px-2 py-1 text-left [&>svg]:size-3.5 [&>svg]:shrink-0 ${
+              active ? (o.id === "break-glass" ? "bg-warning/15 text-warning" : "bg-primary/15 text-primary") : "text-muted hover:bg-elevated hover:text-text"
+            } disabled:cursor-default ${locked && !active ? "opacity-40" : ""}`}
+          >
+            {o.icon}
+            <span className="min-w-0">
+              <span className="block truncate text-[11.5px] font-semibold">{o.label}</span>
+              <span className="block truncate text-[10.5px] opacity-80">{o.hint}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

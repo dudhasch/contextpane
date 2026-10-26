@@ -30,7 +30,7 @@ class AuditLedger {
     return this.entries;
   }
 
-  append(input: Omit<AuditEntry, "id" | "timestamp" | "detail" | "execution"> & Partial<Pick<AuditEntry, "detail" | "execution">>): AuditEntry {
+  append(input: Omit<AuditEntry, "id" | "timestamp" | "detail" | "execution" | "executionMode"> & Partial<Pick<AuditEntry, "detail" | "execution" | "executionMode">>): AuditEntry {
     const entries = this.load();
     this.seq += 1;
     const entry = AuditEntrySchema.parse({

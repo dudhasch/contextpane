@@ -1,0 +1,12 @@
+{
+  "name": "EndpointSecurity-Firewall-Prod",
+  "kind": "Endpoint Security",
+  "platforms": "windows10",
+  "technologies": "mdm,microsoftSense",
+  "settings": {
+    "vendor_msft_firewall_mdmstore_domainprofile_enablefirewall": "true",
+    "vendor_msft_firewall_mdmstore_privateprofile_enablefirewall": "true",
+    "vendor_msft_firewall_mdmstore_publicprofile_enablefirewall": "true",
+    "vendor_msft_firewall_mdmstore_publicprofile_defaultinboundaction": "block"
+  }
+}

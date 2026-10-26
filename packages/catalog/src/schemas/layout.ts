@@ -7,7 +7,7 @@ import {
   IntuneDriftCardSchema,
   LicenseDriftCardSchema,
 } from "./components.ts";
-import { IsoTimestampSchema, ProviderIdSchema, RouterTierSchema } from "./primitives.ts";
+import { DataPtrSchema, IsoTimestampSchema, ProviderIdSchema, RouterTierSchema } from "./primitives.ts";
 
 /**
  * The allow-list. Anything not in here cannot be rendered — the canvas has no
@@ -38,14 +38,18 @@ const triggeredBy = z
   .max(8)
   .default([])
   .describe("Ids of the left-pane entities that spawned this card (UPNs, SKUs, policy names, resources)");
+const dataPtrs = z
+  .record(z.string(), DataPtrSchema)
+  .default({})
+  .describe("Prop name → ptr:// URI the data plane bound that prop's rows from");
 
 export const LayoutComponentSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("LicenseDriftCard"), id: componentId, triggeredBy, props: LicenseDriftCardSchema }),
-  z.object({ type: z.literal("EntraSignInTimeline"), id: componentId, triggeredBy, props: EntraSignInTimelineSchema }),
-  z.object({ type: z.literal("IntuneDriftCard"), id: componentId, triggeredBy, props: IntuneDriftCardSchema }),
-  z.object({ type: z.literal("IaCDriftBanner"), id: componentId, triggeredBy, props: IaCDriftBannerSchema }),
-  z.object({ type: z.literal("HoverDiagnosticPopover"), id: componentId, triggeredBy, props: HoverDiagnosticPopoverSchema }),
-  z.object({ type: z.literal("ActionApprovalDrawer"), id: componentId, triggeredBy, props: ActionApprovalDrawerSchema }),
+  z.object({ type: z.literal("LicenseDriftCard"), id: componentId, triggeredBy, dataPtrs, props: LicenseDriftCardSchema }),
+  z.object({ type: z.literal("EntraSignInTimeline"), id: componentId, triggeredBy, dataPtrs, props: EntraSignInTimelineSchema }),
+  z.object({ type: z.literal("IntuneDriftCard"), id: componentId, triggeredBy, dataPtrs, props: IntuneDriftCardSchema }),
+  z.object({ type: z.literal("IaCDriftBanner"), id: componentId, triggeredBy, dataPtrs, props: IaCDriftBannerSchema }),
+  z.object({ type: z.literal("HoverDiagnosticPopover"), id: componentId, triggeredBy, dataPtrs, props: HoverDiagnosticPopoverSchema }),
+  z.object({ type: z.literal("ActionApprovalDrawer"), id: componentId, triggeredBy, dataPtrs, props: ActionApprovalDrawerSchema }),
 ]);
 export type LayoutComponent = z.infer<typeof LayoutComponentSchema>;
 

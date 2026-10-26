@@ -1,11 +1,12 @@
-import type { ComponentType, Layout, RouterTelemetry, ViewRecipe } from "@contextpane/catalog";
-import { contextForModel, gatherContext } from "../mcp/context.ts";
+import { getHydrateLayoutToolDefinition, type ComponentType, type Layout, type RouterTelemetry, type ViewRecipe } from "@contextpane/catalog";
+import { publishDataPlane } from "../local/dataplane.ts";
+import { contextForCorrelation, gatherContext } from "../mcp/context.ts";
 import { buildLayout, scenarioComponents } from "../local/hydrate.ts";
 import { recipeStore } from "../store/recipes.ts";
 import { ZERO_USAGE, estimateTokens, telemetry } from "../telemetry.ts";
 
-/** Approximate size of the hydrate_contextpane_layout tool schema in tokens. */
-const TOOL_SCHEMA_TOKENS = 1800;
+/** Size of the hydrate_contextpane_layout tool schema (row sets as { dataPtr }) in tokens. */
+const TOOL_SCHEMA_TOKENS = estimateTokens(JSON.stringify(getHydrateLayoutToolDefinition()));
 
 export class RecipeNotFoundError extends Error {
   constructor(recipeId: string) {
@@ -57,7 +58,7 @@ export async function hydrateRecipe(recipeId: string, scenarioId: string, option
   );
 
   const baseline = telemetry.baselineTier2();
-  const promptTokens = estimateTokens(JSON.stringify(contextForModel(ctx))) + TOOL_SCHEMA_TOKENS;
+  const promptTokens = estimateTokens(JSON.stringify(contextForCorrelation(ctx, publishDataPlane(ctx).descriptors))) + TOOL_SCHEMA_TOKENS;
   const completionTokens = estimateTokens(JSON.stringify(layout.components));
   const event = telemetry.record({
     requestId,

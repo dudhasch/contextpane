@@ -1,0 +1,12 @@
+{
+  "name": "Intune-Win11-ASR-Baseline",
+  "kind": "Endpoint Security",
+  "platforms": "windows10",
+  "technologies": "mdm,microsoftSense",
+  "settings": {
+    "blockcredentialstealingfromwindowslocalsecurityauthoritysubsystem": "block",
+    "blockexecutablecontentfromemailclientandwebmail": "block",
+    "blockofficeapplicationsfromcreatingexecutablecontent": "block",
+    "useadvancedprotectionagainstransomware": "block"
+  }
+}

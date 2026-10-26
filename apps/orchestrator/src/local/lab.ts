@@ -1,14 +1,16 @@
 import type { ScenarioId } from "@contextpane/catalog";
+import { azureIacService, type NsgWriteResult } from "@contextpane/mcp-azure-iac";
 import { getManifestTenant, msgraphService, type LabLicenseState } from "@contextpane/mcp-msgraph";
 import { SCENARIO_REGISTRY } from "@contextpane/catalog";
 
 /**
- * The lab writes behind Approve & Execute (state "remediated") and Reset Drift
- * (state "drifted"), per scenario. Licensing is modelled in the open extension
- * com.contextpane.licenseState, so no real seat is ever consumed; Conditional
- * Access and Intune changes PATCH the seeded [ContextPane-Demo] objects through
- * the delegated Connect-MgGraph token. Anything the tenant cannot take is
- * reported as simulated, with the reason.
+ * The lab writes behind an Emergency Break-Glass approval (state "remediated") and
+ * Reset Drift (state "drifted"), per scenario. Licensing is modelled in the open
+ * extension com.contextpane.licenseState, so no real seat is ever consumed; Conditional
+ * Access and Intune changes PATCH the seeded [ContextPane-Demo] objects through the
+ * delegated Connect-MgGraph token; INC-4092's NSG is put back to the Terraform baseline
+ * (or the seeded drift) over ARM with the Az token. Anything the tenant cannot take is
+ * reported as simulated, with the reason. A Pure GitOps approval writes nothing here.
  */
 
 export interface LabWriteOutcome {
@@ -19,6 +21,8 @@ export interface LabWriteOutcome {
   results: Array<{ id: string; ok: boolean; status: number; error?: string }>;
   /** One line for the execution log / audit entry. */
   summary: string;
+  /** The ARM side of a scenario with an Azure estate (INC-4092's NSG). */
+  arm?: NsgWriteResult;
 }
 
 /** Upns of the INC-4092 users the demo keeps drifted. */
@@ -34,12 +38,18 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
   switch (scenarioId) {
     case "INC-4092": {
       const targets = upns?.length ? upns : contosoDriftedUpns();
-      const w = await msgraphService.setLicenseExtensionState(tenantId, targets, state);
+      // Graph and ARM are independent writes; the NSG one waits for each long-running operation.
+      const [w, nsg] = await Promise.all([msgraphService.setLicenseExtensionState(tenantId, targets, state), azureIacService.setNsgState(tenantId, state)]);
       const ok = w.results.filter((r) => r.ok).length;
+      const nsgOps = nsg.results.map((r) => r.id).join(", ") || "already at target";
       return {
         ...pick(w),
-        results: w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
-        summary: `${ok}/${w.results.length} users → ${fixed ? "SPE_E5 / Compliant" : "SPE_E3 / Drift_Missing_E5_SKU"}`,
+        results: [
+          ...w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
+          ...nsg.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
+        ],
+        summary: `${ok}/${w.results.length} users → ${fixed ? "SPE_E5 / Compliant" : "SPE_E3 / Drift_Missing_E5_SKU"} · NSG ${nsg.source === "live-azure" ? `(ARM): ${nsgOps}` : `simulated (${nsg.fallbackReason ?? "no Azure context"})`}`,
+        arm: nsg,
       };
     }
     case "ANOM-LIC-101": {

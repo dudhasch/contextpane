@@ -22,6 +22,7 @@ import {
   type IntuneScenarioKey,
   type LicenseAnomalyUser,
 } from "./fixtures.ts";
+import { caBaselineDiff, caDriftSourceRef, caPolicySourceRef, intuneBaselineDiff, intuneSettingSourceRef } from "./golden.ts";
 import {
   GraphHttpError,
   assignDeviceConfigurationLive,
@@ -201,6 +202,8 @@ export interface CaPosture {
   goldenSource: string;
   legacySignIns: SignInSummary[];
   auditEvents: DirectoryAuditEvent[];
+  /** Live policies vs golden-tenant/entra/conditional-access/*.json; empty when none drifted. */
+  baselineDiff: string;
 }
 
 export interface IntuneDrift {
@@ -214,6 +217,8 @@ export interface IntuneDrift {
   affectedDeviceCount: number;
   /** True when the live tenant already matches the golden baseline (the fix was applied). */
   resolved: boolean;
+  /** Live configuration vs the golden-tenant/intune files; empty when in sync. */
+  baselineDiff: string;
 }
 
 /** Outcome of a Conditional Access or Intune write: one row per policy. */
@@ -343,13 +348,19 @@ function inspectCaPolicy(
   live: { id: string; state: CaPolicyInspector["state"]; includeGroups: string[]; excludeGroups: string[]; modifiedDateTime: string | null },
 ): CaPolicyInspector {
   const drift: CaPolicyInspector["drift"] = [];
+  const at = (field: string) => {
+    const ref = caDriftSourceRef(g.key, field);
+    return ref ? { sourceRef: ref } : {};
+  };
   if (live.state !== g.golden.state) {
-    drift.push({ field: "state", expected: g.golden.state, actual: live.state, severity: g.key === "CA-004" ? "high" : "critical" });
+    drift.push({ field: "state", expected: g.golden.state, actual: live.state, severity: g.key === "CA-004" ? "high" : "critical", ...at("state") });
   }
   const missing = g.golden.excludeGroups.filter((x) => !live.excludeGroups.includes(x));
   if (missing.length) {
-    drift.push({ field: "conditions.users.excludeGroups", expected: g.golden.excludeGroups.join(", "), actual: live.excludeGroups.join(", ") || "(none)", severity: "critical" });
+    const field = "conditions.users.excludeGroups";
+    drift.push({ field, expected: g.golden.excludeGroups.join(", "), actual: live.excludeGroups.join(", ") || "(none)", severity: "critical", ...at(field) });
   }
+  const policyRef = caPolicySourceRef(g.key);
   return {
     id: live.id,
     displayName: g.displayName,
@@ -364,13 +375,19 @@ function inspectCaPolicy(
     fixedState: g.golden.state,
     fixedExcludeGroups: [...new Set([...live.excludeGroups, ...g.golden.excludeGroups])],
     modifiedDateTime: live.modifiedDateTime,
+    ...(policyRef ? { sourceRef: policyRef } : {}),
   };
 }
 
 function caPosture(policies: CaPolicyInspector[]): CaPosture {
   const now = Date.now();
+  const drifted = CA_POSTURE.policies.flatMap((g) => {
+    const p = policies.find((x) => x.displayName === g.displayName);
+    return p?.drift.length ? [{ key: g.key, state: p.state, excludeGroups: p.excludeGroups }] : [];
+  });
   return {
     policies,
+    baselineDiff: caBaselineDiff(drifted),
     breakGlassGroup: CA_POSTURE.breakGlassGroup,
     breakGlassAccount: CA_POSTURE.breakGlassAccount,
     goldenSource: CA_POSTURE.goldenSource,
@@ -398,12 +415,12 @@ function caPosture(policies: CaPolicyInspector[]): CaPosture {
 
 const capitalise = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
 
-function intuneDrift(fixture: IntuneScenarioFixture, live: LiveIntuneState | null): IntuneDrift {
+function intuneDrift(key: IntuneScenarioKey, fixture: IntuneScenarioFixture, live: LiveIntuneState | null): IntuneDrift {
   const probe = fixture.live;
   const asrFixed = live && probe.asrPolicy ? live.asrRuleValue === "block" : false;
   const conflictFixed = live ? live.conflictingProfileAssigned === false : false;
   const resolved = Boolean(live) && (!probe.asrPolicy || asrFixed) && conflictFixed;
-  const settings = fixture.settings.map((s): IntuneSettingDrift => {
+  const evaluated = fixture.settings.map((s): IntuneSettingDrift => {
     if (!live) return s;
     if (s.settingId === "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2") {
       const value = live.asrRuleValue ? capitalise(live.asrRuleValue) : s.live;
@@ -411,6 +428,10 @@ function intuneDrift(fixture: IntuneScenarioFixture, live: LiveIntuneState | nul
     }
     if (s.status === "conflict") return conflictFixed ? { ...s, live: s.golden, status: "in-sync" } : s;
     return resolved ? { ...s, live: s.golden, status: "in-sync" } : s;
+  });
+  const settings = evaluated.map((s) => {
+    const ref = intuneSettingSourceRef(s);
+    return ref ? { ...s, sourceRef: ref } : s;
   });
   const policies = fixture.policies.map((p): IntunePolicyRef => {
     const isLive = Boolean(live) && ((p.name === probe.asrPolicy && live!.asrPolicyId) || (p.name === probe.conflictingProfile && live!.conflictingProfileId));
@@ -428,6 +449,7 @@ function intuneDrift(fixture: IntuneScenarioFixture, live: LiveIntuneState | nul
     devices,
     affectedDeviceCount: devices.filter((d) => d.complianceState !== "Compliant").length,
     resolved,
+    baselineDiff: intuneBaselineDiff(key, settings, policies),
   };
 }
 
@@ -834,12 +856,12 @@ export const msgraphService = {
   async getIntuneDrift(key: IntuneScenarioKey): Promise<GraphResult<IntuneDrift>> {
     const done = envelope<IntuneDrift>(performance.now());
     const fixture = INTUNE_SCENARIOS[key];
-    if (!isLiveCloudMode()) return done(intuneDrift(fixture, null), "seeded-manifest");
+    if (!isLiveCloudMode()) return done(intuneDrift(key, fixture, null), "seeded-manifest");
     try {
-      return done(intuneDrift(fixture, await fetchIntuneStateLive(fixture.live, LIVE_TIMEOUT_MS)), "live-graph");
+      return done(intuneDrift(key, fixture, await fetchIntuneStateLive(fixture.live, LIVE_TIMEOUT_MS)), "live-graph");
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      return done(intuneDrift(fixture, null), "seeded-manifest", reason);
+      return done(intuneDrift(key, fixture, null), "seeded-manifest", reason);
     }
   },
 

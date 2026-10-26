@@ -1,10 +1,15 @@
 import {
+  DATASETS,
   HydrateLayoutArgsSchema,
   LayoutSchema,
+  ORCHESTRATOR_PROPS,
+  dataPtr,
+  datasetsFor,
   formatIssues,
   getHydrateLayoutToolDefinition,
   parseToolArguments,
   validateComponents,
+  type CanvasComponentType,
   type ComponentType,
   type Layout,
   type LayoutComponent,
@@ -12,8 +17,9 @@ import {
   type RouterTelemetry,
 } from "@contextpane/catalog";
 import { config, models, providerFor, providers } from "../config.ts";
+import { publishDataPlane, type DataPlaneSnapshot } from "../local/dataplane.ts";
 import { buildComponent, buildLayout, scenarioComponents } from "../local/hydrate.ts";
-import { contextForModel, gatherContext, type CorrelationContext } from "../mcp/context.ts";
+import { contextForCorrelation, gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
@@ -35,6 +41,8 @@ export interface CorrelateResult {
     sources: CorrelationContext["sourcesUsed"];
     scenarioId: string;
     fallbackReasons: string[];
+    /** The ptr:// bypass: datasets published, rows and bytes kept out of the prompt, pointers bound. */
+    dataPlane: { datasets: number; rows: number; bytes: number; bound: number; rejected: string[] };
   };
 }
 
@@ -43,9 +51,9 @@ You receive one scenario (a customer ticket or a proactive tenant anomaly) with 
 Your job: hydrate the operator's canvas by calling hydrate_contextpane_layout exactly once.
 Rules:
 - Emit exactly the components listed in requestedComponents, in that order.
-- Fill every prop strictly from the supplied context. Copy identifiers (UPNs, policy names, rule names, setting names, error codes) verbatim.
+- The context holds no row sets. Each entry in datasets describes one (ptr, card, prop, rowCount, columns, aggregates); for every dataset of a card you emit, set that prop to {"dataPtr": "<ptr>"} copied verbatim. Never write rows, diffs or lists of users, events, devices or rules yourself.
+- Fill the remaining props (headline, state, scalar fields) strictly from the facts and the dataset aggregates. Copy identifiers (policy names, rule names, setting names, error codes) verbatim.
 - Each card's headline is one technical line an engineer can act on (no SLA, cost or marketing language).
-- Leave out LicenseDriftCard.users, EntraSignInTimeline.events and .policies, IntuneDriftCard.devices and .settings, and IaCDriftBanner.hclDiff: the orchestrator copies them verbatim from the MCP data.
 - Never output prose, markdown or components outside the catalog.`;
 
 function chainSteps(): ChainStep[] {
@@ -57,37 +65,43 @@ function chainSteps(): ChainStep[] {
   ];
 }
 
-/**
- * The model reasons about the layout but does not re-type MCP data: every prop it
- * leaves out (license users, sign-in events, the HCL diff) is filled from the
- * deterministic hydrator for the same component before Zod validation. This roughly
- * halves the output tokens of a layout.
- */
-const VERBATIM_PROPS: Partial<Record<ComponentType, string[]>> = {
-  LicenseDriftCard: ["users", "skuPools", "groupErrors"],
-  EntraSignInTimeline: ["events", "policies"],
-  IntuneDriftCard: ["devices", "settings", "policies"],
-  IaCDriftBanner: ["hclDiff", "hostPool", "azurePolicies"],
-};
+export interface PointerBinding {
+  /** Pointers bound to data-plane rows (the model's or, when it left one out, the card's own). */
+  bound: number;
+  /** Pointers the model got wrong (another scenario, another dataset, rows instead of a pointer). */
+  rejected: string[];
+}
 
-function fillVerbatimProps(raw: unknown, ctx: CorrelationContext): unknown {
+/**
+ * The data-plane side of the ptr:// protocol: every dataset prop is bound from the rows
+ * published under the card's own pointer, so whatever the model put there (a pointer, a
+ * wrong pointer, rows) never reaches the client. Props it left out are filled from the
+ * deterministic hydrator, and the orchestrator-owned props (triggeredBy, dataPtrs,
+ * sourceRef) always come from it.
+ */
+export function bindDataPlane(raw: unknown, ctx: CorrelationContext, snapshot: DataPlaneSnapshot): { raw: unknown; binding: PointerBinding } {
+  const binding: PointerBinding = { bound: 0, rejected: [] };
   const components = (raw as { components?: unknown })?.components;
-  if (!Array.isArray(components)) return raw;
-  return {
-    ...(raw as Record<string, unknown>),
-    components: components.map((c: { type?: ComponentType; props?: Record<string, unknown> }) => {
-      const reference = c?.type ? buildComponent(c.type, ctx) : null;
-      if (!reference || !c.props || typeof c.props !== "object") return c;
-      const props = { ...c.props };
-      const verbatim = VERBATIM_PROPS[reference.type] ?? [];
-      // Verbatim MCP data always comes from the hydrator (the model sometimes sends "" instead of omitting it).
-      for (const [key, value] of Object.entries(reference.props)) {
-        if (verbatim.includes(key) || props[key] === undefined || props[key] === null) props[key] = value;
-      }
-      // Provenance links are the orchestrator's, never the model's.
-      return { ...c, triggeredBy: reference.triggeredBy, props };
-    }),
-  };
+  if (!Array.isArray(components)) return { raw, binding };
+  const bound = components.map((c: { type?: ComponentType; props?: Record<string, unknown> }) => {
+    const reference = c?.type ? buildComponent(c.type, ctx) : null;
+    if (!reference || !c.props || typeof c.props !== "object") return c;
+    const props = { ...c.props };
+    for (const key of datasetsFor(reference.type as CanvasComponentType)) {
+      const { prop } = DATASETS[key];
+      const ptr = dataPtr(ctx.scenarioId, key);
+      const sent = props[prop];
+      const sentPtr = sent && typeof sent === "object" && !Array.isArray(sent) ? (sent as { dataPtr?: unknown }).dataPtr : undefined;
+      if (sent !== undefined && sent !== null && sentPtr !== ptr) binding.rejected.push(`${reference.type}.${prop}: ${typeof sentPtr === "string" ? sentPtr : "inline rows"}`);
+      props[prop] = snapshot.rows.has(ptr) ? snapshot.rows.get(ptr) : (reference.props as Record<string, unknown>)[prop];
+      binding.bound++;
+    }
+    for (const [key, value] of Object.entries(reference.props)) {
+      if (props[key] === undefined || props[key] === null || (ORCHESTRATOR_PROPS as readonly string[]).includes(key)) props[key] = value;
+    }
+    return { ...c, triggeredBy: reference.triggeredBy, dataPtrs: reference.dataPtrs, props };
+  });
+  return { raw: { ...(raw as Record<string, unknown>), components: bound }, binding };
 }
 
 /**
@@ -115,6 +129,13 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
     scenarioId: ctx.scenarioId,
   });
   const scenarioCards = scenarioComponents(ctx);
+  const snapshot = publishDataPlane(ctx);
+  const datasetRows = snapshot.descriptors.reduce((n, d) => n + d.rowCount, 0);
+  report("dataplane", `${snapshot.descriptors.length} datasets held under ptr://${ctx.scenarioId.toLowerCase()}/… · ${(snapshot.bytes / 1024).toFixed(1)} KB kept out of the prompt`, {
+    datasets: snapshot.descriptors.map((d) => ({ ptr: d.ptr, rowCount: d.rowCount, bytes: d.bytes })),
+    bytes: snapshot.bytes,
+  });
+  let binding: PointerBinding = { bound: 0, rejected: [] };
   if (sink) {
     // First paint: the compact cards render from the MCP data while the model correlates.
     const firstPaint = buildLayout(ctx, {
@@ -143,7 +164,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
 
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const tool = getHydrateLayoutToolDefinition();
-    const modelContext = contextForModel(ctx);
+    const modelContext = contextForCorrelation(ctx, snapshot.descriptors);
     const payload = {
       tenantId: ctx.tenantId,
       ticketId: ctx.ticketId,
@@ -169,7 +190,8 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
             reasoningEffort: step.tier === "Tier 2" ? config.reasoning.correlate : config.reasoning.catalog,
           },
         );
-        const raw = fillVerbatimProps(parseToolArguments(result.argumentsRaw), ctx);
+        const { raw, binding: stepBinding } = bindDataPlane(parseToolArguments(result.argumentsRaw), ctx, snapshot);
+        binding = stepBinding;
         const parsed = HydrateLayoutArgsSchema.safeParse(raw);
         if (parsed.success) return { components: parsed.data.components, usage: result.usage, partial: false };
         // Salvage valid components even when the envelope fails.
@@ -224,6 +246,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       provenance: { ...provenance, repaired },
     });
     if (repaired.length) report("repair", `Deterministic hydrator rebuilt ${repaired.length} component(s)`, { repaired });
+    report("dataplane:bind", `${binding.bound} ptr:// props bound on the data plane (${datasetRows} rows, 0 model tokens)${binding.rejected.length ? ` · ${binding.rejected.length} model pointer(s) replaced` : ""}`, { ...binding });
   } else {
     layout = buildLayout(ctx, provenance, { components: wanted });
   }
@@ -252,6 +275,13 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
   return {
     layout,
     telemetry: event,
-    context: { gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, sources: ctx.sourcesUsed, fallbackReasons, scenarioId: ctx.scenarioId },
+    context: {
+      gatherLatencyMs: ctx.gatherLatencyMs,
+      transport: ctx.transport,
+      sources: ctx.sourcesUsed,
+      fallbackReasons,
+      scenarioId: ctx.scenarioId,
+      dataPlane: { datasets: snapshot.descriptors.length, rows: datasetRows, bytes: snapshot.bytes, bound: binding.bound, rejected: binding.rejected },
+    },
   };
 }

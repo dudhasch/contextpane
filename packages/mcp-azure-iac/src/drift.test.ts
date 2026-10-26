@@ -2,6 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { parseNsgResources, renderNsgHcl } from "./hcl.ts";
 import { azureIacService } from "./service.ts";
 
+describe("line provenance", () => {
+  test("the NSG drift names the resource block in main.tf", async () => {
+    const baseline = azureIacService.getTerraformBaseline("tenant-contoso-01");
+    const lines = baseline.content.split("\n");
+    expect(lines[baseline.nsg.lines.startLine - 1]).toStartWith('resource "azurerm_network_security_group" "contoso_avd_hostpool"');
+    expect(lines[baseline.nsg.lines.endLine - 1]).toBe("}");
+    const drift = await azureIacService.getNsgDrift("tenant-contoso-01");
+    expect(drift.data.sourceRef).toMatchObject({ file: "demo-iac/main.tf", startLine: baseline.nsg.lines.startLine, endLine: baseline.nsg.lines.endLine });
+  });
+});
+
 describe("hcl subset parser", () => {
   test("parses the Contoso baseline NSG with tags from locals", () => {
     const baseline = azureIacService.getTerraformBaseline("tenant-contoso-01");

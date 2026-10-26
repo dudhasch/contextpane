@@ -28,6 +28,7 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
       state={props.state}
       triggeredBy={triggeredBy}
       source={live ? "live Intune (lab)" : "devices: fixture"}
+      codeLens={props.sourceRef}
       tabs={[
         { id: "settings", label: "Setting-Level Drift Diff", badge: open.length },
         { id: "devices", label: "Affected Devices & Compliance", badge: props.affectedDeviceCount },

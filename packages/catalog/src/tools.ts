@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { HoverDiagnosticPopoverSchema } from "./schemas/components.ts";
-import { HydrateLayoutArgsSchema } from "./schemas/layout.ts";
-import { EntityTypeSchema } from "./schemas/primitives.ts";
+import { DATASETS, datasetsFor } from "./dataplane.ts";
+import {
+  EntraSignInTimelineSchema,
+  HoverDiagnosticPopoverSchema,
+  IaCDriftBannerSchema,
+  IntuneDriftCardSchema,
+  LicenseDriftCardSchema,
+} from "./schemas/components.ts";
+import type { CanvasComponentType } from "./schemas/layout.ts";
+import { DataPtrRefSchema, EntityTypeSchema } from "./schemas/primitives.ts";
 
 /**
  * OpenAI-compatible function-calling tool definitions.
@@ -54,6 +61,39 @@ export function forcedToolChoice(name: string): ForcedToolChoice {
 
 /* ----------------------------- Tier 1B / Tier 2 ---------------------------- */
 
+/** A card's props as the model writes them: every dataset prop is a { dataPtr } reference, sourceRef is the orchestrator's. */
+function modelProps<T extends z.ZodObject>(type: CanvasComponentType, schema: T) {
+  const pointers = Object.fromEntries(
+    datasetsFor(type).map((k) => [DATASETS[k].prop, DataPtrRefSchema.optional().describe(`{ "dataPtr": "ptr://<scenario>/${k}" } from the ${k} descriptor`)]),
+  );
+  const owned = "sourceRef" in schema.shape ? schema.omit({ sourceRef: true } as never) : schema;
+  return owned.extend(pointers);
+}
+
+const modelComponentId = z.string().min(1).describe("Stable id, kebab-case, e.g. license-drift-card-inc-4092");
+
+/**
+ * What Tier 1B / Tier 2 are asked to emit: the four canvas cards with their row sets
+ * replaced by data-plane pointers. The orchestrator binds the rows and validates the
+ * result against HydrateLayoutArgsSchema, so the model never serialises customer data.
+ */
+export const HydrateLayoutModelArgsSchema = z.object({
+  tenantId: z.string().describe("Tenant the layout is for, e.g. tenant-contoso-01"),
+  ticketId: z.string().describe("Scenario that triggered the correlation, e.g. INC-4092 or ANOM-LIC-101"),
+  components: z
+    .array(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("LicenseDriftCard"), id: modelComponentId, props: modelProps("LicenseDriftCard", LicenseDriftCardSchema) }),
+        z.object({ type: z.literal("EntraSignInTimeline"), id: modelComponentId, props: modelProps("EntraSignInTimeline", EntraSignInTimelineSchema) }),
+        z.object({ type: z.literal("IntuneDriftCard"), id: modelComponentId, props: modelProps("IntuneDriftCard", IntuneDriftCardSchema) }),
+        z.object({ type: z.literal("IaCDriftBanner"), id: modelComponentId, props: modelProps("IaCDriftBanner", IaCDriftBannerSchema) }),
+      ]),
+    )
+    .min(1)
+    .max(4)
+    .describe("Ordered canvas cards. Dataset props are { dataPtr } references copied from the descriptors, never rows."),
+});
+
 export function getHydrateLayoutToolDefinition(): OpenAIFunctionTool {
   return {
     type: "function",
@@ -61,11 +101,12 @@ export function getHydrateLayoutToolDefinition(): OpenAIFunctionTool {
       name: HYDRATE_LAYOUT_TOOL_NAME,
       description:
         "Hydrate the ContextPane generative UI canvas. Emit an ordered list of catalog components " +
-        "(LicenseDriftCard, EntraSignInTimeline, IntuneDriftCard, IaCDriftBanner) whose props are " +
-        "filled exclusively from the supplied MCP context (ERP ticket or tenant anomaly, Entra license pools and " +
-        "assignments, sign-in events, Conditional Access policies, Intune policy drift, Azure NSG drift). Never emit " +
-        "prose, markdown or components outside the catalog. Never invent users, policies, rules or identifiers.",
-      parameters: zodToToolParameters(HydrateLayoutArgsSchema),
+        "(LicenseDriftCard, EntraSignInTimeline, IntuneDriftCard, IaCDriftBanner) whose scalar props are " +
+        "filled exclusively from the supplied context (ERP ticket or tenant anomaly plus one schema-and-aggregate " +
+        "descriptor per dataset). Row sets are never written out: set each dataset prop to { \"dataPtr\": \"ptr://...\" } " +
+        "copied from its descriptor. Never emit prose, markdown or components outside the catalog. Never invent " +
+        "users, policies, rules or identifiers.",
+      parameters: zodToToolParameters(HydrateLayoutModelArgsSchema),
     },
   };
 }

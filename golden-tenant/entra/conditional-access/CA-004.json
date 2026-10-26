@@ -1,0 +1,29 @@
+{
+  "displayName": "[ContextPane-Demo] CA-004-Block-Legacy-Auth",
+  "state": "enabled",
+  "conditions": {
+    "users": {
+      "includeGroups": [
+        "SG-Contoso-Finance-AVD"
+      ],
+      "excludeGroups": [
+        "SG-BreakGlass-Accounts"
+      ]
+    },
+    "applications": {
+      "includeApplications": [
+        "All"
+      ]
+    },
+    "clientAppTypes": [
+      "exchangeActiveSync",
+      "other"
+    ]
+  },
+  "grantControls": {
+    "operator": "OR",
+    "builtInControls": [
+      "block"
+    ]
+  }
+}

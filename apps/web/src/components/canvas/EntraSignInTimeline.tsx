@@ -35,6 +35,7 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
       title="Sign-In History & Conditional Access"
       state={props.state}
       triggeredBy={triggeredBy}
+      codeLens={props.sourceRef}
       tabs={[
         { id: "signins", label: "User Sign-In & Audit History", badge: props.events.length },
         { id: "policies", label: "Conditional Access Policy Inspector", badge: props.policies.length },

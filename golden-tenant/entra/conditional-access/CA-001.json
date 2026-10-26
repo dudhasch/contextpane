@@ -1,0 +1,26 @@
+{
+  "displayName": "[ContextPane-Demo] CA-001-Require-PhishingResistant-MFA-Admins",
+  "state": "enabled",
+  "conditions": {
+    "users": {
+      "includeGroups": [
+        "SG-ContextPane-Demo-Admins"
+      ],
+      "excludeGroups": [
+        "SG-BreakGlass-Accounts"
+      ]
+    },
+    "applications": {
+      "includeApplications": [
+        "All"
+      ]
+    },
+    "clientAppTypes": [
+      "all"
+    ]
+  },
+  "grantControls": {
+    "operator": "OR",
+    "authenticationStrength": "Phishing-resistant MFA"
+  }
+}

@@ -10,6 +10,7 @@ import type { AvdEstate, IacResult, NsgDrift } from "@contextpane/mcp-azure-iac"
 import type { ErpContract, ErpTenant, ErpTicket } from "@contextpane/mcp-erp";
 import type { CaPolicySummary, CaPosture, GraphResult, IntuneDrift, LicenseInventory, SignInSummary } from "@contextpane/mcp-msgraph";
 import { CA_POSTURE, LICENSE_ANOMALY, getManifestTenant } from "@contextpane/mcp-msgraph";
+import type { DatasetDescriptor } from "@contextpane/catalog";
 import { sources, type McpDataSources } from "./clients.ts";
 
 /**
@@ -240,5 +241,52 @@ export function contextForModel(ctx: CorrelationContext) {
           azurePolicies: ctx.avd?.data.azurePolicies.map((p) => ({ name: p.name, compliance: p.compliance })),
         }
       : {}),
+  };
+}
+
+/**
+ * What Tier 1B / Tier 2 see under the ptr:// data-plane bypass: the scenario, the ticket
+ * text, one scalar fact sheet per source, and a schema-and-aggregate descriptor per
+ * dataset. No multi-row array reaches the prompt; the model answers with { dataPtr } and
+ * the data plane binds the rows (see local/dataplane.ts). Tier 3 keeps contextForModel,
+ * since its PowerShell has to name the users and policies it changes.
+ */
+export function contextForCorrelation(ctx: CorrelationContext, datasets: DatasetDescriptor[]) {
+  const { ticket, contract, tenant } = ctx.erp;
+  return {
+    scenario: { scenarioId: ctx.scenarioId, kind: ctx.kind, title: SCENARIO_REGISTRY[ctx.scenarioId].title, cards: SCENARIO_REGISTRY[ctx.scenarioId].components },
+    tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, verifiedDomain: tenant.verifiedDomain },
+    ...(ticket
+      ? {
+          ticket: { ticketId: ticket.ticketId, title: ticket.title, status: ticket.status, description: ticket.description, requesterUpn: ticket.requester.upn },
+          contract: {
+            contractId: contract.contractId,
+            entitlements: contract.lines.map((l) => `${l.quantity} × ${l.skuPartNumber}${l.entitlementGroup ? ` via ${l.entitlementGroup}` : ""}`).join("; "),
+          },
+        }
+      : {}),
+    facts: {
+      ...(ctx.license ? { licensing: { source: ctx.license.source, sku: ctx.license.data.sku.skuPartNumber, skuName: ctx.license.data.sku.skuName, group: ctx.license.data.groupName } } : {}),
+      ...(ctx.caPosture
+        ? { conditionalAccess: { source: ctx.caPosture.source, breakGlassGroup: ctx.caPosture.data.breakGlassGroup, goldenSource: ctx.caPosture.data.goldenSource, legacySignIns24h: ctx.caPosture.data.legacySignIns.length } }
+        : {}),
+      ...(ctx.intune
+        ? { intune: { source: ctx.intune.source, issueKind: ctx.intune.data.issueKind, errorCode: ctx.intune.data.errorCode ?? null, goldenSource: ctx.intune.data.goldenSource, affectedDeviceCount: ctx.intune.data.affectedDeviceCount, resolved: ctx.intune.data.resolved } }
+        : {}),
+      ...(ctx.drift
+        ? {
+            azure: {
+              source: ctx.drift.source,
+              resourceName: ctx.drift.data.resourceName,
+              resourceGroup: ctx.drift.data.resourceGroup,
+              terraformFile: ctx.drift.data.terraformFile,
+              gitBranch: ctx.drift.data.gitBranch,
+              driftState: ctx.drift.data.driftState,
+              summary: ctx.drift.data.summary,
+            },
+          }
+        : {}),
+    },
+    datasets,
   };
 }

@@ -1,4 +1,5 @@
 import type {
+  ExecutionMode,
   ActionApprovalDrawer,
   AuditEntry,
   ComponentType,
@@ -154,7 +155,7 @@ export const api = {
   hover: (body: { scenarioId: string; entityId: string; entityType?: EntityType }) => request<HoverResponse>("/api/hover", { method: "POST", body: JSON.stringify(body) }),
   correlate: (body: { scenarioId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
   remediate: (body: { scenarioId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
-  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean }) =>
+  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean; mode?: ExecutionMode }) =>
     request<ApproveResponse>("/api/remediate/approve", { method: "POST", body: JSON.stringify(body) }),
   labState: () => request<{ convergence: Convergence[] }>("/api/lab/state"),
   resetDrift: (scenarioId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(scenarioId ? { scenarioId } : {}) }),

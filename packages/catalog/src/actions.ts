@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ExecutionModeSchema } from "./schemas/primitives.ts";
 import type { LicenseDriftCard, LicenseDriftUser } from "./schemas/components.ts";
 import type { Layout, LayoutComponent } from "./schemas/layout.ts";
 
@@ -40,6 +41,8 @@ export const AuditEntrySchema = z.object({
   detail: z.string().max(300).default(""),
   /** live-graph when the change reached the tenant, simulated otherwise. */
   execution: z.enum(["live-graph", "simulated", "none"]).default("none"),
+  /** Break-glass (live write + reconcile commit) or Pure GitOps (PR only), for approvals. */
+  executionMode: ExecutionModeSchema.nullable().default(null),
 });
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
 

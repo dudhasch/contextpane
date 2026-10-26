@@ -1,0 +1,9 @@
+{
+  "Intune-Win11-ASR-Baseline": [
+    "SG-All-Workstations"
+  ],
+  "EndpointSecurity-Firewall-Prod": [
+    "SG-All-Workstations"
+  ],
+  "Win11-Firewall-MDM": []
+}

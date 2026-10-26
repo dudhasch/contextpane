@@ -23,6 +23,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
       state={props.state}
       triggeredBy={triggeredBy}
       source={props.comparedAgainst === "live-azure" ? "NSG: live Azure" : "NSG: manifest"}
+      codeLens={props.sourceRef}
       tabs={[
         { id: "hostpool", label: "Host Pool & Session Hosts", badge: pool?.sessionHosts.length },
         { id: "nsg", label: "NSG Rules & Terraform Drift", badge: props.rogueSecurityRules.length + props.tagDrift.length },
@@ -49,7 +50,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
       }
       primaryAction={
         drift && (
-          <Button size="xs" variant="meta" icon={<GitCompareArrows />} onClick={() => setDiffOpen(true)}>
+          <Button size="xs" variant="meta" icon={<GitCompareArrows />} onClick={() => setDiffOpen(true, "IaCDriftBanner")}>
             Open Terraform Diff &amp; Fix
           </Button>
         )
