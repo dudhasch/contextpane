@@ -321,7 +321,14 @@ $ruleBlocks = ($baselineRules | ForEach-Object {
     source_address_prefix      = "$($_.Src)"
     destination_address_prefix = "$($_.Dst)"
   }
-"@ }) -join ''
+"@ }) -join "`n"
+
+# Repo files are LF with a single trailing newline; Set-Content/ConvertTo-Json on Windows would emit CRLF
+# and make every seed run show up as a whole-file diff.
+function Write-LfFile([string]$Path, [string]$Content) {
+    $text = ($Content -replace "`r`n", "`n").TrimEnd("`n") + "`n"
+    [IO.File]::WriteAllText($Path, $text, [Text.UTF8Encoding]::new($false))
+}
 
 $tf = @"
 # ---------------------------------------------------------------------------
@@ -376,7 +383,7 @@ output "contoso_nsg_id" {
 "@
 
 if ($PSCmdlet.ShouldProcess($TerraformPath, 'Write Terraform baseline')) {
-    Set-Content -Path $TerraformPath -Value $tf -Encoding utf8NoBOM
+    Write-LfFile -Path $TerraformPath -Content $tf
     Write-Ok "wrote $TerraformPath"
 }
 
@@ -410,7 +417,7 @@ $manifest.generatedBy = 'scripts/Invoke-SeedContextPaneLab.ps1'
 $manifest.liveSeeded = (-not $SkipGraph) -and (-not $SkipAzure) -and (-not $WhatIfPreference)
 
 if ($PSCmdlet.ShouldProcess($ManifestPath, 'Write lab manifest')) {
-    ($manifest | ConvertTo-Json -Depth 32) | Set-Content -Path $ManifestPath -Encoding utf8NoBOM
+    Write-LfFile -Path $ManifestPath -Content ($manifest | ConvertTo-Json -Depth 32)
     Write-Ok "wrote $ManifestPath (liveSeeded=$($manifest.liveSeeded))"
 }
 

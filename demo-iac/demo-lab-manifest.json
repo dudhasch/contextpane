@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-26T12:00:00Z",
-  "generatedBy": "static-seed",
-  "liveSeeded": false,
+  "generatedAt": "2026-10-26T16:32:19Z",
+  "generatedBy": "scripts/Invoke-SeedContextPaneLab.ps1",
+  "liveSeeded": true,
   "notes": "Deterministic fallback for LIVE_CLOUD_MODE=false. scripts/Invoke-SeedContextPaneLab.ps1 rewrites this file with real object IDs after seeding the lab tenant. Contoso Finance lives in the real lab tenant; Fabrikam Legal is manifest-only.",
   "tenants": {
     "tenant-contoso-01": {
@@ -14,7 +14,7 @@
         {
           "displayName": "SG-Contoso-Finance-AVD",
           "mailNickname": "sg-contoso-finance-avd",
-          "objectId": "6d1f2c7a-0c3e-4b9a-9d1e-3a7f5b2c8e01",
+          "objectId": "a6b68a69-7a48-4481-b650-dc3ffd86640a",
           "description": "ContextPane demo: Contoso Finance users entitled to AVD host pool vdpool-contoso-fin-01 (Microsoft 365 E5)",
           "memberUpns": [
             "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
@@ -27,7 +27,7 @@
         {
           "displayName": "SG-Contoso-Finance-Legacy",
           "mailNickname": "sg-contoso-finance-legacy",
-          "objectId": "b2e4a9c1-7f6d-4e3b-8a2c-5d9f1e0b7c02",
+          "objectId": "5e82f43a-f4cb-4ef9-8206-1cf01e101a54",
           "description": "ContextPane demo: legacy Microsoft 365 E3 users that should have been migrated out after the E5 upgrade",
           "memberUpns": [
             "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
@@ -38,7 +38,7 @@
       ],
       "users": [
         {
-          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000001",
+          "objectId": "d51d07ea-ab4c-4e42-a679-06c102f0589d",
           "upn": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
           "displayName": "Lynne Robins",
           "jobTitle": "Senior Financial Analyst",
@@ -53,11 +53,11 @@
             "currentSku": "SPE_E3",
             "driftStatus": "drifted",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-24T16:12:00Z"
+            "lastSyncedAt": "2026-10-26T16:32:19Z"
           }
         },
         {
-          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000002",
+          "objectId": "f28ca842-bcb6-41ba-a83b-a315703aecb3",
           "upn": "alex.wilber.contoso@c4a8shili.onmicrosoft.com",
           "displayName": "Alex Wilber",
           "jobTitle": "Finance Manager",
@@ -72,11 +72,11 @@
             "currentSku": "SPE_E5",
             "driftStatus": "compliant",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-24T16:12:00Z"
+            "lastSyncedAt": "2026-10-26T16:32:19Z"
           }
         },
         {
-          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000003",
+          "objectId": "14c326ef-84a8-401a-84ce-c034e8f2d146",
           "upn": "miriam.graham.contoso@c4a8shili.onmicrosoft.com",
           "displayName": "Miriam Graham",
           "jobTitle": "Financial Controller",
@@ -91,11 +91,11 @@
             "currentSku": "SPE_E5",
             "driftStatus": "compliant",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-24T16:12:00Z"
+            "lastSyncedAt": "2026-10-26T16:32:19Z"
           }
         },
         {
-          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000004",
+          "objectId": "a3cae558-e7c2-48c7-bffc-fade53f9223b",
           "upn": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
           "displayName": "Diego Siciliani",
           "jobTitle": "Accounts Payable Specialist",
@@ -110,11 +110,11 @@
             "currentSku": "SPE_E3",
             "driftStatus": "drifted",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-24T16:12:00Z"
+            "lastSyncedAt": "2026-10-26T16:32:19Z"
           }
         },
         {
-          "objectId": "0a1b2c3d-1111-4a01-9c01-000000000005",
+          "objectId": "8daa54ba-49ac-474b-8e6c-0a495ce2613d",
           "upn": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
           "displayName": "Patti Fernandez",
           "jobTitle": "Treasury Analyst",
@@ -129,7 +129,7 @@
             "currentSku": "SPE_E3",
             "driftStatus": "drifted",
             "contractId": "CNT-2026-884",
-            "lastSyncedAt": "2026-10-24T16:12:00Z"
+            "lastSyncedAt": "2026-10-26T16:32:19Z"
           }
         }
       ],
@@ -145,27 +145,39 @@
       },
       "conditionalAccessPolicies": [
         {
-          "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01",
+          "id": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
           "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
-          "state": "enabled",
-          "createdDateTime": "2026-10-24T15:40:00Z",
-          "modifiedDateTime": "2026-10-24T15:40:00Z",
+          "state": "enabledForReportingButNotEnforced",
+          "createdDateTime": "2026-10-26T16:32:32Z",
+          "modifiedDateTime": "2026-10-26T16:32:19Z",
           "conditions": {
             "users": {
-              "includeGroups": ["b2e4a9c1-7f6d-4e3b-8a2c-5d9f1e0b7c02"],
-              "includeGroupNames": ["SG-Contoso-Finance-Legacy"],
+              "includeGroups": [
+                "5e82f43a-f4cb-4ef9-8206-1cf01e101a54"
+              ],
+              "includeGroupNames": [
+                "SG-Contoso-Finance-Legacy"
+              ],
               "excludeGroups": [],
               "excludeGroupNames": []
             },
             "applications": {
-              "includeApplications": ["9cdead84-a844-4324-93f2-b2e6bb768d07"],
-              "includeApplicationNames": ["Azure Virtual Desktop"]
+              "includeApplications": [
+                "9cdead84-a844-4324-93f2-b2e6bb768d07"
+              ],
+              "includeApplicationNames": [
+                "Azure Virtual Desktop"
+              ]
             },
-            "clientAppTypes": ["all"]
+            "clientAppTypes": [
+              "all"
+            ]
           },
           "grantControls": {
             "operator": "OR",
-            "builtInControls": ["block"]
+            "builtInControls": [
+              "block"
+            ]
           }
         }
       ],
@@ -180,8 +192,16 @@
           "clientAppUsed": "Browser",
           "ipAddress": "203.0.113.42",
           "location": "Zurich, CH",
-          "deviceDetail": { "displayName": "CONTOSO-LT-0471", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
-          "status": { "errorCode": 0, "failureReason": null },
+          "deviceDetail": {
+            "displayName": "CONTOSO-LT-0471",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 0,
+            "failureReason": null
+          },
           "conditionalAccessStatus": "success",
           "appliedConditionalAccessPolicies": []
         },
@@ -195,11 +215,26 @@
           "clientAppUsed": "Mobile Apps and Desktop clients",
           "ipAddress": "203.0.113.42",
           "location": "Zurich, CH",
-          "deviceDetail": { "displayName": "CONTOSO-LT-0471", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
-          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "deviceDetail": {
+            "displayName": "CONTOSO-LT-0471",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 53003,
+            "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance."
+          },
           "conditionalAccessStatus": "failure",
           "appliedConditionalAccessPolicies": [
-            { "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01", "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy", "result": "failure", "enforcedGrantControls": ["Block"] }
+            {
+              "id": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+              "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "Block"
+              ]
+            }
           ]
         },
         {
@@ -212,11 +247,26 @@
           "clientAppUsed": "Browser",
           "ipAddress": "203.0.113.42",
           "location": "Zurich, CH",
-          "deviceDetail": { "displayName": "CONTOSO-LT-0471", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
-          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "deviceDetail": {
+            "displayName": "CONTOSO-LT-0471",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 53003,
+            "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance."
+          },
           "conditionalAccessStatus": "failure",
           "appliedConditionalAccessPolicies": [
-            { "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01", "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy", "result": "failure", "enforcedGrantControls": ["Block"] }
+            {
+              "id": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+              "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "Block"
+              ]
+            }
           ]
         },
         {
@@ -229,8 +279,16 @@
           "clientAppUsed": "Mobile Apps and Desktop clients",
           "ipAddress": "203.0.113.17",
           "location": "Zurich, CH",
-          "deviceDetail": { "displayName": "CONTOSO-LT-0302", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
-          "status": { "errorCode": 0, "failureReason": null },
+          "deviceDetail": {
+            "displayName": "CONTOSO-LT-0302",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 0,
+            "failureReason": null
+          },
           "conditionalAccessStatus": "notApplied",
           "appliedConditionalAccessPolicies": []
         },
@@ -244,11 +302,26 @@
           "clientAppUsed": "Mobile Apps and Desktop clients",
           "ipAddress": "203.0.113.88",
           "location": "Basel, CH",
-          "deviceDetail": { "displayName": "CONTOSO-LT-0519", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
-          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "deviceDetail": {
+            "displayName": "CONTOSO-LT-0519",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 53003,
+            "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance."
+          },
           "conditionalAccessStatus": "failure",
           "appliedConditionalAccessPolicies": [
-            { "id": "c4a8f0e1-2d3b-4c5d-9e6f-7a8b9c0d1e01", "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy", "result": "failure", "enforcedGrantControls": ["Block"] }
+            {
+              "id": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+              "displayName": "[ContextPane-Demo] Block AVD - Contoso Finance Legacy",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "Block"
+              ]
+            }
           ]
         },
         {
@@ -261,8 +334,16 @@
           "clientAppUsed": "Browser",
           "ipAddress": "203.0.113.21",
           "location": "Zurich, CH",
-          "deviceDetail": { "displayName": "CONTOSO-LT-0288", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Azure AD joined" },
-          "status": { "errorCode": 0, "failureReason": null },
+          "deviceDetail": {
+            "displayName": "CONTOSO-LT-0288",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Azure AD joined"
+          },
+          "status": {
+            "errorCode": 0,
+            "failureReason": null
+          },
           "conditionalAccessStatus": "notApplied",
           "appliedConditionalAccessPolicies": []
         }
@@ -469,20 +550,32 @@
           "modifiedDateTime": "2026-10-25T08:02:00Z",
           "conditions": {
             "users": {
-              "includeGroups": ["9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c03"],
-              "includeGroupNames": ["SG-Fabrikam-Legal"],
+              "includeGroups": [
+                "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c03"
+              ],
+              "includeGroupNames": [
+                "SG-Fabrikam-Legal"
+              ],
               "excludeGroups": [],
               "excludeGroupNames": []
             },
             "applications": {
-              "includeApplications": ["80ccca67-54bd-44ab-8625-4b79c4dc7775"],
-              "includeApplicationNames": ["Microsoft Purview"]
+              "includeApplications": [
+                "80ccca67-54bd-44ab-8625-4b79c4dc7775"
+              ],
+              "includeApplicationNames": [
+                "Microsoft Purview"
+              ]
             },
-            "clientAppTypes": ["all"]
+            "clientAppTypes": [
+              "all"
+            ]
           },
           "grantControls": {
             "operator": "AND",
-            "builtInControls": ["compliantDevice"]
+            "builtInControls": [
+              "compliantDevice"
+            ]
           }
         }
       ],
@@ -497,8 +590,16 @@
           "clientAppUsed": "Browser",
           "ipAddress": "198.51.100.23",
           "location": "Geneva, CH",
-          "deviceDetail": { "displayName": "FABRIKAM-LT-1107", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Hybrid Azure AD joined" },
-          "status": { "errorCode": 50105, "failureReason": "The signed in user is not assigned to a role for the application." },
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-1107",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Hybrid Azure AD joined"
+          },
+          "status": {
+            "errorCode": 50105,
+            "failureReason": "The signed in user is not assigned to a role for the application."
+          },
           "conditionalAccessStatus": "notApplied",
           "appliedConditionalAccessPolicies": []
         },
@@ -512,11 +613,26 @@
           "clientAppUsed": "Browser",
           "ipAddress": "198.51.100.61",
           "location": "Geneva, CH",
-          "deviceDetail": { "displayName": "FABRIKAM-MBP-0042", "operatingSystem": "macOS", "isCompliant": false, "trustType": "Azure AD registered" },
-          "status": { "errorCode": 53003, "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance." },
+          "deviceDetail": {
+            "displayName": "FABRIKAM-MBP-0042",
+            "operatingSystem": "macOS",
+            "isCompliant": false,
+            "trustType": "Azure AD registered"
+          },
+          "status": {
+            "errorCode": 53003,
+            "failureReason": "Access has been blocked by Conditional Access policies. The access policy does not allow token issuance."
+          },
           "conditionalAccessStatus": "failure",
           "appliedConditionalAccessPolicies": [
-            { "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02", "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal", "result": "failure", "enforcedGrantControls": ["RequireCompliantDevice"] }
+            {
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+              "result": "failure",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
+            }
           ]
         },
         {
@@ -529,11 +645,26 @@
           "clientAppUsed": "Browser",
           "ipAddress": "198.51.100.19",
           "location": "Geneva, CH",
-          "deviceDetail": { "displayName": "FABRIKAM-LT-0981", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Hybrid Azure AD joined" },
-          "status": { "errorCode": 0, "failureReason": null },
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-0981",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Hybrid Azure AD joined"
+          },
+          "status": {
+            "errorCode": 0,
+            "failureReason": null
+          },
           "conditionalAccessStatus": "success",
           "appliedConditionalAccessPolicies": [
-            { "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02", "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal", "result": "success", "enforcedGrantControls": ["RequireCompliantDevice"] }
+            {
+              "id": "f4b8c0e1-2d3b-4c5d-9e6f-7a8b9c0d1e02",
+              "displayName": "[ContextPane-Demo] Require Compliant Device - Fabrikam Legal",
+              "result": "success",
+              "enforcedGrantControls": [
+                "RequireCompliantDevice"
+              ]
+            }
           ]
         },
         {
@@ -546,8 +677,16 @@
           "clientAppUsed": "Mobile Apps and Desktop clients",
           "ipAddress": "198.51.100.77",
           "location": "Lausanne, CH",
-          "deviceDetail": { "displayName": "FABRIKAM-LT-1133", "operatingSystem": "Windows 11", "isCompliant": true, "trustType": "Hybrid Azure AD joined" },
-          "status": { "errorCode": 50105, "failureReason": "The signed in user is not assigned to a role for the application." },
+          "deviceDetail": {
+            "displayName": "FABRIKAM-LT-1133",
+            "operatingSystem": "Windows 11",
+            "isCompliant": true,
+            "trustType": "Hybrid Azure AD joined"
+          },
+          "status": {
+            "errorCode": 50105,
+            "failureReason": "The signed in user is not assigned to a role for the application."
+          },
           "conditionalAccessStatus": "notApplied",
           "appliedConditionalAccessPolicies": []
         }
