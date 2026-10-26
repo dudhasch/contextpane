@@ -201,6 +201,11 @@ export const VerificationStatusSchema = z.object({
   sandboxProvider: z.enum(["local-pwsh", "modal-cloud-sandbox", "none"]),
   validationLatencyMs: z.number().int().nonnegative(),
   findings: z.array(z.string().max(300)).default([]),
+  sandboxLatencyMs: z.number().int().nonnegative().optional().describe("Time spent inside the sandbox; validationLatencyMs is the round trip"),
+  checkLatencyMs: z
+    .object({ powershellAst: z.number().optional(), terraformFmt: z.number().optional(), terraformValidate: z.number().optional() })
+    .optional()
+    .describe("Per-check time inside the sandbox"),
 });
 export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
 

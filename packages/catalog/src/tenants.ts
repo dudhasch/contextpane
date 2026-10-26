@@ -12,6 +12,8 @@ export interface TenantRegistryEntry {
   ticketId: string;
   contractId: string;
   shortLabel: string;
+  /** What a Tier 3 fix for this ticket reconciles; used in the canonical PR title. */
+  remediationScope: string;
 }
 
 export const TENANT_REGISTRY: Record<TenantId, TenantRegistryEntry> = {
@@ -21,6 +23,7 @@ export const TENANT_REGISTRY: Record<TenantId, TenantRegistryEntry> = {
     ticketId: "INC-4092",
     contractId: "CNT-2026-884",
     shortLabel: "Contoso Finance (#INC-4092)",
+    remediationScope: "AVD NSG drift & E5 license state",
   },
   "tenant-fabrikam-02": {
     tenantId: "tenant-fabrikam-02",
@@ -28,6 +31,7 @@ export const TENANT_REGISTRY: Record<TenantId, TenantRegistryEntry> = {
     ticketId: "INC-4099",
     contractId: "CNT-2026-912",
     shortLabel: "Fabrikam Legal (#INC-4099)",
+    remediationScope: "SLZ hub NSG drift & Information Protection license state",
   },
 };
 

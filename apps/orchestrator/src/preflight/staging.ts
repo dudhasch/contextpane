@@ -8,6 +8,10 @@ import { REPO_ROOT, config } from "../config.ts";
  * Stage a remediation on a real git branch without touching the user's
  * checkout: a throw-away worktree is created from HEAD, the bundle is
  * committed there, and the worktree is removed. The branch stays.
+ *
+ * Every ticket has one canonical branch (fix/INC-4092-contoso-remediation),
+ * force-updated by each new remediation, so repeated demo runs leave at most
+ * one branch per ticket instead of one per run.
  */
 
 export interface StagingBundle {
@@ -15,6 +19,8 @@ export interface StagingBundle {
   tenantName: string;
   remediationId: string;
   title: string;
+  /** Canonical PR title for the ticket; stays the same across runs. */
+  prTitle: string;
   summary: string;
   powershellScript: string;
   terraformDiff: string;
@@ -49,18 +55,27 @@ async function must(args: string[], cwd: string): Promise<string> {
   return r.stdout;
 }
 
-export function branchNameFor(ticketId: string, remediationId: string): string {
-  const short = remediationId.replace(/[^a-z0-9]/gi, "").slice(-6).toLowerCase();
-  return `fix/${ticketId.toLowerCase()}-nsg-drift-${short}`;
+export function branchNameFor(ticketId: string, tenantName: string): string {
+  const slug = (tenantName.trim().split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "") || "tenant";
+  return `fix/${ticketId.replace(/[^A-Za-z0-9-]/g, "")}-${slug}-remediation`;
 }
 
-export async function stageRemediationBranch(bundle: StagingBundle): Promise<{ staging: StagingInfo | null; findings: string[] }> {
+// One staging at a time: two remediations for the same ticket share a branch and a worktree path.
+let stagingQueue: Promise<unknown> = Promise.resolve();
+
+export function stageRemediationBranch(bundle: StagingBundle): Promise<{ staging: StagingInfo | null; findings: string[] }> {
+  const next = stagingQueue.then(() => stageNow(bundle));
+  stagingQueue = next.catch(() => {});
+  return next;
+}
+
+async function stageNow(bundle: StagingBundle): Promise<{ staging: StagingInfo | null; findings: string[] }> {
   const findings: string[] = [];
   const inRepo = await git(["rev-parse", "--is-inside-work-tree"], REPO_ROOT);
   if (inRepo.code !== 0 || inRepo.stdout !== "true") {
     return { staging: null, findings: ["Not a git repository; PR staging skipped"] };
   }
-  const branchName = branchNameFor(bundle.ticketId, bundle.remediationId);
+  const branchName = branchNameFor(bundle.ticketId, bundle.tenantName);
   const worktreeDir = join(config.stagingDir, branchName.replace(/[\\/]/g, "_"));
   mkdirSync(config.stagingDir, { recursive: true });
   if (existsSync(worktreeDir)) {
@@ -71,7 +86,8 @@ export async function stageRemediationBranch(bundle: StagingBundle): Promise<{ s
 
   try {
     const head = await must(["rev-parse", "HEAD"], REPO_ROOT);
-    await must(["worktree", "add", "-b", branchName, worktreeDir, head], REPO_ROOT);
+    // -B force-updates the ticket's canonical branch to HEAD instead of failing when it exists.
+    await must(["worktree", "add", "-B", branchName, worktreeDir, head], REPO_ROOT);
 
     const relDir = join("demo-iac", "remediations", bundle.ticketId);
     const absDir = join(worktreeDir, relDir);
@@ -112,7 +128,7 @@ export async function stageRemediationBranch(bundle: StagingBundle): Promise<{ s
     );
 
     await must(["add", "-A"], worktreeDir);
-    const message = `fix(${bundle.ticketId.toLowerCase()}): stage remediation for ${bundle.tenantName}\n\n${bundle.summary}\n\nStaged-By: ContextPane Tier 3 (HITL pending)`;
+    const message = `fix(${bundle.ticketId}): stage remediation for ${bundle.tenantName}\n\n${bundle.summary}\n\nStaged by ContextPane Tier 3 (${bundle.remediationId}); human approval pending.`;
     await must(["commit", "-q", "-m", message], worktreeDir);
     const sha = await must(["rev-parse", "HEAD"], worktreeDir);
     const files = (await must(["show", "--name-only", "--format=", "HEAD"], worktreeDir)).split("\n").filter(Boolean);
@@ -123,7 +139,7 @@ export async function stageRemediationBranch(bundle: StagingBundle): Promise<{ s
         commitSha: sha,
         filesChanged: files,
         worktreePath: worktreeDir,
-        prTitle: bundle.title,
+        prTitle: bundle.prTitle,
         pushed: false,
         prUrl: null,
       },
@@ -192,10 +208,21 @@ export async function githubStatus(fresh = false): Promise<GitHubStatus> {
   return value;
 }
 
+/** https://github.com/<owner>/<repo> for the origin remote, or null when origin is not on GitHub. */
+export async function githubRepoUrl(): Promise<string | null> {
+  const origin = (await githubStatus()).origin;
+  const m = origin ? /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(origin) : null;
+  return m ? `https://github.com/${m[1]}/${m[2]}` : null;
+}
+
 /**
  * Push a staged branch and open a real pull request with `gh pr create`.
  * Only ever called from the HITL approve endpoint, only when the operator
  * opted in, and only when a remote origin plus gh auth exist.
+ *
+ * Idempotent per ticket: the approved commit is force-pushed to the canonical
+ * branch, and when that branch already has an open PR its URL is returned
+ * instead of opening a duplicate.
  */
 export async function openPullRequest(staging: StagingInfo, body: string): Promise<{ staging: StagingInfo; log: string[] }> {
   const log: string[] = [];
@@ -204,14 +231,31 @@ export async function openPullRequest(staging: StagingInfo, body: string): Promi
   if (!status.ghAuthenticated) return { staging, log: ["gh CLI is not authenticated (gh auth login); PR skipped"] };
   if (staging.prUrl) return { staging, log: [`PR already open: ${staging.prUrl}`] };
 
-  const push = await git(["push", "-u", "origin", `${staging.branchName}:${staging.branchName}`], REPO_ROOT, 60_000);
+  // Push the commit this remediation staged, even if a later run has moved the local branch since.
+  const ref = staging.commitSha ?? staging.branchName;
+  const push = await git(["push", "--force", "origin", `${ref}:refs/heads/${staging.branchName}`], REPO_ROOT, 60_000);
   if (push.code !== 0) return { staging, log: [`git push failed: ${push.stderr || push.stdout}`] };
-  log.push(`Pushed ${staging.branchName} to ${status.origin}`);
+  log.push(`Force-pushed ${staging.branchName} @ ${ref.slice(0, 7)} to ${status.origin}`);
 
   const bodyFile = join(config.stagingDir, `${staging.branchName.replace(/[\\/]/g, "_")}.pr.md`);
   mkdirSync(config.stagingDir, { recursive: true });
   writeFileSync(bodyFile, body, "utf8");
   try {
+    const existing = await run("gh", ["pr", "view", staging.branchName, "--json", "url,state"], REPO_ROOT, 30_000);
+    let openUrl: string | null = null;
+    try {
+      const found = existing.code === 0 ? (JSON.parse(existing.stdout) as { url?: string; state?: string }) : {};
+      if (found.url && found.state === "OPEN") openUrl = found.url;
+    } catch {
+      // Unparseable answer: fall through to gh pr create, which refuses a duplicate itself.
+    }
+    if (openUrl) {
+      // Same PR, new commit: refresh the description so it matches what was just pushed.
+      const edit = await run("gh", ["pr", "edit", openUrl, "--title", staging.prTitle, "--body-file", bodyFile], REPO_ROOT, 30_000);
+      log.push(`Pull request already open, updated in place: ${openUrl}${edit.code === 0 ? "" : ` (description not refreshed: ${edit.stderr || edit.stdout})`}`);
+      return { staging: { ...staging, pushed: true, prUrl: openUrl }, log };
+    }
+
     const pr = await run("gh", ["pr", "create", "--head", staging.branchName, "--base", config.github.prBase, "--title", staging.prTitle, "--body-file", bodyFile], REPO_ROOT, 60_000);
     const url = /https:\/\/github\.com\/\S+\/pull\/\d+/.exec(`${pr.stdout}\n${pr.stderr}`)?.[0] ?? null;
     if (pr.code !== 0 && !url) return { staging: { ...staging, pushed: true }, log: [...log, `gh pr create failed: ${pr.stderr || pr.stdout}`] };

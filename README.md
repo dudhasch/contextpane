@@ -18,7 +18,7 @@ verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 | ![Contoso Finance workbench with the Tier 1A hover popover on the affected UPN](docs/screenshots/01-workbench-hover-popover.png) | ![Unified HCL diff, live Azure NSG vs the Terraform baseline](docs/screenshots/02-iac-diff-modal.png) |
 | **1 · Workbench + inline hover.** The ticket's UPN resolves to a `HoverDiagnosticPopover` served from the Muse Glimmer 30B cache in 7 ms with 0 tokens, with `[Issue TAP]`, `[Inspect CA Policy]` and `[Assign SPE_E5]`. | **2 · IaC CodeLens diff.** The live `nsg-contoso-avd-hostpool-01` in Azure against `demo-iac/main.tf`: tag drift plus a rogue RDP rule open to `*`. |
 | ![Tier 3 approval drawer, Verified Safe in the Modal cloud sandbox](docs/screenshots/03-tier3-approval-drawer.png) | ![Fabrikam Legal hydrated from a pinned Contoso recipe with 0 LLM tokens, router savings open](docs/screenshots/04-fabrikam-recipe-router-savings.png) |
-| **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle; the `modal-cloud-sandbox` pre-flight (AST, `terraform fmt` + `validate`) says **Verified Safe** in 750 ms and the fix is staged on a `fix/inc-4092-nsg-drift-*` branch. | **4 · Zero-token recipe switch.** The canvas pinned on Contoso re-hydrates Fabrikam Legal through Tier 0 (0 LLM tokens, 0 ms server time); the router savings panel tallies every tier. |
+| **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle; the `modal-cloud-sandbox` pre-flight (AST, `terraform fmt` + `validate`) says **Verified Safe** in 750 ms and the fix is staged on the ticket's `fix/INC-4092-contoso-remediation` branch. | **4 · Zero-token recipe switch.** The canvas pinned on Contoso re-hydrates Fabrikam Legal through Tier 0 (0 LLM tokens, 0 ms server time); the router savings panel tallies every tier. |
 
 Screenshots are 1600×900 captures of the live workbench (`bun run scripts/capture-readme-screenshots.ts`).
 
@@ -86,8 +86,10 @@ bun run dev
 
 Runtime state lives in `data/` (pinned recipes, remediation bundles) and
 `.contextpane/` (terraform validation workspace, provider cache); both are git-ignored.
-Staged remediations are real local branches named `fix/<ticket>-nsg-drift-<id>` that add
-`demo-iac/remediations/<ticket>/` (script, patch, REMEDIATION.md); nothing is pushed.
+Staged remediations land on one real local branch per ticket, `fix/INC-4092-contoso-remediation`
+and `fix/INC-4099-fabrikam-remediation`, force-updated by every new remediation, so any number of
+smoke or screenshot runs leaves at most those two. Each commit adds
+`demo-iac/remediations/<ticket>/` (script, patch, REMEDIATION.md); nothing is pushed unless a PR is requested.
 
 With no keys in `.env.local`, every tier falls back to a deterministic local engine that
 hydrates the same catalog components from `demo-iac/demo-lab-manifest.json`. Paste keys
@@ -152,7 +154,7 @@ that fails is repaired by the deterministic hydrator, and every tier falls back 
 | **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of both tenants is pre-generated and persisted to `data/hover-cache.json`, seeded on a fresh clone from the tracked `data/hover-cache.seed.json` |
 | **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Meta API `muse-spark-1.3` (`minimal`; open-weight Glimmer first only with `CTX_OPEN_WEIGHT_TIERS=hover,catalog`); the SSE stream paints `TenantSummaryHeader` from MCP data (`mcp_ready`) before the model answers |
 | **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
-| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
+| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree force-updates the ticket's canonical `fix/<ticket>-<tenant>-remediation` branch, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
 | **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe-1.0` + `muse-spark-1.3` |
 | **Vision** | `POST /api/vision-extract` | The ticket's screenshot (base64 data URI) → `{ errorCode, appId, correlationId, timestamp, deviceState, recommendedComponent }`, Zod-validated, then matched to the sign-in it shows (same AADSTS code and app id, nearest time), which the timeline highlights. No model, no extraction: pixels have no deterministic fallback. | Meta API `muse-spark-1.3` with an `image_url` part (`CTX_MODEL_META_VISION`) |
 
@@ -199,8 +201,11 @@ so the canvas is always complete and always typed.
 In `LIVE_CLOUD_MODE` it PATCHes the drifted users' `com.contextpane.licenseState` open
 extension (`entraAssignedSku = SPE_E5`, `avdEntitlementStatus = Compliant`) with the cached
 Graph token, the lab's stand-in for the license itself; `CTX_ALLOW_EXECUTE=true` additionally
-runs the approved PowerShell. With **Open GitHub PR on approval** ticked it pushes the staged
-branch and opens (or returns) the pull request with `gh pr create`.
+runs the approved PowerShell. With **Open GitHub PR on approval** ticked it force-pushes the
+approved commit to the ticket's branch and, when `gh pr view` finds that branch's PR already open,
+refreshes its description and returns its URL; otherwise it runs `gh pr create`. Repeated demo runs
+therefore update one PR per ticket instead of opening duplicates
+([dudhasch/contextpane#1](https://github.com/dudhasch/contextpane/pull/1) is the Contoso one).
 
 The orchestrator then pushes `notifications/resources/updated` over `/ws`. The workbench
 overlays `convergeLayout()` from `packages/catalog` on the mounted canvas, so
@@ -212,8 +217,14 @@ run back to back without the seed script.
 
 Hover popovers carry three micro-actions: `[Issue TAP]` (`POST /api/actions/issue-tap`, demo
 users only) tries Graph's `temporaryAccessPassMethods` and otherwise returns a clearly labelled
-fallback pass; on the lab tenant the Az-derived token lacks `UserAuthenticationMethod.ReadWrite.All`,
-so it answers 403 and the card says so. `[Inspect CA Policy]` scrolls to the timeline and
+fallback pass. The Az-derived token (Azure PowerShell client `1950a258-…`) never carries
+`UserAuthenticationMethod.ReadWrite.All`, so for this one call `mcp-msgraph` first mints a token from
+the persisted `Connect-MgGraph` sign-in and only falls back to `Get-AzAccessToken` without one.
+`scripts/Enable-ContextPaneTapPolicy.ps1` (also run by the seed script) signs Microsoft Graph
+PowerShell in with `Policy.ReadWrite.AuthenticationMethod` + `UserAuthenticationMethod.ReadWrite.All`
+(`-ContextScope CurrentUser`), enables the tenant's Temporary Access Pass policy (one-time, 60 min)
+and reports whether the token can issue a pass. Until then Graph answers 403 and the card shows the
+labelled fallback with the reason. `[Inspect CA Policy]` scrolls to the timeline and
 expands the live policy JSON. `[Assign SPE_E5]` opens the approval drawer on its PowerShell tab,
 because a license change only ever runs through the HITL path.
 
@@ -281,7 +292,8 @@ up to 45 minutes, and from then on talks to the APIs with plain `fetch()`:
   the Conditional Access policies; a second batch fetches each member's
   `com.contextpane.licenseState` open extension. 0.16-0.65 s for a fresh gather (Graph + ARM).
 - **Writes:** an approval PATCHes the drifted users' open extensions (parallel, ~1 s) and
-  `[Issue TAP]` POSTs `temporaryAccessPassMethods`; both run only from an explicit click.
+  `[Issue TAP]` POSTs `temporaryAccessPassMethods` with the `Connect-MgGraph` token when one is
+  persisted (see `scripts/Enable-ContextPaneTapPolicy.ps1`); both run only from an explicit click.
 - **ARM:** one `GET .../networkSecurityGroups/nsg-contoso-avd-hostpool-01` (~80-300 ms),
   diffed against `demo-iac/main.tf`.
 - **Sign-ins:** a UPN-filtered `auditLogs/signIns` query takes 40-60 s on a busy tenant and
@@ -354,8 +366,9 @@ pwsh -NoProfile -File ./scripts/Publish-ContextPaneRepo.ps1 -NormalizeTimestamps
   `gh repo create contextpane --public --source . --remote origin --push`.
 - Once `origin` exists, the Tier 3 drawer can open a real pull request: tick
   **Open GitHub PR on approval** (or set `CTX_GH_PR_ON_APPROVE=true`) and
-  `[Approve & Execute]` pushes the staged `fix/<ticket>-nsg-drift-<id>` branch and runs
-  `gh pr create --base $CTX_GH_PR_BASE`. Without a remote the approval behaves as before.
+  `[Approve & Execute]` force-pushes the approved commit to the ticket's canonical branch
+  (`fix/INC-4092-contoso-remediation`) and returns the open PR for it, or runs
+  `gh pr create --base $CTX_GH_PR_BASE` when there is none. Without a remote the approval behaves as before.
 
 ---
 

@@ -17,6 +17,7 @@ interface ModalResponse {
   sandboxProvider?: string;
   validationLatencyMs?: number;
   findings?: string[];
+  checkLatencyMs?: { powershellAst?: number; terraformFmt?: number; terraformValidate?: number };
 }
 
 export function modalConfigured(): boolean {
@@ -92,6 +93,8 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
       sandboxProvider: "modal-cloud-sandbox",
       validationLatencyMs: Math.round(performance.now() - started),
       findings,
+      ...(typeof json.validationLatencyMs === "number" ? { sandboxLatencyMs: Math.round(json.validationLatencyMs) } : {}),
+      ...(json.checkLatencyMs ? { checkLatencyMs: json.checkLatencyMs } : {}),
     };
   } finally {
     clearTimeout(timer);

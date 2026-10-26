@@ -22,7 +22,7 @@
 
     Once `origin` exists the orchestrator can open real pull requests from the Tier 3 HITL drawer:
     set CTX_GH_PR_ON_APPROVE=true (or tick "Open GitHub PR" in the drawer) and [Approve & Execute] pushes the staged
-    fix/<ticket>-nsg-drift-<id> branch and runs `gh pr create`.
+    fix/<ticket>-<tenant>-remediation branch and returns its open PR, or runs `gh pr create` when there is none.
 
     Supports -WhatIf for every mutating step. Requires a clean working tree and no extra worktrees.
 

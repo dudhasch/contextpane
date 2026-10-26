@@ -1,4 +1,4 @@
-import { cachedTokenClaims, getAccessToken, invalidateAccessToken } from "./token.ts";
+import { cachedTokenClaims, getAccessToken, getGraphSdkAccessToken, invalidateAccessToken, invalidateGraphSdkAccessToken } from "./token.ts";
 
 /**
  * Live Microsoft Graph reads over plain fetch() with a bearer token minted once
@@ -88,16 +88,20 @@ export class GraphHttpError extends Error {
 /* Transport                                                                   */
 /* -------------------------------------------------------------------------- */
 
-async function graphFetch(path: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
+/** "az": the Get-AzAccessToken bearer every read uses; "graph-sdk": the Connect-MgGraph one (TAP writes). */
+type TokenSource = "az" | "graph-sdk";
+
+async function graphFetch(path: string, init: RequestInit, timeoutMs: number, tokenSource: TokenSource = "az"): Promise<unknown> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const token = await getAccessToken(GRAPH, Math.max(timeoutMs, 30_000));
+    const token = tokenSource === "graph-sdk" ? await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000)) : await getAccessToken(GRAPH, Math.max(timeoutMs, 30_000));
     const response = await fetch(`${GRAPH_V1}${path}`, {
       ...init,
       headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status === 401 && attempt === 0) {
-      invalidateAccessToken(GRAPH);
+      if (tokenSource === "graph-sdk") invalidateGraphSdkAccessToken();
+      else invalidateAccessToken(GRAPH);
       continue;
     }
     const body = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
@@ -374,13 +378,41 @@ export interface LiveTemporaryAccessPass {
   startDateTime: string;
 }
 
-/** POST /users/{id}/authentication/temporaryAccessPassMethods; throws GraphHttpError when the TAP policy or token scope says no. */
+// After a failed Connect-MgGraph mint, TAP requests go straight to the Az token for a while instead of paying a pwsh spawn each.
+let graphSdkRetryAt = 0;
+
+/**
+ * POST /users/{id}/authentication/temporaryAccessPassMethods; throws GraphHttpError when the TAP policy or token scope says no.
+ * Prefers the Connect-MgGraph token (it can carry UserAuthenticationMethod.ReadWrite.All) and falls back to the Az token.
+ */
 export async function createTemporaryAccessPassLive(upn: string, lifetimeInMinutes: number, isUsableOnce: boolean, timeoutMs: number): Promise<LiveTemporaryAccessPass> {
-  const body = (await graphFetch(
-    `/users/${encodeURIComponent(upn)}/authentication/temporaryAccessPassMethods`,
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lifetimeInMinutes, isUsableOnce }) },
-    timeoutMs,
-  )) as Partial<LiveTemporaryAccessPass>;
+  let tokenSource: TokenSource = "az";
+  if (Date.now() >= graphSdkRetryAt) {
+    try {
+      await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000));
+      tokenSource = "graph-sdk";
+    } catch {
+      graphSdkRetryAt = Date.now() + 5 * 60_000;
+    }
+  }
+  let body: Partial<LiveTemporaryAccessPass>;
+  try {
+    body = (await graphFetch(
+      `/users/${encodeURIComponent(upn)}/authentication/temporaryAccessPassMethods`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lifetimeInMinutes, isUsableOnce }) },
+      timeoutMs,
+      tokenSource,
+    )) as Partial<LiveTemporaryAccessPass>;
+  } catch (error) {
+    if (error instanceof GraphHttpError && error.status === 403) {
+      const hint =
+        tokenSource === "az"
+          ? "the Az token never carries UserAuthenticationMethod.ReadWrite.All; run scripts/Enable-ContextPaneTapPolicy.ps1"
+          : "the Connect-MgGraph token lacks UserAuthenticationMethod.ReadWrite.All or an Authentication Administrator role; re-run scripts/Enable-ContextPaneTapPolicy.ps1";
+      throw new GraphHttpError(403, `${error.message.replace(/^Graph HTTP 403: /, "")} (${hint})`);
+    }
+    throw error;
+  }
   if (!body.temporaryAccessPass) throw new GraphHttpError(502, "temporaryAccessPassMethods answered without a pass");
   return {
     id: body.id ?? "",

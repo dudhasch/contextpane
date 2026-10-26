@@ -10,6 +10,8 @@
       2. Security groups SG-Contoso-Finance-AVD (all 5) and SG-Contoso-Finance-Legacy (3 drifted).
       3. Conditional Access policy "[ContextPane-Demo] Block AVD - Contoso Finance Legacy":
          include SG-Contoso-Finance-Legacy, app Azure Virtual Desktop, grant = Block.
+         Then scripts/Enable-ContextPaneTapPolicy.ps1 enables the Temporary Access Pass policy and
+         persists a Connect-MgGraph sign-in the [Issue TAP] action reuses (-SkipTapPolicy to skip).
       4. Resource group rg-contoso-avd-prod and the deliberately drifted NSG nsg-contoso-avd-hostpool-01
          (rogue Allow-Temp-RDP-Diagnostic-Drift on TCP 3389 from *, tag Environment = Prod-Hotfix-Manual).
       5. Rewrites ./demo-iac/main.tf (clean baseline) and ./demo-iac/demo-lab-manifest.json with the real object ids.
@@ -37,6 +39,8 @@ param(
     [string]$PolicyState = 'enabled',
     [switch]$SkipGraph,
     [switch]$SkipAzure,
+    # Leave the tenant's Temporary Access Pass policy alone (scripts/Enable-ContextPaneTapPolicy.ps1 is skipped).
+    [switch]$SkipTapPolicy,
     [string]$ManifestPath,
     [string]$TerraformPath,
     # Install any missing Az / Microsoft.Graph submodule via scripts/Install-ContextPaneModules.ps1 (ModuleFast) before running.
@@ -235,6 +239,13 @@ if (-not $SkipGraph) {
                 grantControls = [ordered]@{ operator = 'OR'; builtInControls = @('block') }
             }
         }
+    }
+
+    # -----------------------------------------------------------------------
+    # Temporary Access Pass policy + a Graph sign-in the [Issue TAP] action can reuse
+    # -----------------------------------------------------------------------
+    if (-not $SkipTapPolicy) {
+        & (Join-Path $PSScriptRoot 'Enable-ContextPaneTapPolicy.ps1') -TenantId $TenantId -WhatIf:$WhatIfPreference
     }
 }
 
