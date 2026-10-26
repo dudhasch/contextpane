@@ -11,7 +11,7 @@
     Primary stack (first-class with only a Meta key and the Modal sandbox):
       Meta Model API   https://api.meta.ai/v1   muse-spark-1.3 (1A, 1B, 2), muse-wonder-1.0 (3A; muse-code when served),
                                                 muse-voice-transcribe-1.0
-      Modal            Tier 3B pre-flight sandbox web endpoint; optional vLLM muse-glimmer-30b (open weights)
+      Modal            Tier 3B pre-flight sandbox web endpoint; optional open-weight Muse Glimmer 30B (scripts/Start-GlimmerOpenWeights.ps1)
       RunPod           optional vLLM muse-glimmer-30b pod (scripts/Start-RunPodGlimmer.ps1)
     Optional drop-in overrides when their keys arrive:
       Baseten          https://inference.baseten.co/v1   meta-models/muse-spark-open-1026, muse-glimmer-30b
@@ -28,7 +28,7 @@
 .PARAMETER ModalSandboxToken
     Bearer token expected by the Modal endpoint.
 .PARAMETER ModalInferenceUrl
-    OpenAI-compatible base URL (ending in /v1) of modal-sandbox/open_weights_vllm.py. Sets MODAL_INFERENCE_BASE_URL.
+    OpenAI-compatible base URL (ending in /v1) of modal-sandbox/glimmer_open_weights.py (or open_weights_vllm.py). Sets MODAL_INFERENCE_BASE_URL.
 .PARAMETER RunPodBaseUrl
     OpenAI-compatible base URL (ending in /v1) of a RunPod vLLM pod. Sets RUNPOD_VLLM_BASE_URL.
 .PARAMETER OpenWeightBaseUrl

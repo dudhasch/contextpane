@@ -20,7 +20,7 @@ import { config, models, providers } from "../config.ts";
 import { buildRemediationBundle } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext } from "../mcp/context.ts";
 import { runLocalPreflight } from "../preflight/local.ts";
-import { modalConfigured, runModalPreflight } from "../preflight/modal.ts";
+import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { openPullRequest, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
@@ -104,6 +104,8 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   const report = progressReporter(sink);
   const remediationId = `rem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
+  // The sandbox container boots while muse-wonder plans and codes, so the pre-flight below starts warm.
+  warmModalSandbox("remediate");
   report("mcp:start", "Refreshing MCP context");
   const ctx = await gatherContext(input.tenantId, { fresh: input.fresh ?? true });
   report("mcp:done", `Context ready (${ctx.gatherLatencyMs} ms)`, { sources: ctx.sourcesUsed });
@@ -202,6 +204,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
   if (modalConfigured()) {
     report("preflight:start", "Pre-flight in Modal sandbox");
     try {
+      await modalWarm();
       verification = await runModalPreflight(preflightInput);
     } catch (error) {
       report("preflight:fallback", `Modal sandbox failed (${error instanceof Error ? error.message : String(error)}) → local pre-flight`);

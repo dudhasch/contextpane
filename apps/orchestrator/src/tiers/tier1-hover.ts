@@ -73,11 +73,11 @@ function hoverContext(ctx: CorrelationContext, entityId: string, entityType: Ent
 }
 
 /**
- * Tier 1A — inline hover. Open-weight muse-glimmer-30b on Modal / RunPod when
+ * Tier 1A — inline hover. Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or locally) when
  * CTX_OPEN_WEIGHT_BASE_URL is set, otherwise the Meta Model API as a first-class
  * route; Fireworks and Baseten slot in ahead of Meta only when their keys exist.
- * Model answers are cached per (tenant, entity) and pre-fetched for the ticket's
- * hero entities (warmHoverCache); the deterministic fallback keeps the popover
+ * Model answers are cached per (tenant, entity) and pre-fetched for every pill
+ * of the ticket (warmHoverCache); the deterministic fallback keeps the popover
  * under the 350 ms budget when no provider answers.
  */
 export async function hover(input: HoverInput): Promise<HoverResult> {
@@ -134,7 +134,12 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
         ],
         tool,
         {
-          timeoutMs: step.provider === "meta" ? config.timeouts.metaHoverMs : config.timeouts.hoverMs,
+          timeoutMs:
+            step.provider === "meta"
+              ? config.timeouts.metaHoverMs
+              : step.provider === providers.openWeight.id
+                ? config.timeouts.openWeightHoverMs
+                : config.timeouts.hoverMs,
           temperature: 0,
           maxTokens: 1500,
           reasoningEffort: config.reasoning.hover,
@@ -188,28 +193,48 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
 }
 
 const warming = new Set<string>();
+const WARM_CONCURRENCY = 3;
+
+/** Every entity the ticket pane and canvas render as a hoverable pill, hero entities first. */
+function hoverTargets(ctx: CorrelationContext): Array<{ entityId: string; entityType: EntityType }> {
+  const ticket = ctx.erp.ticket;
+  const lastFailure = ctx.signIns.data.filter((e) => e.status === "failure").at(-1);
+  const all: Array<{ entityId: string; entityType: EntityType }> = [
+    ...ticket.affectedUpns.slice(0, 1).map((entityId) => ({ entityId, entityType: "upn" as const })),
+    ...ticket.affectedGroups.slice(0, 1).map((entityId) => ({ entityId, entityType: "group" as const })),
+    ...(lastFailure?.errorCodeLabel ? [{ entityId: lastFailure.errorCodeLabel, entityType: "errorCode" as const }] : []),
+    ...ticket.entities.map((e) => ({ entityId: e.id, entityType: e.type as EntityType })),
+    ...ticket.affectedGroups.map((entityId) => ({ entityId, entityType: "group" as const })),
+    ...ticket.affectedUpns.map((entityId) => ({ entityId, entityType: "upn" as const })),
+    ...ctx.license.data.users.map((u) => ({ entityId: u.upn, entityType: "upn" as const })),
+    ...ctx.signIns.data.flatMap((e) => (e.errorCodeLabel ? [{ entityId: e.errorCodeLabel, entityType: "errorCode" as const }] : [])),
+    { entityId: ctx.drift.data.resourceName, entityType: "resource" as const },
+  ];
+  const seen = new Set<string>();
+  return all.filter((t) => t.entityId && !seen.has(t.entityId.toLowerCase()) && seen.add(t.entityId.toLowerCase()));
+}
 
 /**
- * Pre-fetch the popovers a demo hovers first: the ticket's requester UPN, its
- * entitlement group and the AADSTS code of the latest failed sign-in. Runs one
- * hover at a time in the background so it never competes with the request path.
+ * Pre-fetch a popover for every hoverable pill of the ticket (all users, the groups,
+ * the AADSTS codes, the NSG and host pool), hero entities first, a few at a time in
+ * the background so a hover anywhere in the workbench is served from the cache.
  */
-export async function warmHoverCache(tenantId: string): Promise<void> {
-  if (warming.has(tenantId) || config.forceLocal || !chainSteps().some((s) => s.hasKey)) return;
+export async function warmHoverCache(tenantId: string): Promise<{ warmed: number; total: number } | undefined> {
+  if (warming.has(tenantId) || config.forceLocal || !chainSteps().some((s) => s.hasKey)) return undefined;
   warming.add(tenantId);
   try {
     const ctx = await gatherContext(tenantId);
-    const lastFailure = ctx.signIns.data.filter((e) => e.status === "failure").at(-1);
-    const heroes: Array<{ entityId: string; entityType: EntityType }> = [
-      ...ctx.erp.ticket.affectedUpns.slice(0, 1).map((entityId) => ({ entityId, entityType: "upn" as const })),
-      ...ctx.erp.ticket.affectedGroups.slice(0, 1).map((entityId) => ({ entityId, entityType: "group" as const })),
-      ...(lastFailure?.errorCodeLabel ? [{ entityId: lastFailure.errorCodeLabel, entityType: "errorCode" as const }] : []),
-    ];
-    for (const hero of heroes) {
-      const cached = hoverCache.get(hoverKey(tenantId, hero.entityId));
-      if (cached && Date.now() - cached.at < HOVER_CACHE_TTL_MS) continue;
-      await hover({ tenantId, ...hero }).catch(() => undefined);
-    }
+    const fresh = (t: { entityId: string }) => {
+      const cached = hoverCache.get(hoverKey(tenantId, t.entityId));
+      return cached !== undefined && Date.now() - cached.at < HOVER_CACHE_TTL_MS;
+    };
+    const targets = hoverTargets(ctx);
+    const queue = targets.filter((t) => !fresh(t));
+    const worker = async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) await hover({ tenantId, ...next }).catch(() => undefined);
+    };
+    await Promise.all(Array.from({ length: WARM_CONCURRENCY }, worker));
+    return { warmed: targets.filter(fresh).length, total: targets.length };
   } finally {
     warming.delete(tenantId);
   }

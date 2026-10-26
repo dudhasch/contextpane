@@ -41,7 +41,8 @@ export const RouterTierSchema = z.enum([
 ]);
 export type RouterTier = z.infer<typeof RouterTierSchema>;
 
-export const ProviderIdSchema = z.enum(["local", "fireworks", "baseten", "meta", "modal", "runpod"]);
+/** modal-open-weights / runpod / local-glimmer-30b: self-hosted open-weight Muse Glimmer 30B (Tier 1A / 1B). */
+export const ProviderIdSchema = z.enum(["local", "fireworks", "baseten", "meta", "modal-open-weights", "runpod", "local-glimmer-30b"]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
 export const QuickActionKindSchema = z.enum([

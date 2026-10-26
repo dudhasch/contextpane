@@ -1,5 +1,7 @@
 """
-Optional: Meta's open-weight muse-glimmer-30b on Modal, behind an OpenAI-compatible vLLM server.
+Optional: Meta's open-weight muse-glimmer-30b on Modal, behind an OpenAI-compatible vLLM server
+(full-precision safetensors on an H100). glimmer_open_weights.py serves the 16.8 GB GGUF on an L40S
+with llama-server instead, which is the cheaper default (scripts/Start-GlimmerOpenWeights.ps1).
 
 The orchestrator treats this as the first choice for Tier 1A (hover) and Tier 1B (catalog hydration)
 when MODAL_INFERENCE_BASE_URL / CTX_OPEN_WEIGHT_BASE_URL points at it, and falls through to the
@@ -10,7 +12,7 @@ named function with guided decoding, so no tool-call parser is needed for hydrat
 
 Deploy:
     modal secret create contextpane-open-weights HF_TOKEN=<hf-token> CTX_OPEN_WEIGHT_API_KEY=<random-token>
-    CTX_GLIMMER_HF_REPO=<org>/<repo> modal deploy modal-sandbox/open_weights_vllm.py
+    modal deploy modal-sandbox/open_weights_vllm.py
 
 Modal prints https://<workspace>--contextpane-open-weights-serve.modal.run; wire it in with
     pwsh ./scripts/Set-ContextPaneRouterConfig.ps1 -ModalInferenceUrl https://<workspace>--contextpane-open-weights-serve.modal.run/v1 -OpenWeightApiKey <token>
@@ -24,7 +26,7 @@ import subprocess
 import modal
 
 # Hugging Face repo of the open weights; set CTX_GLIMMER_HF_REPO at deploy time to the published repo id
-MODEL_REPO = os.environ.get("CTX_GLIMMER_HF_REPO", "meta-models/muse-glimmer-30b")
+MODEL_REPO = os.environ.get("CTX_GLIMMER_HF_REPO", "meta-models/Muse-Glimmer-30B")
 # Name the orchestrator sends as `model` (CTX_MODEL_OPEN_WEIGHT_GLIMMER)
 SERVED_MODEL_NAME = os.environ.get("CTX_MODEL_OPEN_WEIGHT_GLIMMER", "muse-glimmer-30b")
 GPU = os.environ.get("CTX_GLIMMER_GPU", "H100")

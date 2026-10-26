@@ -78,8 +78,19 @@ export interface ChatOptions {
   temperature?: number;
   /** Includes reasoning tokens on reasoning models, so leave headroom above the visible answer. */
   maxTokens?: number;
-  /** Sent to the Meta Model API only (muse-spark / muse-wonder are reasoning models). */
+  /** Meta Model API: reasoning_effort. Open-weight Muse Glimmer: the template's reasoning_strength. */
   reasoningEffort?: ReasoningEffort;
+}
+
+const OPEN_WEIGHT_PROVIDERS = new Set<string>(["modal-open-weights", "runpod", "local-glimmer-30b"]);
+
+/** Muse Glimmer cannot switch reasoning off; its chat template takes low | medium | high | xhigh. */
+function reasoningParams(provider: ProviderConfig, effort: ReasoningEffort | undefined): Record<string, unknown> {
+  if (!effort) return {};
+  if (provider.id === "meta") return { reasoning_effort: effort };
+  if (!OPEN_WEIGHT_PROVIDERS.has(provider.id)) return {};
+  const strength = effort === "minimal" || effort === "low" ? "low" : effort;
+  return { chat_template_kwargs: { reasoning_strength: strength } };
 }
 
 /**
@@ -116,7 +127,7 @@ export async function chatWithForcedTool(
         tool_choice: named ? { type: "function", function: { name: tool.function.name } } : "auto",
         temperature: options.temperature ?? 0.1,
         max_tokens: options.maxTokens ?? 4096,
-        ...(provider.id === "meta" && options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
+        ...reasoningParams(provider, options.reasoningEffort),
         stream: false,
       }),
       signal: controller.signal,

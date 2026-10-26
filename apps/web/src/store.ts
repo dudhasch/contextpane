@@ -185,9 +185,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const tenantId = get().tenantId;
     set({ canvasStatus: "loading", canvasError: null, progress: [] });
     try {
-      const result = await streamPost<CorrelateResponse>("/api/correlate", { tenantId, fresh: options.fresh ?? false }, (event) =>
-        set((s) => ({ progress: [...s.progress, event] })),
-      );
+      const result = await streamPost<CorrelateResponse>("/api/correlate", { tenantId, fresh: options.fresh ?? false }, (event) => {
+        set((s) => ({ progress: [...s.progress, event] }));
+        // First paint: the header arrives with the MCP data, before the model's layout.
+        if (event.stage === "mcp_ready" && event.data?.layout && get().tenantId === tenantId) set({ layout: event.data.layout as Layout });
+      });
       if (get().tenantId !== tenantId) return;
       set({ layout: result.layout, canvasStatus: "ready", activeRecipeId: null });
     } catch (error) {

@@ -60,8 +60,8 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 ┌────────────────────────── apps/orchestrator (:4000) ─────────────────────────┐
 │                          4-Tier Meta Model Router                            │
 │  Tier 0  recipe hydrate    0 tokens   in-process MCP binding      <150 ms    │
-│  Tier 1A hover             glimmer-30b on Modal/RunPod → Meta spark-1.3      │
-│  Tier 1B catalog           glimmer-30b on Modal/RunPod → Meta spark-1.3      │
+│  Tier 1A hover             Glimmer 30B open weights → Meta spark-1.3         │
+│  Tier 1B catalog           Glimmer 30B open weights → Meta spark-1.3         │
 │  Tier 2  correlate         Meta API muse-spark-1.3 (escalation)              │
 │  Tier 3A/3B remediate      Meta API muse-wonder-1.0 (muse-code if served)    │
 │          └─ pre-flight: Modal sandbox → pwsh AST + terraform fmt/validate    │
@@ -84,8 +84,8 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 | Tier | Endpoint | What happens | Model / provider chain |
 |---|---|---|---|
 | **0** | `GET /api/recipe/:id/hydrate?tenantId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. Measured: 2–11 ms server time. | — |
-| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight `muse-glimmer-30b` on Modal / RunPod vLLM → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`) |
-| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Open-weight vLLM on Modal / RunPod → Meta API `muse-spark-1.3` (`minimal`) |
+| **1A** | `POST /api/hover` | Translates an entity (UPN, group, `AADSTS53003`) into a `HoverDiagnosticPopover`. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of the ticket is pre-cached |
+| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Open-weight Muse Glimmer 30B → Meta API `muse-spark-1.3` (`minimal`); the SSE stream paints `TenantSummaryHeader` from MCP data (`mcp_ready`) before the model answers |
 | **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
 | **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the PowerShell + Terraform bundle (`muse-code` takes the second step once the Meta API serves it), pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`), a git worktree stages `fix/<ticket>-nsg-drift-*`, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
 | **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch tenant / generate fix. | `muse-voice-transcribe-1.0` + `muse-spark-1.3` |
@@ -93,10 +93,13 @@ pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
 **Primary stack: Meta Model API + Modal.** A `META_API_KEY` alone (plus the optional Modal
 sandbox URL) is a complete, first-class configuration: providers without a key are left out
 of the chain entirely, so Meta answering Tier 1A/1B is not reported as a fallback. Open
-weights are opt-in: `modal-sandbox/open_weights_vllm.py` serves `muse-glimmer-30b` on Modal
-with vLLM (scale to zero), and `scripts/Start-RunPodGlimmer.ps1` does the same on RunPod;
-either URL goes into `CTX_OPEN_WEIGHT_BASE_URL` (or `MODAL_INFERENCE_BASE_URL` /
-`RUNPOD_VLLM_BASE_URL`). Baseten (`muse-spark-open-1026`) and Fireworks keys remain optional
+weights are opt-in: `scripts/Start-GlimmerOpenWeights.ps1` serves Meta's
+`Muse-Glimmer-30B-GGUF` (Q4_K_M, 16.8 GB) with llama-server on a Modal L40S
+(`modal-sandbox/glimmer_open_weights.py`, scale to zero) or locally, and wires the URL in;
+`modal-sandbox/open_weights_vllm.py` and `scripts/Start-RunPodGlimmer.ps1` serve the
+full-precision weights on vLLM instead. Telemetry names where Glimmer ran:
+`modal-open-weights`, `runpod` or `local-glimmer-30b`. Any such URL goes into
+`CTX_OPEN_WEIGHT_BASE_URL` (or `MODAL_INFERENCE_BASE_URL` / `RUNPOD_VLLM_BASE_URL`). Baseten (`muse-spark-open-1026`) and Fireworks keys remain optional
 drop-in overrides ahead of Meta.
 
 Every provider in a chain is bounded by a timeout and falls through on error, timeout,
@@ -149,9 +152,10 @@ contextpane/
 │   ├── Invoke-SeedContextPaneLab.ps1
 │   ├── Remove-ContextPaneLab.ps1
 │   ├── Publish-ContextPaneRepo.ps1      Hackathon-compliant history audit/normalise + gh repo create
+│   ├── Start-GlimmerOpenWeights.ps1     Open-weight Muse Glimmer 30B GGUF on Modal (L40S) or local llama-server
 │   ├── Start-RunPodGlimmer.ps1          Optional RunPod vLLM pod for open-weight muse-glimmer-30b
 │   └── Test-ContextPaneSmoke.ps1
-├── modal-sandbox/                Modal Tier 3B pre-flight sandbox + optional open-weight vLLM (Python)
+├── modal-sandbox/                Modal Tier 3B pre-flight sandbox + optional open-weight Glimmer (Python)
 ├── packages/
 │   ├── catalog/                  Zod schemas, View Recipes, forced tool schema, AADSTS catalog
 │   ├── mcp-erp/                  MCP server 1: ERP/PSA tickets & contracts
@@ -298,28 +302,32 @@ Same smoke test with `META_API_KEY` and the Modal sandbox set and `LIVE_CLOUD_MO
 against `c4a8shili.onmicrosoft.com`, after the startup warm-up:
 
 ```
-  pre-flight: Verified Safe  ast=True fmt=True validate=True sandbox=modal-cloud-sandbox
+  pre-flight: Verified Safe  ast=True fmt=True validate=True sandbox=modal-cloud-sandbox 667ms
 Endpoint                                                   Status       Latency(ms) Tier    Provider Model                   Tokens Schema
 GET /api/health                                            OK                    57 -       -        -                            0 PASS
 GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK             6 (srv 3) Tier 0  local    deterministic                0 PASS
-POST /api/hover                                            OK             8 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
+POST /api/hover                                            OK             7 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
 POST /api/hover                                            OK             1 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
-POST /api/correlate                                        OK       5139 (srv 5137) Tier 1B meta     muse-spark-1.3           10533 PASS
+POST /api/correlate                                        OK       4067 (srv 4065) Tier 1B meta     muse-spark-1.3           10409 PASS
 POST /api/voice-steer                                      OK            17 (srv 0) Voice   local    deterministic                0 PASS
-POST /api/remediate                                        OK     38000 (srv 37994) Tier 3B meta     muse-wonder-1.0          13793 PASS
+POST /api/remediate                                        OK     18282 (srv 18279) Tier 3B meta     muse-wonder-1.0          13801 PASS
 POST /api/approve                                          OK                  3098 -       -        -                            0 PASS
 GET /api/telemetry/stats                                   OK                     1 -       -        -                            0 PASS
 ```
 
-- **Hover:** the ticket's hero entities (requester UPN, entitlement group, AADSTS code) are
-  pre-fetched after startup and after every correlate, then served from memory in <10 ms
-  with 0 tokens. An uncached hover on the Meta API takes ~2.3-3 s even at
+- **Hover:** every pill of the ticket (all 5 users, the entitlement group, the AADSTS code,
+  the host pool and the NSG: 9 on Contoso) is pre-fetched after startup (~10 s, three at a
+  time) and after every correlate, then served from memory in <10 ms with 0 tokens. An uncached hover on the Meta API takes ~2.3-3 s even at
   `reasoning_effort: minimal` (measured across `muse-spark-1.1`/`1.2`/`1.3`).
-- **Correlate:** ~5-6 s. The model reasons over the context but leaves the verbatim MCP
+- **Correlate:** ~4-5.5 s for the layout, but the SSE stream sends `mcp_ready` with a
+  `TenantSummaryHeader` built from the MCP data first (~0.7-1 s in the workbench). The model reasons over the context but leaves the verbatim MCP
   data (license users, sign-in events, HCL diff) for the orchestrator to fill in before Zod
   validation, which cut the layout output from ~9k to ~3k characters.
-- **Remediate:** ~14 s of `muse-wonder-1.0` plus the Modal pre-flight (~18 s on a cold
-  container, ~5.5 s warm).
+- **Remediate:** ~15-18 s, almost all of it `muse-wonder-1.0`. The Modal pre-flight takes
+  670-770 ms round trip from Europe to us-east (350-420 ms inside the sandbox: AST ~10 ms,
+  `fmt` ~40 ms, `validate` ~300 ms, run concurrently), down from 5.5-7 s, because the container
+  keeps `pwsh` and the azurerm provider running between requests. The orchestrator pings it
+  at startup and on every correlate, so the ~6.5 s cold boot happens before Generate Fix.
 - **Voice:** `scripts/New-ContextPaneVoiceFixture.ps1 -WebM -Send` synthesizes the command
   with Windows' speech engine and transcribes it live: WAV in 1.9 s, MediaRecorder-style
   WebM/Opus in 2.5 s, both "only show license drift and the sign in timeline" → `filter`.
@@ -340,8 +348,11 @@ What the live Meta Model API taught the router:
   MediaRecorder recording to 16 kHz WAV in the browser (`apps/web/src/lib/wav.ts`), and the
   orchestrator transcodes anything else with `ffmpeg` when it is installed.
 
-Not yet exercised: the open-weight endpoints on Modal / RunPod. They are typed,
-timeout-bounded and fall back to the Meta Model API on failure.
+Not yet exercised: the open-weight Muse Glimmer endpoints (`scripts/Start-GlimmerOpenWeights.ps1`
+on Modal, RunPod or locally). They are typed, timeout-bounded and fall back to the Meta Model
+API on failure. Muse Glimmer always reasons (its template cannot switch thinking off), so an
+uncached hover there is bounded by `--reasoning-budget` and GPU decode speed rather than
+reaching sub-second; the hover cache is what keeps hovers instant either way.
 
 ---
 

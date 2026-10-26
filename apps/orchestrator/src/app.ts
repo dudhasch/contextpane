@@ -15,6 +15,7 @@ import { config, describeConfig, providers } from "./config.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext } from "./mcp/context.ts";
 import { metaModelsResolved } from "./router/meta-models.ts";
+import { warmModalSandbox } from "./preflight/modal.ts";
 import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
 import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
@@ -190,7 +191,8 @@ const CorrelateBodySchema = z.object({
 app.post("/api/correlate", async (c) => {
   const parsed = CorrelateBodySchema.parse(await c.req.json().catch(() => ({})));
   const body = { ...parsed, fresh: parsed.fresh || wantsRefresh(c) };
-  // A correlate is the "ticket opened" moment: pre-fetch the hero hovers once it is done.
+  // A correlate is the "ticket opened" moment: wake the Modal sandbox now and pre-fetch every hover once it is done.
+  warmModalSandbox("correlate");
   if (!wantsSse(c)) {
     const result = await correlate(body);
     void warmHoverCache(body.tenantId);

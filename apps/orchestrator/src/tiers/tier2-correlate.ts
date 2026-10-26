@@ -120,6 +120,15 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
     policies: ctx.policies.data.length,
     driftState: ctx.drift.data.driftState,
   });
+  if (sink) {
+    // First paint: the header and live source badges render from MCP data while the model correlates.
+    const firstPaint = buildLayout(
+      ctx,
+      { tier: "Tier 0", provider: "local", modelId: "mcp-first-paint", latencyMs: ctx.gatherLatencyMs, tokensUsed: 0, fallbackChain: [], validated: true, repaired: [] },
+      { components: ["TenantSummaryHeader"] },
+    );
+    report("mcp_ready", "TenantSummaryHeader painted from live MCP data", { layout: firstPaint, sources: ctx.sourcesUsed });
+  }
 
   const wanted = input.components ?? DEFAULT_COMPONENT_ORDER;
   const steps = chainSteps();

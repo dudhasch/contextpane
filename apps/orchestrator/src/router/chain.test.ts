@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { InvalidSchemaError, runChain, type ChainStep } from "./chain.ts";
 
 const correlateSteps = (metaKey: boolean, openWeight: boolean): ChainStep[] => [
-  { provider: "modal", modelId: "muse-glimmer-30b", hasKey: openWeight, tier: "Tier 1B" },
+  { provider: "modal-open-weights", modelId: "muse-glimmer-30b", hasKey: openWeight, tier: "Tier 1B" },
   { provider: "baseten", modelId: "meta-models/muse-spark-open-1026", hasKey: false, tier: "Tier 1B" },
   { provider: "meta", modelId: "muse-spark-1.3-contributor", hasKey: metaKey, tier: "Tier 1B" },
   { provider: "meta", modelId: "muse-spark-1.3", hasKey: metaKey, tier: "Tier 2" },
@@ -23,7 +23,7 @@ describe("runChain", () => {
     });
     expect(outcome.winner?.tier).toBe("Tier 2");
     expect(outcome.chain.map((s) => `${s.provider}/${s.modelId}:${s.outcome}`)).toEqual([
-      "modal/muse-glimmer-30b:invalid-schema",
+      "modal-open-weights/muse-glimmer-30b:invalid-schema",
       "meta/muse-spark-1.3-contributor:invalid-schema",
       "meta/muse-spark-1.3:ok",
     ]);

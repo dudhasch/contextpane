@@ -86,16 +86,29 @@ export interface ProviderConfig {
 const metaApiKey = env("META_API_KEY", env("MODEL_API_KEY"));
 
 /**
- * Self-hosted open-weight endpoint (OpenAI-compatible vLLM serving muse-glimmer-30b):
+ * Self-hosted open-weight Muse Glimmer 30B (OpenAI-compatible llama-server or vLLM):
  * CTX_OPEN_WEIGHT_BASE_URL wins, else the Modal deployment, else the RunPod pod.
+ * The telemetry provider names where it runs: a loopback llama-server is
+ * local-glimmer-30b, a RunPod pod runpod, anything else modal-open-weights.
  */
 const openWeightBaseUrl = env("CTX_OPEN_WEIGHT_BASE_URL", env("MODAL_INFERENCE_BASE_URL", env("RUNPOD_VLLM_BASE_URL")));
-const openWeightIsRunPod = /runpod/i.test(openWeightBaseUrl) || (openWeightBaseUrl !== "" && openWeightBaseUrl === env("RUNPOD_VLLM_BASE_URL"));
+const openWeightHost = (() => {
+  try {
+    return new URL(openWeightBaseUrl).hostname;
+  } catch {
+    return "";
+  }
+})();
+const openWeight: Pick<ProviderConfig, "id" | "label"> =
+  /^(localhost|127\.0\.0\.1|\[::1\])$|\.localhost$/i.test(openWeightHost)
+    ? { id: "local-glimmer-30b", label: "Local llama-server" }
+    : /runpod/i.test(openWeightBaseUrl) || (openWeightBaseUrl !== "" && openWeightBaseUrl === env("RUNPOD_VLLM_BASE_URL"))
+      ? { id: "runpod", label: "RunPod open weights" }
+      : { id: "modal-open-weights", label: "Modal open weights" };
 
 export const providers: Record<"openWeight" | "fireworks" | "baseten" | "meta", ProviderConfig> = {
   openWeight: {
-    id: openWeightIsRunPod ? "runpod" : "modal",
-    label: openWeightIsRunPod ? "RunPod vLLM" : "Modal vLLM",
+    ...openWeight,
     baseUrl: openWeightBaseUrl,
     apiKey: env("CTX_OPEN_WEIGHT_API_KEY"),
     hasKey: openWeightBaseUrl !== "",
@@ -158,6 +171,8 @@ export const config = {
     hoverMs: envInt("CTX_HOVER_TIMEOUT_MS", 2500),
     /** The Meta Model API's reasoning models answer a hover in ~1.5-2.5 s even at reasoning_effort=minimal. */
     metaHoverMs: envInt("CTX_META_HOVER_TIMEOUT_MS", 5000),
+    /** Muse Glimmer always reasons (budget-capped server-side), so it gets longer than the hosted hover APIs. */
+    openWeightHoverMs: envInt("CTX_OPEN_WEIGHT_HOVER_TIMEOUT_MS", 8000),
     correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),

@@ -71,8 +71,9 @@ export const PROVIDER_LABEL: Record<string, string> = {
   fireworks: "Fireworks",
   baseten: "Baseten 2M TPM",
   meta: "Meta API",
-  modal: "Modal vLLM",
-  runpod: "RunPod vLLM",
+  "modal-open-weights": "Modal open weights",
+  runpod: "RunPod open weights",
+  "local-glimmer-30b": "Local llama-server",
 };
 
 export function healthTone(state: HealthState): "healthy" | "warning" | "critical" | "muted" {
