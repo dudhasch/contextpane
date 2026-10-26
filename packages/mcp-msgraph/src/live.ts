@@ -133,7 +133,8 @@ export async function fetchConditionalAccessPoliciesLive(prefix: string, timeout
   const script = `
 ${REQUIRE_CONTEXT}
 $all = @(Get-MgIdentityConditionalAccessPolicy -All)
-$sel = @($all | Where-Object { $_.DisplayName -like (${psq(prefix)} + '*') } | ForEach-Object {
+# StartsWith, not -like: the '[' in '[ContextPane-Demo]' is a wildcard character set to -like
+$sel = @($all | Where-Object { $_.DisplayName -and $_.DisplayName.StartsWith(${psq(prefix)}) } | ForEach-Object {
   [pscustomobject]@{
     id                  = $_.Id
     displayName         = $_.DisplayName
