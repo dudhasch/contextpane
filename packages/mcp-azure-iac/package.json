@@ -1,0 +1,32 @@
+{
+  "name": "@contextpane/mcp-azure-iac",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ContextPane MCP server 3: Azure NSG / tag drift vs the local Terraform baseline (live via PowerShell 7 Az, or seeded manifest).",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "contextpane-mcp-azure-iac": "./src/server.ts"
+  },
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@contextpane/catalog": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "diff": "^9.0.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}

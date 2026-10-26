@@ -1,0 +1,154 @@
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+/* -------------------------------------------------------------------------- */
+/* Repo / manifest resolution (kept local so this server has no sibling deps)  */
+/* -------------------------------------------------------------------------- */
+
+const MANIFEST_REL = join("demo-iac", "demo-lab-manifest.json");
+
+export function findRepoRoot(anchors: string[] = [process.cwd(), import.meta.dir]): string | null {
+  for (const anchor of anchors) {
+    let dir = resolve(anchor);
+    for (let i = 0; i < 8; i++) {
+      if (existsSync(join(dir, MANIFEST_REL))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return null;
+}
+
+export function resolveIacDir(): string {
+  const override = process.env.CTX_DEMO_IAC_DIR;
+  if (override && existsSync(override)) return resolve(override);
+  const root = findRepoRoot();
+  if (!root) throw new Error(`demo-iac directory not found. Set CTX_DEMO_IAC_DIR or run inside the ContextPane repository (cwd=${process.cwd()}).`);
+  return join(root, "demo-iac");
+}
+
+export function resolveManifestPath(): string {
+  const override = process.env.CTX_DEMO_MANIFEST;
+  if (override && existsSync(override)) return resolve(override);
+  return join(resolveIacDir(), "demo-lab-manifest.json");
+}
+
+export interface ManifestSecurityRule {
+  name: string;
+  priority: number;
+  direction: "Inbound" | "Outbound";
+  access: "Allow" | "Deny";
+  protocol: string;
+  sourcePortRange: string;
+  destinationPortRange: string;
+  sourceAddressPrefix: string;
+  destinationAddressPrefix: string;
+  description?: string;
+}
+
+export interface ManifestAzureTenant {
+  displayName: string;
+  tenantId: string;
+  subscriptionId: string;
+  azure: {
+    resourceGroup: string;
+    location: string;
+    terraformFile: string;
+    gitBranch: string;
+    nsg: { name: string; id: string; tags: Record<string, string>; securityRules: ManifestSecurityRule[] };
+  };
+}
+
+interface ManifestShape {
+  tenants: Record<string, ManifestAzureTenant>;
+}
+
+let cache: { path: string; mtimeMs: number; manifest: ManifestShape } | null = null;
+
+export function loadManifest(): ManifestShape {
+  const path = resolveManifestPath();
+  const mtimeMs = statSync(path).mtimeMs;
+  if (cache && cache.path === path && cache.mtimeMs === mtimeMs) return cache.manifest;
+  const manifest = JSON.parse(readFileSync(path, "utf8")) as ManifestShape;
+  cache = { path, mtimeMs, manifest };
+  return manifest;
+}
+
+export function getManifestTenant(tenantId: string): ManifestAzureTenant {
+  const tenant = loadManifest().tenants[tenantId];
+  if (!tenant) throw new Error(`Tenant '${tenantId}' not present in demo-lab-manifest.json`);
+  return tenant;
+}
+
+/* -------------------------------------------------------------------------- */
+/* PowerShell 7 runner                                                         */
+/* -------------------------------------------------------------------------- */
+
+export function isLiveCloudMode(): boolean {
+  return /^(true|1|yes)$/i.test(process.env.LIVE_CLOUD_MODE ?? "");
+}
+
+let pwshAvailable: boolean | null = null;
+
+export async function isPwshAvailable(): Promise<boolean> {
+  if (pwshAvailable !== null) return pwshAvailable;
+  try {
+    const out = await runPwshRaw("$PSVersionTable.PSVersion.Major", 15_000);
+    pwshAvailable = Number.parseInt(out.trim(), 10) >= 7;
+  } catch {
+    pwshAvailable = false;
+  }
+  return pwshAvailable;
+}
+
+export function runPwshRaw(script: string, timeoutMs = 30_000): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", "-"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`pwsh timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => (stdout += d));
+    child.stderr.on("data", (d: string) => (stderr += d));
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`failed to start pwsh: ${err.message}`));
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolvePromise(stdout);
+      else reject(new Error(`pwsh exited with code ${code}: ${stderr.trim().split("\n").slice(-3).join(" | ")}`));
+    });
+    child.stdin.write("$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n");
+    child.stdin.write(script);
+    child.stdin.write("\n");
+    child.stdin.end();
+  });
+}
+
+export async function runPwshJson<T>(script: string, timeoutMs?: number): Promise<T> {
+  const out = (await runPwshRaw(script, timeoutMs)).trim();
+  const start = out.search(/[[{]/);
+  if (start < 0) throw new Error(`pwsh produced no JSON output: ${out.slice(0, 200)}`);
+  return JSON.parse(out.slice(start)) as T;
+}
+
+export function psq(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
