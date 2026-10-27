@@ -1,0 +1,29 @@
+[
+  {
+    "id": "skill-inc-4092-tier0",
+    "scenarioId": "INC-4092",
+    "signature": {
+      "scenarioId": "INC-4092",
+      "tenantId": "tenant-contoso-01",
+      "components": [
+        "LicenseDriftCard",
+        "EntraSignInTimeline",
+        "IaCDriftBanner"
+      ],
+      "skuPartNumber": "SPE_E5",
+      "groupName": "SG-Contoso-Finance-AVD",
+      "policyIds": [
+        "ca-policy-001"
+      ]
+    },
+    "tier": 0,
+    "tokenCost": 0,
+    "latencyMs": 0.002,
+    "fuzz": {
+      "cases": 100,
+      "passed": 100
+    },
+    "createdAt": "2026-10-27T00:17:57.277Z",
+    "version": 1
+  }
+]

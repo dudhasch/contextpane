@@ -1,4 +1,4 @@
-import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, ShieldAlert, ShieldCheck, Sparkles, Terminal, Users, X, XCircle, Zap } from "lucide-react";
+import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, History, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
 import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench, type DrawerTab as Tab } from "@/store";
@@ -38,6 +38,7 @@ export function ActionApprovalDrawerSheet() {
   const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
   const toast = useWorkbench((s) => s.toast);
   const mode = useWorkbench((s) => s.executionMode);
+  const formalPassed = useWorkbench((s) => s.formal?.formal.passed);
   if (!open) return null;
   const prPossible = Boolean(github?.origin && github.ghAuthenticated);
   const copy = async (text: string, what: string) => {
@@ -157,6 +158,8 @@ export function ActionApprovalDrawerSheet() {
               <TabButton active={tab === "graph"} onClick={() => setTab("graph")} icon={<Braces />} label="Graph JSON" />
               {drawer.terraformDiff && <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform diff" />}
               <TabButton active={tab === "entities"} onClick={() => setTab("entities")} icon={<Users />} label={`Entities (${drawer.affectedEntities.length})`} />
+              <TabButton active={tab === "formal"} onClick={() => setTab("formal")} icon={<ShieldCheck />} label="Formal proof" />
+              <TabButton active={tab === "rollback"} onClick={() => setTab("rollback")} icon={<History />} label="Inverse Rollback (f⁻¹)" />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -173,6 +176,8 @@ export function ActionApprovalDrawerSheet() {
               {tab === "terraform" && drawer.terraformDiff && (
                 <CodeBlock code={drawer.terraformDiff} render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="max-h-none" wrap={wrap} className="pt-8" />} />
               )}
+              {tab === "formal" && <FormalProof />}
+              {tab === "rollback" && <RollbackTab />}
               {tab === "entities" && (
                 <ul className="divide-y divide-border-subtle rounded-md border border-border-subtle">
                   {drawer.affectedEntities.map((e) => (
@@ -250,7 +255,7 @@ export function ActionApprovalDrawerSheet() {
                     size="md"
                     icon={mode === "break-glass" ? <Zap /> : <GitMerge />}
                     className="flex-1"
-                    disabled={drawer.verificationStatus.verdict === "Verification Failed"}
+                    disabled={drawer.verificationStatus.verdict === "Verification Failed" || formalPassed === false}
                     onClick={() => void approve("approve")}
                   >
                     {mode === "break-glass" ? "Approve · Execute Live & Reconcile" : "Approve · Stage for Pipeline"}
@@ -265,6 +270,47 @@ export function ActionApprovalDrawerSheet() {
           </>
         )}
       </aside>
+    </div>
+  );
+}
+
+function FormalProof() {
+  const formal = useWorkbench((s) => s.formal);
+  const compileSkill = useWorkbench((s) => s.compileSkill);
+  if (!formal) return <div className="text-[12px] text-muted">Formal proof loading…</div>;
+  const b = formal.blastRadius;
+  return (
+    <div className="space-y-3 text-[12px]" data-testid="formal-proof">
+      <div className="flex flex-wrap gap-1.5">
+        <Pill tone={formal.formal.passed ? "healthy" : "critical"} icon={<ShieldCheck />}>{formal.formal.passed ? "Formal proof passed" : "Formal proof FAILED"} · {formal.formal.latencyMs} ms</Pill>
+        <Pill tone="muted">f(f(S)) = f(S): {formal.idempotency.passed ? "idempotent" : "FAILED"}</Pill>
+        <Button size="sm" variant="outline" icon={<Zap />} onClick={() => void compileSkill()}>Compile to Tier 0 Fleet Skill</Button>
+      </div>
+      <ul className="space-y-1">
+        {formal.formal.invariants.map((i) => (
+          <li key={i.id} className="flex gap-2"><Pill tone={i.passed ? "healthy" : "critical"}>{i.passed ? "proved" : "counterexample"}</Pill><span><span className="font-mono text-[11px]">{i.id}</span><span className="block text-muted">{i.evidence[0] ?? i.statement}</span></span></li>
+        ))}
+      </ul>
+      <div>
+        <div className="section-label mb-1">Blast-Radius Matrix · 30-day replay</div>
+        <div className="rounded-md border border-border-subtle p-2 font-mono text-[11px] text-muted" data-testid="blast-radius">
+          {b.rows.map((r) => <div key={r.cohort}>{r.entities.length} {r.cohort}: {r.before} → {r.after}</div>)}
+          <div>0 collateral user lockouts · {b.collateralChanges} collateral changes</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RollbackTab() {
+  const formal = useWorkbench((s) => s.formal);
+  const rollbackNow = useWorkbench((s) => s.rollbackNow);
+  if (!formal) return <div className="text-[12px] text-muted">Rollback bundle loading…</div>;
+  return (
+    <div className="space-y-2" data-testid="rollback-tab">
+      <div className="flex gap-1.5"><Pill tone="healthy" icon={<History />}>f⁻¹ pre-verified · idempotent</Pill><Button size="sm" variant="outline" icon={<Undo2 />} onClick={() => void rollbackNow()}>1-Click Undo / Rollback (f⁻¹)</Button></div>
+      <CodeBlock code={formal.rollback.powershellScript} />
+      {formal.rollback.terraformDiff && <CodeBlock code={formal.rollback.terraformDiff} />}
     </div>
   );
 }

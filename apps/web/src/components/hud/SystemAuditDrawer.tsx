@@ -25,11 +25,13 @@ export function SystemAuditDrawer() {
           <Tab id="savings" active={tab} icon={<PiggyBank />} label="Router Savings" />
           <Tab id="audit" active={tab} icon={<ShieldCheck />} label="Audit Log" />
           <Tab id="providers" active={tab} icon={<Cable />} label="Providers & MCP" />
+          <Tab id="skills" active={tab} icon={<Sparkles />} label="Skills & PII Vault" />
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
           {tab === "savings" && <RouterSavingsBody />}
           {tab === "audit" && <AuditLogBody />}
           {tab === "providers" && <ProvidersBody />}
+          {tab === "skills" && <SkillsPiiBody />}
         </div>
       </aside>
     </div>
@@ -47,6 +49,32 @@ function Tab({ id, active, icon, label }: { id: SystemTab; active: SystemTab; ic
       {icon}
       {label}
     </button>
+  );
+}
+
+function SkillsPiiBody() {
+  const skills = useWorkbench((s) => s.compiledSkills);
+  const pii = useWorkbench((s) => s.piiMetrics);
+  const compileSkill = useWorkbench((s) => s.compileSkill);
+  const loadSkills = useWorkbench((s) => s.loadSkills);
+  return (
+    <div className="space-y-4 text-[12px]" data-testid="skills-pii">
+      <section>
+        <div className="section-label mb-1.5">Tier 0 compiled skills</div>
+        <button type="button" onClick={() => { void loadSkills(); void compileSkill(); }} className="mb-2 rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] text-primary">Compile to Tier 0 Fleet Skill</button>
+        {skills.length === 0 && <div className="text-muted">No compiled skill yet.</div>}
+        {skills.map((s) => <div key={s.id} className="mb-1 flex flex-wrap gap-1.5"><Pill tone="healthy">{s.badge}</Pill><Pill tone="muted">{s.id} · {s.latencyMs} ms · 0 tok</Pill></div>)}
+      </section>
+      <section>
+        <div className="section-label mb-1.5">PII pseudonym vault · @pii(EU-GDPR-Personal)</div>
+        {pii ? (
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-1.5"><Pill tone="healthy">{pii.piiFieldsVaulted} PII fields vaulted</Pill><Pill tone={pii.zeroRawPiiInLlmPrompt ? "healthy" : "critical"}>zeroRawPiiInLlmPrompt: {String(pii.zeroRawPiiInLlmPrompt)}</Pill></div>
+            <div className="rounded-md border border-border-subtle p-2 font-mono text-[10.5px] text-muted">{Object.entries(pii.sampleMappings ?? {}).slice(0, 6).map(([k, v]) => <div key={k}>{k} ↔ {v}</div>)}</div>
+          </div>
+        ) : <div className="text-muted">Open a scenario to populate the vault.</div>}
+      </section>
+    </div>
   );
 }
 

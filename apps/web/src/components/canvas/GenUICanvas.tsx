@@ -1,4 +1,4 @@
-import { ChevronRight, Database, LayoutGrid, Pin, X } from "lucide-react";
+import { ChevronRight, Database, History, LayoutGrid, Pin, Undo2, X } from "lucide-react";
 import type { LayoutComponent } from "@contextpane/catalog";
 import { selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
@@ -23,12 +23,35 @@ export function GenUICanvas() {
   return (
     <div className="flex h-full flex-col">
       <TenantBreadcrumb cards={components.length} />
+      <TimeTravelScrubber />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
         {status === "loading" && !layout && <ProgressRail events={progress} title="Correlating scenario" busy />}
         {status === "error" && <div className="card border-critical/40 text-sm text-critical">Canvas error: {error}</div>}
         {layout && components.map((c) => <Component key={c.id} component={c} />)}
         {layout && components.length === 0 && status === "ready" && <div className="card text-sm text-muted">No components match the current filter.</div>}
       </div>
+    </div>
+  );
+}
+
+/** Sleek 1-line flight-recorder scrubber: Tier 0, 0 tokens, re-hydrates in <2 ms and rings the changed card. */
+function TimeTravelScrubber() {
+  const timeline = useWorkbench((s) => s.timeline);
+  const sliceId = useWorkbench((s) => s.timelineSliceId);
+  const select = useWorkbench((s) => s.selectTimelineSlice);
+  const load = useWorkbench((s) => s.loadDrawerExtras);
+  const convergence = useWorkbench(selectConvergence);
+  const rollbackNow = useWorkbench((s) => s.rollbackNow);
+  if (!timeline) return <button type="button" onClick={() => void load()} className="flex h-7 shrink-0 items-center gap-1.5 border-b border-border px-3 font-mono text-[10.5px] text-faint hover:text-text" data-testid="timeline-scrubber"><History className="size-3" /> Time travel…</button>;
+  const active = timeline.slices.find((s) => s.id === sliceId);
+  return (
+    <div className="flex h-7 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3" data-testid="timeline-scrubber">
+      <History className="size-3 shrink-0 text-primary" />
+      {timeline.slices.map((s) => (
+        <button key={s.id} type="button" onClick={() => select(s.id)} title={`${s.label} · ${s.timestamp.slice(11, 16)} UTC · ${s.state.summary}`} className={`h-5 shrink-0 rounded border px-1.5 font-mono text-[10.5px] ${s.id === sliceId ? "border-primary/50 bg-primary/12 text-primary" : "border-border text-faint hover:text-text"}`}>{s.relativeLabel}</button>
+      ))}
+      {active && <span className="truncate text-[10.5px] text-muted">{active.label} · {active.timestamp.slice(11, 16)} UTC{active.changedCardId ? ` · Δ ${active.changedCardId}` : ""} · Tier 0 · 0 tok</span>}
+      {convergence && <button type="button" onClick={() => void rollbackNow()} className="ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 font-mono text-[10.5px] text-healthy" data-testid="rollback-button"><Undo2 className="size-3" /> 1-Click Undo / Rollback (f⁻¹)</button>}
     </div>
   );
 }

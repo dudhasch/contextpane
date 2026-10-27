@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dataPtr, datasetsFor, formatSourceRef, getHydrateLayoutToolDefinition, locateJsonPath, parseDataPtr } from "./index.ts";
+import { PII_FIELDS, applyPtrQuery, createPiiVault, dataPtr, datasetsFor, formatSourceRef, getHydrateLayoutToolDefinition, locateJsonPath, parseDataPtr, parsePtrQuery, pseudonymizeForLlm, resolvePointer } from "./index.ts";
 
 describe("ptr:// data-plane pointers", () => {
   test("pointers are deterministic per scenario and dataset, and parse back", () => {
@@ -25,6 +25,75 @@ describe("ptr:// data-plane pointers", () => {
     const iac = cards.find((c) => c.properties.type.const === "IaCDriftBanner");
     expect(iac.properties.props.properties.hclDiff.properties.dataPtr.type).toBe("string");
     expect(iac.properties.props.properties).not.toHaveProperty("sourceRef");
+  });
+});
+
+describe("ptr:// v2 relational queries", () => {
+  const rows = [
+    { upn: "b@x", status: "drifted", assignedSku: "E3", expectedSku: "E5" },
+    { upn: "a@x", status: "compliant", assignedSku: "E5", expectedSku: "E5" },
+    { upn: "c@x", status: "drifted", assignedSku: "E3", expectedSku: "E5" },
+  ];
+  test("where filters (comma = AND)", () => {
+    expect(resolvePointer("ptr://inc-4092/entra/users?where=status:drifted", rows).rows.map((r) => r.upn)).toEqual(["b@x", "c@x"]);
+    expect(resolvePointer("ptr://inc-4092/entra/users?where=status:drifted,assignedSku:E3", rows).rows).toHaveLength(2);
+    expect(resolvePointer("ptr://inc-4092/entra/users?where=status:drifted,assignedSku:E5", rows).rows).toHaveLength(0);
+  });
+  test("select projects only requested fields", () => {
+    expect(resolvePointer("ptr://inc-4092/entra/users?select=upn,expectedSku", rows).rows[0]).toEqual({ upn: "b@x", expectedSku: "E5" });
+  });
+  test("order asc and -field desc", () => {
+    expect(resolvePointer("ptr://inc-4092/entra/users?order=upn", rows).rows.map((r) => r.upn)).toEqual(["a@x", "b@x", "c@x"]);
+    expect(resolvePointer("ptr://inc-4092/entra/users?order=-upn", rows).rows.map((r) => r.upn)).toEqual(["c@x", "b@x", "a@x"]);
+  });
+  test("combined where+select+order (spec example shape)", () => {
+    const hit = resolvePointer("ptr://inc-4092/entra/users?where=status:drifted&select=upn,assignedSku,expectedSku&order=upn", rows);
+    expect(hit.found).toBe(true);
+    expect(hit.rows).toEqual([{ upn: "b@x", assignedSku: "E3", expectedSku: "E5" }, { upn: "c@x", assignedSku: "E3", expectedSku: "E5" }]);
+    expect(parseDataPtr("ptr://inc-4092/entra/users?where=status:drifted&select=upn&order=-upn")?.query).toEqual({ where: [{ field: "status", operator: "eq", value: "drifted" }], select: ["upn"], order: { field: "upn", direction: "desc" } });
+  });
+  test("invalid field/operator/param fails closed, never raw", () => {
+    for (const ptr of ["ptr://inc-4092/entra/users?where=nope:drifted", "ptr://inc-4092/entra/users?select=nope", "ptr://inc-4092/entra/users?order=nope", "ptr://inc-4092/entra/users?where=status=drifted", "ptr://inc-4092/entra/users?where=status!=drifted", "ptr://inc-4092/entra/users?limit=2"]) {
+      const hit = resolvePointer(ptr, rows);
+      expect(hit.found).toBe(false);
+      expect(hit.rows).toEqual([]);
+      expect(hit.value).toEqual([]);
+    }
+    expect(parseDataPtr("ptr://inc-4092/entra/users?where=status=drifted")).toBeNull();
+    expect(parsePtrQuery("?where=status:drifted").error).toBeUndefined();
+    expect(applyPtrQuery(rows, { where: [{ field: "nope", operator: "eq", value: "x" }] }).rows).toEqual([]);
+  });
+  test("plain ptr backwards compatible", () => {
+    expect(parseDataPtr("ptr://inc-4092/entra/users")).toEqual({ scenario: "inc-4092", dataset: "entra/users" });
+    expect(resolvePointer("ptr://inc-4092/entra/users", rows).value).toEqual(rows);
+  });
+});
+
+describe("PII Pseudonym Vault", () => {
+  test("registry tags sensitive fields @pii EU-GDPR-Personal", () => {
+    for (const f of ["upn", "displayName", "ipAddress", "userId", "deviceName"] as const) expect(PII_FIELDS[f].annotation).toBe('@pii(classification:"EU-GDPR-Personal")');
+  });
+  test("deterministic tokens, round-trip, metrics, no raw in LLM output", () => {
+    const vault = createPiiVault();
+    const input = [{ upn: "alice@contoso.com", displayName: "Alice", ipAddress: "10.0.0.1", deviceName: "WS-1", status: "drifted" }, { upn: "bob@contoso.com", displayName: "Bob", ipAddress: "10.0.0.2", deviceName: "WS-2", status: "drifted" }];
+    const safe = vault.pseudonymize(input) as typeof input;
+    expect(safe[0]!.upn).toBe("upn_tok_01");
+    expect(safe[1]!.upn).toBe("upn_tok_02");
+    expect(safe[0]!.ipAddress).toBe("ip_tok_01");
+    expect(safe[0]!.status).toBe("drifted");
+    const json = JSON.stringify(safe);
+    expect(json).not.toContain("alice@contoso.com");
+    expect(json).not.toContain("10.0.0.1");
+    expect(vault.unvault("upn_tok_01")).toBe("alice@contoso.com");
+    expect(vault.depseudonymize(safe)).toEqual(input);
+    const m = vault.metrics();
+    expect(m.zeroRawPiiInLlmPrompt).toBe(true);
+    expect(m.piiFieldsVaulted).toBe(8);
+    expect(m.tokenMappings.upn_tok_01).toBe("alice@contoso.com");
+    expect(m.sampleMappings.ip_tok_01).toBe("10.0.0.1");
+    // deterministic: same input in a fresh vault yields same tokens
+    expect((createPiiVault().pseudonymize(input) as typeof input)[0]!.upn).toBe("upn_tok_01");
+    expect(JSON.stringify(pseudonymizeForLlm(input, createPiiVault()))).not.toContain("bob@contoso.com");
   });
 });
 

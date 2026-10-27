@@ -45,6 +45,17 @@ The left pane holds the Summary & Resolution Plan (numbered steps; clicking one 
 tab), the ticket or anomaly text with inline pills, the *Detected & Enriched Context* pills grouped by
 provenance, and the contract and infrastructure spec in collapsed accordions.
 
+## Day-2 architectural upgrades
+
+Four upgrades, all kept off the main canvas cards (see `DESIGN.md`):
+
+1. **Tier 3C Formal Blast-Radius Prover** (`apps/orchestrator/src/local/formal-verifier.ts`, Python mirror `modal-sandbox/app.py`): a deterministic symbolic prover (<100 ms, no GPU) proves break-glass non-lockout, target Blocked→Allowed remediation, and NSG 5-tuple reachability (`Internet→AVDSubnet TCP/3389` empty, AVD control plane 443 intact) before Approve unlocks. `GET /api/formal/:scenarioId` returns the proof, the 30-day counterfactual Blast-Radius Matrix, the pre-verified inverse rollback bundle `f⁻¹`, and the `f(f(S)) = f(S)` copy-on-write idempotency check. The matrix, proof and `[Inverse Rollback (f⁻¹)]` tab live inside the Action Approval drawer; converged canvases get a `[1-Click Undo / Rollback (f⁻¹)]` button (`POST /api/rollback`, <1 s).
+2. **Tier 3 → Tier 0 Skill Compiler** (`apps/orchestrator/src/local/skill-compiler.ts`): `POST /api/skills/compile` captures the verified execution trace, runs a 100-case property fuzzer (tenant IDs, user/SKU counts, groups, policy IDs; 100/100 Zod-valid + formally verified), and promotes the skill to `data/compiled-skills.json`. Later matches run at Tier 0 (0 tokens, <2 ms) with a `Tier 0 Compiled Skill (100/100 fuzz verified)` badge in System & Audit.
+3. **Bi-Temporal Time-Travel Scrubber** (`GET /api/timeline/:scenarioId`): 4–5 `[valid_from, valid_to]` causal slices per scenario (INC-4092: `T-18m` healthy → `T-14m` drift → `T-06m` first `AADSTS53003` → `NOW` → `T+Fix` counterfactual), rendered as one pill bar above the cards. Scrubbing re-hydrates at Tier 0 in <2 ms and rings the changed card.
+4. **`ptr://` v2 + PII Pseudonym Vault** (`packages/catalog/src/dataplane.ts`): relational projections such as `ptr://inc-4092/entra/users?where=driftStatus:drifted&select=upn,currentSku,expectedSku&order=upn` (invalid queries fail closed), and `@pii(classification: "EU-GDPR-Personal")` fields (`upn`, `displayName`, `ipAddress`, `userId`, `deviceName`) vaulted per session (`upn_tok_01 ↔ …`). `GET /api/dataplane/:scenarioId` exposes `piiMetrics` with `zeroRawPiiInLlmPrompt: true`, also shown in System & Audit.
+
+`CTX_OPEN_WEIGHT_TIERS=hover` stays set throughout: none of this wakes the Modal L40S GPU.
+
 ## Reproduce the Demo in 60 Seconds
 
 ```bash

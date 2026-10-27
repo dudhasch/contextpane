@@ -287,6 +287,74 @@ if (-not $SkipRemediate) {
     }
 }
 
+$null = Invoke-Check -Name formal -Method GET -Path "/api/formal/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.formal.passed) { $i += 'formal invariants failed' }
+    if (@($r.formal.invariants).Count -ne 3) { $i += "expected 3 invariants, got $(@($r.formal.invariants).Count)" }
+    if ($r.formal.latencyMs -ge 100) { $i += "formal prover $($r.formal.latencyMs)ms >= 100ms" }
+    if ($r.blastRadius.collateralChanges -ne 0) { $i += 'collateral changes != 0' }
+    if ($ScenarioId -eq 'INC-4092' -and $r.blastRadius.targetBlockedToAllowed -lt 1) { $i += 'no target Blocked->Allowed' }
+    if (-not $r.rollback.powershellScript) { $i += 'rollback f^-1 powershell missing' }
+    if (-not $r.idempotency.passed) { $i += 'idempotency f(f(S))=f(S) failed' }
+    $i
+}
+
+$null = Invoke-Check -Name timeline -Method GET -Path "/api/timeline/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    $s = @($r.timeline.slices)
+    if ($s.Count -lt 4 -or $s.Count -gt 5) { $i += "expected 4-5 slices, got $($s.Count)" }
+    if ($r.telemetry.tier -ne 'Tier 0') { $i += 'timeline not Tier 0' }
+    if ($ScenarioId -eq 'INC-4092') {
+        if ($s[0].relativeLabel -ne 'T-18m') { $i += 'first slice not T-18m' }
+        if ($s[-1].relativeLabel -ne 'T+Fix') { $i += 'last slice not T+Fix' }
+    }
+    $i
+}
+
+$null = Invoke-Check -Name skills-compile -Method POST -Path '/api/skills/compile' -Body @{ scenarioId = $ScenarioId } -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.promoted) { $i += 'skill not promoted to Tier 0' }
+    if ($r.skill.fuzz.passed -ne 100 -or $r.skill.fuzz.cases -ne 100) { $i += "fuzz $($r.skill.fuzz.passed)/$($r.skill.fuzz.cases) != 100/100" }
+    if ($r.skill.tier -ne 0) { $i += 'skill tier != 0' }
+    $i
+}
+
+$null = Invoke-Check -Name skills-match -Method GET -Path "/api/skills/match/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.matched) { $i += 'Tier 0 skill lookup missed' }
+    $i
+}
+
+$ptr = [uri]::EscapeDataString("ptr://$($ScenarioId.ToLower())/entra/users?where=driftStatus:drifted&select=upn,currentSku,expectedSku&order=upn")
+$null = Invoke-Check -Name dataplane-ptr-v2 -Method GET -Path "/api/dataplane?ptr=$ptr" -Schema {
+    param($r)
+    $i = @()
+    # License scenarios publish users; others may 404 the entra/users dataset — Invoke-Check already flags HTTP errors.
+    if ($r.rows) { foreach ($row in @($r.rows)) { if ($row.PSObject.Properties.Name -contains 'displayName') { $i += 'select projection leaked displayName' } } }
+    $i
+}
+
+$null = Invoke-Check -Name dataplane-pii -Method GET -Path "/api/dataplane/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    if ($null -eq $r.piiMetrics) { $i += 'piiMetrics missing' }
+    elseif ($r.piiMetrics.zeroRawPiiInLlmPrompt -ne $true) { $i += 'zeroRawPiiInLlmPrompt != true' }
+    $i
+}
+
+$null = Invoke-Check -Name rollback -Method POST -Path '/api/rollback' -Body @{ scenarioId = $ScenarioId } -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.ok) { $i += 'rollback not ok' }
+    if ($r.latencyMs -ge 1000) { $i += "rollback $($r.latencyMs)ms >= 1s" }
+    if (-not $r.rollback.powershellScript) { $i += 'rollback script missing' }
+    $i
+}
+
 $null = Invoke-Check -Name stats -Method GET -Path '/api/telemetry/stats' -Schema {
     param($r)
     $i = @()

@@ -1,14 +1,27 @@
 import {
   DATASETS,
+  PII_FIELDS,
+  applyPtrQuery,
+  baseDataPtr,
+  createPiiVault,
   dataPtr,
   datasetsFor,
+  isPiiField,
   parseDataPtr,
+  pseudonymizeForLlm as catalogPseudonymizeForLlm,
+  resolvePointer,
+  sessionPiiVault,
   type CanvasComponentType,
   type DataPtr,
   type DatasetDescriptor,
   type DatasetKey,
+  type PiiVault,
+  type PiiVaultMetrics,
   type ScenarioId,
 } from "@contextpane/catalog";
+
+export { PII_FIELDS, createPiiVault, createPseudonymVault, getPiiVaultMetrics, isPiiField, PII_FIELD_NAMES, sessionPiiVault } from "@contextpane/catalog";
+export type { PiiVault, PiiVaultMetrics } from "@contextpane/catalog";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { buildComponent, scenarioComponents } from "./hydrate.ts";
 
@@ -26,6 +39,9 @@ export interface DataPlaneSnapshot {
   rows: Map<DataPtr, unknown>;
   /** Total JSON size of the rows: what a prompt carrying them would have spent. */
   bytes: number;
+  piiVault: PiiVault;
+  piiMetrics: PiiVaultMetrics;
+  vaultMetrics: PiiVaultMetrics;
 }
 
 const byContext = new WeakMap<CorrelationContext, DataPlaneSnapshot>();
@@ -48,12 +64,18 @@ export function publishDataPlane(ctx: CorrelationContext): DataPlaneSnapshot {
       descriptors.push(describeDataset(ptr, key, value));
     }
   }
+  const piiVault = createPiiVault();
+  for (const value of rows.values()) piiVault.pseudonymize(value);
+  const piiMetrics = piiVault.metrics();
   const snapshot: DataPlaneSnapshot = {
     scenarioId: ctx.scenarioId,
     gatheredAt: ctx.gatheredAt,
     descriptors,
     rows,
     bytes: descriptors.reduce((n, d) => n + d.bytes, 0),
+    piiVault,
+    piiMetrics,
+    vaultMetrics: piiMetrics,
   };
   byContext.set(ctx, snapshot);
   latest.set(ctx.scenarioId, snapshot);
@@ -65,14 +87,49 @@ export function dataPlaneSnapshot(scenarioId: ScenarioId): DataPlaneSnapshot | n
   return latest.get(scenarioId) ?? null;
 }
 
-/** Rows behind a pointer, from the latest snapshot of its scenario. */
-export function resolveDataPtr(ptr: string): { found: boolean; value?: unknown; descriptor?: DatasetDescriptor } {
-  const parsed = parseDataPtr(ptr);
-  if (!parsed) return { found: false };
-  const snapshot = [...latest.values()].find((s) => s.scenarioId.toLowerCase() === parsed.scenario);
-  if (!snapshot?.rows.has(ptr as DataPtr)) return { found: false };
-  return { found: true, value: snapshot.rows.get(ptr as DataPtr), descriptor: snapshot.descriptors.find((d) => d.ptr === ptr)! };
+export interface ResolvedDataPtr { found: boolean; value?: unknown; rows?: unknown; descriptor?: DatasetDescriptor; error?: string; query?: unknown; piiMetrics: PiiVaultMetrics; vaultMetrics: PiiVaultMetrics; pii: PiiVaultMetrics; pseudonymizedValue?: unknown; llmSafeValue?: unknown }
+
+/** LLM-prompt-facing serialization: PII fields become deterministic vault tokens, never raw. */
+export function pseudonymizeForLlm(value: unknown, vault?: PiiVault): unknown {
+  return catalogPseudonymizeForLlm(value, vault ?? createPiiVaultForValue(value));
 }
+function createPiiVaultForValue(_value: unknown): PiiVault {
+  // Prefer a live snapshot vault so tokens round-trip with resolveDataPtr output.
+  const snap = [...latest.values()].at(-1);
+  return snap?.piiVault ?? sessionPiiVault;
+}
+export function unvaultForLlm(value: unknown, vault?: PiiVault): unknown {
+  const v = vault ?? [...latest.values()].at(-1)?.piiVault ?? sessionPiiVault;
+  return v.depseudonymize(value);
+}
+export const depseudonymizeForLlm = unvaultForLlm;
+export function vaultPii(value: unknown, vault?: PiiVault): unknown { return pseudonymizeForLlm(value, vault); }
+export function unvaultPii(value: unknown, vault?: PiiVault): unknown { return unvaultForLlm(value, vault); }
+
+/** Rows behind a pointer (plain or ptr:// v2 relational query), from the latest snapshot of its scenario. */
+export function resolveDataPtr(ptr: string): ResolvedDataPtr {
+  const emptyMetrics = createPiiVault().metrics();
+  const parsed = parseDataPtr(ptr);
+  if (!parsed) return { found: false, value: [], rows: [], error: `invalid ptr: ${ptr}`, piiMetrics: emptyMetrics, vaultMetrics: emptyMetrics, pii: emptyMetrics };
+  const snapshot = [...latest.values()].find((s) => s.scenarioId.toLowerCase() === parsed.scenario);
+  const base = (parsed.basePtr ?? baseDataPtr(ptr)) as DataPtr;
+  if (!snapshot?.rows.has(base)) return { found: false, value: [], rows: [], error: `'${ptr}' is not published`, piiMetrics: emptyMetrics, vaultMetrics: emptyMetrics, pii: emptyMetrics };
+  const descriptor = snapshot.descriptors.find((d) => d.ptr === base)!;
+  const metrics = snapshot.piiVault ? snapshot.piiVault.metrics() : snapshot.piiMetrics;
+  const raw = snapshot.rows.get(base);
+  if (!parsed.query) {
+    const llmSafeValue = snapshot.piiVault.pseudonymize(raw);
+    const m2 = snapshot.piiVault.metrics();
+    return { found: true, value: raw, rows: raw, descriptor, piiMetrics: m2, vaultMetrics: m2, pii: m2, pseudonymizedValue: llmSafeValue, llmSafeValue };
+  }
+  const resolved = resolvePointer(ptr, raw);
+  if (!resolved.found) return { found: false, value: [], rows: [], descriptor, error: resolved.error ?? "invalid ptr query", query: parsed.query, piiMetrics: metrics, vaultMetrics: metrics, pii: metrics };
+  const llmSafeValue = snapshot.piiVault.pseudonymize(resolved.value);
+  const m2 = snapshot.piiVault.metrics();
+  return { found: true, value: resolved.value, rows: resolved.value, descriptor, query: parsed.query, piiMetrics: m2, vaultMetrics: m2, pii: m2, pseudonymizedValue: llmSafeValue, llmSafeValue };
+}
+export const resolvePointerFn = resolveDataPtr;
+export { resolvePointer };
 
 /* -------------------------------- descriptors ------------------------------- */
 
@@ -109,7 +166,9 @@ export function describeDataset(ptr: DataPtr, key: DatasetKey, value: unknown): 
   }
   if (Array.isArray(value)) {
     const rows = value.filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === "object");
-    return { ...base, kind: rows.length ? "rows" : "empty", rowCount: rows.length, columns: columnsOf(rows), aggregates: enumCounts(rows) };
+    const cols = columnsOf(rows);
+    const piiFields = cols.filter((c) => isPiiField(c));
+    return { ...base, kind: rows.length ? "rows" : "empty", rowCount: rows.length, columns: cols, aggregates: enumCounts(rows), ...(piiFields.length ? { piiFields, piiAnnotations: Object.fromEntries(piiFields.map((f) => [f, PII_FIELDS[f as keyof typeof PII_FIELDS].annotation])) } : {}) };
   }
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;

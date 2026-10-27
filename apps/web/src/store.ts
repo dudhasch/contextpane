@@ -53,8 +53,12 @@ export interface Toast {
   hrefLabel?: string;
 }
 
-export type DrawerTab = "powershell" | "graph" | "terraform" | "entities";
-export type SystemTab = "savings" | "audit" | "providers";
+export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback";
+export type SystemTab = "savings" | "audit" | "providers" | "skills";
+export type FormalData = import("./lib/api").FormalResponse;
+export type TimelineData = import("./lib/api").TimelineResponse["timeline"];
+export type SkillDef = import("./lib/api").SkillDef;
+export type PiiMetrics = import("./lib/api").PiiMetrics;
 
 export interface VisionState {
   status: "idle" | "loading" | "ready" | "error";
@@ -109,6 +113,11 @@ interface WorkbenchState {
   drawerTab: DrawerTab;
   /** UPN the drawer was opened for from a hover [Stage License Fix]. */
   drawerFocusUpn: string | null;
+  formal: FormalData | null;
+  timeline: TimelineData | null;
+  timelineSliceId: string | null;
+  compiledSkills: SkillDef[];
+  piiMetrics: PiiMetrics | null;
 
   /* telemetry */
   telemetry: RouterTelemetry | null;
@@ -177,6 +186,11 @@ interface WorkbenchState {
   resetDrift(): Promise<void>;
   loadAudit(): Promise<void>;
   setDrawerTab(tab: DrawerTab): void;
+  loadDrawerExtras(): Promise<void>;
+  compileSkill(): Promise<void>;
+  loadSkills(): Promise<void>;
+  selectTimelineSlice(sliceId: string): void;
+  rollbackNow(): Promise<void>;
   extractVision(attachment: ErpAttachment): Promise<void>;
   toast(toast: Omit<Toast, "id">): void;
   dismissToast(id: number): void;
@@ -215,6 +229,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   vision: { status: "idle" },
   drawerTab: "powershell",
   drawerFocusUpn: null,
+  formal: null,
+  timeline: null,
+  timelineSliceId: null,
+  compiledSkills: [],
+  piiMetrics: null,
 
   telemetry: null,
   telemetryHistory: [],
@@ -318,6 +337,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       });
       if (get().scenarioId !== scenarioId) return;
       set({ layout: result.layout, canvasStatus: "ready", activeRecipeId: null });
+      void get().loadDrawerExtras();
     } catch (error) {
       set({ canvasStatus: "error", canvasError: error instanceof Error ? error.message : String(error) });
     }
@@ -386,6 +406,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) => set((s) => ({ remediateProgress: [...s.remediateProgress, event] })));
       // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
       set({ drawer: result.drawer, remediateStatus: "ready", executionMode: SCENARIO_REGISTRY[scenarioId].kind === "ticket" ? "break-glass" : "gitops" });
+      void get().loadDrawerExtras();
     } catch (error) {
       set({ remediateStatus: "error" });
       get().toast({ tone: "critical", title: "Remediation failed", detail: error instanceof Error ? error.message : String(error) });
@@ -489,6 +510,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   setSystemOpen: (systemOpen, tab) => {
     set(tab ? { systemOpen, systemTab: tab } : { systemOpen });
     if (systemOpen && (tab ?? get().systemTab) === "audit") void get().loadAudit();
+    if (systemOpen && (tab ?? get().systemTab) === "skills") void get().loadSkills();
   },
   setHotkeysOpen: (hotkeysOpen) => set({ hotkeysOpen }),
   setVoiceOpen: (voiceOpen) => set({ voiceOpen }),
@@ -599,6 +621,39 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   setDrawerTab: (drawerTab) => set({ drawerTab }),
+
+  async loadDrawerExtras() {
+    const scenarioId = get().scenarioId;
+    try {
+      const [formal, tl, dp, skills] = await Promise.all([api.formal(scenarioId), api.timeline(scenarioId), api.dataplaneDetail(scenarioId), api.skills()]);
+      if (get().scenarioId !== scenarioId) return;
+      set({ formal, timeline: tl.timeline, timelineSliceId: get().timelineSliceId ?? tl.timeline.slices.at(-2)?.id ?? tl.timeline.slices.at(-1)?.id ?? null, piiMetrics: dp.piiMetrics, compiledSkills: skills.skills });
+    } catch { /* extras are drawer-only; canvas stays clean */ }
+  },
+  async loadSkills() {
+    try { const { skills } = await api.skills(); set({ compiledSkills: skills }); } catch { /* offline */ }
+    try { const dp = await api.dataplaneDetail(get().scenarioId); set({ piiMetrics: dp.piiMetrics }); } catch { /* offline */ }
+  },
+  async compileSkill() {
+    try {
+      const { skill, promoted } = await api.compileSkill(get().scenarioId);
+      set((s) => ({ compiledSkills: [...s.compiledSkills.filter((x) => x.id !== skill.id), skill] }));
+      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? skill.badge : "Skill not promoted", detail: `${skill.fuzz.passed}/${skill.fuzz.cases} fuzz · Tier 0 · 0 tokens · ${skill.latencyMs} ms` });
+    } catch (e) { get().toast({ tone: "critical", title: "Compile failed", detail: e instanceof Error ? e.message : String(e) }); }
+  },
+  selectTimelineSlice(sliceId) {
+    set({ timelineSliceId: sliceId });
+    const slice = get().timeline?.slices.find((s) => s.id === sliceId);
+    if (slice?.changedCardId) get().flashComponent(slice.changedCardId as ComponentType);
+  },
+  async rollbackNow() {
+    try {
+      const r = await api.rollback(get().scenarioId);
+      get().applyConvergence(get().scenarioId, null);
+      get().toast({ tone: "healthy", title: `Rollback (f⁻¹) executed in ${r.latencyMs} ms`, detail: "Pre-verified inverse bundle applied (simulated); canvas reverted." });
+      void get().correlate({ fresh: true });
+    } catch (e) { get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) }); }
+  },
 
   async extractVision(attachment) {
     const scenarioId = get().scenarioId;

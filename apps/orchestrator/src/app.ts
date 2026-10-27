@@ -31,6 +31,9 @@ import { convergenceStore } from "./store/convergence.ts";
 import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "./telemetry.ts";
+import { buildInverseRollback, counterfactualReplay, verifyFormalInvariants, verifyIdempotency } from "./local/formal-verifier.ts";
+import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skill-compiler.ts";
+import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
@@ -131,7 +134,50 @@ app.get("/api/scenarios/:scenarioId/brief", async (c) => {
 app.get("/api/dataplane/:scenarioId", async (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
   const snapshot = publishDataPlane(await gatherContext(scenarioId));
-  return c.json({ scenarioId, gatheredAt: snapshot.gatheredAt, bytes: snapshot.bytes, datasets: snapshot.descriptors });
+  return c.json({ scenarioId, gatheredAt: snapshot.gatheredAt, bytes: snapshot.bytes, datasets: snapshot.descriptors, piiMetrics: snapshot.piiMetrics, vaultMetrics: snapshot.piiMetrics, pii: snapshot.piiMetrics });
+});
+
+/* -------- Day-2: formal prover, rollback, timeline, skill compiler -------- */
+
+app.get("/api/formal/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const formal = verifyFormalInvariants(scenarioId);
+  return c.json({ scenarioId, formal, blastRadius: counterfactualReplay(scenarioId), rollback: buildInverseRollback(scenarioId), idempotency: verifyIdempotency(scenarioId), telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
+});
+
+app.post("/api/rollback", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
+  const scenarioId = scenarioOf(body);
+  const started = performance.now();
+  const rollback = buildInverseRollback(scenarioId);
+  const check = verifyIdempotency(scenarioId);
+  if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
+  return c.json({ ok: true, executed: "simulated", latencyMs: Math.round((performance.now() - started) * 10) / 10, rollback, idempotency: check });
+});
+
+app.get("/api/timeline/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const timeline = getTimeline(scenarioId);
+  if (!timeline) return c.json({ error: "unknown scenario" }, 404);
+  return c.json({ timeline, telemetry: { tier: "Tier 0", tokensUsed: { total: 0 }, latencyMs: 0 } });
+});
+
+const CompileBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional() });
+const skillDef = (s: ReturnType<typeof listCompiledSkills>[number]) => ({ id: s.id, scenarioId: s.scenarioId, signature: s.signature, tier: s.tier, tokenCost: s.tokenCost, latencyMs: s.latencyMs, fuzz: s.fuzz, createdAt: s.createdAt, version: s.version, badge: `Tier 0 Compiled Skill (${s.fuzz.passed}/${s.fuzz.cases} fuzz verified)` });
+
+app.get("/api/skills", (c) => c.json({ skills: listCompiledSkills().map(skillDef), file: "data/compiled-skills.json" }));
+
+app.post("/api/skills/compile", async (c) => {
+  const body = CompileBodySchema.parse(await c.req.json().catch(() => ({})));
+  const scenarioId = scenarioOf(body);
+  const skill = await compileSkill(scenarioId);
+  return c.json({ skill: skillDef(skill), promoted: skill.fuzz.passed === skill.fuzz.cases, telemetry: { tier: "Tier 0", tokensUsed: { total: 0 }, latencyMs: skill.latencyMs } }, 201);
+});
+
+app.get("/api/skills/match/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const hit = lookupTier0Skill({ scenarioId });
+  return hit ? c.json({ matched: true, skill: skillDef(hit.skill), latencyMs: hit.latencyMs }) : c.json({ matched: false, skill: null });
 });
 
 app.get("/api/dataplane", (c) => {
