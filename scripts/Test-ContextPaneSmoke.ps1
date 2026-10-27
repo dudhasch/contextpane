@@ -513,6 +513,20 @@ if ($triage) {
         if (@($r.timeline.slices).Count -lt 4) { $i += 'fewer than 4 slices' }
         $i
     }
+    $null = Invoke-Check -Name clarifying-questions -Method POST -Path '/api/tickets/clarifying-questions' -Body @{ title = 'Federated Credentials on my spn stopped working'; body = 'Federated Credentials on my spn stopped working. github repo stayed the same, but it says subject identifier did not match' } -Schema {
+        param($r)
+        $i = @()
+        if (@($r.questions).Count -ne 3) { $i += "questions count $(@($r.questions).Count) != 3" }
+        if (-not $r.modelUsed) { $i += 'modelUsed missing' }
+        $i
+    }
+    $null = Invoke-Check -Name refine-goal -Method POST -Path "/api/tickets/$customId/refine-goal" -Body @{ clarifiedAnswers = @{ 'project-target-env' = 'dev-sandbox-first' } } -Schema {
+        param($r)
+        $i = @()
+        if ($r.brief.scenarioId -ne $customId) { $i += 'refine-goal brief.scenarioId mismatch' }
+        if (@($r.brief.subAgentTasks).Count -ne 5) { $i += "subAgentTasks count $(@($r.brief.subAgentTasks).Count) != 5" }
+        $i
+    }
 }
 
 $null = Invoke-Check -Name reconcile-commercial -Method GET -Path "/api/reconcile/commercial/$ScenarioId" -Schema {
@@ -668,58 +682,78 @@ if ($inbox) {
     $results.Add([pscustomobject]$row)
 }
 
+$ticketsRoot = Join-Path $PSScriptRoot '..' 'input' 'tickets'
 $dropDir = $null
-$drop = Invoke-Check -Name simulate-drop -Method POST -Path '/api/tickets/simulate-drop' -Body @{ archetype = 'AVD' } -Schema {
-    param($r)
-    $i = @()
-    if ($r.folder -notmatch '^#2026\d{3}$') { $i += "folder $($r.folder)" }
-    if ($r.scenarioId -ne "ERP-$($r.folder.TrimStart('#'))") { $i += "scenarioId $($r.scenarioId)" }
-    if ($r.displayId -ne $r.folder) { $i += "displayId $($r.displayId)" }
-    if (@($r.files) -notcontains 'ticketbody.json' -or @($r.files) -notcontains 'attachment1.png') { $i += "files $($r.files -join ',')" }
-    if (-not (Test-Path (Join-Path $r.dir 'ticketbody.json')) -or -not (Test-Path (Join-Path $r.dir 'attachment1.png'))) { $i += "drop not on disk at $($r.dir)" }
-    if ($r.scenario.origin -ne 'erp-drop' -or $r.scenario.kind -ne 'ticket') { $i += "scenario origin/kind $($r.scenario.origin)/$($r.scenario.kind)" }
-    if ($r.extraction.baseScenarioId -ne 'INC-4092') { $i += "AVD drop base $($r.extraction.baseScenarioId) != INC-4092" }
-    if (-not ($r.extraction.entities | Where-Object id -eq 'AADSTS53003')) { $i += 'AADSTS53003 not extracted from the drop' }
-    if (-not ($r.extraction.entities | Where-Object { $_.type -eq 'upn' -and $_.resolvedTo })) { $i += 'requester not resolved to a live UPN' }
-    if ($r.brief.originKind -ne 'erp-drop' -or $r.brief.status -ne 'New' -or $r.brief.displayId -ne $r.folder) { $i += "brief originKind/status/displayId $($r.brief.originKind)/$($r.brief.status)/$($r.brief.displayId)" }
-    if (@($r.brief.attachments).Count -ne 1 -or $r.brief.attachments[0].fileName -ne 'attachment1.png') { $i += 'brief attachment missing' }
-    if (-not $r.brief.requester.upn) { $i += 'brief requester missing' }
-    if (-not ($r.brief.timeline | Where-Object actor -eq 'ERP inbox watcher')) { $i += 'ingest timeline entry missing' }
-    $i
-}
-if ($drop) {
-    $dropDir = $drop.dir
-    $dropId = $drop.scenarioId
-    Write-Host "  drop: $($drop.folder) -> $dropId ($($drop.archetype)) · $(@($drop.extraction.entities).Count) entities · $($drop.latencyMs) ms · $dropDir" -ForegroundColor DarkGray
-    $null = Invoke-Check -Name erp-correlate -Method POST -Path '/api/correlate' -Body @{ scenarioId = $dropId } -Schema {
-        param($r)
-        $i = Test-Layout $r.layout
-        if ($r.layout.ticketId -ne $dropId) { $i += "layout.ticketId $($r.layout.ticketId)" }
-        foreach ($c in $r.layout.components) { foreach ($ptr in $c.dataPtrs.PSObject.Properties.Value) { if ($ptr -notlike "ptr://$($dropId.ToLower())/*") { $i += "$($c.type) pointer $ptr" } } }
-        $i
-    }
-    $null = Invoke-Check -Name vision-triage -Method POST -Path '/api/vision/triage' -Body @{ scenarioId = $dropId } -BudgetMs 30000 -Schema {
+try {
+    $drop = Invoke-Check -Name simulate-drop -Method POST -Path '/api/tickets/simulate-drop' -Body @{ archetype = 'AVD' } -Schema {
         param($r)
         $i = @()
-        if ($r.source -notin @('muse-vision', 'deterministic')) { $i += "source $($r.source)" }
-        if ($r.attachment.fileName -ne 'attachment1.png') { $i += "attachment $($r.attachment.fileName)" }
-        if ($r.extraction.errorCode -ne 'AADSTS53003') { $i += "errorCode $($r.extraction.errorCode) (source $($r.source))" }
-        # The 36-char correlation id in the pixel font is the one value the live vision read gets wrong now and then; the fallback always has it.
-        if ($r.source -eq 'deterministic' -and -not $r.extraction.correlationId) { $i += 'correlationId empty' }
-        if (-not $r.match.eventId) { $i += 'no sign-in matched' }
-        if ($r.source -eq 'muse-vision' -and $r.telemetry.tier -ne 'Vision') { $i += 'tier != Vision' }
-        if ($r.source -eq 'deterministic' -and $r.telemetry.tokensUsed.total -ne 0) { $i += 'fallback used tokens' }
+        if ($r.folder -notmatch '^#2026\d{3}$') { $i += "folder $($r.folder)" }
+        if ($r.scenarioId -ne "ERP-$($r.folder.TrimStart('#'))") { $i += "scenarioId $($r.scenarioId)" }
+        if ($r.displayId -ne $r.folder) { $i += "displayId $($r.displayId)" }
+        if (@($r.files) -notcontains 'ticketbody.json' -or @($r.files) -notcontains 'attachment1.png') { $i += "files $($r.files -join ',')" }
+        if (-not (Test-Path -LiteralPath (Join-Path $r.dir 'ticketbody.json')) -or -not (Test-Path -LiteralPath (Join-Path $r.dir 'attachment1.png'))) { $i += "drop not on disk at $($r.dir)" }
+        if ($r.scenario.origin -ne 'erp-drop' -or $r.scenario.kind -ne 'ticket') { $i += "scenario origin/kind $($r.scenario.origin)/$($r.scenario.kind)" }
+        if ($r.extraction.baseScenarioId -ne 'INC-4092') { $i += "AVD drop base $($r.extraction.baseScenarioId) != INC-4092" }
+        if (-not ($r.extraction.entities | Where-Object id -eq 'AADSTS53003')) { $i += 'AADSTS53003 not extracted from the drop' }
+        if (-not ($r.extraction.entities | Where-Object { $_.type -eq 'upn' -and $_.resolvedTo })) { $i += 'requester not resolved to a live UPN' }
+        if ($r.brief.originKind -ne 'erp-drop' -or $r.brief.status -ne 'New' -or $r.brief.displayId -ne $r.folder) { $i += "brief originKind/status/displayId $($r.brief.originKind)/$($r.brief.status)/$($r.brief.displayId)" }
+        if (@($r.brief.attachments).Count -ne 1 -or $r.brief.attachments[0].fileName -ne 'attachment1.png') { $i += 'brief attachment missing' }
+        if (-not $r.brief.requester.upn) { $i += 'brief requester missing' }
+        if (-not ($r.brief.timeline | Where-Object actor -eq 'ERP inbox watcher')) { $i += 'ingest timeline entry missing' }
         $i
     }
-    # Clean up the generated drop; the watcher must drop it from the queue on its next scan.
-    Remove-Item -Recurse -Force $dropDir
-    $null = Invoke-Check -Name inbox-after-cleanup -Method GET -Path '/api/tickets/inbox?scan=1' -Schema {
-        param($r)
-        $i = @()
-        if ($r.items | Where-Object scenarioId -eq $dropId) { $i += "$dropId still in the inbox after its folder was removed" }
-        if (-not ($r.items | Where-Object scenarioId -eq 'ERP-2026323')) { $i += 'seeded ERP-2026323 vanished' }
-        $i
+    if ($drop) {
+        $dropDir = if ($drop.dir) { $drop.dir } elseif ($drop.folder) { Join-Path $ticketsRoot $drop.folder } else { $null }
+        $dropId = $drop.scenarioId
+        Write-Host "  drop: $($drop.folder) -> $dropId ($($drop.archetype)) · $(@($drop.extraction.entities).Count) entities · $($drop.latencyMs) ms · $dropDir" -ForegroundColor DarkGray
+        $null = Invoke-Check -Name erp-correlate -Method POST -Path '/api/correlate' -Body @{ scenarioId = $dropId } -Schema {
+            param($r)
+            $i = Test-Layout $r.layout
+            if ($r.layout.ticketId -ne $dropId) { $i += "layout.ticketId $($r.layout.ticketId)" }
+            foreach ($c in $r.layout.components) { foreach ($ptr in $c.dataPtrs.PSObject.Properties.Value) { if ($ptr -notlike "ptr://$($dropId.ToLower())/*") { $i += "$($c.type) pointer $ptr" } } }
+            $i
+        }
+        $null = Invoke-Check -Name vision-triage -Method POST -Path '/api/vision/triage' -Body @{ scenarioId = $dropId } -BudgetMs 30000 -Schema {
+            param($r)
+            $i = @()
+            if ($r.source -notin @('muse-vision', 'deterministic')) { $i += "source $($r.source)" }
+            if ($r.attachment.fileName -ne 'attachment1.png') { $i += "attachment $($r.attachment.fileName)" }
+            if ($r.extraction.errorCode -ne 'AADSTS53003') { $i += "errorCode $($r.extraction.errorCode) (source $($r.source))" }
+            # The 36-char correlation id in the pixel font is the one value the live vision read gets wrong now and then; the fallback always has it.
+            if ($r.source -eq 'deterministic' -and -not $r.extraction.correlationId) { $i += 'correlationId empty' }
+            if (-not $r.match.eventId) { $i += 'no sign-in matched' }
+            if ($r.source -eq 'muse-vision' -and $r.telemetry.tier -ne 'Vision') { $i += 'tier != Vision' }
+            if ($r.source -eq 'deterministic' -and $r.telemetry.tokensUsed.total -ne 0) { $i += 'fallback used tokens' }
+            $i
+        }
+        # Clean up the generated drop immediately; the watcher must drop it from the queue on its next scan.
+        if ($dropDir -and (Test-Path -LiteralPath $dropDir)) {
+            Remove-Item -LiteralPath $dropDir -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $ticketsRoot) {
+            Get-ChildItem -LiteralPath $ticketsRoot -Directory -Filter '#*' |
+                Where-Object { $_.Name -notin @('#2026323', '#2026330') } |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+        $null = Invoke-Check -Name inbox-after-cleanup -Method GET -Path '/api/tickets/inbox?scan=1' -Schema {
+            param($r)
+            $i = @()
+            if ($r.items | Where-Object scenarioId -eq $dropId) { $i += "$dropId still in the inbox after its folder was removed" }
+            if (-not ($r.items | Where-Object scenarioId -eq 'ERP-2026323')) { $i += 'seeded ERP-2026323 vanished' }
+            $i
+        }
     }
+} finally {
+    if ($dropDir -and (Test-Path -LiteralPath $dropDir)) {
+        Remove-Item -LiteralPath $dropDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $ticketsRoot) {
+        Get-ChildItem -LiteralPath $ticketsRoot -Directory -Filter '#*' |
+            Where-Object { $_.Name -notin @('#2026323', '#2026330') } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    try { $null = Invoke-RestMethod -Method GET -Uri "$BaseUrl/api/tickets/inbox?scan=1" -TimeoutSec 10 } catch {}
 }
 
 $null = Invoke-Check -Name app401-formal -Method GET -Path '/api/formal/ANOM-APP-401' -Schema {

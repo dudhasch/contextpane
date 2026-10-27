@@ -220,6 +220,17 @@ function convergeComponent(c: LayoutComponent, convergence: Pick<Convergence, "r
           summary: "Remediated: Terraform baseline restored on the approved fix branch",
         },
       };
+    case "SynthesizedDynamicCard":
+      return {
+        ...c,
+        props: {
+          ...c.props,
+          state: "healthy",
+          headline: c.props.headline.startsWith("Resolved · ")
+            ? c.props.headline
+            : `Resolved · ${c.props.headline}`.slice(0, 240),
+        },
+      };
     default:
       return c;
   }

@@ -2,11 +2,13 @@ import type {
   ExecutionMode,
   ActionApprovalDrawer,
   AuditEntry,
+  ClarifyingQuestion,
   ComponentType,
   ContextViewMode,
   ContextualMiniDashboard,
   Convergence,
   ScenarioId,
+  SubAgentTaskRecord,
   TicketExtraction,
   EntityType,
   HoverDiagnosticPopover,
@@ -251,12 +253,30 @@ export interface TriageCustomResponse {
   scenario: ScenarioListItem;
   brief: ScenarioBrief;
   extraction: TicketExtraction;
+  clarifyingQuestions?: ClarifyingQuestion[];
+  clarifiedAnswers?: Record<string, string>;
+  subAgentTasks?: SubAgentTaskRecord[];
   dataPtrs: string[];
   dataPlane: { datasets: number; bytes: number; piiMetrics: PiiMetrics };
   verification: { formal: { passed: boolean; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean }; baseScenarioId: ScenarioId };
   timelineSlices: number;
   latencyMs: number;
   telemetry: RouterTelemetry;
+}
+
+export interface ClarifyQuestionsResponse {
+  questions: ClarifyingQuestion[];
+  modelUsed: string;
+  latencyMs: number;
+}
+
+export interface RefineGoalResponse {
+  ok: boolean;
+  scenario: ScenarioListItem;
+  brief: ScenarioBrief;
+  clarifyingQuestions: ClarifyingQuestion[];
+  clarifiedAnswers: Record<string, string>;
+  subAgentTasks: SubAgentTaskRecord[];
 }
 
 export interface SampleTicket { id: string; title: string; body: string; customerName: string }
@@ -422,7 +442,15 @@ export const api = {
   runbookUrl: (scenarioId: string) => `/api/runbooks/${scenarioId}.md`,
   exploreSelection: (body: { scenarioId: string; selectedText: string; refinementText?: string; viewMode?: ContextViewMode; customTicketText?: string }) =>
     request<ExploreSelectionResponse>("/api/explore-selection", { method: "POST", body: JSON.stringify(body) }),
-  triageCustom: (body: { title: string; body: string; customerName?: string }) => request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),
+  triageCustom: (body: { title: string; body: string; customerName?: string; clarifiedAnswers?: Record<string, string> }) =>
+    request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),
+  clarifyQuestions: (body: { title: string; body: string; clarifiedAnswers?: Record<string, string> }) =>
+    request<ClarifyQuestionsResponse>("/api/tickets/clarify-questions", { method: "POST", body: JSON.stringify(body) }),
+  refineGoal: (scenarioId: string, clarifiedAnswers: Record<string, string>) =>
+    request<RefineGoalResponse>(`/api/tickets/${encodeURIComponent(scenarioId)}/refine-goal`, {
+      method: "POST",
+      body: JSON.stringify({ clarifiedAnswers }),
+    }),
   ticketSamples: () => request<{ samples: SampleTicket[] }>("/api/tickets/samples"),
   inbox: () => request<InboxResponse>("/api/tickets/inbox"),
   simulateDrop: (body: { archetype?: DropArchetype; ticketId?: string } = {}) => request<SimulateDropResponse>("/api/tickets/simulate-drop", { method: "POST", body: JSON.stringify(body) }),

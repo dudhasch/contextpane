@@ -10,6 +10,7 @@ import {
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { correlateUpstreamCloudStatusSync } from "./cloud-status-correlator.ts";
+import { buildSubAgentPipelineRecords, generateClarifyingQuestionsSync } from "./subagent-orchestrator.ts";
 
 /**
  * The left pane, deterministically: what the issue is (summary), what MCP enriched
@@ -365,6 +366,15 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     ticketText: ticket ? `${ticket.title}\n${ticket.description}` : ctx.scenarioId,
     createdAt: ticket?.openedAt ?? ctx.gatheredAt,
   });
+  const defaultSubAgentTasks = buildSubAgentPipelineRecords({
+    scenarioId: ctx.ticketId,
+    title: ticket?.title ?? SCENARIO_REGISTRY[ctx.scenarioId].title,
+    body: ticket?.description ?? ctx.scenarioId,
+    questions: [],
+    elementIds: SCENARIO_REGISTRY[ctx.scenarioId].components,
+    gatekeeperModel: "muse-spark-1.3",
+    synthesizerModel: "muse-wonder-1.0",
+  });
   const base = {
     scenarioId: ctx.ticketId,
     kind: ctx.kind,
@@ -378,6 +388,9 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     extraction: null,
     elementRouting: null,
     cloudStatusCorrelation: defaultCloudCorrelation,
+    clarifyingQuestions: [],
+    clarifiedAnswers: {},
+    subAgentTasks: defaultSubAgentTasks,
     originKind: ctx.custom ? ctx.custom.origin : ctx.kind === "ticket" ? ("psa" as const) : ("anomaly" as const),
     displayId: displayScenarioId(ctx.ticketId),
     priority: null,
@@ -528,6 +541,29 @@ function buildCustomBrief(
   const customer = custom.ticket.customerName ?? ctx.erp.tenant.displayName;
   const drop = custom.origin === "erp-drop" ? custom.erpDrop : undefined;
   const displayId = displayScenarioId(custom.scenarioId);
+  const clarifyingQuestions =
+    custom.clarifyingQuestions ??
+    generateClarifyingQuestionsSync({
+      title: custom.ticket.title,
+      body: custom.ticket.body,
+      ...(custom.clarifiedAnswers ? { clarifiedAnswers: custom.clarifiedAnswers } : {}),
+    });
+  const clarifiedAnswers =
+    custom.clarifiedAnswers ??
+    Object.fromEntries(clarifyingQuestions.map((q) => [q.id, q.selectedValue ?? q.options[0]?.value ?? ""]));
+  const subAgentTasks =
+    custom.subAgentTasks ??
+    buildSubAgentPipelineRecords({
+      scenarioId: custom.scenarioId,
+      title: custom.ticket.title,
+      body: custom.ticket.body,
+      questions: clarifyingQuestions,
+      clarifiedAnswers,
+      elementIds:
+        hasSynthesizedElements && routing ? routing.missingElements.map((m) => m.elementId) : custom.components,
+      gatekeeperModel: "muse-spark-1.3",
+      synthesizerModel: "muse-wonder-1.0",
+    });
 
   if (hasSynthesizedElements && routing) {
     const customSteps: ResolutionStep[] = routing.customBrief.steps.map((s, idx) =>
@@ -552,6 +588,9 @@ function buildCustomBrief(
       extraction: custom.extraction,
       elementRouting: routing,
       cloudStatusCorrelation: cloudCorrelation,
+      clarifyingQuestions,
+      clarifiedAnswers,
+      subAgentTasks,
       title: custom.ticket.title,
       status: drop ? "New" : "Open",
       openedAt: custom.createdAt,
@@ -592,7 +631,8 @@ function buildCustomBrief(
   const x = custom.extraction;
   const matched = x.entities.filter((e) => e.resolvedTo);
   const how = drop ? `ERP ticket ${displayId} dropped into input/tickets/${drop.folder}/ and triaged live` : "Unscripted ticket triaged live";
-  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "live tenant correlation"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`;
+  const customRemNote = custom.customRemediation ? ` ${custom.customRemediation.summary}` : "";
+  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "live tenant correlation"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern.${customRemNote} ${base.summary}`;
   const summary = cleanTruncate(rawSummary, 700);
   const timeline = drop
     ? [
@@ -608,6 +648,9 @@ function buildCustomBrief(
     extraction: x,
     elementRouting: routing,
     cloudStatusCorrelation: cloudCorrelation,
+    clarifyingQuestions,
+    clarifiedAnswers,
+    subAgentTasks,
     title: custom.ticket.title,
     status: drop ? "New" : "Open",
     openedAt: custom.createdAt,

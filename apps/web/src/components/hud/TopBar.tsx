@@ -1,4 +1,4 @@
-import { Activity, Building2, Mic, Pin, PinOff, RotateCcw } from "lucide-react";
+import { Activity, Building2, FilePlus2, Mic, Pin, PinOff, RotateCcw } from "lucide-react";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { WorkQueue } from "./WorkQueue";
@@ -11,6 +11,7 @@ export function TopBar() {
   const canvasStatus = useWorkbench((s) => s.canvasStatus);
   const voiceOpen = useWorkbench((s) => s.voiceOpen);
   const setVoiceOpen = useWorkbench((s) => s.setVoiceOpen);
+  const setComposerOpen = useWorkbench((s) => s.setComposerOpen);
   const systemOpen = useWorkbench((s) => s.systemOpen);
   const setSystemOpen = useWorkbench((s) => s.setSystemOpen);
   const resetDrift = useWorkbench((s) => s.resetDrift);
@@ -33,6 +34,15 @@ export function TopBar() {
         <span className="shrink-0 font-mono text-[10.5px] text-faint" title="Open work items in the queue" data-testid="queue-open-count">
           {openCount} open
         </span>
+        <Button
+          variant="outline"
+          icon={<FilePlus2 />}
+          onClick={() => setComposerOpen(true)}
+          title="Paste any unscripted support ticket or outline a cloud engineering project/goal (n)"
+          data-testid="topbar-new-ticket-button"
+        >
+          + New Ticket / Outline Project Goal
+        </Button>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">

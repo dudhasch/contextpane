@@ -2,7 +2,7 @@
  * Auto-Synthesized ContextPane UI Element (AzureVmDeploymentQuotaAndPolicyCard)
  * Gatekeeper: muse-spark-1.3 -> Synthesizer: muse-wonder-1.0
  * Domain: azure | Primitives: quota-gauges, policy-chain, data-table, config-diff, event-stream
- * Generated At: 2026-10-27T22:05:10.433Z
+ * Generated At: 2026-10-27T23:35:05.529Z
  */
 import { z } from "zod";
 import { SynthesizedDynamicCardSchema, type SynthesizedDynamicCard } from "@contextpane/catalog";
@@ -18,7 +18,7 @@ export const DEFAULT_AZUREVMDEPLOYMENTQUOTAANDPOLICYCARD_SPEC: SynthesizedDynami
   "title": "Azure VM Regional Quota & Policy Blocker (westeurope)",
   "headline": "ARM Deployment Failed in westeurope · Standard_D4s_v5 Regional vCPUs 20/20 (100% QuotaExceeded) · Blocked by Azure Policy 'Allowed-Locations-EU-Sovereign'",
   "domain": "azure",
-  "reason": "No static card covers Azure VM regional vCPU quota or RequestDisallowedByPolicy in westeurope",
+  "reason": "None of the 4 static catalog cards inspect Azure subscription regional vCPU quotas (Standard_D4s_v5 in westeurope), ARM RequestDisallowedByPolicy (Allowed Locations), or Compute AllocationFailed activity logs.",
   "state": "critical",
   "requiredPrimitives": [
     "quota-gauges",
@@ -240,7 +240,7 @@ export const DEFAULT_AZUREVMDEPLOYMENTQUOTAANDPOLICYCARD_SPEC: SynthesizedDynami
     "reusedFromCatalog": true,
     "reuseCount": 4,
     "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentQuotaAndPolicyCard.tsx",
-    "synthesizedAt": "2026-10-27T22:05:10.433Z"
+    "synthesizedAt": "2026-10-27T23:35:05.529Z"
   },
   "sourceRef": {
     "file": "data/synthesized-elements/AzureVmDeploymentQuotaAndPolicyCard.tsx",

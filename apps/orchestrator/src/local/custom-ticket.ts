@@ -33,6 +33,12 @@ import {
   synthesizeAndPersistMissingElementsSync,
 } from "./dynamic-catalog.ts";
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
+import {
+  applyClarifiedAnswersToEntry,
+  buildSubAgentPipelineRecords,
+  generateClarifyingQuestions,
+  generateClarifyingQuestionsSync,
+} from "./subagent-orchestrator.ts";
 
 /**
  * Unscripted ticket triage: a dynamic entity & intent extractor over the pasted text,
@@ -48,6 +54,7 @@ export interface CustomTicketRequest {
   customerName?: string;
   requester?: { displayName: string; upn: string; role: string };
   priority?: string;
+  clarifiedAnswers?: Record<string, string>;
 }
 
 /** How a ticket enters the registry: pasted (CUSTOM-<hash>) or dropped into the inbox (ERP-<id>). */
@@ -424,13 +431,32 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       })
     : undefined;
 
-  const entry = registerCustomScenario({
+  const clarifyingQuestions = generateClarifyingQuestionsSync({
+    title,
+    body,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+  });
+  const initialAnswers: Record<string, string> = Object.fromEntries(
+    clarifyingQuestions.map((q) => [q.id, input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""]),
+  );
+  const subAgentTasks = buildSubAgentPipelineRecords({
+    scenarioId: id,
+    title,
+    body,
+    questions: clarifyingQuestions,
+    clarifiedAnswers: initialAnswers,
+    elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
+    gatekeeperModel: "muse-spark-1.3",
+    synthesizerModel: "muse-wonder-1.0",
+  });
+
+  const rawEntry: CustomScenarioEntry = {
     scenarioId: id,
     kind: "ticket",
     origin: options.origin ?? "unscripted",
     tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
     title,
-    remediationScope: hasMissingElements ? "Azure VM regional quota & policy blocker" : base.remediationScope,
+    remediationScope: hasMissingElements ? routingDecision.missingElements[0]?.title ?? "Dynamic cloud remediation" : base.remediationScope,
     components: finalComponents,
     baseScenarioId: extraction.baseScenarioId,
     shortHash: id.slice(id.indexOf("-") + 1),
@@ -447,14 +473,25 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     ...(synthesizedElements ? { synthesizedElements } : {}),
     cloudStatusCorrelation,
     ...(customRemediation ? { customRemediation } : {}),
+    clarifyingQuestions,
+    clarifiedAnswers: initialAnswers,
+    subAgentTasks,
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
-  });
+  };
+
+  const finalizedEntry =
+    input.clarifiedAnswers && Object.keys(input.clarifiedAnswers).length > 0
+      ? applyClarifiedAnswersToEntry(rawEntry, input.clarifiedAnswers)
+      : rawEntry;
+
+  const entry = registerCustomScenario(finalizedEntry);
   save();
   return entry;
 }
 
 /**
- * Full async Two-Stage N+k Triage (`muse-spark-1.3` -> `muse-wonder-1.0`) + Live Upstream Cloud Status Correlation.
+ * Full async Two-Stage N+k Triage (`muse-spark-1.3` -> `muse-wonder-1.0`) + Live Upstream Cloud Status Correlation
+ * + Per-Task Sub-Agent Pipeline & Goal Clarifier.
  */
 export async function triageCustomTicketAsync(
   input: CustomTicketRequest,
@@ -468,7 +505,11 @@ export async function triageCustomTicketAsync(
   const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
   const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
 
-  const [{ decision: routingDecision, modelUsed: gatekeeperModel }, cloudStatusCorrelation] = await Promise.all([
+  const [
+    { decision: routingDecision, modelUsed: gatekeeperModel },
+    cloudStatusCorrelation,
+    { questions: clarifyingQuestions },
+  ] = await Promise.all([
     assessTicketElementNeeds({
       title,
       body: probe,
@@ -477,6 +518,11 @@ export async function triageCustomTicketAsync(
     correlateUpstreamCloudStatus({
       ticketText: `${title}\n${body}`,
       createdAt,
+    }),
+    generateClarifyingQuestions({
+      title,
+      body,
+      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
     }),
   ]);
 
@@ -519,13 +565,27 @@ export async function triageCustomTicketAsync(
       }
     : rawExtraction;
 
-  const entry = registerCustomScenario({
+  const initialAnswers: Record<string, string> = Object.fromEntries(
+    clarifyingQuestions.map((q) => [q.id, input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""]),
+  );
+  const subAgentTasks = buildSubAgentPipelineRecords({
+    scenarioId: id,
+    title,
+    body,
+    questions: clarifyingQuestions,
+    clarifiedAnswers: initialAnswers,
+    elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
+    gatekeeperModel,
+    synthesizerModel: synthesizedElements?.[0]?.synthesisMeta.synthesizerModel ?? "muse-wonder-1.0",
+  });
+
+  const rawEntry: CustomScenarioEntry = {
     scenarioId: id,
     kind: "ticket",
     origin: options.origin ?? "unscripted",
     tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
     title,
-    remediationScope: hasMissingElements ? "Azure VM regional quota & policy blocker" : base.remediationScope,
+    remediationScope: hasMissingElements ? routingDecision.missingElements[0]?.title ?? "Dynamic cloud remediation" : base.remediationScope,
     components: finalComponents,
     baseScenarioId: extraction.baseScenarioId,
     shortHash: id.slice(id.indexOf("-") + 1),
@@ -542,10 +602,36 @@ export async function triageCustomTicketAsync(
     ...(synthesizedElements ? { synthesizedElements } : {}),
     cloudStatusCorrelation,
     ...(customRemediation ? { customRemediation } : {}),
+    clarifyingQuestions,
+    clarifiedAnswers: initialAnswers,
+    subAgentTasks,
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
-  });
+  };
+
+  const finalizedEntry =
+    input.clarifiedAnswers && Object.keys(input.clarifiedAnswers).length > 0
+      ? applyClarifiedAnswersToEntry(rawEntry, input.clarifiedAnswers)
+      : rawEntry;
+
+  const entry = registerCustomScenario(finalizedEntry);
   save();
   return entry;
+}
+
+/**
+ * Interactive Goal Clarifier refinement: applies operator-selected option pills or free-text answers
+ * to a custom ticket/project, re-synthesizing its brief, dynamic cards, and PowerShell/IaC remediation.
+ */
+export async function refineCustomTicketGoal(
+  scenarioId: string,
+  clarifiedAnswers: Record<string, string>,
+): Promise<CustomScenarioEntry | null> {
+  const existing = getCustomScenario(scenarioId);
+  if (!existing) return null;
+  const updated = applyClarifiedAnswersToEntry(existing, clarifiedAnswers);
+  registerCustomScenario(updated);
+  save();
+  return updated;
 }
 
 /** Drops a custom ticket (an ERP folder that disappeared from the inbox) and persists the registry. */

@@ -4,15 +4,16 @@ import { findRolePermissionsInText, getScenarioEntry, isAnyScenarioId, isCustomS
 
 process.env.LIVE_CLOUD_MODE = "false";
 process.env.CTX_FORCE_LOCAL = "true";
-const { SAMPLE_UNSCRIPTED_TICKETS, extractTicket, registerCustomTicket } = await import("./custom-ticket.ts");
+const { SAMPLE_UNSCRIPTED_TICKETS, extractTicket, registerCustomTicket, refineCustomTicketGoal } = await import("./custom-ticket.ts");
 const { loadDynamicCatalog } = await import("./dynamic-catalog.ts");
 const { extractIncidentTimestampWindow } = await import("./cloud-status-correlator.ts");
-const { gatherContext } = await import("../mcp/context.ts");
+const { gatherContext, invalidateContext } = await import("../mcp/context.ts");
 const { buildScenarioBrief } = await import("./brief.ts");
 const { publishDataPlane, resolveDataPtr } = await import("./dataplane.ts");
 const { buildLayout } = await import("./hydrate.ts");
 const { verifyFormalInvariants, verifyIdempotency } = await import("./formal-verifier.ts");
 const { buildRemediationPlan } = await import("./remediate.ts");
+const { remediate, approve } = await import("../tiers/tier3-remediate.ts");
 const { getTimeline } = await import("./timeline.ts");
 
 const [avd, legal, erp] = SAMPLE_UNSCRIPTED_TICKETS as [typeof SAMPLE_UNSCRIPTED_TICKETS[0], typeof SAMPLE_UNSCRIPTED_TICKETS[0], typeof SAMPLE_UNSCRIPTED_TICKETS[0]];
@@ -268,5 +269,97 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(inText.map((m) => m.id)).toEqual(
       expect.arrayContaining(["Directory.ReadWrite.All", "Sites.FullControl.All", "Sites.Selected"]),
     );
+  });
+
+  test("Goal Clarifier & 5-Stage Sub-Agent Pipeline: OIDC Federated Credential ticket generates EntraOidcFederatedCredentialMismatchCard, 3 clarifying questions, 5 sub-agent task records, and zero westeurope/alex.wilber contamination", async () => {
+    const oidcTicket = {
+      title: "Federated Credentials on my spn stopped working",
+      body: "Federated Credentials on my spn stopped working. github repo stayed the same, but it says subject identifier did not match",
+      customerName: "Contoso Finance",
+    };
+
+    const entry = registerCustomTicket(oidcTicket);
+    expect(entry.clarifyingQuestions).toHaveLength(3);
+    expect(entry.clarifyingQuestions?.map((q) => q.id)).toEqual([
+      "oidc-workflow-scope",
+      "oidc-remediation-approach",
+      "oidc-secret-hygiene",
+    ]);
+    expect(entry.subAgentTasks).toHaveLength(5);
+    expect(entry.subAgentTasks?.map((t) => t.task)).toEqual([
+      "scope-and-questions",
+      "telemetry-and-status",
+      "ui-element-synthesis",
+      "script-and-iac-synthesis",
+      "preflight-and-undo",
+    ]);
+
+    const ctx = await gatherContext(entry.scenarioId, { fresh: true });
+    const brief = buildScenarioBrief(ctx);
+    expect(brief.clarifyingQuestions).toHaveLength(3);
+    expect(brief.subAgentTasks).toHaveLength(5);
+    expect(brief.summary).toContain("AADSTS70021");
+    expect(brief.summary).not.toContain("westeurope");
+    expect(brief.summary).not.toContain("Standard_D4s_v5");
+
+    const layout = buildLayout(ctx, { tier: "Tier 0", provider: "local", modelId: "deterministic", latencyMs: 0, tokensUsed: 0, fallbackChain: [], validated: true, repaired: [] });
+    const synthCard = layout.components.find((c) => c.type === "SynthesizedDynamicCard");
+    expect(synthCard).toBeDefined();
+    if (synthCard?.type === "SynthesizedDynamicCard") {
+      expect(synthCard.props.elementId).toBe("EntraOidcFederatedCredentialMismatchCard");
+      const cardJson = JSON.stringify(synthCard.props);
+      expect(cardJson).toContain("repo:contoso/erp-sync:environment:production");
+      expect(cardJson).not.toContain("westeurope");
+      expect(cardJson).not.toContain("Standard_D4s_v5");
+      expect(cardJson).not.toContain("alex.wilber");
+    }
+
+    // Verify remediation bundle and pre-flight verification pass with zero westeurope or alex.wilber contamination
+    const remResult = await remediate({ scenarioId: entry.scenarioId });
+    expect(["Verified Safe", "Verified With Warnings"]).toContain(remResult.drawer.verificationStatus.verdict);
+    expect(remResult.drawer.powershellScript).toMatch(/Get-MgApplicationFederatedIdentityCredential|Update-MgApplicationFederatedIdentityCredential|New-MgApplicationFederatedIdentityCredential/);
+    expect(remResult.drawer.powershellScript).not.toContain("westeurope");
+    expect(remResult.drawer.powershellScript).not.toContain("Standard_D4s_v5");
+    expect(remResult.drawer.powershellScript).not.toContain("alex.wilber");
+
+    // Verify approval execution console logs OIDC steps and never logs removing alex.wilber
+    const approved = await approve({
+      remediationId: remResult.drawer.remediationId,
+      approvedBy: "timur@contextpane.dev",
+      decision: "approve",
+      mode: "break-glass",
+      openPullRequest: false,
+    });
+    const logJoined = approved.executionLog.join("\n");
+    expect(logJoined).toContain("FederatedIdentityCredential");
+    expect(logJoined).not.toContain("alex.wilber");
+    expect(logJoined).not.toContain("westeurope");
+
+    // Verify refineCustomTicketGoal dynamically updates the brief, synthesized card, and remediation script
+    const refined = await refineCustomTicketGoal(entry.scenarioId, {
+      "oidc-workflow-scope": "repo:contoso/erp-sync:pull_request",
+      "oidc-remediation-approach": "update-existing-subject",
+      "oidc-secret-hygiene": "only-fix-oidc",
+    });
+    expect(refined).not.toBeNull();
+    invalidateContext(entry.scenarioId);
+    const refinedCtx = await gatherContext(entry.scenarioId, { fresh: true });
+    const refinedBrief = buildScenarioBrief(refinedCtx);
+    expect(refinedBrief.summary).toContain("repo:contoso/erp-sync:pull_request");
+    expect(refinedBrief.clarifiedAnswers?.["oidc-workflow-scope"]).toBe("repo:contoso/erp-sync:pull_request");
+    const refinedPlan = buildRemediationPlan(refinedCtx);
+    expect(refinedPlan.bundle.powershellScript).toContain("repo:contoso/erp-sync:pull_request");
+    expect(refinedPlan.bundle.powershellScript).toContain("Update-MgApplicationFederatedIdentityCredential");
+    expect(refinedPlan.bundle.powershellScript).not.toContain("alex.wilber");
+  });
+
+  test("#ERP-* and #CUSTOM-* formal verification passes all pre-flight checks", () => {
+    const erpProof = verifyFormalInvariants("ERP-202688511" as any);
+    expect(erpProof.passed).toBe(true);
+    expect(verifyIdempotency("ERP-202688511" as any).passed).toBe(true);
+
+    const customProof = verifyFormalInvariants("CUSTOM-14KX82" as any);
+    expect(customProof.passed).toBe(true);
+    expect(verifyIdempotency("CUSTOM-14KX82" as any).passed).toBe(true);
   });
 });

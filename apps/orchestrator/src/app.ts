@@ -50,9 +50,10 @@ import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skil
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
-import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
 import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
+import { generateClarifyingQuestions } from "./local/subagent-orchestrator.ts";
 import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
 import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
@@ -229,6 +230,7 @@ const TriageBodySchema = z.object({
   title: z.string().min(3).max(200),
   body: z.string().min(10).max(8000),
   customerName: z.string().max(80).optional(),
+  clarifiedAnswers: z.record(z.string(), z.string()).optional(),
 });
 
 /**
@@ -269,6 +271,9 @@ app.post("/api/tickets/triage-custom", async (c) => {
       elementRouting: entry.elementRouting ?? null,
       synthesizedElements: entry.synthesizedElements ?? [],
       cloudStatusCorrelation: entry.cloudStatusCorrelation ?? null,
+      clarifyingQuestions: entry.clarifyingQuestions ?? [],
+      clarifiedAnswers: entry.clarifiedAnswers ?? {},
+      subAgentTasks: entry.subAgentTasks ?? [],
       dataPtrs: snapshot.descriptors.map((d) => d.ptr),
       dataPlane: { datasets: snapshot.descriptors.length, bytes: snapshot.bytes, piiMetrics: snapshot.piiMetrics },
       verification: {
@@ -282,6 +287,51 @@ app.post("/api/tickets/triage-custom", async (c) => {
     },
     201,
   );
+});
+
+const ClarifyQuestionsBodySchema = z.object({
+  title: z.string().min(3).max(200),
+  body: z.string().min(5).max(8000),
+  clarifiedAnswers: z.record(z.string(), z.string()).optional(),
+});
+
+app.post("/api/tickets/clarify-questions", async (c) => {
+  const body = ClarifyQuestionsBodySchema.parse(await c.req.json());
+  const result = await generateClarifyingQuestions(body);
+  return c.json(result);
+});
+
+app.post("/api/tickets/clarifying-questions", async (c) => {
+  const body = ClarifyQuestionsBodySchema.parse(await c.req.json());
+  const result = await generateClarifyingQuestions(body);
+  return c.json(result);
+});
+
+const RefineGoalBodySchema = z.object({
+  clarifiedAnswers: z.record(z.string(), z.string()),
+});
+
+app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const body = RefineGoalBodySchema.parse(await c.req.json());
+  const updated = await refineCustomTicketGoal(scenarioId, body.clarifiedAnswers);
+  if (!updated) {
+    return c.json({ error: `${scenarioId} is not a custom ticket/project` }, 404);
+  }
+  remediationStore.clear(scenarioId);
+  invalidateContext(scenarioId);
+  const ctx = await gatherContext(scenarioId, { fresh: true });
+  const brief = buildScenarioBrief(ctx);
+  return c.json({
+    ok: true,
+    scenario: customScenarioListItem(updated, Boolean(convergenceStore.get(scenarioId))),
+    brief,
+    clarifyingQuestions: updated.clarifyingQuestions ?? [],
+    clarifiedAnswers: updated.clarifiedAnswers ?? {},
+    subAgentTasks: updated.subAgentTasks ?? [],
+    synthesizedElements: updated.synthesizedElements ?? [],
+    customRemediation: updated.customRemediation ?? null,
+  });
 });
 
 app.get("/api/dynamic-catalog", (c) => {

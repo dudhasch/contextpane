@@ -1,6 +1,6 @@
-import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Cloud, ExternalLink, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
-import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { CATEGORY_META, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief, type UpstreamCloudStatusCorrelation } from "@contextpane/catalog";
+import { AlertOctagon, Bot, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Cloud, ExternalLink, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, MessageSquare, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { CATEGORY_META, type ClarifyingQuestion, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief, type SubAgentTaskRecord, type UpstreamCloudStatusCorrelation } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
 import { fmtDateTimeUtc } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
@@ -29,7 +29,15 @@ export function ScenarioPane() {
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-4" data-testid="scenario-pane">
       <ScenarioHeader brief={brief} />
+      {brief.subAgentTasks && brief.subAgentTasks.length > 0 && <SubAgentTaskStrip tasks={brief.subAgentTasks} />}
       {brief.cloudStatusCorrelation && <UpstreamCloudStatusBanner correlation={brief.cloudStatusCorrelation} />}
+      {brief.clarifyingQuestions && brief.clarifyingQuestions.length > 0 && (
+        <ProjectGoalClarifierCard
+          scenarioId={brief.scenarioId}
+          questions={brief.clarifyingQuestions}
+          clarifiedAnswers={brief.clarifiedAnswers ?? {}}
+        />
+      )}
       <SummaryPlan brief={brief} />
       <ScenarioText brief={brief} />
       <div className="space-y-1.5">
@@ -117,6 +125,194 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
         {brief.priority && <span className="font-mono">priority {brief.priority}</span>}
       </div>
     </header>
+  );
+}
+
+/** Per-Task Sub-Agent Pipeline strip showing the 5 specialized sub-agents that triaged and synthesized the scenario. */
+function SubAgentTaskStrip({ tasks }: { tasks: SubAgentTaskRecord[] }) {
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+  const activeTask = tasks.find((t) => t.stepIndex === selectedStep) ?? null;
+
+  return (
+    <section
+      className="rounded-lg border border-border-subtle bg-surface/90 px-2.5 py-2 text-[11px]"
+      data-testid="subagent-task-strip"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Bot className="size-3.5 shrink-0 text-primary" />
+        <span className="font-semibold text-text">
+          Sub-Agent Task Pipeline ({tasks.filter((t) => t.status === "completed").length}/{tasks.length} Completed)
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {tasks.map((t, idx) => {
+            const isSelected = selectedStep === t.stepIndex;
+            return (
+              <Fragment key={t.stepIndex}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedStep(isSelected ? null : t.stepIndex)}
+                  data-testid={`subagent-pill-${t.stepIndex}`}
+                  title={`${t.role} (${t.modelId}) · ${t.latencyMs} ms — click to inspect`}
+                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary/20 font-semibold text-primary"
+                      : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                  }`}
+                >
+                  <span>✓ {t.agentName}</span>
+                </button>
+                {idx < tasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
+              </Fragment>
+            );
+          })}
+        </div>
+      </div>
+
+      {activeTask && (
+        <div
+          className="mt-2 rounded border border-primary/35 bg-canvas/85 p-2 text-[11px] space-y-1"
+          data-testid="subagent-task-detail"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-1">
+            <span className="font-semibold text-primary">
+              {activeTask.agentName} · {activeTask.role}
+            </span>
+            <span className="font-mono text-[10px] text-muted">
+              model: {activeTask.modelId} · {activeTask.latencyMs} ms
+            </span>
+          </div>
+          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">
+            <span className="font-mono text-faint">Input:</span>
+            <span className="text-muted">{activeTask.inputSummary}</span>
+            <span className="font-mono text-faint">Output:</span>
+            <span className="text-text font-medium">{activeTask.outputSummary}</span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Interactive Project & Goal Clarifier card allowing 1-click option pill selection or custom input to regenerate the plan & remediation. */
+function ProjectGoalClarifierCard({
+  scenarioId,
+  questions,
+  clarifiedAnswers,
+}: {
+  scenarioId: string;
+  questions: ClarifyingQuestion[];
+  clarifiedAnswers: Record<string, string>;
+}) {
+  const refineGoal = useWorkbench((s) => s.refineGoal);
+  const refiningGoal = useWorkbench((s) => s.refiningGoal);
+  const [expanded, setExpanded] = useState(true);
+  const [draft, setDraft] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const q of questions) {
+      init[q.id] = clarifiedAnswers[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+    }
+    return init;
+  });
+
+  useEffect(() => {
+    const synced: Record<string, string> = {};
+    for (const q of questions) {
+      synced[q.id] = clarifiedAnswers[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+    }
+    setDraft(synced);
+  }, [scenarioId, questions, clarifiedAnswers]);
+
+  return (
+    <section
+      className="rounded-[10px] border border-primary/45 bg-primary/6 p-2.5 text-[11.5px]"
+      data-testid="project-goal-clarifier-card"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <MessageSquare className="size-4 shrink-0 text-primary" />
+        <span className="text-[12px] font-semibold tracking-wide text-text uppercase">
+          Interactive Goal &amp; Scope Clarifier
+        </span>
+        <span className="rounded border border-primary/35 bg-canvas/75 px-1.5 py-0.5 font-mono text-[10px] text-primary">
+          Sub-Agent 1 · muse-spark-1.3
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="ml-auto rounded px-1.5 py-0.5 font-mono text-[10px] text-muted hover:bg-elevated hover:text-text"
+        >
+          {expanded ? "Collapse ▴" : "Refine Scope ▾"}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-2 space-y-2">
+          <p className="text-[11px] text-muted">
+            Select target scope options or type custom parameters below — Sub-Agents 3 &amp; 4 will immediately re-synthesize the resolution plan, UI card, and PowerShell/IaC remediation.
+          </p>
+          <div className="space-y-1.5">
+            {questions.map((q, idx) => {
+              const currentVal = draft[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+              return (
+                <div
+                  key={q.id}
+                  className="rounded-md border border-border-subtle bg-canvas/85 p-2"
+                  data-testid={`clarifier-question-${q.id}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-text">
+                      {idx + 1}. {q.question}
+                    </span>
+                    <span className="font-mono text-[10px] text-faint">{q.category}</span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {q.options.map((opt) => {
+                      const active = currentVal === opt.value;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          data-testid={`clarifier-opt-${q.id}-${opt.id}`}
+                          onClick={() => setDraft((prev) => ({ ...prev, [q.id]: opt.value }))}
+                          title={opt.description}
+                          className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-colors ${
+                            active
+                              ? "border-primary bg-primary/20 font-semibold text-primary"
+                              : "border-border bg-surface text-muted hover:border-primary/40 hover:text-text"
+                          }`}
+                        >
+                          {active && <Check className="size-3 shrink-0" />}
+                          <span>{opt.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="text"
+                    value={currentVal}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                    placeholder={q.customHint ?? "Or type custom parameter…"}
+                    data-testid={`clarifier-input-${q.id}`}
+                    className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-mono text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-0.5">
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Sparkles />}
+              loading={refiningGoal}
+              onClick={() => void refineGoal(draft)}
+              data-testid="refine-goal-submit"
+            >
+              ↻ Update Plan &amp; Regenerate via Sub-Agents
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

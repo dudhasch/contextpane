@@ -10,15 +10,27 @@ interface Pending {
   rect: DOMRect;
 }
 
+function isWithinSelectableSurface(node: Node | null, rootEl: HTMLElement | null): boolean {
+  if (!node) return false;
+  const el = node instanceof Element ? node : node.parentElement;
+  if (!el) return false;
+  if (el.closest('[data-selection-bar="true"], [data-testid="selection-trigger-bar"]')) return false;
+  if (rootEl && rootEl.contains(el)) return true;
+  if (el.closest('[data-hover-popover="true"], [data-testid="hover-popover"], [data-testid="permission-hover-popover"]')) {
+    return true;
+  }
+  return false;
+}
+
 /**
- * Wraps the ticket / anomaly body. When the engineer highlights 3-120 characters inside it a
- * floating action bar appears right above the selection:
+ * Wraps the ticket / anomaly body. When the engineer highlights 3-120 characters inside it (or inside
+ * any hover popover portal) a floating action bar appears right above the selection:
  * - Left: `✨ Generate Context UI for "…"`
  * - Middle: auto-focused inline refinement input (e.g. "other apps with the same owner") — press Enter to generate
  * - Right: 4 VectorCraft SVG view-mode icons (Dashboard, Full Card, Quick Comparison, Blast Radius) — press Tab to cycle
  */
 export function SelectionTrigger({ children, className }: { children: ReactNode; className?: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [refinement, setRefinement] = useState("");
@@ -38,14 +50,16 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
 
   const readSelection = useCallback(() => {
     const activeEl = document.activeElement;
-    if (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement || activeEl?.getAttribute("contenteditable") === "true") {
+    if (
+      activeEl !== inputRef.current &&
+      (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement || activeEl?.getAttribute("contenteditable") === "true")
+    ) {
       return;
     }
     const sel = window.getSelection();
-    const container = containerRef.current;
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !container) return;
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
     const range = sel.getRangeAt(0);
-    if (!container.contains(range.commonAncestorContainer)) return;
+    if (!isWithinSelectableSurface(range.commonAncestorContainer, rootRef.current)) return;
     const text = sel.toString().replace(/\s+/g, " ").trim();
     if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return setPending(null);
     const rect = range.getBoundingClientRect();
@@ -56,6 +70,24 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
     void prewarmSelection(text, { viewMode: "dashboard" });
   }, [prewarmSelection]);
 
+  // Listen for mouseup and keyup on document so selections inside portal hover popovers also trigger the floating bar
+  useEffect(() => {
+    const onDocMouseUp = (e: MouseEvent) => {
+      const pill = refs.floating.current;
+      if (pill && pill.contains(e.target as Node)) return;
+      readSelection();
+    };
+    const onDocKeyUp = (e: KeyboardEvent) => {
+      if (e.shiftKey) readSelection();
+    };
+    document.addEventListener("mouseup", onDocMouseUp);
+    document.addEventListener("keyup", onDocKeyUp);
+    return () => {
+      document.removeEventListener("mouseup", onDocMouseUp);
+      document.removeEventListener("keyup", onDocKeyUp);
+    };
+  }, [readSelection, refs.floating]);
+
   // Silent kinematic pre-fetch on selectionchange (debounced 90ms when 3-120 chars are highlighted)
   useEffect(() => {
     const onSelectionChange = () => {
@@ -64,14 +96,16 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
         debounceRef.current = null;
       }
       const activeEl = document.activeElement;
-      if (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement || activeEl?.getAttribute("contenteditable") === "true") {
+      if (
+        activeEl !== inputRef.current &&
+        (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement || activeEl?.getAttribute("contenteditable") === "true")
+      ) {
         return;
       }
       const sel = window.getSelection();
-      const container = containerRef.current;
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !container) return;
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
       const range = sel.getRangeAt(0);
-      if (!container.contains(range.commonAncestorContainer)) return;
+      if (!isWithinSelectableSurface(range.commonAncestorContainer, rootRef.current)) return;
       const text = sel.toString().replace(/\s+/g, " ").trim();
       if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return;
       debounceRef.current = window.setTimeout(() => {
@@ -103,7 +137,7 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
   useEffect(() => {
     if (!pending) return;
     const rect = pending.rect;
-    refs.setPositionReference({ getBoundingClientRect: () => rect, contextElement: containerRef.current ?? undefined });
+    refs.setPositionReference({ getBoundingClientRect: () => rect, contextElement: rootRef.current ?? undefined });
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true });
     });
@@ -181,7 +215,7 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
   return (
     <>
       <div
-        ref={containerRef}
+        ref={rootRef}
         onMouseUp={readSelection}
         onKeyUp={(e) => (e.shiftKey ? readSelection() : undefined)}
         data-testid="selection-surface"
@@ -201,8 +235,9 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
                 ...(refinement.trim() ? { refinementText: refinement.trim() } : {}),
               })
             }
+            data-selection-bar="true"
             data-testid="selection-trigger-bar"
-            className="z-50 inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-selection/65 bg-[#0B1120]/96 p-1 text-[11.5px] text-selection shadow-popover ring-1 ring-white/10 backdrop-blur-xl"
+            className="z-[10001] inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-selection/65 bg-[#0B1120]/96 p-1 text-[11.5px] text-selection shadow-popover ring-1 ring-white/10 backdrop-blur-xl"
           >
             {/* Primary Generate button */}
             <button
@@ -211,11 +246,12 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
               onClick={() => generate()}
               disabled={status === "loading"}
               data-testid="selection-trigger"
+              data-selection-trigger-button="true"
               title={`Generate ${activeModeMeta.label} for "${pending.text}"${refinement.trim() ? ` + "${refinement.trim()}"` : ""} (Enter)`}
               className="inline-flex h-6 max-w-[290px] items-center gap-1.5 rounded-md px-2 font-medium text-selection transition-colors hover:bg-selection/18 disabled:opacity-60"
             >
               <Sparkles className="size-3.5 shrink-0" />
-              <span className="truncate">
+              <span data-testid="selection-trigger-button" className="truncate">
                 Generate Context UI for "{pending.text.length > 30 ? `${pending.text.slice(0, 29)}…` : pending.text}"
               </span>
             </button>

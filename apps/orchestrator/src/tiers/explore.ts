@@ -126,7 +126,11 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
       const keepReferenceAction =
         PLACEHOLDER_RE.test(args.suggestedAction.scriptPreview) ||
         slice.kind === "entra-ca-policies" ||
-        slice.kind === "workload-identity";
+        slice.kind === "workload-identity" ||
+        slice.kind === "azure-quota-capacity" ||
+        slice.kind === "entra-groups" ||
+        slice.kind === "azure-policies" ||
+        Boolean(refinementText);
       const keepReferenceHeading =
         slice.kind === "entra-ca-policies" &&
         slice.rows[0]?.role === "blocking" &&
@@ -143,6 +147,9 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         suggestedAction: keepReferenceAction
           ? reference.suggestedAction
           : { ...args.suggestedAction, ...(args.suggestedAction.targetStepIndex !== undefined && args.suggestedAction.targetStepIndex < brief.steps.length ? {} : { targetStepIndex: reference.suggestedAction.targetStepIndex }) },
+        ...(reference.errorCodeReference || args.errorCodeReference
+          ? { errorCodeReference: reference.errorCodeReference ?? args.errorCodeReference }
+          : {}),
         rows: slice.rows,
         rowsPtr: ptr,
       });

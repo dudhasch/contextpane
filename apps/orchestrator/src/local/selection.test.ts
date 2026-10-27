@@ -153,6 +153,50 @@ describe("highlight → selection slice", () => {
     expect(cmp.card.rows.length).toBe(4);
     expect(cmp.card.rows.some((r) => r.displayName === "spn-contoso-avd-autoscaler")).toBe(true);
   });
+
+  test("Overhauled exploreSelection: QuotaExceeded, legacy block group, resource health, subject identifier, and AADSTS53003 return rich matched data and errorCodeReference explanations", async () => {
+    const quota = await exploreSelection({
+      scenarioId: "INC-4092",
+      selectedText: "QuotaExceeded",
+    });
+    expect(quota.slice.kind).toBe("azure-quota-capacity");
+    expect(quota.slice.matchedBy).not.toBe("none");
+    expect(quota.card.rows.length).toBeGreaterThanOrEqual(4);
+    expect(quota.card.errorCodeReference?.code).toBe("QuotaExceeded");
+    expect(quota.card.suggestedAction?.scriptPreview).toContain("Get-AzVMUsage");
+
+    const legacyGroup = await exploreSelection({
+      scenarioId: "INC-4092",
+      selectedText: "legacy block group",
+    });
+    expect(legacyGroup.slice.kind).toBe("entra-groups");
+    expect(legacyGroup.slice.matchedBy).not.toBe("none");
+    expect(legacyGroup.card.rows.some((r) => String(r.displayName).includes("SG-Contoso-Finance-Legacy"))).toBe(true);
+
+    const resourceHealth = await exploreSelection({
+      scenarioId: "INC-4099",
+      selectedText: "resource health",
+    });
+    expect(resourceHealth.slice.kind).toBe("azure-policies");
+    expect(resourceHealth.slice.matchedBy).not.toBe("none");
+    expect(resourceHealth.card.rows.length).toBeGreaterThan(0);
+
+    const oidcSub = await exploreSelection({
+      scenarioId: "INC-4092",
+      selectedText: "subject identifier",
+    });
+    expect(oidcSub.slice.kind).toBe("workload-identity");
+    expect(oidcSub.slice.matchedBy).not.toBe("none");
+    expect(oidcSub.card.errorCodeReference?.code).toBe("AADSTS70021");
+    expect(oidcSub.card.rows.some((r) => String(r.detail ?? "").includes("repo:contoso/erp-sync:"))).toBe(true);
+
+    const aadsts53003 = await exploreSelection({
+      scenarioId: "INC-4092",
+      selectedText: "AADSTS53003",
+    });
+    expect(aadsts53003.card.errorCodeReference?.code).toBe("AADSTS53003");
+    expect(aadsts53003.card.errorCodeReference?.explanation).toContain("Conditional Access");
+  });
 });
 
 describe("POST /api/explore-selection pointer hydration and PII vaulting", () => {

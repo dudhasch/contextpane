@@ -1,4 +1,4 @@
-import { baseScenarioOf, getCustomScenario, isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { baseScenarioOf, getCustomScenario, isCustomScenarioId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import {
   SHADOW_ADMIN_SCENARIO_ID,
   SHADOW_ADMIN_USER_UPN,
@@ -229,26 +229,34 @@ function affectedFor(scenarioId: ScenarioId): AffectedEntity[] {
   return [];
 }
 
+function effectiveScenarioId(scenarioId: ScenarioId | string): ScenarioId {
+  const raw = String(scenarioId).trim().replace(/^#/, "");
+  if (isCustomScenarioId(raw) || raw.startsWith("CUSTOM-") || raw.startsWith("ERP-") || /^2026\d+$/.test(raw)) {
+    const normalized = /^2026\d+$/.test(raw) ? `ERP-${raw}` : raw;
+    return baseScenarioOf(normalized);
+  }
+  return raw as ScenarioId;
+}
+
 /** Pre-remediation (drifted) symbolic state S. */
 export function preState(scenarioId: ScenarioId): SymbolicState {
-  const post = postState(scenarioId);
+  const effectiveId = effectiveScenarioId(scenarioId);
+  const post = postState(effectiveId);
   const driftPolicies = post.policies.map((p) =>
-    p.id === "CA-001" && scenarioId === "ANOM-CA-204" ? { ...p, excludeGroups: [] as string[] } : p.id === "ca-avd-legacy" ? { ...p, state: "enabled" as const, excludeGroups: [] as string[] } : p,
+    p.id === "CA-001" && effectiveId === "ANOM-CA-204" ? { ...p, excludeGroups: [] as string[] } : p.id === "ca-avd-legacy" ? { ...p, state: "enabled" as const, excludeGroups: [] as string[] } : p,
   );
   return {
     ...post,
     policies: driftPolicies,
     affected: post.affected.map((a) => ({ ...a, post: a.pre })),
-    nsgRules: scenarioId === "INC-4092" ? [...baselineNsgRules(), rogueRdpRule()] : baselineNsgRules(),
-    tags: scenarioId === "INC-4092" ? { Environment: "Prod-Hotfix-Manual", ChangeTicket: "manual-hotfix-2026-10-24", CostCenter: "FIN-4092" } : { ...post.tags },
+    nsgRules: effectiveId === "INC-4092" ? [...baselineNsgRules(), rogueRdpRule()] : baselineNsgRules(),
+    tags: effectiveId === "INC-4092" ? { Environment: "Prod-Hotfix-Manual", ChangeTicket: "manual-hotfix-2026-10-24", CostCenter: "FIN-4092" } : { ...post.tags },
   };
 }
 
 /** Proposed post-remediation symbolic state P_post(S). */
 export function postState(scenarioId: ScenarioId): SymbolicState {
-  const effectiveId = String(scenarioId).startsWith("CUSTOM-")
-    ? baseScenarioOf(String(scenarioId))
-    : scenarioId;
+  const effectiveId = effectiveScenarioId(scenarioId);
   // ANOM-APP-401 is modelled locally (shadow-admin.ts) until the catalog lands it.
   if (!isScenarioId(effectiveId) && (effectiveId as string) !== SHADOW_ADMIN_SCENARIO_ID) {
     throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
@@ -266,7 +274,8 @@ export function postState(scenarioId: ScenarioId): SymbolicState {
 }
 
 function resolveOptions(scenarioId: ScenarioId, options?: FormalVerifyOptions): SymbolicState {
-  const base = postState(scenarioId);
+  const effectiveId = effectiveScenarioId(scenarioId);
+  const base = postState(effectiveId);
   if (!options) return base;
   const policies = options.postPolicies ?? options.proposedPolicies ?? options.pPost ?? options.policies ?? options.postState?.policies;
   const nsgRules = options.postNsgRules ?? options.proposedNsgRules ?? options.nsgRules ?? options.postState?.nsgRules;
@@ -397,7 +406,7 @@ export function verifyNsgReachability(state: SymbolicState): InvariantResult {
  * paths they descend from).
  */
 export function verifyShadowAdminInvariant(scenarioId: string): InvariantResult {
-  const rawId: string = scenarioId;
+  const rawId: string = effectiveScenarioId(scenarioId);
   // Guard with isScenarioId: ANOM-APP-401 may not be a catalog id yet.
   const known = isScenarioId(rawId) || rawId === SHADOW_ADMIN_SCENARIO_ID;
   if (!known) {
@@ -533,9 +542,7 @@ const CANONICAL_DETECT_SCRIPT = [
 ].join("\n");
 
 export function maxSmtSynthesis(scenarioId: ScenarioId, options?: FormalVerifyOptions): MaxSmtSynthesisResult {
-  const effectiveId = String(scenarioId).startsWith("CUSTOM-") || String(scenarioId).startsWith("ERP-")
-    ? baseScenarioOf(String(scenarioId))
-    : scenarioId;
+  const effectiveId = effectiveScenarioId(scenarioId);
   const state = resolveOptions(effectiveId, options);
   const inv1 = verifyBreakGlassNonLockout(state);
   const inv2 = verifyTargetRemediation(state);
@@ -632,13 +639,14 @@ export function maxSmtSynthesis(scenarioId: ScenarioId, options?: FormalVerifyOp
 
 export function verifyFormalInvariants(scenarioId: ScenarioId, options?: FormalVerifyOptions): FormalVerificationResult {
   const started = performance.now();
-  const state = resolveOptions(scenarioId, options);
+  const effectiveId = effectiveScenarioId(scenarioId);
+  const state = resolveOptions(effectiveId, options);
   const invariants: InvariantResult[] = [verifyBreakGlassNonLockout(state), verifyTargetRemediation(state), verifyNsgReachability(state)];
   // 4th invariant ONLY for ANOM-APP-401 (string compare: the catalog id
   // may not exist yet; verifyShadowAdminInvariant guards with isScenarioId).
-  if ((scenarioId as string) === SHADOW_ADMIN_SCENARIO_ID) invariants.push(verifyShadowAdminInvariant(scenarioId as string));
+  if ((effectiveId as string) === SHADOW_ADMIN_SCENARIO_ID) invariants.push(verifyShadowAdminInvariant(effectiveId as string));
   const counterexamples = invariants.flatMap((i) => i.counterexamples);
-  const smt = maxSmtSynthesis(scenarioId, options);
+  const smt = maxSmtSynthesis(effectiveId, options);
   const allPassed = counterexamples.length === 0 && verifyPccBitmask(smt.invariantProofMask);
   return {
     scenarioId,
@@ -682,7 +690,8 @@ function stableHash(value: unknown): string {
 
 /** Copy-on-write fork check: f(f(S)) == f(S) and f does not mutate its input fork's source. */
 export function verifyIdempotency(scenarioId: ScenarioId, options?: FormalVerifyOptions): IdempotencyResult {
-  const source = options?.postState ? ({ ...preState(scenarioId), ...options.postState } as SymbolicState) : preState(scenarioId);
+  const effectiveId = effectiveScenarioId(scenarioId);
+  const source = options?.postState ? ({ ...preState(effectiveId), ...options.postState } as SymbolicState) : preState(effectiveId);
   const snapshot = JSON.stringify(source);
   const fork = structuredClone(source); // copy-on-write fork
   const once = applyRemediation(fork);
@@ -716,7 +725,7 @@ export const CONTOSO_USER_OBJECT_IDS: Record<string, string> = {
 
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
 export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBundle {
-  const customEntry = getCustomScenario(String(scenarioId));
+  const customEntry = getCustomScenario(String(scenarioId).trim().replace(/^#/, ""));
   if (customEntry?.customRemediation) {
     return {
       scenarioId,
@@ -727,9 +736,7 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
       restores: customEntry.customRemediation.affectedEntities.map((e) => `${e.id}: ${e.change}`),
     };
   }
-  const effectiveId = String(scenarioId).startsWith("CUSTOM-") || String(scenarioId).startsWith("ERP-")
-    ? baseScenarioOf(String(scenarioId))
-    : scenarioId;
+  const effectiveId = effectiveScenarioId(scenarioId);
   const pre = preState(effectiveId);
   const rogue = pre.nsgRules.find((r) => r.name === "Allow-Temp-RDP-Diagnostic-Drift");
   const hcl = rogue
@@ -777,7 +784,8 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
 export const synthesizeInverseRollback = buildInverseRollback;
 
 export function verifyInverseRollback(scenarioId: ScenarioId): { scenarioId: ScenarioId; passed: boolean; detail: string } {
-  const pre = preState(scenarioId);
+  const effectiveId = effectiveScenarioId(scenarioId);
+  const pre = preState(effectiveId);
   const restored = applyInverseForTest(pre, applyRemediation(structuredClone(pre)));
   const passed = JSON.stringify(restored.policies) === JSON.stringify(pre.policies) && JSON.stringify(restored.nsgRules) === JSON.stringify(pre.nsgRules);
   return { scenarioId, passed, detail: passed ? "f^-1(f(S)) == S on policies+NSG" : "inverse did not restore S" };
@@ -810,7 +818,8 @@ export interface BlastRadiusMatrix {
 
 /** 30-day counterfactual replay: replay each cohort daily under P_pre vs P_post and count transitions. */
 export function counterfactualReplay(scenarioId: ScenarioId, options?: FormalVerifyOptions): BlastRadiusMatrix {
-  const state = resolveOptions(scenarioId, options);
+  const effectiveId = effectiveScenarioId(scenarioId);
+  const state = resolveOptions(effectiveId, options);
   const days = 30 as const;
   const targetIds = state.affected.map((a) => a.id);
   const collateralIds = ["alex.wilber.contoso@c4a8shili.onmicrosoft.com", "miriam.graham.contoso@c4a8shili.onmicrosoft.com", "bg-adjacent-admin@c4a8shili.onmicrosoft.com"].filter((u) => !targetIds.includes(u) && !BREAK_GLASS_USERS.includes(u));

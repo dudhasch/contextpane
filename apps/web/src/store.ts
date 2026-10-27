@@ -239,6 +239,7 @@ interface WorkbenchState {
   linkedSelection: string | null;
   composerOpen: boolean;
   triageStatus: CanvasStatus;
+  refiningGoal: boolean;
   rowFilter: RowFilter | null;
   resolutionNote: PsaResolutionNote | null;
   resolutionNoteStatus: CanvasStatus;
@@ -362,7 +363,9 @@ interface WorkbenchState {
   setLinkedSelection(id: string | null): void;
   setComposerOpen(open: boolean): void;
   /** Unscripted ticket: triage the pasted text live and switch the workbench to the new CUSTOM-<hash> ticket. */
-  triageCustom(input: { title: string; body: string; customerName?: string }): Promise<void>;
+  triageCustom(input: { title: string; body: string; customerName?: string; clarifiedAnswers?: Record<string, string> }): Promise<void>;
+  /** Interactive Goal Clarifier: apply clarified answers and regenerate brief, cards, and remediation via Sub-Agents. */
+  refineGoal(clarifiedAnswers: Record<string, string>): Promise<void>;
   setRowFilter(filter: RowFilter | null): void;
   loadResolutionNote(): Promise<void>;
   closeTicket(): Promise<void>;
@@ -447,6 +450,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   linkedSelection: null,
   composerOpen: false,
   triageStatus: "idle",
+  refiningGoal: false,
   rowFilter: null,
   resolutionNote: null,
   resolutionNoteStatus: "idle",
@@ -1705,6 +1709,40 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     } catch (error) {
       set({ triageStatus: "error" });
       get().toast({ tone: "critical", title: "Triage failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+  async refineGoal(clarifiedAnswers) {
+    const scenarioId = get().scenarioId;
+    if (get().refiningGoal) return;
+    set({ refiningGoal: true });
+    try {
+      const result = await api.refineGoal(scenarioId, clarifiedAnswers);
+      const wasDrawerOpen = get().drawerOpen;
+      set((s) => ({
+        brief: result.brief,
+        refiningGoal: false,
+        drawer: null,
+        remediateStatus: "idle",
+        speculativeEpoch: s.speculativeEpoch + 1,
+        speculativeBuffer: s.speculativeBuffer.filter((b) => b.scenarioId !== scenarioId),
+      }));
+      await get().correlate({ fresh: true });
+      if (wasDrawerOpen) {
+        void get().remediate();
+      }
+      const summaryValues = Object.values(result.clarifiedAnswers).slice(0, 3).join(" · ");
+      get().toast({
+        tone: "healthy",
+        title: "Plan & Remediation Regenerated via Sub-Agents (5/5 ✓)",
+        detail: `Applied clarified scope: ${summaryValues}`,
+      });
+    } catch (error) {
+      set({ refiningGoal: false });
+      get().toast({
+        tone: "critical",
+        title: "Goal refinement failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   },
   setRowFilter: (rowFilter) => set((s) => (s.rowFilter?.kind === rowFilter?.kind && s.rowFilter?.value === rowFilter?.value ? {} : { rowFilter })),

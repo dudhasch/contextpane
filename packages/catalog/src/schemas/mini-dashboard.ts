@@ -54,6 +54,15 @@ export const SelectionDataPtrSchema = z
   .describe("Data-plane pointer of the matched rows, e.g. ptr://inc-4092/selection/k3f9a1x2");
 export type SelectionDataPtr = z.infer<typeof SelectionDataPtrSchema>;
 
+export const ErrorCodeReferenceSchema = z.object({
+  code: z.string(),
+  symbolicName: z.string(),
+  explanation: z.string(),
+  troubleshootingChecks: z.array(z.string()).min(1).max(5),
+  docsUrl: z.string(),
+});
+export type ErrorCodeReference = z.infer<typeof ErrorCodeReferenceSchema>;
+
 export const ContextualMiniDashboardSchema = z.object({
   id: z.string().min(1).describe("Stable id, e.g. selection-k3f9a1x2"),
   selectionText: z.string().min(1).max(120).describe("The exact phrase the engineer highlighted"),
@@ -69,6 +78,7 @@ export const ContextualMiniDashboardSchema = z.object({
   rowsPtr: SelectionDataPtrSchema,
   rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))).max(60),
   suggestedAction: MiniDashboardSuggestedActionSchema,
+  errorCodeReference: ErrorCodeReferenceSchema.optional(),
 });
 export type ContextualMiniDashboard = z.infer<typeof ContextualMiniDashboardSchema>;
 

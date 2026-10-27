@@ -114,9 +114,41 @@ export function RolePermissionHoverPopover({
   const entry = lookupRoleOrPermission(query);
   const [open, setOpen] = useState(false);
 
+  const scheduleClose = () => {
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    const selText = sel?.toString().trim() ?? "";
+    const floatingEl = refs.floating.current;
+    const commonNode = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).commonAncestorContainer : null;
+    const commonEl = commonNode instanceof Element ? commonNode : commonNode?.parentElement ?? null;
+    const hasPopoverSelection =
+      selText.length >= 3 &&
+      Boolean((floatingEl && commonNode && floatingEl.contains(commonNode)) || commonEl?.closest('[data-hover-popover="true"]'));
+    const activeEl = typeof document !== "undefined" ? document.activeElement : null;
+    const isInteractingWithTrigger =
+      (activeEl instanceof Element &&
+        Boolean(
+          activeEl.closest(
+            '[data-selection-bar="true"], [data-testid="selection-trigger-bar"], [data-testid="selection-trigger"], [data-testid="selection-trigger-button"]',
+          ),
+        )) ||
+      (typeof document !== "undefined" &&
+        Boolean(
+          document.querySelector(
+            '[data-selection-bar="true"]:hover, [data-testid="selection-trigger-bar"]:hover, [data-testid="selection-trigger-button"]:hover',
+          ),
+        ));
+    if (hasPopoverSelection || isInteractingWithTrigger) {
+      return;
+    }
+    setOpen(false);
+  };
+
   const { refs, floatingStyles, context } = useFloating({
     open: open && Boolean(entry),
-    onOpenChange: setOpen,
+    onOpenChange: (nextOpen) => {
+      if (nextOpen) setOpen(true);
+      else scheduleClose();
+    },
     placement: "top-start",
     middleware: [offset(6), flip({ fallbackPlacements: ["bottom-start", "right-start"] }), shift({ padding: 8 })],
     whileElementsMounted: autoUpdate,
@@ -149,7 +181,9 @@ export function RolePermissionHoverPopover({
             ref={refs.setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className="z-[9999] w-[340px] max-w-[360px] animate-fade-in rounded-lg border border-sky-500/45 bg-slate-950/[0.98] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
+            data-hover-popover="true"
+            data-testid="permission-hover-popover"
+            className="z-[9999] w-[340px] max-w-[360px] select-text animate-fade-in rounded-lg border border-sky-500/45 bg-slate-950/[0.98] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
           >
             <RolePermissionCardContent entry={entry} />
           </div>

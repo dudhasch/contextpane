@@ -210,6 +210,26 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const avdGroupUuid = GROUP_IDS["SG-Contoso-Finance-AVD"]!;
   const legacyGroupUuid = GROUP_IDS["SG-Contoso-Finance-Legacy"]!;
   const blockingPolicyUuid = "d09ae604-9c1e-4b9c-9a5d-000000000001";
+  const fallbackUnifiedHclDiff = [
+    `--- a/${d.terraformFile || "demo-iac/main.tf"} (live Azure state)`,
+    `+++ b/${d.terraformFile || "demo-iac/main.tf"} (Terraform baseline)`,
+    "@@ -18,12 +18,2 @@",
+    "-  security_rule {",
+    '-    name                       = "Allow-Temp-RDP-Diagnostic-Drift"',
+    "-    priority                   = 150",
+    '-    direction                  = "Inbound"',
+    '-    access                     = "Allow"',
+    '-    protocol                   = "Tcp"',
+    '-    source_port_range          = "*"',
+    '-    destination_port_range     = "3389"',
+    '-    source_address_prefix      = "*"',
+    '-    destination_address_prefix = "*"',
+    "-  }",
+    " }",
+    "",
+  ].join("\n");
+  const effectiveHclDiff = d.hclDiff && d.hclDiff.includes("@@") ? d.hclDiff : fallbackUnifiedHclDiff;
+
   return {
     bundle: {
       title: `Fix ${ctx.ticketId}: E5 license upgrade, AVD block and NSG drift for ${tenant.displayName}`,
@@ -223,7 +243,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
         .join(" ")
         .slice(0, 600),
       powershellScript: `${L.join("\n")}\n`,
-      terraformDiff: d.hclDiff,
+      terraformDiff: effectiveHclDiff,
       graphPatch: graphPatch([
         ...drifted.flatMap((u, idx) => {
           const uid = userUuid(u.objectId ?? u.upn, idx + 1);
@@ -772,18 +792,27 @@ export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
     const cr = ctx.custom.customRemediation;
     return {
       bundle: {
-        title: cr.title,
-        summary: cr.summary,
+        title: cr.title.slice(0, 120),
+        summary: cr.summary.slice(0, 600),
         powershellScript: cr.powershellScript,
         terraformDiff: cr.terraformDiff,
         graphPatch: cr.graphPatch,
-        affectedEntities: cr.affectedEntities,
-        riskNotes: [
-          "Regional VM deployment is re-targeted to EU-Sovereign policy-approved germanywestcentral (16 free Standard_D4s_v5 vCPUs).",
-          "Scoped Azure Policy waiver expires automatically after 14 days once Terraform state converges.",
-        ],
+        affectedEntities: cr.affectedEntities.slice(0, 20).map((e) => ({
+          ...e,
+          change: e.change.slice(0, 200),
+        })),
+        riskNotes:
+          cr.riskNotes && cr.riskNotes.length > 0
+            ? cr.riskNotes.slice(0, 6).map((r) => r.slice(0, 300))
+            : [
+                "Verify target resource and identity state in the staged branch before applying in production.",
+                "All mutating operations are guarded by $PSCmdlet.ShouldProcess (-WhatIf safe).",
+              ],
       },
-      requiredCommands: ["get-azvmusage", "new-azpolicyexemption", "new-azresourcegroupdeployment"],
+      requiredCommands:
+        cr.requiredCommands && cr.requiredCommands.length > 0
+          ? cr.requiredCommands.map((c) => c.toLowerCase())
+          : ["get-azvmusage", "new-azpolicyexemption", "new-azresourcegroupdeployment"],
       remediatedUpns: [],
       reclaimedUpns: [],
     };

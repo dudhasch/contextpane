@@ -164,7 +164,7 @@ try {
     for (const e of report.parseErrors) findings.push(`AST parse error: ${e}`);
     const lower = report.commands.map((c) => c.toLowerCase());
     for (const forbidden of FORBIDDEN_COMMANDS) if (lower.includes(forbidden)) findings.push(`Forbidden command: ${forbidden}`);
-    for (const required of requiredCommands) if (!lower.includes(required)) findings.push(`Expected command missing: ${required}`);
+    for (const required of requiredCommands) if (!lower.includes(required.toLowerCase())) findings.push(`Expected command missing: ${required}`);
     for (const cmd of report.commands) {
       const verb = cmd.split("-")[0] ?? cmd;
       if (cmd.includes("-") && !ALLOWED_VERBS.has(verb) && !ALLOWED_COMMANDS.has(cmd.toLowerCase())) findings.push(`Verb outside allow-list: ${cmd}`);
