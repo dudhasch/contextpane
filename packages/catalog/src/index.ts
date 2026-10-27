@@ -2,6 +2,7 @@ export * from "./schemas/primitives.ts";
 export * from "./schemas/components.ts";
 export * from "./schemas/layout.ts";
 export * from "./schemas/recipe.ts";
+export * from "./schemas/mini-dashboard.ts";
 export * from "./tools.ts";
 export * from "./aadsts.ts";
 export * from "./tenants.ts";

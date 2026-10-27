@@ -6,6 +6,9 @@ import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Dot, Pill, type Tone } from "../ui/Pill";
 import { CardShell, DataTable } from "./CardShell";
+import { FilterChips, IdentityCell, rowHighlightClass, useStatusFilter, type RowStatus } from "./TableFilter";
+
+const classifyEvent = (e: SignInEvent): RowStatus => (e.status === "failure" || e.status === "interrupted" ? "bad" : "good");
 
 /** Events shown before "show more": every highlighted one plus the nearest context. */
 const COLLAPSED_EVENTS = 6;
@@ -92,17 +95,20 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
 function SignInList({ events: all }: { events: SignInEvent[] }) {
   const [showAll, setShowAll] = useState(false);
   const vision = useWorkbench((s) => s.vision);
+  const rowFilter = useWorkbench((s) => s.rowFilter);
+  const { chip, setChip, counts, filtered } = useStatusFilter(all, classifyEvent);
   const visionEventId = vision.status === "ready" ? (vision.result?.match?.eventId ?? null) : null;
-  const events = useMemo(() => (showAll ? all : collapseEvents(all, visionEventId)), [all, showAll, visionEventId]);
-  const hidden = all.length - events.length;
+  const events = useMemo(() => (showAll || chip !== "all" ? filtered : collapseEvents(filtered, visionEventId)), [filtered, showAll, chip, visionEventId]);
+  const hidden = filtered.length - events.length;
   return (
     <div>
+      <FilterChips chip={chip} counts={counts} onChange={setChip} testId="signin-filter-chips" />
       <ol className="relative ml-2 border-l border-border-subtle pl-4">
         {events.map((e) => {
           const tone: Tone = e.status === "failure" ? "critical" : e.status === "interrupted" ? "warning" : e.isHighlighted ? "warning" : "healthy";
           const visionHit = e.id === visionEventId;
           return (
-            <li key={e.id} data-event-id={e.id} className={`relative mb-1 last:mb-0 ${visionHit ? "rounded-md ring-2 ring-meta ring-offset-1 ring-offset-canvas" : ""}`}>
+            <li key={e.id} data-event-id={e.id} className={`relative mb-1 last:mb-0 ${visionHit ? "rounded-md ring-2 ring-meta ring-offset-1 ring-offset-canvas" : ""} ${rowHighlightClass(rowFilter, { upn: e.upn, deviceName: e.deviceName || null })}`}>
               <span className="absolute top-1.5 -left-[21px]">
                 <Dot tone={tone} pulse={e.isHighlighted} />
               </span>
@@ -112,7 +118,9 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
               >
                 <div className="flex items-center gap-x-2">
                   <span className="shrink-0 font-mono text-faint">{fmtTimeUtc(e.timestamp)}</span>
-                  <span className="shrink-0 font-medium">{e.displayName}</span>
+                  <IdentityCell kind="upn" value={e.upn} className="shrink-0 font-medium">
+                    {e.displayName}
+                  </IdentityCell>
                   <span className="text-muted">→</span>
                   <span className="truncate font-mono">{e.appDisplayName}</span>
                   <span className="hidden truncate text-[10.5px] text-faint xl:inline">

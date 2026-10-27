@@ -82,6 +82,138 @@ export function isScenarioId(value: unknown): value is ScenarioId {
   return typeof value === "string" && (SCENARIO_IDS as readonly string[]).includes(value);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Unscripted (ad-hoc) tickets: CUSTOM-<shortHash>                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A free-form ticket the engineer pasted into the composer. It is triaged live against
+ * the tenant and keeps its own id for pointers (ptr://custom-<hash>/...), its brief, its
+ * convergence and its audit rows, while `baseScenarioId` names the built-in scenario whose
+ * data gathering, remediation template and formal invariants it inherits.
+ */
+export type CustomScenarioId = `CUSTOM-${string}`;
+export type WorkbenchScenarioId = ScenarioId | CustomScenarioId;
+
+export const CUSTOM_SCENARIO_ID_RE = /^CUSTOM-[A-Z0-9]{4,12}$/;
+
+export const ExtractedEntityTypeSchema = z.enum(["upn", "name", "errorCode", "sku", "keyword", "group", "resource", "device", "policy"]);
+export type ExtractedEntityType = z.infer<typeof ExtractedEntityTypeSchema>;
+
+export const TicketIntentSchema = z.enum([
+  "avd",
+  "nsg",
+  "license",
+  "conditional-access",
+  "break-glass",
+  "legacy-auth",
+  "bitlocker",
+  "intune-compliance",
+  "asr",
+  "firewall",
+  "workload-identity",
+  "oauth",
+  "secret",
+  "copilot",
+]);
+export type TicketIntent = z.infer<typeof TicketIntentSchema>;
+
+export const ExtractedEntitySchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  type: ExtractedEntityTypeSchema,
+  category: ProvenanceCategorySchema,
+  /** The live MCP object the mention resolved to (UPN of a matched user, policy name, ...); null when unresolved. */
+  resolvedTo: z.string().nullable().default(null),
+  source: z.string().max(80).describe("MCP server / Graph endpoint the entity was matched against"),
+  confidence: z.number().min(0).max(1).default(1),
+});
+export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;
+
+export const TicketExtractionSchema = z.object({
+  tenantId: z.string(),
+  baseScenarioId: z.enum(SCENARIO_IDS),
+  intents: z.array(TicketIntentSchema),
+  entities: z.array(ExtractedEntitySchema),
+  components: z.array(z.enum(CANVAS_COMPONENT_TYPES)).min(1),
+  /** Why this base scenario won: the intents and entities that voted for it. */
+  rationale: z.string().max(300),
+});
+export type TicketExtraction = z.infer<typeof TicketExtractionSchema>;
+
+export interface CustomTicketInput {
+  title: string;
+  body: string;
+  customerName?: string;
+}
+
+export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenarioId"> {
+  scenarioId: CustomScenarioId;
+  kind: "ticket";
+  baseScenarioId: ScenarioId;
+  shortHash: string;
+  createdAt: string;
+  ticket: CustomTicketInput;
+  extraction: TicketExtraction;
+}
+
+export type AnyScenarioEntry = ScenarioRegistryEntry | CustomScenarioEntry;
+
+const customRegistry = new Map<string, CustomScenarioEntry>();
+export const MAX_CUSTOM_SCENARIOS = 12;
+
+export function isCustomScenarioId(value: unknown): value is CustomScenarioId {
+  return typeof value === "string" && CUSTOM_SCENARIO_ID_RE.test(value);
+}
+
+/** A built-in scenario id, or a custom one that has been registered in this process. */
+export function isAnyScenarioId(value: unknown): value is WorkbenchScenarioId {
+  return isScenarioId(value) || (isCustomScenarioId(value) && customRegistry.has(value));
+}
+
+export function isCustomScenarioEntry(entry: AnyScenarioEntry | undefined): entry is CustomScenarioEntry {
+  return Boolean(entry && "baseScenarioId" in entry);
+}
+
+/** Registers (or replaces) a custom scenario; the oldest entries beyond MAX_CUSTOM_SCENARIOS are dropped. */
+export function registerCustomScenario(entry: CustomScenarioEntry): CustomScenarioEntry {
+  customRegistry.delete(entry.scenarioId);
+  customRegistry.set(entry.scenarioId, entry);
+  while (customRegistry.size > MAX_CUSTOM_SCENARIOS) {
+    const oldest = customRegistry.keys().next().value;
+    if (oldest === undefined) break;
+    customRegistry.delete(oldest);
+  }
+  return entry;
+}
+
+export function unregisterCustomScenario(scenarioId: string): boolean {
+  return customRegistry.delete(scenarioId);
+}
+
+export function getCustomScenario(scenarioId: string): CustomScenarioEntry | undefined {
+  return customRegistry.get(scenarioId);
+}
+
+/** Newest first. */
+export function listCustomScenarios(): CustomScenarioEntry[] {
+  return [...customRegistry.values()].reverse();
+}
+
+export function getScenarioEntry(scenarioId: string): AnyScenarioEntry | undefined {
+  return isScenarioId(scenarioId) ? SCENARIO_REGISTRY[scenarioId] : customRegistry.get(scenarioId);
+}
+
+/** The built-in scenario whose data, remediation template and invariants a workbench id resolves to. */
+export function baseScenarioOf(scenarioId: string, fallback: ScenarioId = "INC-4092"): ScenarioId {
+  if (isScenarioId(scenarioId)) return scenarioId;
+  return customRegistry.get(scenarioId)?.baseScenarioId ?? fallback;
+}
+
+export function customScenarioId(shortHash: string): CustomScenarioId {
+  return `CUSTOM-${shortHash.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12)}`;
+}
+
 /** The ticket scenario of a tenant, for callers that still speak tenant ids. */
 export function scenarioForTenant(tenantId: string): ScenarioId {
   return SCENARIO_IDS.find((id) => SCENARIO_REGISTRY[id].kind === "ticket" && SCENARIO_REGISTRY[id].tenantId === tenantId) ?? "INC-4092";
@@ -100,6 +232,7 @@ export const CATEGORY_META: Record<ProvenanceCategory, { label: string; short: s
   identity: { label: "Identity, Sign-Ins & Conditional Access", short: "Identity & CA", color: "#f43f5e" },
   intune: { label: "Intune & Device Compliance", short: "Intune", color: "#a855f7" },
   azure: { label: "Azure, Host Pool & Network IaC", short: "Azure IaC", color: "#14b8a6" },
+  selection: { label: "Spawned from selection", short: "Selection", color: "#06b6d4" },
 };
 
 export const COMPONENT_CATEGORY: Record<CanvasComponentType, ProvenanceCategory> = {
@@ -152,7 +285,7 @@ export const ScenarioSignalSchema = z.object({
 export type ScenarioSignal = z.infer<typeof ScenarioSignalSchema>;
 
 export const ScenarioBriefSchema = z.object({
-  scenarioId: z.enum(SCENARIO_IDS),
+  scenarioId: z.string().describe("INC-4092, ANOM-LIC-101, ... or CUSTOM-<hash> for an unscripted ticket"),
   kind: ScenarioKindSchema,
   tenantId: z.string(),
   tenantName: z.string(),
@@ -184,14 +317,18 @@ export const ScenarioBriefSchema = z.object({
     .default([]),
   /** Where each MCP source answered from: live tenant reads or fixtures. */
   sources: z.record(z.string(), z.string()),
+  /** Unscripted tickets: what the entity & intent extractor found and the base pattern it inherited. */
+  extraction: TicketExtractionSchema.nullable().default(null),
 });
 export type ScenarioBrief = z.infer<typeof ScenarioBriefSchema>;
 
 export interface ScenarioListItem {
-  scenarioId: ScenarioId;
+  scenarioId: WorkbenchScenarioId;
   kind: ScenarioKind;
   tenantId: string;
   tenantName: string;
   title: string;
   resolved: boolean;
+  /** Set for unscripted CUSTOM-<hash> tickets, with the built-in scenario they inherit. */
+  custom?: { baseScenarioId: ScenarioId; shortHash: string; createdAt: string; ticket: CustomTicketInput; extraction: TicketExtraction; components: CanvasComponentType[] };
 }

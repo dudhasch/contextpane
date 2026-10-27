@@ -163,7 +163,7 @@ export function Stat({ label, children, tone }: { label: string; children: React
 }
 
 /** Generic data table with the canvas look. */
-export function DataTable({ head, rows, className = "" }: { head: string[]; rows: ReactNode[][]; className?: string }) {
+export function DataTable({ head, rows, className = "", rowClassName }: { head: string[]; rows: ReactNode[][]; className?: string; rowClassName?: (index: number) => string }) {
   return (
     <div className={`overflow-x-auto rounded-md border border-border-subtle ${className}`}>
       <table className="w-full text-[11.5px]">
@@ -178,7 +178,7 @@ export function DataTable({ head, rows, className = "" }: { head: string[]; rows
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t border-border-subtle align-middle">
+            <tr key={i} className={`border-t border-border-subtle align-middle transition-opacity ${rowClassName?.(i) ?? ""}`}>
               {r.map((cell, j) => (
                 <td key={j} className="px-2.5 py-1.5">
                   {cell}

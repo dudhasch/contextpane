@@ -37,7 +37,7 @@ export const DEFAULT_COMPONENT_ORDER: ComponentType[] = ["LicenseDriftCard", "En
 
 /** The cards a scenario renders, in canvas order. */
 export function scenarioComponents(ctx: CorrelationContext): ComponentType[] {
-  return SCENARIO_REGISTRY[ctx.scenarioId].components;
+  return ctx.components ?? SCENARIO_REGISTRY[ctx.scenarioId].components;
 }
 
 const worst = (...states: HealthState[]): HealthState => {
@@ -363,10 +363,10 @@ export function buildIaCDriftBanner(ctx: CorrelationContext): IaCDriftBanner | n
 
 export function buildComponent(type: ComponentType, ctx: CorrelationContext): LayoutComponent | null {
   if (!isCanvasComponentType(type)) return null;
-  const id = `${type.replace(/[A-Z]/g, (c, i) => (i ? "-" : "") + c.toLowerCase())}-${ctx.scenarioId.toLowerCase()}`;
+  const id = `${type.replace(/[A-Z]/g, (c, i) => (i ? "-" : "") + c.toLowerCase())}-${ctx.ticketId.toLowerCase()}`;
   const trigger = triggeredBy(ctx, type);
   // Each row-set prop records the ptr:// it is bound from (see local/dataplane.ts).
-  const dataPtrs = Object.fromEntries(datasetsFor(type).map((k) => [DATASETS[k].prop, dataPtr(ctx.scenarioId, k)]));
+  const dataPtrs = Object.fromEntries(datasetsFor(type).map((k) => [DATASETS[k].prop, dataPtr(ctx.ticketId, k)]));
   switch (type) {
     case "LicenseDriftCard": {
       const props = buildLicenseDriftCard(ctx);
@@ -394,9 +394,9 @@ export function buildLayout(ctx: CorrelationContext, provenance: Provenance, opt
     .filter((c): c is LayoutComponent => c !== null)
     .map((c) => LayoutComponentSchema.parse(c));
   return {
-    layoutId: options.layoutId ?? `layout-${ctx.scenarioId.toLowerCase()}-${Date.now().toString(36)}`,
+    layoutId: options.layoutId ?? `layout-${ctx.ticketId.toLowerCase()}-${Date.now().toString(36)}`,
     tenantId: ctx.tenantId,
-    ticketId: ctx.scenarioId,
+    ticketId: ctx.ticketId,
     components,
     generatedAt: new Date().toISOString(),
     recipeId: options.recipeId ?? null,

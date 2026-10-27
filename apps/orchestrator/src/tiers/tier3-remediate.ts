@@ -6,8 +6,9 @@ import { z } from "zod";
 import {
   ActionApprovalDrawerSchema,
   RemediationBundleArgsSchema,
-  SCENARIO_REGISTRY,
+  baseScenarioOf,
   formatIssues,
+  getScenarioEntry,
   getRemediationBundleToolDefinition,
   parseToolArguments,
   formatSourceRef,
@@ -214,7 +215,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     tenantName: ctx.erp.tenant.displayName,
     remediationId,
     title: bundle.title,
-    prTitle: canonicalPrTitle(ctx.scenarioId, ctx.erp.tenant.displayName),
+    prTitle: canonicalPrTitle(ctx.ticketId, ctx.erp.tenant.displayName),
     summary: bundle.summary,
     powershellScript: bundle.powershellScript,
     terraformDiff: bundle.terraformDiff,
@@ -408,7 +409,7 @@ export interface ApproveInput {
 
 /** One PR title per scenario, so the canonical branch keeps one PR however often the demo runs. */
 export function canonicalPrTitle(scenarioId: string, tenantName: string): string {
-  const scope = SCENARIO_REGISTRY[scenarioId as ScenarioId]?.remediationScope ?? "infrastructure drift & license state";
+  const scope = getScenarioEntry(scenarioId)?.remediationScope ?? "infrastructure drift & license state";
   return `fix(${scenarioId}): remediate ${tenantName} ${scope} [ContextPane Tier 3]`;
 }
 
@@ -470,7 +471,7 @@ function ms(v: number | undefined): string {
 
 export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log: string[], ctx: CorrelationContext | null, repoUrl: string | null): string {
   const v = drawer.verificationStatus;
-  const registry = SCENARIO_REGISTRY[drawer.ticketId as ScenarioId];
+  const registry = getScenarioEntry(drawer.ticketId);
   const tenantName = ctx?.erp.tenant.displayName ?? drawer.tenantId;
   const ticket = ctx?.erp.ticket ?? null;
   const contractId = ctx?.erp.contract.contractId ?? "n/a";
@@ -619,6 +620,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   }
 
   const scenarioId = resolveScenarioId(drawer.ticketId);
+  // The lab objects a custom ticket's fix writes are those of the built-in scenario it inherits.
+  const labScenarioId = baseScenarioOf(scenarioId);
   const mode: ExecutionMode = input.mode ?? "break-glass";
   const wantPullRequest = input.openPullRequest ?? config.github.prOnApprove;
   // The PR body quotes the ticket and the convergence names the users: read both before the Graph write invalidates the context.
@@ -640,7 +643,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         const script = await runApprovedScript(drawer);
         log.push(...script.log);
       }
-      write = await applyScenarioState(scenarioId, "remediated", remediatedUpns);
+      write = await applyScenarioState(labScenarioId, "remediated", remediatedUpns);
       const failed = write.results.filter((r) => !r.ok);
       writeSummary = write.summary;
       if (write.source === "live-graph") {

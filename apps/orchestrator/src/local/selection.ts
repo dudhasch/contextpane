@@ -1,0 +1,577 @@
+import {
+  ContextualMiniDashboardSchema,
+  selectionDataPtr,
+  selectionHash,
+  type ContextualMiniDashboard,
+  type MetricTone,
+  type MiniDashboardBreakdown,
+  type MiniDashboardColumn,
+  type MiniDashboardKpi,
+  type MiniDashboardSuggestedAction,
+  type ResolutionStep,
+} from "@contextpane/catalog";
+import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
+import type { CorrelationContext } from "../mcp/context.ts";
+
+/**
+ * Deterministic selection slicer. Given the phrase an engineer highlighted, it searches every
+ * dataset the gathered MCP context holds (Entra users and SKU pools, sign-ins, Conditional
+ * Access policies, Intune devices and settings, the workload identity, the NSG rules, the AVD
+ * session hosts and Azure Policy) and assembles the one slice that explains the phrase best:
+ * rows, columns, KPIs, a distribution and a targeted command. This is both the fallback when
+ * no model answers and the reference the model's composition is checked against.
+ */
+
+export type SliceKind =
+  | "entra-users"
+  | "entra-sku-pools"
+  | "entra-signins"
+  | "entra-ca-policies"
+  | "intune-devices"
+  | "intune-settings"
+  | "workload-identity"
+  | "azure-nsg-rules"
+  | "avd-session-hosts"
+  | "azure-policies";
+
+export type Row = Record<string, string | number | boolean | null>;
+
+export interface SelectionSlice {
+  kind: SliceKind;
+  score: number;
+  /** How the slice was found: rows matched the phrase, or the phrase named the dataset. */
+  matchedBy: "rows" | "dataset" | "none";
+  title: string;
+  subtitle: string;
+  sourceQuery: string;
+  columns: MiniDashboardColumn[];
+  rows: Row[];
+  kpis: MiniDashboardKpi[];
+  breakdown: MiniDashboardBreakdown[];
+  suggestedAction: MiniDashboardSuggestedAction;
+  /** Datasets searched and how many rows each holds, for the "no match" card and the prompt. */
+  searched: Array<{ kind: SliceKind; rows: number; matched: number }>;
+}
+
+const STOPWORDS = new Set(["the", "and", "for", "with", "that", "this", "from", "user", "users", "still", "looks", "open", "cannot", "can", "not", "has", "have", "are", "was", "were", "been", "into", "but", "also", "its", "his", "her", "their", "our", "your", "all", "any", "some", "more", "than", "then", "when", "while", "where", "which", "who", "what", "how", "why", "yes"]);
+
+function tokens(text: string): string[] {
+  return [...new Set(text.toLowerCase().split(/[^a-z0-9_.@:\-\/\\]+/).map((t) => t.replace(/^[.\-:]+|[.\-:]+$/g, "")).filter((t) => t.length >= 3 && !STOPWORDS.has(t)))];
+}
+
+/** Dataset-level vocabulary: a phrase that names a dataset selects it even when no row contains the phrase. */
+const DATASET_WORDS: Record<SliceKind, RegExp[]> = {
+  "entra-users": [/\blicen[cs]e/, /\bsku\b/, /\bspe_e[35]\b/, /\be[35]\b/, /\bseat/, /disabled/, /orphan/, /countviolation/, /copilot/, /assign/, /\bdrift/, /offboard/, /leaver/, /account/],
+  "entra-sku-pools": [/\bpool/, /subscribedskus/, /available seat/, /consumed/, /purchase/],
+  "entra-signins": [/sign[- ]?in/, /\blog[- ]?in/, /aadsts\d*/, /\bblocked\b/, /\bfailure/, /cannot connect/, /can't connect/, /denied/, /interrupted/, /audit log/],
+  "entra-ca-policies": [/conditional access/, /\bca-?\d/, /\bpolicy\b/, /\bpolicies\b/, /break[- ]?glass/, /report[- ]only/, /legacy auth/, /\bmfa\b/, /exclusion/, /block avd/, /grant control/],
+  "intune-devices": [/\bdevice/, /laptop/, /workstation/, /compliance/, /compliant/, /uncompliant/, /non-?compliant/, /check[- ]?in/, /grace period/, /managed ?device/, /enrol/],
+  "intune-settings": [/bitlocker/, /0x87d/, /\basr\b/, /attack surface/, /lsass/, /\bsetting/, /baseline/, /conflict/, /\bprofile/, /settings catalog/, /endpoint security/, /encryption/, /\bcsp\b/, /tattoo/],
+  "workload-identity": [/\bsecret/, /expired/, /service principal/, /\bspn\b/, /app registration/, /\boauth/, /\bowner/, /\bscope/, /aadsts7000222/, /federat/, /github actions/, /workload identity/, /enterprise app/, /erp[- ]sync/, /api permission/, /consent/],
+  "azure-nsg-rules": [/\bnsg\b/, /\b3389\b/, /\brdp\b/, /\bport\b/, /security rule/, /inbound/, /network security/, /firewall port/, /0\.0\.0\.0/, /terraform/, /\btag\b/, /rogue/, /\bhcl\b/],
+  "avd-session-hosts": [/\bavd\b/, /host ?pool/, /session host/, /virtual desktop/, /vdpool/, /fslogix/, /\bvm\b/],
+  "azure-policies": [/azure policy/, /policy assignment/, /non-?compliant resource/, /audit effect/],
+};
+
+const KIND_ORDER: SliceKind[] = ["entra-users", "entra-signins", "entra-ca-policies", "intune-devices", "intune-settings", "workload-identity", "azure-nsg-rules", "avd-session-hosts", "entra-sku-pools", "azure-policies"];
+
+const pct = (n: number, total: number) => (total ? Math.round((n / total) * 1000) / 10 : 0);
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const short = (name: string) => name.replace("[ContextPane-Demo] ", "");
+
+function rowText(row: Row): string {
+  return Object.values(row)
+    .filter((v) => v !== null && v !== undefined)
+    .map((v) => String(v).toLowerCase())
+    .join(" · ");
+}
+
+/** Phrase-level synonyms that a plain substring search would miss. */
+function synonymMatch(selection: string, row: Row): boolean {
+  const s = selection.toLowerCase();
+  const state = String(row.complianceState ?? row.assignmentState ?? row.status ?? row.state ?? "").toLowerCase();
+  if (/uncompliant|non-?compliant|not compliant/.test(s) && /noncompliant|conflict|error/.test(state)) return true;
+  if (/disabled account|disabled user|offboard|leaver/.test(s) && row.accountEnabled === false) return true;
+  if (/orphan/.test(s) && state === "orphaned") return true;
+  if (/drift/.test(s) && /drifted|drift-detected|error/.test(state)) return true;
+  if (/report[- ]?only/.test(s) && state === "enabledforreportingbutnotenforced") return true;
+  if (/expired/.test(s) && (row.expired === true || /expired/.test(String(row.state ?? row.detail ?? "").toLowerCase()))) return true;
+  if (/conflict/.test(s) && /conflict/.test(state)) return true;
+  if (/\brdp\b/.test(s) && String(row.port ?? "") === "3389") return true;
+  if (/break[- ]?glass/.test(s) && /breakglass|bg-admin/.test(rowText(row))) return true;
+  if (/legacy auth|imap|smtp/.test(s) && /imap|smtp|legacy|exchangeactivesync|other/.test(rowText(row))) return true;
+  if (/\bfail/.test(s) && /failure|failed/.test(rowText(row))) return true;
+  if (/blocked|cannot connect|can't connect/.test(s) && /failure|block/.test(rowText(row))) return true;
+  return false;
+}
+
+function rowMatches(selection: string, row: Row): boolean {
+  const text = rowText(row);
+  const whole = selection.trim().toLowerCase();
+  if (whole.length >= 3 && text.includes(whole)) return true;
+  if (synonymMatch(selection, row)) return true;
+  const ts = tokens(selection).filter((t) => !/^(e3|e5|port|rule|policy|device|account|secret|user)$/.test(t));
+  // Every meaningful token must appear (an identifier like a UPN, a code, a rule name, a first name).
+  return ts.length > 0 && ts.every((t) => text.includes(t));
+}
+
+function datasetHits(selection: string, kind: SliceKind): number {
+  const s = selection.toLowerCase();
+  return DATASET_WORDS[kind].filter((re) => re.test(s)).length;
+}
+
+function stepIndex(steps: ResolutionStep[], category: ResolutionStep["category"]): number | undefined {
+  const i = steps.findIndex((s) => s.category === category);
+  return i >= 0 ? i : undefined;
+}
+
+function breakdownBy(rows: Row[], field: string, toneOf: (value: string) => MetricTone, max = 5): MiniDashboardBreakdown[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const v = String(r[field] ?? "n/a");
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  const out = [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, max)
+    .map(([label, count]) => ({ label, count, pct: pct(count, rows.length), tone: toneOf(label) }));
+  while (out.length < 2) out.push({ label: out.length ? "other" : "none", count: 0, pct: 0, tone: "default" });
+  return out;
+}
+
+const col = (key: string, label: string, extra: Partial<MiniDashboardColumn> = {}): MiniDashboardColumn => ({ key, label, ...extra });
+
+/* ------------------------------ dataset builders ----------------------------- */
+
+interface Dataset {
+  kind: SliceKind;
+  rows: Row[];
+  /** Rows the dataset shows when the phrase names it but no row contains it (the interesting subset). */
+  focus: Row[];
+  columns: MiniDashboardColumn[];
+  sourceQuery: string;
+  title: (matched: Row[]) => string;
+  subtitle: (matched: Row[]) => string;
+  kpis: (matched: Row[]) => Array<Omit<MiniDashboardKpi, "tone"> & { tone?: MetricTone }>;
+  breakdown: (matched: Row[]) => MiniDashboardBreakdown[];
+  action: (matched: Row[]) => MiniDashboardSuggestedAction;
+}
+
+function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
+  const out: Dataset[] = [];
+  const tenant = ctx.erp.tenant;
+  const sub = tenant.azureSubscriptionId;
+
+  if (ctx.license) {
+    const inv = ctx.license.data;
+    const rows: Row[] = inv.users.map((u) => ({
+      displayName: u.displayName,
+      upn: u.upn,
+      jobTitle: u.jobTitle,
+      accountEnabled: u.accountEnabled,
+      account: u.accountEnabled ? "Enabled" : "Disabled",
+      currentSku: u.currentSku,
+      expectedSku: u.expectedSku,
+      assignmentPath: u.assignmentPath,
+      assignmentState: u.assignmentState,
+      driftStatus: u.driftStatus,
+      lastSignIn: u.lastSignIn ?? null,
+      group: inv.groupName,
+    }));
+    const open = (r: Row) => r.assignmentState !== "Active" && r.assignmentState !== "Reclaimed";
+    const target = inv.skuPools.find((p) => p.skuPartNumber === inv.sku.skuPartNumber);
+    out.push({
+      kind: "entra-users",
+      rows,
+      focus: rows.some(open) ? rows.filter(open) : rows,
+      columns: [col("displayName", "User"), col("upn", "UPN", { mono: true }), col("account", "Account", { isBadge: true }), col("currentSku", "Assigned", { mono: true }), col("expectedSku", "Expected", { mono: true }), col("assignmentState", "State", { isBadge: true })],
+      sourceQuery: `GET /v1.0/groups/{${inv.groupName}}/members?$select=userPrincipalName,accountEnabled,assignedLicenses,licenseAssignmentStates`,
+      title: (m) => (m.every((r) => r.accountEnabled === false) ? `Disabled accounts still holding ${inv.sku.skuPartNumber}` : m.every(open) ? `Drifted license assignments in ${inv.groupName}` : `License assignments in ${inv.groupName}`),
+      subtitle: (m) => `Live query across users/licenseAssignmentStates · ${plural(m.length, "user")} matched`,
+      kpis: (m) => [
+        { label: "Matched", value: plural(m.length, "user"), tone: m.length ? "warning" : "default" },
+        { label: "Drifted / error", value: String(m.filter(open).length), tone: m.filter(open).length ? "critical" : "success" },
+        { label: "Disabled", value: String(m.filter((r) => r.accountEnabled === false).length), tone: m.some((r) => r.accountEnabled === false) ? "warning" : "default" },
+        { label: `${inv.sku.skuPartNumber} available`, value: target ? `${target.available}/${target.enabled}` : "n/a", tone: target && target.available <= 0 ? "critical" : "default" },
+      ],
+      breakdown: (m) => breakdownBy(m, "assignmentState", (v) => (v === "Active" || v === "Reclaimed" ? "success" : v === "Drifted" ? "warning" : "critical")),
+      action: (m) => {
+        const first = m.find(open) ?? m[0];
+        const orphaned = first?.assignmentState === "Orphaned";
+        return {
+          label: orphaned ? "Reclaim orphaned seats" : `Assign ${inv.sku.skuPartNumber}`,
+          scriptPreview: orphaned
+            ? `$sku = Get-MgSubscribedSku -All | Where-Object SkuPartNumber -eq '${inv.sku.skuPartNumber}'\nSet-MgUserLicense -UserId '${first?.upn ?? "<upn>"}' -AddLicenses @() -RemoveLicenses @($sku.SkuId)`
+            : `$sku = Get-MgSubscribedSku -All | Where-Object SkuPartNumber -eq '${inv.sku.skuPartNumber}'\nSet-MgUserLicense -UserId '${first?.upn ?? "<upn>"}' -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @()`,
+          ...(stepIndex(steps, "licensing") !== undefined ? { targetStepIndex: stepIndex(steps, "licensing") } : {}),
+        };
+      },
+    });
+    const pools: Row[] = inv.skuPools.map((p) => ({ skuPartNumber: p.skuPartNumber, skuName: p.skuName, enabled: p.enabled, consumed: p.consumed, available: p.available, note: p.note ?? null, source: p.source }));
+    out.push({
+      kind: "entra-sku-pools",
+      rows: pools,
+      focus: pools,
+      columns: [col("skuPartNumber", "SKU", { mono: true }), col("skuName", "Name"), col("enabled", "Enabled", { mono: true }), col("consumed", "Consumed", { mono: true }), col("available", "Available", { mono: true })],
+      sourceQuery: "GET /v1.0/subscribedSkus?$select=skuPartNumber,prepaidUnits,consumedUnits",
+      title: () => "SKU pools & seat availability",
+      subtitle: (m) => `Live query across subscribedSkus · ${plural(m.length, "pool")} matched`,
+      kpis: (m) => [
+        { label: "Pools", value: String(m.length) },
+        { label: "Seats enabled", value: String(m.reduce((n, r) => n + Number(r.enabled), 0)) },
+        { label: "Consumed", value: String(m.reduce((n, r) => n + Number(r.consumed), 0)) },
+        { label: "Available", value: String(m.reduce((n, r) => n + Number(r.available), 0)), tone: m.some((r) => Number(r.available) <= 0) ? "critical" : "success" },
+      ],
+      breakdown: (m) => {
+        const b = m.slice(0, 5).map((r) => ({ label: String(r.skuPartNumber), count: Number(r.consumed), pct: pct(Number(r.consumed), Number(r.enabled)), tone: (Number(r.available) <= 0 ? "critical" : Number(r.available) <= 2 ? "warning" : "success") as MetricTone }));
+        while (b.length < 2) b.push({ label: "other", count: 0, pct: 0, tone: "default" });
+        return b;
+      },
+      action: () => ({ label: "List SKU pools", scriptPreview: "Get-MgSubscribedSku -All | Select-Object SkuPartNumber, @{n='Enabled';e={$_.PrepaidUnits.Enabled}}, ConsumedUnits", ...(stepIndex(steps, "licensing") !== undefined ? { targetStepIndex: stepIndex(steps, "licensing") } : {}) }),
+    });
+  }
+
+  const signIns = [...(ctx.signIns?.data ?? []), ...(ctx.caPosture?.data.legacySignIns ?? []), ...(ctx.workloadIdentity ? workloadIdentitySignIns() : [])];
+  if (signIns.length) {
+    const rows: Row[] = signIns.map((e) => ({
+      timestamp: e.timestamp,
+      displayName: e.displayName,
+      upn: e.upn,
+      appDisplayName: e.appDisplayName,
+      status: e.status,
+      errorCodeLabel: e.errorCodeLabel ?? null,
+      blockingPolicyName: "blockingPolicyName" in e && e.blockingPolicyName ? short(String(e.blockingPolicyName)) : null,
+      clientApp: e.clientApp,
+      location: e.location,
+      ipAddress: e.ipAddress,
+      deviceName: e.deviceName,
+      deviceCompliant: e.deviceCompliant,
+    }));
+    const failures = rows.filter((r) => r.status === "failure");
+    out.push({
+      kind: "entra-signins",
+      rows,
+      focus: failures.length ? failures : rows,
+      columns: [col("timestamp", "Time", { mono: true }), col("displayName", "User"), col("appDisplayName", "App", { mono: true }), col("status", "Status", { isBadge: true }), col("errorCodeLabel", "Error", { mono: true }), col("blockingPolicyName", "Policy"), col("deviceName", "Device", { mono: true })],
+      sourceQuery: "GET /v1.0/auditLogs/signIns?$filter=status/errorCode ne 0&$top=50&$orderby=createdDateTime desc",
+      title: (m) => {
+        const codes = [...new Set(m.map((r) => r.errorCodeLabel).filter(Boolean))];
+        return codes.length === 1 ? `Sign-ins failing with ${codes[0]}` : m.every((r) => r.status === "failure") ? "Failed sign-ins" : "Sign-in events";
+      },
+      subtitle: (m) => `Live query across auditLogs/signIns · ${plural(m.length, "event")} matched`,
+      kpis: (m) => [
+        { label: "Events", value: String(m.length) },
+        { label: "Failures", value: String(m.filter((r) => r.status === "failure").length), tone: m.some((r) => r.status === "failure") ? "critical" : "success" },
+        { label: "Users", value: String(new Set(m.map((r) => r.upn)).size) },
+        { label: "Blocked by CA", value: String(m.filter((r) => r.blockingPolicyName).length), tone: m.some((r) => r.blockingPolicyName) ? "warning" : "default" },
+      ],
+      breakdown: (m) => breakdownBy(m, m.some((r) => r.errorCodeLabel) ? "errorCodeLabel" : "status", (v) => (v === "success" || v === "n/a" || v === "null" ? "success" : "critical")),
+      action: (m) => {
+        const first = m.find((r) => r.status === "failure") ?? m[0];
+        return {
+          label: "Query sign-in log",
+          scriptPreview: first?.upn?.toString().includes("@")
+            ? `Get-MgAuditLogSignIn -Filter "userPrincipalName eq '${first.upn}' and status/errorCode ne 0" -Top 25 | Select-Object CreatedDateTime, AppDisplayName, @{n='Error';e={$_.Status.ErrorCode}}, ConditionalAccessStatus`
+            : `Get-MgAuditLogSignIn -Filter "status/errorCode eq ${String(first?.errorCodeLabel ?? "AADSTS53003").replace("AADSTS", "")}" -Top 25`,
+          ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
+        };
+      },
+    });
+  }
+
+  const caRows: Row[] = [];
+  for (const p of ctx.caPosture?.data.policies ?? []) {
+    caRows.push({ displayName: short(p.displayName), state: p.state, role: p.role, includeGroups: p.includeGroups.join(", "), excludeGroups: p.excludeGroups.join(", ") || "(none)", targetApps: p.targetApps.join(", "), grantControls: p.grantControls.join(", "), drift: p.drift.map((d) => `${d.field}: ${d.actual} → ${d.expected}`).join("; ") || "in sync", id: p.id });
+  }
+  for (const p of ctx.policies?.data ?? []) {
+    if (caRows.some((r) => r.id === p.id)) continue;
+    caRows.push({ displayName: short(p.displayName), state: p.state, role: p.blocks ? "blocking" : "in-scope", includeGroups: p.includeGroupNames.join(", "), excludeGroups: p.excludeGroupNames.join(", ") || "(none)", targetApps: p.targetApps.map((a) => a.displayName).join(", "), grantControls: p.grant.builtInControls.join(", "), drift: p.blocks ? "blocks the affected users" : "in sync", id: p.id });
+  }
+  if (caRows.length) {
+    const drifted = caRows.filter((r) => r.drift !== "in sync");
+    out.push({
+      kind: "entra-ca-policies",
+      rows: caRows,
+      focus: drifted.length ? drifted : caRows,
+      columns: [col("displayName", "Policy"), col("state", "State", { isBadge: true }), col("role", "Role", { isBadge: true }), col("excludeGroups", "Exclude", { mono: true }), col("grantControls", "Grant"), col("drift", "Drift vs golden")],
+      sourceQuery: "GET /v1.0/identity/conditionalAccess/policies?$select=displayName,state,conditions,grantControls",
+      title: (m) => (m.length === 1 ? `Conditional Access · ${m[0]!.displayName}` : "Conditional Access policies"),
+      subtitle: (m) => `Live query across identity/conditionalAccess/policies · ${plural(m.length, "policy").replace("policys", "policies")} matched`,
+      kpis: (m) => [
+        { label: "Policies", value: String(m.length) },
+        { label: "Enforced", value: String(m.filter((r) => r.state === "enabled").length), tone: "success" },
+        { label: "Report-only", value: String(m.filter((r) => r.state === "enabledForReportingButNotEnforced").length), tone: m.some((r) => r.state === "enabledForReportingButNotEnforced") ? "warning" : "default" },
+        { label: "Drifted / blocking", value: String(m.filter((r) => r.drift !== "in sync").length), tone: m.some((r) => r.drift !== "in sync") ? "critical" : "success" },
+      ],
+      breakdown: (m) => breakdownBy(m, "state", (v) => (v === "enabled" ? "success" : v === "enabledForReportingButNotEnforced" ? "warning" : "default")),
+      action: (m) => {
+        const first = m.find((r) => r.drift !== "in sync") ?? m[0];
+        return {
+          label: "Patch CA policy",
+          scriptPreview: `Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${first?.id ?? "<id>"}' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ excludeGroups = @('<SG-BreakGlass-Accounts objectId>') } } }`,
+          ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
+        };
+      },
+    });
+  }
+
+  if (ctx.intune) {
+    const d = ctx.intune.data;
+    const devices: Row[] = d.devices.map((x) => ({ deviceName: x.deviceName, upn: x.upn, os: x.os, complianceState: x.complianceState, lastCheckIn: x.lastCheckIn, detail: x.detail }));
+    const bad = devices.filter((r) => r.complianceState !== "Compliant");
+    out.push({
+      kind: "intune-devices",
+      rows: devices,
+      focus: bad.length ? bad : devices,
+      columns: [col("deviceName", "Device", { mono: true }), col("upn", "User", { mono: true }), col("complianceState", "Compliance", { isBadge: true }), col("lastCheckIn", "Last check-in", { mono: true }), col("detail", "Detail")],
+      sourceQuery: "GET /v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'conflict'&$select=deviceName,userPrincipalName,complianceState,lastSyncDateTime",
+      title: (m) => (m.every((r) => r.complianceState === "NonCompliant") ? "Non-Compliant Intune Devices Cohort" : m.every((r) => r.complianceState === "Conflict") ? "Intune devices in policy Conflict" : "Intune managed devices"),
+      subtitle: (m) => `Live query across deviceManagement/managedDevices · ${plural(m.length, "device")} matched`,
+      kpis: (m) => [
+        { label: "Matched", value: plural(m.length, "device"), tone: m.length ? "warning" : "default" },
+        { label: "NonCompliant", value: String(m.filter((r) => r.complianceState === "NonCompliant").length), tone: m.some((r) => r.complianceState === "NonCompliant") ? "critical" : "success" },
+        { label: "Conflict", value: String(m.filter((r) => r.complianceState === "Conflict").length), tone: m.some((r) => r.complianceState === "Conflict") ? "critical" : "default" },
+        { label: "Compliant", value: String(m.filter((r) => r.complianceState === "Compliant").length), tone: "success" },
+      ],
+      breakdown: (m) => breakdownBy(m, "complianceState", (v) => (v === "Compliant" ? "success" : v === "InGracePeriod" ? "warning" : "critical")),
+      action: (m) => ({
+        label: "Sync devices",
+        scriptPreview: `Get-MgDeviceManagementManagedDevice -Filter "complianceState eq '${String(m[0]?.complianceState ?? "noncompliant").toLowerCase()}'" | ForEach-Object { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId $_.Id }`,
+        ...(stepIndex(steps, "intune") !== undefined ? { targetStepIndex: stepIndex(steps, "intune") } : {}),
+      }),
+    });
+    const settings: Row[] = d.settings.map((s) => ({ settingName: s.settingName, policyName: s.policyName, golden: s.golden, live: s.live, status: s.status, severity: s.severity, cspUri: s.cspUri ?? null, registryPath: s.registryPath ?? null, tattooedOnUnassign: s.tattooedOnUnassign ?? false }));
+    for (const p of d.policies) settings.push({ settingName: `${p.name} (${p.kind})`, policyName: p.name, golden: p.role === "golden" ? "assigned" : "unassigned", live: p.assignedTo.join(", ") || "unassigned", status: p.role === "golden" || p.role === "compliance" ? "in-sync" : p.role === "conflicting" || p.role === "duplicate" ? "conflict" : "drifted", severity: p.role === "golden" ? "low" : "high", cspUri: null, registryPath: null, tattooedOnUnassign: false });
+    const off = settings.filter((r) => r.status !== "in-sync");
+    out.push({
+      kind: "intune-settings",
+      rows: settings,
+      focus: off.length ? off : settings,
+      columns: [col("settingName", "Setting / policy"), col("golden", "Golden", { mono: true }), col("live", "Live", { mono: true }), col("status", "Status", { isBadge: true }), col("cspUri", "CSP", { mono: true })],
+      sourceQuery: "GET /beta/deviceManagement/configurationPolicies/{id}/settings + /beta/deviceManagement/deviceConfigurations/{id}/assignments",
+      title: (m) => (d.errorCode && m.some((r) => /bitlocker|encryption/i.test(String(r.settingName))) ? `${d.errorCode} · BitLocker policy conflict` : m.every((r) => r.status === "conflict") ? "Conflicting Intune settings" : "Intune settings vs golden baseline"),
+      subtitle: (m) => `Live query across configurationPolicies/settings · ${plural(m.length, "setting")} matched`,
+      kpis: (m) => [
+        { label: "Settings", value: String(m.length) },
+        { label: "Drifted", value: String(m.filter((r) => r.status === "drifted").length), tone: m.some((r) => r.status === "drifted") ? "warning" : "default" },
+        { label: "Conflicts", value: String(m.filter((r) => r.status === "conflict").length), tone: m.some((r) => r.status === "conflict") ? "critical" : "default" },
+        { label: "Affected devices", value: String(d.affectedDeviceCount), tone: d.affectedDeviceCount ? "critical" : "success" },
+      ],
+      breakdown: (m) => breakdownBy(m, "status", (v) => (v === "in-sync" ? "success" : v === "drifted" ? "warning" : "critical")),
+      action: (m) => {
+        const conflicting = d.policies.find((p) => p.role === "conflicting" || p.role === "duplicate");
+        const first = m[0];
+        return {
+          label: conflicting ? `Unassign ${conflicting.name}` : "Restore golden value",
+          scriptPreview: conflicting
+            ? `Invoke-MgGraphRequest -Method POST -Uri "/v1.0/deviceManagement/deviceConfigurations/${conflicting.id}/assign" -Body @{ assignments = @() }`
+            : `Invoke-MgGraphRequest -Method PUT -Uri "/beta/deviceManagement/configurationPolicies/<id>/settings" -Body @{ settings = @(@{ settingInstance = @{ settingDefinitionId = '${first?.cspUri ?? "<definitionId>"}'; choiceSettingValue = @{ value = '${first?.golden ?? "<golden>"}' } } }) }`,
+          ...(stepIndex(steps, "intune") !== undefined ? { targetStepIndex: stepIndex(steps, "intune") } : {}),
+        };
+      },
+    });
+  }
+
+  if (ctx.workloadIdentity) {
+    const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+    const rows: Row[] = [
+      { kind: "owner", name: w.owner.upn, state: `${w.owner.directoryRoles.length} directory roles`, required: false, detail: "shadow admin: controls credentials and consent without a role", expired: false },
+      ...w.appPermissions.map((p) => ({ kind: "application permission", name: p, state: "granted", required: w.requiredPermissions.includes(p), detail: w.requiredPermissions.includes(p) ? "used in the last 90 days" : "unused in the last 90 days", expired: false })),
+      ...w.requiredPermissions.filter((p) => !w.appPermissions.includes(p)).map((p) => ({ kind: "application permission", name: p, state: "required", required: true, detail: "least privilege for the observed activity", expired: false })),
+      { kind: "delegated grant", name: w.oauth2PermissionGrant.scope, state: w.oauth2PermissionGrant.verifiedPublisher ? "verified publisher" : "unverified publisher", required: false, detail: `${w.oauth2PermissionGrant.consentType} consent`, expired: false },
+      { kind: "client secret", name: w.passwordCredential.displayName, state: w.passwordCredential.expired ? `expired ${w.passwordCredential.endDateTime.slice(0, 10)}` : "valid", required: false, detail: `${w.errorCodeLabel} nightly from ${w.failureSource}`, expired: w.passwordCredential.expired },
+      { kind: "federated credential", name: w.federatedCredential.name, state: "missing", required: true, detail: w.federatedCredential.subject, expired: false },
+    ];
+    const bad = rows.filter((r) => r.expired === true || (r.kind === "application permission" && r.required === false) || r.kind === "owner" || r.kind === "delegated grant");
+    out.push({
+      kind: "workload-identity",
+      rows,
+      focus: bad,
+      columns: [col("kind", "Item", { isBadge: true }), col("name", "Name", { mono: true }), col("state", "State"), col("detail", "Detail")],
+      sourceQuery: `GET /v1.0/servicePrincipals/${w.spn.servicePrincipalId}?$expand=owners,appRoleAssignments,oauth2PermissionGrants + /v1.0/applications/${w.spn.objectId}/passwordCredentials`,
+      title: (m) => (m.some((r) => r.expired === true) && m.length <= 2 ? `${w.spn.displayName} · expired client secret (${w.errorCodeLabel})` : `${w.spn.displayName} · workload identity posture`),
+      subtitle: (m) => `Live query across servicePrincipals/owners, appRoleAssignments, passwordCredentials · ${plural(m.length, "item")} matched`,
+      kpis: (m) => [
+        { label: "Granted scopes", value: String(w.appPermissions.length), tone: "critical" },
+        { label: "Required", value: String(w.requiredPermissions.length), tone: "success" },
+        { label: "Expired secrets", value: String(m.filter((r) => r.expired === true).length || (w.passwordCredential.expired ? 1 : 0)), tone: w.passwordCredential.expired ? "critical" : "success" },
+        { label: "Non-admin owners", value: String(w.owner.directoryRoles.length === 0 ? 1 : 0), tone: "warning" },
+      ],
+      breakdown: (m) => breakdownBy(m, "kind", (v) => (v === "client secret" || v === "owner" ? "critical" : v === "delegated grant" ? "warning" : "default")),
+      action: (m) => {
+        const secret = m.some((r) => r.expired === true);
+        return {
+          label: secret ? "Federate OIDC, retire secret" : "Remove shadow-admin owner",
+          scriptPreview: secret
+            ? `New-MgApplicationFederatedIdentityCredential -ApplicationId '${w.spn.objectId}' -BodyParameter @{ name = '${w.federatedCredential.name}'; issuer = '${w.federatedCredential.issuer}'; subject = '${w.federatedCredential.subject}'; audiences = @('${w.federatedCredential.audiences[0]}') }\nRemove-MgApplicationPassword -ApplicationId '${w.spn.objectId}' -KeyId '${w.passwordCredential.keyId}'`
+            : `Remove-MgApplicationOwnerByRef -ApplicationId '${w.spn.objectId}' -DirectoryObjectId '${w.owner.objectId}'`,
+          ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
+        };
+      },
+    });
+  }
+
+  if (ctx.drift) {
+    const d = ctx.drift.data;
+    const rows: Row[] = [
+      ...d.rogueSecurityRules.map((r) => ({ ruleName: r.ruleName, kind: "rogue rule", priority: r.priority, direction: r.direction, access: r.access, protocol: r.protocol, port: r.port, source: r.source, destination: r.destination, severity: r.severity, reason: r.reason })),
+      ...d.missingSecurityRules.map((name) => ({ ruleName: name, kind: "missing in Azure", priority: 0, direction: "Inbound", access: "Deny", protocol: "*", port: "*", source: "*", destination: "*", severity: "medium", reason: "declared in Terraform, absent live" })),
+      ...d.tagDrift.map((t) => ({ ruleName: `tag ${t.key}`, kind: "tag drift", priority: 0, direction: "-", access: "-", protocol: "-", port: "-", source: t.actualInAzure ?? "(absent)", destination: t.expectedInTf ?? "(absent)", severity: "low", reason: `Azure '${t.actualInAzure ?? "absent"}' vs Terraform '${t.expectedInTf ?? "absent"}'` })),
+    ];
+    out.push({
+      kind: "azure-nsg-rules",
+      rows,
+      focus: rows,
+      columns: [col("ruleName", "Rule / tag", { mono: true }), col("kind", "Kind", { isBadge: true }), col("protocol", "Proto", { mono: true }), col("port", "Port", { mono: true }), col("source", "Source", { mono: true }), col("severity", "Severity", { isBadge: true }), col("reason", "Reason")],
+      sourceQuery: `GET /subscriptions/${sub}/resourceGroups/${d.resourceGroup}/providers/Microsoft.Network/networkSecurityGroups/${d.resourceName}?api-version=2023-09-01 (diffed against ${d.terraformFile} @ ${d.gitBranch})`,
+      title: (m) => (m.length === 1 && m[0]!.kind === "rogue rule" ? `${d.resourceName} · rogue rule ${m[0]!.ruleName} (${String(m[0]!.protocol).toUpperCase()}/${m[0]!.port})` : `${d.resourceName} · NSG drift vs Terraform`),
+      subtitle: (m) => `Live ARM read of ${d.resourceName} diffed against ${d.terraformFile} · ${plural(m.length, "finding")} matched`,
+      kpis: (m) => [
+        { label: "Rogue rules", value: String(m.filter((r) => r.kind === "rogue rule").length), tone: m.some((r) => r.kind === "rogue rule") ? "critical" : "success" },
+        { label: "Critical", value: String(m.filter((r) => r.severity === "critical").length), tone: m.some((r) => r.severity === "critical") ? "critical" : "default" },
+        { label: "Tag drift", value: String(m.filter((r) => r.kind === "tag drift").length), tone: m.some((r) => r.kind === "tag drift") ? "warning" : "default" },
+        { label: "Drift state", value: d.driftState, tone: d.driftState === "drift-detected" ? "critical" : "success" },
+      ],
+      breakdown: (m) => breakdownBy(m, "severity", (v) => (v === "critical" || v === "high" ? "critical" : v === "medium" ? "warning" : "default")),
+      action: (m) => {
+        const rogue = m.find((r) => r.kind === "rogue rule");
+        return {
+          label: rogue ? `Remove rule ${rogue.ruleName}` : "Re-apply Terraform baseline",
+          scriptPreview: rogue
+            ? `Get-AzNetworkSecurityGroup -Name '${d.resourceName}' -ResourceGroupName '${d.resourceGroup}' | Remove-AzNetworkSecurityRuleConfig -Name '${rogue.ruleName}' | Set-AzNetworkSecurityGroup`
+            : `terraform -chdir=demo-iac plan -target=azurerm_network_security_group.contoso_avd_hostpool`,
+          ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
+        };
+      },
+    });
+  }
+
+  if (ctx.avd) {
+    const a = ctx.avd.data;
+    const pool = a.hostPool;
+    const rows: Row[] = pool.sessionHosts.map((h) => ({ name: h.name, status: h.status, sessions: h.sessions, agentVersion: h.agentVersion ?? null, hostPool: pool.name, vmSize: pool.vmSize, location: pool.location, joinType: pool.joinType, fslogix: pool.fslogix.status }));
+    out.push({
+      kind: "avd-session-hosts",
+      rows,
+      focus: rows,
+      columns: [col("name", "Session host", { mono: true }), col("status", "Status", { isBadge: true }), col("sessions", "Sessions", { mono: true }), col("agentVersion", "Agent", { mono: true }), col("fslogix", "FSLogix", { isBadge: true })],
+      sourceQuery: `GET /subscriptions/${sub}/resourceGroups/${a.resourceGroup}/providers/Microsoft.DesktopVirtualization/hostPools/${pool.name}/sessionHosts?api-version=2024-04-03`,
+      title: () => `${pool.name} · ${pool.poolType} host pool (${pool.loadBalancer})`,
+      subtitle: (m) => `Live ARM read of hostPools/sessionHosts · ${plural(m.length, "host")} matched`,
+      kpis: (m) => [
+        { label: "Hosts", value: String(m.length) },
+        { label: "Available", value: String(m.filter((r) => r.status === "Available").length), tone: m.every((r) => r.status === "Available") ? "success" : "warning" },
+        { label: "Sessions", value: String(m.reduce((n, r) => n + Number(r.sessions), 0)) },
+        { label: "FSLogix", value: pool.fslogix.status, tone: pool.fslogix.status === "Healthy" ? "success" : "warning" },
+      ],
+      breakdown: (m) => breakdownBy(m, "status", (v) => (v === "Available" ? "success" : v === "Draining" ? "warning" : "critical")),
+      action: () => ({ label: "List session hosts", scriptPreview: `Get-AzWvdSessionHost -HostPoolName '${pool.name}' -ResourceGroupName '${a.resourceGroup}' | Select-Object Name, Status, Session, AgentVersion`, ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}) }),
+    });
+    const policies: Row[] = a.azurePolicies.map((p) => ({ name: p.name, effect: p.effect, compliance: p.compliance, nonCompliantResources: p.nonCompliantResources, scope: p.scope, detail: p.detail }));
+    if (policies.length) {
+      const nc = policies.filter((r) => r.compliance === "NonCompliant");
+      out.push({
+        kind: "azure-policies",
+        rows: policies,
+        focus: nc.length ? nc : policies,
+        columns: [col("name", "Policy"), col("effect", "Effect", { isBadge: true }), col("compliance", "Compliance", { isBadge: true }), col("nonCompliantResources", "Non-compliant", { mono: true }), col("detail", "Detail")],
+        sourceQuery: `POST /subscriptions/${sub}/resourceGroups/${a.resourceGroup}/providers/Microsoft.PolicyInsights/policyStates/latest/summarize?api-version=2019-10-01`,
+        title: () => `Azure Policy compliance · ${a.resourceGroup}`,
+        subtitle: (m) => `Live PolicyInsights summary · ${plural(m.length, "assignment")} matched`,
+        kpis: (m) => [
+          { label: "Assignments", value: String(m.length) },
+          { label: "Non-compliant", value: String(m.filter((r) => r.compliance === "NonCompliant").length), tone: m.some((r) => r.compliance === "NonCompliant") ? "warning" : "success" },
+          { label: "Resources flagged", value: String(m.reduce((n, r) => n + Number(r.nonCompliantResources), 0)) },
+        ],
+        breakdown: (m) => breakdownBy(m, "compliance", (v) => (v === "Compliant" ? "success" : "warning")),
+        action: () => ({ label: "Summarise policy states", scriptPreview: `Get-AzPolicyStateSummary -ResourceGroupName '${a.resourceGroup}' | Select-Object -ExpandProperty PolicyAssignments`, ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}) }),
+      });
+    }
+  }
+  return out;
+}
+
+/* ------------------------------- slice selection ----------------------------- */
+
+const MAX_ROWS = 60;
+
+export function buildSelectionSlice(ctx: CorrelationContext, selectedText: string, steps: ResolutionStep[]): SelectionSlice {
+  const selection = selectedText.trim();
+  const sets = datasets(ctx, steps);
+  const searched: SelectionSlice["searched"] = [];
+  let best: { ds: Dataset; score: number; matchedBy: "rows" | "dataset"; rows: Row[] } | null = null;
+  for (const ds of sets) {
+    const hits = datasetHits(selection, ds.kind);
+    const matched = ds.rows.filter((r) => rowMatches(selection, r));
+    searched.push({ kind: ds.kind, rows: ds.rows.length, matched: matched.length });
+    let score = 0;
+    let matchedBy: "rows" | "dataset" = "rows";
+    let rows = matched;
+    if (matched.length) {
+      // A row match counts only when the phrase is specific: a lone dataset word like "device" matches via the dataset path below.
+      score = 100 + hits * 20 + Math.min(matched.length, 40) - (matched.length === ds.rows.length && hits === 0 ? 60 : 0);
+    } else if (hits) {
+      // A phrase made of a dataset's own vocabulary ("AVD host pool", "disabled accounts") beats an incidental substring hit elsewhere.
+      score = 50 + hits * 45;
+      matchedBy = "dataset";
+      rows = ds.focus;
+    }
+    if (!score) continue;
+    const order = KIND_ORDER.indexOf(ds.kind);
+    if (!best || score > best.score || (score === best.score && order < KIND_ORDER.indexOf(best.ds.kind))) best = { ds, score, matchedBy, rows };
+  }
+  if (!best) {
+    const top = [...searched].sort((a, b) => b.rows - a.rows).slice(0, 5);
+    return {
+      kind: "entra-users",
+      score: 0,
+      matchedBy: "none",
+      title: `No live object matches "${selection.slice(0, 60)}"`,
+      subtitle: `Searched ${searched.length} datasets across mcp-msgraph and mcp-azure-iac · 0 rows matched`,
+      sourceQuery: `search '${selection.replace(/'/g, "''")}' across ${searched.map((s) => s.kind).join(", ")}`,
+      columns: [col("dataset", "Dataset", { mono: true }), col("rows", "Rows scanned", { mono: true })],
+      rows: top.map((s) => ({ dataset: s.kind, rows: s.rows })),
+      kpis: [
+        { label: "Matched", value: "0 rows", tone: "warning" },
+        { label: "Datasets searched", value: String(searched.length), tone: "default" },
+      ],
+      breakdown: top.length >= 2 ? top.map((s) => ({ label: s.kind, count: s.rows, pct: pct(s.rows, Math.max(1, ...top.map((t) => t.rows))), tone: "default" as MetricTone })) : [{ label: "datasets", count: searched.length, pct: 100, tone: "default" }, { label: "matches", count: 0, pct: 0, tone: "warning" }],
+      suggestedAction: { label: "Search the tenant", scriptPreview: `Get-MgUser -Search '"displayName:${selection.replace(/"/g, "")}"' -ConsistencyLevel eventual -Top 10` },
+      searched,
+    };
+  }
+  const rows = best.rows.slice(0, MAX_ROWS);
+  return {
+    kind: best.ds.kind,
+    score: best.score,
+    matchedBy: best.matchedBy,
+    title: best.ds.title(rows).slice(0, 90),
+    subtitle: best.ds.subtitle(rows).slice(0, 160),
+    sourceQuery: best.ds.sourceQuery.slice(0, 300),
+    columns: best.ds.columns,
+    rows,
+    kpis: best.ds.kpis(rows).slice(0, 4).map((k) => ({ ...k, tone: k.tone ?? "default" })),
+    breakdown: best.ds.breakdown(rows).slice(0, 5),
+    suggestedAction: best.ds.action(rows),
+    searched,
+  };
+}
+
+/** The validated deterministic card for a slice (the fallback and the reference). */
+export function sliceToCard(ctx: CorrelationContext, selectedText: string, slice: SelectionSlice): ContextualMiniDashboard {
+  const hash = selectionHash(ctx.ticketId, selectedText);
+  return ContextualMiniDashboardSchema.parse({
+    id: `selection-${hash}`,
+    selectionText: selectedText.trim().slice(0, 120),
+    title: slice.title,
+    subtitle: slice.subtitle,
+    sourceQuery: slice.sourceQuery,
+    provenanceCategory: "selection",
+    kpis: slice.kpis,
+    breakdown: slice.breakdown,
+    columns: slice.columns,
+    rowsPtr: selectionDataPtr(ctx.ticketId, hash),
+    rows: slice.rows,
+    suggestedAction: slice.suggestedAction,
+  });
+}

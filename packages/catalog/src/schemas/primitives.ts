@@ -86,9 +86,10 @@ export type ProviderTelemetry = z.infer<typeof ProviderTelemetrySchema>;
 
 /**
  * Semantic provenance of an MCP-enriched entity and of the canvas card it spawns.
- * licensing=amber, identity=rose, intune=violet, azure=teal (see CATEGORY_META).
+ * licensing=amber, identity=rose, intune=violet, azure=teal, selection=cyan (see CATEGORY_META).
+ * selection is the provenance of an ad-hoc ContextualMiniDashboard spawned from highlighted text.
  */
-export const ProvenanceCategorySchema = z.enum(["licensing", "identity", "intune", "azure"]);
+export const ProvenanceCategorySchema = z.enum(["licensing", "identity", "intune", "azure", "selection"]);
 export type ProvenanceCategory = z.infer<typeof ProvenanceCategorySchema>;
 
 export const IsoTimestampSchema = z
@@ -102,7 +103,7 @@ export const IsoTimestampSchema = z
  */
 export const DataPtrSchema = z
   .string()
-  .regex(/^ptr:\/\/[a-z0-9-]+\/(entra|intune|iac)\/[a-z0-9-]+$/, "expected ptr://<scenario>/<entra|intune|iac>/<dataset>")
+  .regex(/^ptr:\/\/[a-z0-9-]+\/(entra|intune|iac|selection)\/[a-z0-9-]+$/, "expected ptr://<scenario>/<entra|intune|iac|selection>/<dataset>")
   .describe("Data-plane pointer, e.g. ptr://inc-4092/entra/users. Copy it verbatim from the dataset descriptor.");
 export type DataPtr = z.infer<typeof DataPtrSchema>;
 

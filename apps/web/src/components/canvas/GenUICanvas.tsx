@@ -4,8 +4,10 @@ import { selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents 
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
 import { IaCDriftBannerCard } from "./IaCDriftBanner";
 import { IntuneDriftCardView } from "./IntuneDriftCard";
+import { ContextualMiniDashboardCard } from "./ContextualMiniDashboard";
 import { LicenseDriftCardView } from "./LicenseDriftCard";
 import { ProgressRail } from "./ProgressRail";
+import { RowFilterPill } from "./TableFilter";
 
 /**
  * Right pane. Mounts only catalog components the orchestrator returned and Zod
@@ -18,6 +20,8 @@ export function GenUICanvas() {
   const error = useWorkbench((s) => s.canvasError);
   const progress = useWorkbench((s) => s.progress);
   const filter = useWorkbench((s) => s.filter);
+  const miniDashboards = useWorkbench((s) => s.miniDashboards);
+  const exploreStatus = useWorkbench((s) => s.exploreStatus);
   const components = visibleComponents(layout, filter);
 
   return (
@@ -25,6 +29,15 @@ export function GenUICanvas() {
       <TenantBreadcrumb cards={components.length} />
       <TimeTravelScrubber />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
+        {exploreStatus === "loading" && (
+          <div className="card flex items-center gap-2 border-l-4 border-l-selection text-[12px] text-muted" data-testid="mini-dashboard-loading">
+            <span className="size-3 animate-spin rounded-full border-2 border-selection border-t-transparent" />
+            Generating Context UI from the live tenant slice…
+          </div>
+        )}
+        {miniDashboards.map((m) => (
+          <ContextualMiniDashboardCard key={m.id} entry={m} />
+        ))}
         {status === "loading" && !layout && <ProgressRail events={progress} title="Correlating scenario" busy />}
         {status === "error" && <div className="card border-critical/40 text-sm text-critical">Canvas error: {error}</div>}
         {layout && components.map((c) => <Component key={c.id} component={c} />)}
@@ -85,6 +98,7 @@ function TenantBreadcrumb({ cards }: { cards: number }) {
             {recipe.name} · 0 tokens
           </span>
         )}
+        <RowFilterPill />
         {filter && (
           <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-meta/40 bg-meta/12 pr-0.5 pl-1.5 font-mono text-[10.5px] text-meta">
             voice filter: {filter.join(", ")}

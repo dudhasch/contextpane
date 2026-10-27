@@ -1,9 +1,45 @@
 import { BadgeCheck, Wrench } from "lucide-react";
-import type { AssignmentState, LicenseDriftCard as Props } from "@contextpane/catalog";
+import { useCallback } from "react";
+import type { AssignmentState, LicenseDriftCard as Props, LicenseDriftUser } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, type Tone } from "../ui/Pill";
 import { CardShell, DataTable, Stat } from "./CardShell";
+import { FilterChips, IdentityCell, rowHighlightClass, useStatusFilter, type RowStatus } from "./TableFilter";
+
+const classifyUser = (u: LicenseDriftUser): RowStatus => (u.assignmentState === "Active" || u.assignmentState === "Reclaimed" ? "good" : "bad");
+
+/** Assignments tab: status chips (0 ms, local) and clickable UPNs that highlight the identity on every card. */
+function UsersTable({ users }: { users: LicenseDriftUser[] }) {
+  const classify = useCallback(classifyUser, []);
+  const { chip, setChip, counts, filtered } = useStatusFilter(users, classify);
+  const rowFilter = useWorkbench((s) => s.rowFilter);
+  return (
+    <div>
+      <FilterChips chip={chip} counts={counts} onChange={setChip} testId="license-filter-chips" />
+      <DataTable
+        head={["User", "Account", "Assigned SKU", "Expected SKU", "Path", "Assignment State"]}
+        rowClassName={(i) => rowHighlightClass(rowFilter, { upn: filtered[i]?.upn ?? null })}
+        rows={filtered.map((u) => [
+          <IdentityCell kind="upn" value={u.upn} className="min-w-0">
+            <div title={u.upn}>
+              <div className="leading-tight">{u.displayName}</div>
+              <div className="truncate font-mono text-[10px] text-faint">{u.upn}</div>
+            </div>
+          </IdentityCell>,
+          <span className={u.accountEnabled ? "text-text" : "text-warning"}>
+            {u.accountEnabled ? "Enabled" : "Disabled"}
+            {u.lastSignIn && !u.accountEnabled ? <span className="block font-mono text-[10px] text-faint">last {u.lastSignIn.slice(0, 10)}</span> : null}
+          </span>,
+          <SkuBadges skus={u.currentSku} />,
+          <SkuBadges skus={u.expectedSku} muted />,
+          <span className="font-mono text-[11px] whitespace-nowrap text-muted">{u.assignmentPath}</span>,
+          <Pill tone={STATE_TONE[u.assignmentState]}>{u.assignmentState}</Pill>,
+        ])}
+      />
+    </div>
+  );
+}
 
 const STATE_TONE: Record<AssignmentState, Tone> = {
   Active: "healthy",
@@ -122,23 +158,7 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
             ))}
           </div>
         ) : (
-          <DataTable
-            head={["User", "Account", "Assigned SKU", "Expected SKU", "Path", "Assignment State"]}
-            rows={props.users.map((u) => [
-              <div className="min-w-0" title={u.upn}>
-                <div className="leading-tight">{u.displayName}</div>
-                <div className="truncate font-mono text-[10px] text-faint">{u.upn}</div>
-              </div>,
-              <span className={u.accountEnabled ? "text-text" : "text-warning"}>
-                {u.accountEnabled ? "Enabled" : "Disabled"}
-                {u.lastSignIn && !u.accountEnabled ? <span className="block font-mono text-[10px] text-faint">last {u.lastSignIn.slice(0, 10)}</span> : null}
-              </span>,
-              <SkuBadges skus={u.currentSku} />,
-              <SkuBadges skus={u.expectedSku} muted />,
-              <span className="font-mono text-[11px] whitespace-nowrap text-muted">{u.assignmentPath}</span>,
-              <Pill tone={STATE_TONE[u.assignmentState]}>{u.assignmentState}</Pill>,
-            ])}
-          />
+          <UsersTable users={props.users} />
         )
       }
     </CardShell>

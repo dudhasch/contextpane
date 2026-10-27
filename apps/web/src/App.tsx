@@ -4,6 +4,7 @@ import { DiffModal } from "./components/canvas/DiffModal";
 import { GenUICanvas } from "./components/canvas/GenUICanvas";
 import { HotkeysOverlay } from "./components/demo/HotkeysOverlay";
 import { SystemAuditDrawer } from "./components/hud/SystemAuditDrawer";
+import { TicketComposer } from "./components/hud/TicketComposer";
 import { TopBar } from "./components/hud/TopBar";
 import { VoiceSteerPanel } from "./components/hud/VoiceSteer";
 import { ScenarioPane } from "./components/ticket/ScenarioPane";
@@ -30,6 +31,7 @@ export function App() {
         </section>
       </main>
       <SystemAuditDrawer />
+      <TicketComposer />
       <VoiceSteerPanel />
       <DiffModal />
       <ActionApprovalDrawerSheet />

@@ -26,6 +26,7 @@ export function useDemoHotkeys() {
           s.setDiffOpen(false);
           s.setVoiceOpen(false);
           s.setSystemOpen(false);
+          s.setComposerOpen(false);
           dispatchDemo({ kind: "close-popovers" });
           break;
         case "1":
@@ -81,6 +82,14 @@ export function useDemoHotkeys() {
         case "r":
           void s.correlate({ fresh: true });
           break;
+        case "n":
+          s.setComposerOpen(!s.composerOpen);
+          break;
+        case "g": {
+          const hero = brief?.entities.find((x) => x.type === "errorCode") ?? brief?.entities.find((x) => x.type === "resource") ?? brief?.entities[0];
+          if (hero) void s.exploreSelection(hero.label || hero.id);
+          break;
+        }
         case "7": {
           const attachment = brief?.attachments[0];
           if (attachment) void s.extractVision(attachment);

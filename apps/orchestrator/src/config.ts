@@ -21,9 +21,13 @@ export function findRepoRoot(): string {
 
 export const REPO_ROOT = findRepoRoot();
 
-/** Load <root>/.env then <root>/.env.local without overriding already-set variables. */
+/**
+ * Load <root>/.env then <root>/.env.local. .env.local overrides .env, but neither overrides a
+ * variable the process already had (so a test's LIVE_CLOUD_MODE=false or CTX_FORCE_LOCAL=true wins).
+ */
 function loadDotEnv(): string[] {
   const loaded: string[] = [];
+  const fromDotEnv = new Set<string>();
   for (const file of [".env", ".env.local"]) {
     const path = join(REPO_ROOT, file);
     if (!existsSync(path)) continue;
@@ -36,8 +40,9 @@ function loadDotEnv(): string[] {
       const key = line.slice(0, eq).trim();
       let value = line.slice(eq + 1).trim();
       if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-      if (file === ".env.local" || process.env[key] === undefined) {
-        if (process.env[key] === undefined || file === ".env.local") process.env[key] = value;
+      if (process.env[key] === undefined || fromDotEnv.has(key)) {
+        process.env[key] = value;
+        fromDotEnv.add(key);
       }
     }
   }
@@ -178,6 +183,8 @@ export const config = {
     /** Background pre-warm of the hover cache: a cold GPU container plus a full reasoning pass. */
     openWeightWarmMs: envInt("CTX_OPEN_WEIGHT_WARM_TIMEOUT_MS", 90000),
     correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
+    /** Highlight → Generate Context UI: muse-spark-1.3 at minimal effort composes a mini-dashboard in ~2-5 s. */
+    exploreMs: envInt("CTX_EXPLORE_TIMEOUT_MS", 8000),
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
     visionMs: envInt("CTX_VISION_TIMEOUT_MS", 30000),

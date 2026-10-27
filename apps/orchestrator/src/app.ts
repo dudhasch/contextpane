@@ -8,14 +8,20 @@ import {
   ExecutionModeSchema,
   SCENARIO_IDS,
   SCENARIO_REGISTRY,
+  SELECTION_MAX_CHARS,
+  SELECTION_MIN_CHARS,
   TENANT_REGISTRY,
   ViewRecipeSchema,
+  baseScenarioOf,
+  getScenarioEntry,
+  isAnyScenarioId,
   isScenarioId,
   isTenantId,
   type ComponentType,
   type RouterTelemetry,
   type ScenarioId,
   type ScenarioListItem,
+  type WorkbenchScenarioId,
 } from "@contextpane/catalog";
 import { config, describeConfig, providers } from "./config.ts";
 import { buildScenarioBrief } from "./local/brief.ts";
@@ -41,6 +47,10 @@ import { OPEN_WEIGHT_INFERENCE_CONFIG } from "./router/glimmer-payload.ts";
 import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skill-compiler.ts";
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
+import { exploreSelection } from "./tiers/explore.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket } from "./local/custom-ticket.ts";
+import { buildResolutionNote } from "./local/psa-note.ts";
+import { closureStore } from "./store/closure.ts";
 import { hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
 import { approve, remediate } from "./tiers/tier3-remediate.ts";
@@ -71,12 +81,21 @@ app.onError((error, c) => {
   return c.json({ error: error.message, path: c.req.path }, status);
 });
 
+loadCustomScenarios();
+
 const TenantIdSchema = z.string().refine(isTenantId, { message: `tenantId must be one of ${Object.keys(TENANT_REGISTRY).join(", ")}` });
-const ScenarioIdSchema = z.string().refine(isScenarioId, { message: `scenarioId must be one of ${SCENARIO_IDS.join(", ")}` });
+/** A built-in scenario, or an unscripted CUSTOM-<hash> ticket registered through POST /api/tickets/triage-custom. */
+const ScenarioIdSchema = z.string().refine(isAnyScenarioId, { message: `scenarioId must be one of ${SCENARIO_IDS.join(", ")} or a registered CUSTOM-<hash> ticket` });
+/** Endpoints whose model is keyed by the built-in scenario only (prover, timeline, skills, runbooks): a custom ticket maps to its base. */
+const BaseScenarioIdSchema = ScenarioIdSchema.transform((id) => baseScenarioOf(id));
 
 /** Every scenario endpoint takes scenarioId; an older tenantId selects that tenant's ticket scenario. */
-function scenarioOf(body: { scenarioId?: string; tenantId?: string }): ScenarioId {
-  return body.scenarioId ? ScenarioIdSchema.parse(body.scenarioId) as ScenarioId : resolveScenarioId(body.tenantId ? TenantIdSchema.parse(body.tenantId) : "INC-4092");
+function scenarioOf(body: { scenarioId?: string; tenantId?: string }): WorkbenchScenarioId {
+  return body.scenarioId ? (ScenarioIdSchema.parse(body.scenarioId) as WorkbenchScenarioId) : resolveScenarioId(body.tenantId ? TenantIdSchema.parse(body.tenantId) : "INC-4092");
+}
+
+function tenantOf(scenarioId: string): string {
+  return getScenarioEntry(scenarioId)?.tenantId ?? SCENARIO_REGISTRY[baseScenarioOf(scenarioId)].tenantId;
 }
 
 /** ?refresh=true (or the older ?fresh=1) bypasses the context and hover caches. */
@@ -114,7 +133,7 @@ app.get("/api/mcp/status", async (c) => c.json(await sources.status()));
 
 app.get("/api/tenants", (c) => c.json({ tenants: Object.values(TENANT_REGISTRY) }));
 
-/** Tickets and tenant anomalies for the mode switcher; resolved = approved since the last drift reset. */
+/** Tickets and tenant anomalies for the mode switcher; resolved = approved since the last drift reset. Unscripted tickets follow. */
 app.get("/api/scenarios", (c) => {
   const scenarios: ScenarioListItem[] = SCENARIO_IDS.map((scenarioId) => {
     const entry = SCENARIO_REGISTRY[scenarioId];
@@ -127,34 +146,157 @@ app.get("/api/scenarios", (c) => {
       resolved: Boolean(convergenceStore.get(scenarioId)),
     };
   });
+  for (const custom of listCustomScenarios()) scenarios.push(customScenarioListItem(custom, Boolean(convergenceStore.get(custom.scenarioId))));
   return c.json({ scenarios });
 });
 
 /** Left pane: summary & resolution plan, MCP-enriched entities by provenance colour, ticket or anomaly text. */
 app.get("/api/scenarios/:scenarioId/brief", async (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
   const ctx = await gatherContext(scenarioId, { fresh: wantsRefresh(c) });
   return c.json({ brief: buildScenarioBrief(ctx), gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, fallbackReasons: ctx.fallbackReasons });
 });
 
 /** The ptr:// data plane: a scenario's dataset descriptors (what the model sees), and one pointer's rows. */
 app.get("/api/dataplane/:scenarioId", async (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
   const snapshot = publishDataPlane(await gatherContext(scenarioId));
   return c.json({ scenarioId, gatheredAt: snapshot.gatheredAt, bytes: snapshot.bytes, datasets: snapshot.descriptors, piiMetrics: snapshot.piiMetrics, vaultMetrics: snapshot.piiMetrics, pii: snapshot.piiMetrics });
+});
+
+/* ------------- Live agency: highlight → Generate Context UI, unscripted tickets ------------- */
+
+const ExploreBodySchema = z.object({
+  scenarioId: z.string().optional(),
+  tenantId: z.string().optional(),
+  selectedText: z.string().min(SELECTION_MIN_CHARS).max(SELECTION_MAX_CHARS * 2),
+  customTicketText: z.string().max(8000).optional(),
+});
+
+/**
+ * Highlight any phrase in the ticket or anomaly text: the matching slice of live tenant data
+ * is published under ptr://<scenario>/selection/<hash> and composed into a ContextualMiniDashboard
+ * (muse-spark-1.3, deterministic fallback). Rows stay on the data plane; the prompt sees the descriptor.
+ */
+app.post("/api/explore-selection", async (c) => {
+  const body = ExploreBodySchema.parse(await c.req.json());
+  const result = await exploreSelection({ scenarioId: scenarioOf(body), selectedText: body.selectedText, ...(body.customTicketText ? { customTicketText: body.customTicketText } : {}) });
+  return c.json(result);
+});
+
+const TriageBodySchema = z.object({
+  title: z.string().min(3).max(200),
+  body: z.string().min(10).max(8000),
+  customerName: z.string().max(80).optional(),
+});
+
+/**
+ * Unscripted ticket triage: entity & intent extraction over the pasted text, matched against the live
+ * tenant objects, a CUSTOM-<hash> scenario registered with ptr://custom-<hash>/... pointers, its brief,
+ * its bi-temporal timeline (inherited) and the formal invariants of the pattern it inherits.
+ */
+app.post("/api/tickets/triage-custom", async (c) => {
+  const started = performance.now();
+  const body = TriageBodySchema.parse(await c.req.json());
+  const entry = registerCustomTicket(body);
+  invalidateContext(entry.scenarioId);
+  const ctx = await gatherContext(entry.scenarioId, { fresh: true });
+  const brief = buildScenarioBrief(ctx);
+  const snapshot = publishDataPlane(ctx);
+  const formal = verifyFormalInvariants(entry.baseScenarioId);
+  const idempotency = verifyIdempotency(entry.baseScenarioId);
+  const timeline = getTimeline(entry.baseScenarioId);
+  const latencyMs = Math.round(performance.now() - started);
+  const event = telemetry.record({
+    requestId: telemetry.nextRequestId("t0"),
+    endpoint: "/api/tickets/triage-custom",
+    tier: "Tier 0",
+    provider: "local",
+    modelId: "deterministic-entity-extractor",
+    latencyMs,
+    tokensUsed: { ...ZERO_USAGE },
+    fallbackChain: [],
+    tenantId: entry.tenantId,
+    estimatedSavings: { tokens: 1800, ms: 4000, versus: "model-based ticket classification" },
+  });
+  return c.json(
+    {
+      scenario: customScenarioListItem(entry, false),
+      brief,
+      extraction: entry.extraction,
+      dataPtrs: snapshot.descriptors.map((d) => d.ptr),
+      dataPlane: { datasets: snapshot.descriptors.length, bytes: snapshot.bytes, piiMetrics: snapshot.piiMetrics },
+      verification: {
+        formal: { passed: formal.passed, invariants: formal.invariants.length, ids: formal.invariants.map((i) => i.id), latencyMs: formal.latencyMs },
+        idempotency: { passed: idempotency.passed },
+        baseScenarioId: entry.baseScenarioId,
+      },
+      timelineSlices: timeline?.slices.length ?? 0,
+      latencyMs,
+      telemetry: event,
+    },
+    201,
+  );
+});
+
+app.get("/api/tickets/samples", (c) => c.json({ samples: SAMPLE_UNSCRIPTED_TICKETS }));
+
+app.get("/api/tickets/:scenarioId", (c) => {
+  const custom = getCustomScenario(c.req.param("scenarioId"));
+  return custom ? c.json({ scenario: customScenarioListItem(custom, Boolean(convergenceStore.get(custom.scenarioId))) }) : c.json({ error: "not an unscripted ticket" }, 404);
+});
+
+/** The auto-drafted Customer & PSA Resolution Note of a converged scenario. */
+app.get("/api/tickets/:scenarioId/resolution-note", async (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const convergence = convergenceStore.get(scenarioId);
+  if (!convergence) return c.json({ error: `${scenarioId} has not converged; approve a remediation first`, note: null }, 409);
+  const brief = buildScenarioBrief(await gatherContext(scenarioId));
+  return c.json({ note: buildResolutionNote({ brief, convergence }) });
+});
+
+const CloseBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional(), closedBy: z.string().max(120).optional() });
+
+/** Mark the ticket closed in the PSA: logs ticket.closed to the audit ledger with the note attached. */
+app.post("/api/tickets/close", async (c) => {
+  const started = performance.now();
+  const body = CloseBodySchema.parse(await c.req.json().catch(() => ({})));
+  const scenarioId = scenarioOf(body);
+  const convergence = convergenceStore.get(scenarioId);
+  if (!convergence) return c.json({ ok: false, error: `${scenarioId} has not converged; approve a remediation first` }, 409);
+  const closedBy = body.closedBy ?? config.lab.delegatedIdentity;
+  closureStore.close(scenarioId, closedBy);
+  const brief = buildScenarioBrief(await gatherContext(scenarioId));
+  const note = buildResolutionNote({ brief, convergence });
+  const entry = auditLedger.append({
+    tenantId: tenantOf(scenarioId),
+    ticketId: scenarioId,
+    actionType: "ticket-closed",
+    delegatedIdentity: closedBy,
+    modalSandboxVerified: false,
+    astPass: null,
+    tfValidatePass: null,
+    gitBranch: convergence.gitBranch,
+    prUrl: convergence.prUrl,
+    latencyMs: Math.round(performance.now() - started),
+    execution: "none",
+    detail: `ticket.closed · PSA resolution note attached (${note.technicalAuditTrail.length} audit lines) · ${convergence.execution} · remediation ${convergence.remediationId}`.slice(0, 300),
+  });
+  return c.json({ ok: true, note, audit: entry });
 });
 
 /* -------- Day-2: formal prover, rollback, timeline, skill compiler -------- */
 
 app.get("/api/formal/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const scenarioId = baseScenarioOf(requested);
   const formal = verifyFormalInvariants(scenarioId);
-  return c.json({ scenarioId, formal, blastRadius: counterfactualReplay(scenarioId), rollback: buildInverseRollback(scenarioId), idempotency: verifyIdempotency(scenarioId), asrBlast: scenarioId === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
+  return c.json({ scenarioId: requested, baseScenarioId: scenarioId, formal, blastRadius: counterfactualReplay(scenarioId), rollback: buildInverseRollback(scenarioId), idempotency: verifyIdempotency(scenarioId), asrBlast: scenarioId === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
 });
 
 app.post("/api/rollback", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
-  const scenarioId = scenarioOf(body);
+  const scenarioId = baseScenarioOf(scenarioOf(body));
   const started = performance.now();
   const rollback = buildInverseRollback(scenarioId);
   const check = verifyIdempotency(scenarioId);
@@ -163,15 +305,17 @@ app.post("/api/rollback", async (c) => {
 });
 
 app.get("/api/intune/health-script/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scenarioId = BaseScenarioIdSchema.parse(c.req.param("scenarioId"));
   const scripts = buildDeviceHealthScripts(scenarioId);
   return c.json({ scenarioId, detect: scripts.detect, remediate: scripts.remediate, verification: verifyProactiveRemediation(scenarioId), csp: getCspMetadata(scenarioId), asrBlast: scenarioId === "ANOM-INT-309" ? asrBlastRadius() : null });
 });
 
 app.get("/api/timeline/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
-  const timeline = getTimeline(scenarioId);
-  if (!timeline) return c.json({ error: "unknown scenario" }, 404);
+  const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const base = getTimeline(baseScenarioOf(requested));
+  if (!base) return c.json({ error: "unknown scenario" }, 404);
+  // A custom ticket inherits the base scenario's bi-temporal slices under its own id.
+  const timeline = requested === base.scenarioId ? base : { ...base, scenarioId: requested, title: getScenarioEntry(requested)?.title ?? base.title, slices: base.slices.map((s) => ({ ...s, scenarioId: requested as ScenarioId, id: s.id.replace(base.scenarioId.toLowerCase(), requested.toLowerCase()) })) };
   return c.json({ timeline, telemetry: { tier: "Tier 0", tokensUsed: { total: 0 }, latencyMs: 0 } });
 });
 
@@ -182,13 +326,13 @@ app.get("/api/skills", (c) => c.json({ skills: listCompiledSkills().map(skillDef
 
 app.post("/api/skills/compile", async (c) => {
   const body = CompileBodySchema.parse(await c.req.json().catch(() => ({})));
-  const scenarioId = scenarioOf(body);
+  const scenarioId = baseScenarioOf(scenarioOf(body));
   const skill = await compileSkill(scenarioId);
   return c.json({ skill: skillDef(skill), promoted: skill.fuzz.passed === skill.fuzz.cases, telemetry: { tier: "Tier 0", tokensUsed: { total: 0 }, latencyMs: skill.latencyMs } }, 201);
 });
 
 app.get("/api/skills/match/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scenarioId = BaseScenarioIdSchema.parse(c.req.param("scenarioId"));
   const hit = lookupTier0Skill({ scenarioId });
   return hit ? c.json({ matched: true, skill: skillDef(hit.skill), latencyMs: hit.latencyMs }) : c.json({ matched: false, skill: null });
 });
@@ -367,8 +511,9 @@ const approveHandler = async (c: Context) => {
   const body = ApproveBodySchema.parse(await c.req.json());
   const { convergence, ...drawer } = await approve(body);
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
-  const scenarioId = drawer.ticketId as ScenarioId;
-  const canary = runCanaryConvergence(scenarioId, { mode: body.mode ?? "break-glass", simulateCanaryFailure: body.simulateCanaryFailure ?? false });
+  const scenarioId = drawer.ticketId;
+  const canary = { ...runCanaryConvergence(baseScenarioOf(scenarioId), { mode: body.mode ?? "break-glass", simulateCanaryFailure: body.simulateCanaryFailure ?? false }), scenarioId: scenarioId as ScenarioId };
+  closureStore.setCanary(scenarioId, canary);
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
     auditLedger.append({ tenantId: drawer.tenantId, ticketId: drawer.ticketId, actionType: "autonomous-rollback", delegatedIdentity: body.approvedBy ?? drawer.approval.requiredIdentity, modalSandboxVerified: false, astPass: null, tfValidatePass: null, gitBranch: drawer.staging?.branchName ?? null, prUrl: null, latencyMs: 0, execution: "none", detail: "Dead-man's switch: AADSTS53003 spike in Canary Ring 0; f^-1 inverse rollback applied, tenant restored to pre-change state" });
@@ -380,31 +525,32 @@ const approveHandler = async (c: Context) => {
 /* --------------------- Day-2 Places 5-8: reconcile / iac / fleet / runbook --------------------- */
 
 app.get("/api/reconcile/commercial/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scenarioId = BaseScenarioIdSchema.parse(c.req.param("scenarioId"));
   return c.json({ reconciliation: reconcileCommercial(scenarioId) });
 });
 
 app.post("/api/iac/reverse-compile", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
-  return c.json({ result: reverseCompile(scenarioOf(body)) });
+  return c.json({ result: reverseCompile(baseScenarioOf(scenarioOf(body))) });
 });
 
 app.get("/api/fleet/immunize/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scenarioId = BaseScenarioIdSchema.parse(c.req.param("scenarioId"));
   return c.json({ fleet: immunizeFleet(scenarioId) });
 });
 
 app.post("/api/fleet/campaign/:scenarioId", (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const scenarioId = baseScenarioOf(requested);
   const campaign = stageFleetCampaign(scenarioId);
   const fleet = immunizeFleet(scenarioId);
-  auditLedger.append({ tenantId: SCENARIO_REGISTRY[scenarioId].tenantId, ticketId: scenarioId, actionType: "fleet-campaign", delegatedIdentity: "contextpane-fleet", modalSandboxVerified: true, astPass: true, tfValidatePass: null, gitBranch: campaign.branches[0]?.branch ?? null, prUrl: null, latencyMs: Math.round(campaign.latencyMs), execution: "none", detail: `Fleet GitOps campaign staged for ${campaign.branches.length} tenants (${fleet.signature})` });
+  auditLedger.append({ tenantId: tenantOf(requested), ticketId: requested, actionType: "fleet-campaign", delegatedIdentity: "contextpane-fleet", modalSandboxVerified: true, astPass: true, tfValidatePass: null, gitBranch: campaign.branches[0]?.branch ?? null, prUrl: null, latencyMs: Math.round(campaign.latencyMs), execution: "none", detail: `Fleet GitOps campaign staged for ${campaign.branches.length} tenants (${fleet.signature})` });
   return c.json({ campaign, fleet });
 });
 
 app.get("/api/runbooks/:file", (c) => {
   const file = c.req.param("file");
-  const scenarioId = ScenarioIdSchema.parse(file.replace(/\.md$/, "")) as ScenarioId;
+  const scenarioId = BaseScenarioIdSchema.parse(file.replace(/\.md$/, ""));
   return c.text(generateRunbook(scenarioId), 200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="${scenarioId}-runbook.md"` });
 });
 app.post("/api/remediate/approve", approveHandler);
@@ -427,13 +573,15 @@ const ResetDriftBodySchema = z.object({ scenarioId: z.string().optional(), tenan
 app.post("/api/lab/reset-drift", async (c) => {
   const started = performance.now();
   const body = ResetDriftBodySchema.parse(await c.req.json().catch(() => ({})));
-  const scenarioIds: ScenarioId[] = body.scenarioId || body.tenantId ? [scenarioOf(body)] : [...SCENARIO_IDS];
+  const scenarioIds: WorkbenchScenarioId[] = body.scenarioId || body.tenantId ? [scenarioOf(body)] : [...SCENARIO_IDS, ...listCustomScenarios().map((s) => s.scenarioId)];
   const results = await Promise.all(
     scenarioIds.map(async (scenarioId) => {
-      const tenantId = SCENARIO_REGISTRY[scenarioId].tenantId;
+      const tenantId = tenantOf(scenarioId);
       // The canvas reverts on this push at once; the Graph writes land behind it.
       convergenceStore.clear(scenarioId, tenantId);
-      const write = await applyScenarioState(scenarioId, "drifted");
+      closureStore.clear(scenarioId);
+      // A custom ticket's lab objects are those of its base pattern; a full reset already restored them.
+      const write = isScenarioId(scenarioId) || body.scenarioId || body.tenantId ? await applyScenarioState(baseScenarioOf(scenarioId), "drifted") : { source: "simulated" as const, latencyMs: 0, results: [], summary: "custom ticket cleared (base pattern reset separately)" };
       invalidateContext(scenarioId);
       const failed = write.results.filter((r) => !r.ok);
       auditLedger.append({
@@ -522,6 +670,8 @@ app.get("/", (c) =>
       "GET  /api/recipe/:recipeId/hydrate?scenarioId=",
       "POST /api/hover",
       "POST /api/correlate  (Accept: text/event-stream for progress)",
+      "POST /api/explore-selection · POST /api/tickets/triage-custom · GET /api/tickets/samples",
+      "GET  /api/tickets/:scenarioId/resolution-note · POST /api/tickets/close",
       "POST /api/remediate  (Accept: text/event-stream for progress)",
       "POST /api/remediate/approve  (alias POST /api/approve)",
       "POST /api/lab/reset-drift · GET /api/lab/state",

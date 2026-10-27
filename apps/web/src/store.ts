@@ -1,9 +1,13 @@
 import { create } from "zustand";
 import {
   SCENARIO_REGISTRY,
+  SELECTION_MAX_CHARS,
+  SELECTION_MIN_CHARS,
   convergeLayout,
+  getScenarioEntry,
+  isAnyScenarioId,
   isCanvasComponentType,
-  isScenarioId,
+  registerCustomScenario,
   resolveTenantId,
   scenarioForTenant,
   scenariosOfKind,
@@ -11,6 +15,7 @@ import {
   type AuditEntry,
   type CanvasComponentType,
   type ComponentType,
+  type ContextualMiniDashboard,
   type Convergence,
   type EntityType,
   type ExecutionMode,
@@ -20,11 +25,11 @@ import {
   type ResolutionStep,
   type RouterTelemetry,
   type ScenarioBrief,
-  type ScenarioId,
   type ScenarioKind,
   type ScenarioListItem,
   type SteerLayoutArgs,
   type ViewRecipe,
+  type WorkbenchScenarioId,
 } from "@contextpane/catalog";
 import {
   api,
@@ -34,11 +39,35 @@ import {
   type ErpAttachment,
   type HealthResponse,
   type ProgressEvent,
+  type PsaResolutionNote,
   type RemediateResponse,
   type TelemetryStats,
   type VisionResponse,
   type VoiceResponse,
 } from "./lib/api";
+
+/** The scenario the workbench shows: a built-in one or an unscripted CUSTOM-<hash> ticket. */
+export type ScenarioId = WorkbenchScenarioId;
+
+/** A mini-dashboard spawned from highlighted text, mounted above the macro cards. */
+export interface MiniDashboardEntry {
+  id: string;
+  scenarioId: ScenarioId;
+  /** 1-based order of the selection in this scenario (the cyan "Selection #n" badge). */
+  index: number;
+  selectionText: string;
+  card: ContextualMiniDashboard;
+  dataPtr: string;
+  latencyMs: number;
+  modelId: string;
+  tokenCount: number;
+}
+
+/** Cross-card identity highlight: one UPN or device lit on every open card. */
+export interface RowFilter {
+  kind: "upn" | "device";
+  value: string;
+}
 import { connectTelemetry } from "./lib/ws";
 
 export type CanvasStatus = "idle" | "loading" | "ready" | "error";
@@ -105,7 +134,7 @@ interface WorkbenchState {
   filter: ComponentType[] | null;
   lastVoice: VoiceResponse | null;
   /** Remediated scenarios (notifications/resources/updated); the canvas overlays this with 0 tokens. */
-  convergence: Partial<Record<ScenarioId, Convergence>>;
+  convergence: Partial<Record<string, Convergence>>;
   /** Emerald pulse on every card right after a convergence push. */
   convergeFlash: boolean;
   resetting: boolean;
@@ -125,6 +154,21 @@ interface WorkbenchState {
   timelineSliceId: string | null;
   compiledSkills: SkillDef[];
   piiMetrics: PiiMetrics | null;
+
+  /* live agency */
+  /** Generated mini-dashboards of the scenario on screen, newest first. */
+  miniDashboards: MiniDashboardEntry[];
+  /** Phrases explored per scenario, in order: drives the cyan "Selection #n" badges in the left pane. */
+  selections: Record<string, Array<{ id: string; text: string; index: number }>>;
+  exploreStatus: CanvasStatus;
+  exploreError: string | null;
+  /** Mini-dashboard the pointer-hovered selection pill links to (pulses cyan). */
+  linkedSelection: string | null;
+  composerOpen: boolean;
+  triageStatus: CanvasStatus;
+  rowFilter: RowFilter | null;
+  resolutionNote: PsaResolutionNote | null;
+  resolutionNoteStatus: CanvasStatus;
 
   /* telemetry */
   telemetry: RouterTelemetry | null;
@@ -203,6 +247,16 @@ interface WorkbenchState {
   selectTimelineSlice(sliceId: string): void;
   rollbackNow(): Promise<void>;
   extractVision(attachment: ErpAttachment): Promise<void>;
+  /** Highlight → Generate Context UI: spawns a cyan mini-dashboard for the phrase on the canvas. */
+  exploreSelection(text: string): Promise<void>;
+  dismissMiniDashboard(id: string): void;
+  setLinkedSelection(id: string | null): void;
+  setComposerOpen(open: boolean): void;
+  /** Unscripted ticket: triage the pasted text live and switch the workbench to the new CUSTOM-<hash> ticket. */
+  triageCustom(input: { title: string; body: string; customerName?: string }): Promise<void>;
+  setRowFilter(filter: RowFilter | null): void;
+  loadResolutionNote(): Promise<void>;
+  closeTicket(): Promise<void>;
   toast(toast: Omit<Toast, "id">): void;
   dismissToast(id: number): void;
 }
@@ -252,6 +306,17 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   compiledSkills: [],
   piiMetrics: null,
 
+  miniDashboards: [],
+  selections: {},
+  exploreStatus: "idle",
+  exploreError: null,
+  linkedSelection: null,
+  composerOpen: false,
+  triageStatus: "idle",
+  rowFilter: null,
+  resolutionNote: null,
+  resolutionNoteStatus: "idle",
+
   telemetry: null,
   telemetryHistory: [],
   stats: null,
@@ -299,6 +364,23 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async loadScenarios() {
     try {
       const { scenarios } = await api.scenarios();
+      // Unscripted tickets live in the orchestrator's registry; mirror them so getScenarioEntry works here too.
+      for (const s of scenarios) {
+        if (!s.custom) continue;
+        registerCustomScenario({
+          scenarioId: s.scenarioId as `CUSTOM-${string}`,
+          kind: "ticket",
+          tenantId: s.tenantId as "tenant-contoso-01" | "tenant-fabrikam-02",
+          title: s.title,
+          remediationScope: SCENARIO_REGISTRY[s.custom.baseScenarioId].remediationScope,
+          components: s.custom.components,
+          baseScenarioId: s.custom.baseScenarioId,
+          shortHash: s.custom.shortHash,
+          createdAt: s.custom.createdAt,
+          ticket: s.custom.ticket,
+          extraction: s.custom.extraction,
+        });
+      }
       set({ scenarios });
     } catch {
       /* orchestrator down; loadBrief toasts */
@@ -312,7 +394,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async selectScenario(scenarioId) {
     if (scenarioId === get().scenarioId && get().layout) return;
-    const kind = SCENARIO_REGISTRY[scenarioId].kind;
+    const kind = getScenarioEntry(scenarioId)?.kind ?? "ticket";
     set((s) => ({
       scenarioId,
       mode: kind,
@@ -327,6 +409,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       filter: null,
       vision: { status: "idle" },
       drawerFocusUpn: null,
+      miniDashboards: [],
+      linkedSelection: null,
+      exploreStatus: "idle",
+      exploreError: null,
+      rowFilter: null,
+      resolutionNote: null,
+      resolutionNoteStatus: "idle",
     }));
     const { activeRecipeId } = get();
     await Promise.all([get().loadBrief(scenarioId), activeRecipeId ? get().hydrateRecipe(activeRecipeId, scenarioId) : get().correlate()]);
@@ -422,7 +511,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     try {
       const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) => set((s) => ({ remediateProgress: [...s.remediateProgress, event] })));
       // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
-      set({ drawer: result.drawer, remediateStatus: "ready", executionMode: SCENARIO_REGISTRY[scenarioId].kind === "ticket" ? "break-glass" : "gitops" });
+      set({ drawer: result.drawer, remediateStatus: "ready", executionMode: (getScenarioEntry(scenarioId)?.kind ?? "ticket") === "ticket" ? "break-glass" : "gitops" });
       void get().loadDrawerExtras();
     } catch (error) {
       set({ remediateStatus: "error" });
@@ -473,7 +562,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   async voiceSteer(input) {
-    const result = await api.voiceSteer({ tenantId: SCENARIO_REGISTRY[get().scenarioId].tenantId, ...input });
+    const result = await api.voiceSteer({ tenantId: getScenarioEntry(get().scenarioId)?.tenantId ?? "tenant-contoso-01", ...input });
     set({ lastVoice: result });
     await get().applyIntent(result.intent);
     return result;
@@ -493,8 +582,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         get().toast({ tone: "meta", title: "Voice: reset", detail: "Showing every card" });
         break;
       case "switch-scenario":
-        if (intent.scenarioId && isScenarioId(intent.scenarioId)) {
-          get().toast({ tone: "meta", title: "Voice: open scenario", detail: `${intent.scenarioId} · ${SCENARIO_REGISTRY[intent.scenarioId].title}` });
+        if (intent.scenarioId && isAnyScenarioId(intent.scenarioId)) {
+          get().toast({ tone: "meta", title: "Voice: open scenario", detail: `${intent.scenarioId} · ${getScenarioEntry(intent.scenarioId)?.title ?? ""}` });
           await get().selectScenario(intent.scenarioId);
         }
         break;
@@ -574,7 +663,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   setExecutionMode: (executionMode) => set({ executionMode }),
 
   applyConvergence(scenarioId, convergence) {
-    if (!isScenarioId(scenarioId)) return;
+    if (!isAnyScenarioId(scenarioId)) return;
     const current = get().convergence[scenarioId];
     if (convergence && current?.remediationId === convergence.remediationId) return;
     if (!convergence && !current) return;
@@ -589,6 +678,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       };
     });
     if (convergence) window.setTimeout(() => set({ convergeFlash: false }), 1800);
+    // The ticket converged: draft the Customer & PSA Resolution Note for the left pane.
+    if (convergence && get().scenarioId === scenarioId) void get().loadResolutionNote();
+    if (!convergence && get().scenarioId === scenarioId) set({ resolutionNote: null, resolutionNoteStatus: "idle" });
   },
 
   async resetDrift() {
@@ -607,6 +699,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       vision: { status: "idle" },
       hovers: {},
       stepsDone: {},
+      resolutionNote: null,
+      resolutionNoteStatus: "idle",
       scenarios: s.scenarios.map((x) => ({ ...x, resolved: false })),
     }));
     try {
@@ -703,7 +797,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async extractVision(attachment) {
     const scenarioId = get().scenarioId;
-    const tenantId = SCENARIO_REGISTRY[scenarioId].tenantId;
+    const tenantId = getScenarioEntry(scenarioId)?.tenantId ?? "tenant-contoso-01";
     set({ vision: { status: "loading" } });
     const started = performance.now();
     try {
@@ -723,6 +817,80 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
   },
 
+  async exploreSelection(rawText) {
+    const text = rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS);
+    const scenarioId = get().scenarioId;
+    if (text.length < SELECTION_MIN_CHARS || get().exploreStatus === "loading") return;
+    set({ exploreStatus: "loading", exploreError: null });
+    const started = performance.now();
+    try {
+      const customText = get().brief?.extraction ? get().brief?.body : undefined;
+      const result = await api.exploreSelection({ scenarioId, selectedText: text, ...(customText ? { customTicketText: customText } : {}) });
+      if (get().scenarioId !== scenarioId) return;
+      set((s) => {
+        const existing = s.selections[scenarioId] ?? [];
+        const known = existing.find((x) => x.id === result.card.id);
+        const index = known?.index ?? existing.length + 1;
+        const selections = known ? s.selections : { ...s.selections, [scenarioId]: [...existing, { id: result.card.id, text, index }] };
+        const entry: MiniDashboardEntry = { id: result.card.id, scenarioId, index, selectionText: text, card: result.card, dataPtr: result.dataPtr, latencyMs: Math.round(performance.now() - started), modelId: result.modelId, tokenCount: result.tokenCount };
+        return { selections, miniDashboards: [entry, ...s.miniDashboards.filter((m) => m.id !== entry.id)].slice(0, 6), exploreStatus: "ready", linkedSelection: entry.id };
+      });
+      window.requestAnimationFrame(() => document.getElementById(`mini-${result.card.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      window.setTimeout(() => set((s) => (s.linkedSelection === result.card.id ? { linkedSelection: null } : {})), 1600);
+      get().toast({ tone: "info", title: `Context UI for "${text.length > 40 ? `${text.slice(0, 39)}…` : text}"`, detail: `${result.slice.rowCount} rows · ${result.modelId} · ${result.tokenCount} tokens · ${Math.round(performance.now() - started)} ms · ${result.dataPtr}` });
+    } catch (error) {
+      set({ exploreStatus: "error", exploreError: error instanceof Error ? error.message : String(error) });
+      get().toast({ tone: "critical", title: "Generate Context UI failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+  dismissMiniDashboard: (id) => set((s) => ({ miniDashboards: s.miniDashboards.filter((m) => m.id !== id), linkedSelection: s.linkedSelection === id ? null : s.linkedSelection })),
+  setLinkedSelection: (linkedSelection) => set((s) => (s.linkedSelection === linkedSelection ? {} : { linkedSelection })),
+  setComposerOpen: (composerOpen) => set({ composerOpen }),
+
+  async triageCustom(input) {
+    if (get().triageStatus === "loading") return;
+    set({ triageStatus: "loading" });
+    const started = performance.now();
+    try {
+      const result = await api.triageCustom(input);
+      await get().loadScenarios();
+      set({ triageStatus: "ready", composerOpen: false });
+      const x = result.extraction;
+      get().toast({
+        tone: "healthy",
+        title: `${result.scenario.scenarioId} triaged in ${Math.round(performance.now() - started)} ms`,
+        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} entities matched live · intents ${x.intents.join(", ") || "none"} · base ${x.baseScenarioId} · ${result.dataPtrs.length} ptr://custom pointers · formal ${result.verification.formal.passed ? "passed" : "FAILED"}`,
+      });
+      await get().selectScenario(result.scenario.scenarioId);
+    } catch (error) {
+      set({ triageStatus: "error" });
+      get().toast({ tone: "critical", title: "Triage failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+  setRowFilter: (rowFilter) => set((s) => (s.rowFilter?.kind === rowFilter?.kind && s.rowFilter?.value === rowFilter?.value ? {} : { rowFilter })),
+
+  async loadResolutionNote() {
+    const scenarioId = get().scenarioId;
+    if (!get().convergence[scenarioId]) return;
+    set({ resolutionNoteStatus: "loading" });
+    try {
+      const { note } = await api.resolutionNote(scenarioId);
+      if (get().scenarioId === scenarioId) set({ resolutionNote: note, resolutionNoteStatus: "ready" });
+    } catch {
+      if (get().scenarioId === scenarioId) set({ resolutionNoteStatus: "error" });
+    }
+  },
+  async closeTicket() {
+    const scenarioId = get().scenarioId;
+    try {
+      const result = await api.closeTicket(scenarioId);
+      set({ resolutionNote: result.note });
+      get().toast({ tone: "healthy", title: `${scenarioId} marked closed in the PSA`, detail: `ticket.closed logged to the audit ledger (${result.audit.id}) with the resolution note attached` });
+    } catch (error) {
+      get().toast({ tone: "critical", title: "Close failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
   toast: (toast) => {
     const id = ++toastSeq;
     set((s) => ({ toasts: [...s.toasts.slice(-3), { ...toast, id }] }));
@@ -738,7 +906,7 @@ let convergedCache: { layout: Layout | null; convergence: Convergence | undefine
  * scenario's convergence overlaid, memoised so zustand selectors stay stable.
  */
 export function selectCanvasLayout(s: Pick<WorkbenchState, "layout" | "convergence">): Layout | null {
-  const convergence = s.layout && isScenarioId(s.layout.ticketId) ? s.convergence[s.layout.ticketId] : undefined;
+  const convergence = s.layout && isAnyScenarioId(s.layout.ticketId) ? s.convergence[s.layout.ticketId] : undefined;
   if (convergedCache.layout === s.layout && convergedCache.convergence === convergence) return convergedCache.result;
   const result = s.layout && convergence ? convergeLayout(s.layout, convergence) : s.layout;
   convergedCache = { layout: s.layout, convergence, result };

@@ -11,6 +11,7 @@ import {
   type HoverDiagnosticArgs,
   type HoverDiagnosticPopover,
   type RouterTelemetry,
+  baseScenarioOf,
 } from "@contextpane/catalog";
 import { config, models, providerFor, providers } from "../config.ts";
 import { scenarioEntities } from "../local/brief.ts";
@@ -84,7 +85,9 @@ const hoverKey = (scope: string, entityId: string) => `${scope}|${entityId.toLow
  * in data/hover-cache.seed.json stay valid; every other scenario has its own scope.
  */
 export function hoverScope(scenarioId: string): string {
-  return scenarioId === "INC-4092" ? "tenant-contoso-01" : scenarioId;
+  // An unscripted ticket reuses the cached answers of the built-in scenario it inherits.
+  const base = baseScenarioOf(scenarioId);
+  return base === "INC-4092" ? "tenant-contoso-01" : base;
 }
 /** Set when data/hover-cache.json was created from the seed at this start-up. */
 export let hoverCacheSeeded = false;

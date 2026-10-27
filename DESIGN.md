@@ -31,6 +31,7 @@ mapped into Tailwind v4 via `@theme`. Components never hardcode hex values.
 | `--cp-warning` | `#F59E0B` | Amber — drift, degraded, report-only |
 | `--cp-critical` | `#F43F5E` | Rose — blocked, rogue rule, AADSTS failure |
 | `--cp-meta` | `#A855F7` | Meta AI Purple — anything produced by a Muse model |
+| `--cp-selection` | `#06B6D4` | Cyan — a `ContextualMiniDashboard` spawned from highlighted text, and its selection badge |
 
 Each accent ships with a `-dim` (12% alpha fill) and `-ring` (40% alpha border) variant
 so badges, pills and banners share one recipe: dim fill + ring border + solid text.
@@ -47,6 +48,7 @@ once per element as the `--cat` custom property (`apps/web/src/lib/provenance.ts
 | Identity / CA | `#F43F5E` | Users, groups, Conditional Access, sign-ins, AADSTS codes |
 | Intune | `#A855F7` | Settings Catalog policies, device configurations, devices, MDM error codes |
 | Azure | `#14B8A6` | AVD host pool, NSG, Azure Policy, Terraform |
+| Selection | `#06B6D4` | An ad-hoc slice of tenant data the engineer asked for by highlighting text (never a macro-card colour) |
 
 Health still uses the semantic accents above (status pills, emerald once converged), so a
 rose identity card can carry an amber *Drifted* pill.
@@ -180,6 +182,41 @@ All deep proof lives off-canvas. Cards never gain verification, vault or compile
   count, `zeroRawPiiInLlmPrompt: true`, and token ↔ raw sample mappings in mono.
   No raw UPN/IP ever appears on a card for this.
 
+### Live agency (highlight, unscripted tickets, closure)
+
+Nothing in this layer renders until the engineer acts; the default view is unchanged.
+
+- **Selection trigger:** highlighting 3–120 characters inside the ticket / anomaly text shows one
+  floating pill above the selection (`--cp-elevated` glass, 1px `--cp-selection` at 60%, Sparkles icon,
+  `Generate Context UI for "<phrase>"`, 120ms fade). It disappears on click, Escape or any click elsewhere.
+- **Selection badge:** once generated, the phrase in the text becomes a cyan inline badge
+  (`Selection #n`, Sparkles, mono 11px, same recipe as entity pills but in `--cp-selection`). Hovering it
+  rings the spawned mini-dashboard (`ring-2` cyan + the pulse); clicking scrolls to it, or regenerates it
+  after a dismiss (dimmed badge).
+- **ContextualMiniDashboard:** mounted above the macro cards, same card chrome, `border-l-4` cyan.
+  Header: title · `Spawned from selection: "<phrase>" · <ms>` cyan chip · `[Copy Graph/PowerShell Query]` ·
+  `[× Dismiss]`. Then one mono subtitle line (the live query), 2–4 KPI tiles (label 10px uppercase, value
+  13px mono in the metric tone), 2–5 proportional bars (1.5px track, tone-coloured fill, `count · pct%`),
+  the dynamic table (filter chips, sticky head, max-height 256px, badge columns as status pills, mono
+  columns in JetBrains Mono) and one action row (meta button with the targeted command, `Copy command`).
+  At most six mini-dashboards are kept; a new one for the same phrase replaces the old one.
+- **Ticket composer:** `[+ Triage Unscripted Ticket]` in the top bar opens a 720px centred modal
+  (`card` recipe, backdrop `rgba(9,13,22,0.7)`): three quick-sample chips, subject input, 6-row body
+  textarea, customer input, a `Tier 0 extraction · 0 tokens` pill and one primary `Triage Live` button.
+  Hotkey `n`. The new `CUSTOM-<hash>` ticket joins the Tickets selector; its header carries a primary
+  `unscripted · base <scenario>` pill and the signals block shows the extraction and the base rationale.
+- **Filter chips & cross-card highlight:** expanded tables (License assignments, Intune devices, sign-ins,
+  mini-dashboards) open with `All (N) | Drifted / Error (M) | Compliant / Active (K)` chips (20px, mono
+  10.5px; primary / critical / healthy when selected). Clicking a UPN or device cell sets one identity
+  filter: matching rows get a cyan 12% fill with an inset cyan ring, every other row drops to 45% opacity
+  on every open card, and the canvas breadcrumb shows `Filtered by: lynne.robins [×]` in cyan.
+- **Status & closure:** the left-pane status pill reads `OPEN` (rose) for tickets and `ACTIVE DRIFT`
+  (amber) for anomalies, flips to `RESOLVED & VERIFIED ✓` (emerald) on convergence and `CLOSED IN PSA ✓`
+  after closing. Every plan step is checked at convergence, and the *Customer & PSA Resolution Note*
+  box (emerald 40% border, collapsible, inside the Resolution Plan) holds the customer paragraph, the
+  mono audit-trail list with check icons, `[Copy PSA Resolution Note]` (outline) and
+  `[Mark Ticket Closed in PSA]` (healthy). Nothing of this appears on the canvas cards.
+
 ---
 
 ## 5. Motion
@@ -210,6 +247,10 @@ Semantic icon mapping:
 | Terraform / IaC | `FileCode2` |
 | PowerShell | `Terminal` |
 | Meta model | `Sparkles` |
+| Generate Context UI / selection | `Wand2` (hint), `Sparkles` (badge, card) |
+| Unscripted ticket | `FilePlus2` |
+| Row filter | `Filter` |
+| Resolution note / close | `FileCheck2` / `CheckCheck` |
 | Voice | `Mic` |
 | Recipe / pin | `Pin` |
 | Verified | `ShieldCheck` |

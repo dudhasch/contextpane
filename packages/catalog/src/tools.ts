@@ -8,6 +8,7 @@ import {
   LicenseDriftCardSchema,
 } from "./schemas/components.ts";
 import type { CanvasComponentType } from "./schemas/layout.ts";
+import { ContextualMiniDashboardModelArgsSchema } from "./schemas/mini-dashboard.ts";
 import { DataPtrRefSchema, EntityTypeSchema } from "./schemas/primitives.ts";
 
 /**
@@ -232,4 +233,30 @@ export interface ForcedToolRequest {
 /** Build the `tools` + `tool_choice` pair for a chat completion request. */
 export function buildForcedToolRequest(tool: OpenAIFunctionTool): ForcedToolRequest {
   return { tools: [tool], tool_choice: forcedToolChoice(tool.function.name) };
+}
+
+/* ------------------------ Contextual mini-dashboard ------------------------ */
+
+export const COMPOSE_MINI_DASHBOARD_TOOL_NAME = "compose_contextual_mini_dashboard";
+
+/**
+ * What muse-spark-1.3 is asked to emit for a highlighted phrase: title, subtitle, KPIs,
+ * breakdown, columns and the suggested action, with the rows referenced through the
+ * selection pointer. The orchestrator binds the rows and validates the result against
+ * ContextualMiniDashboardSchema.
+ */
+export function getComposeMiniDashboardToolDefinition(): OpenAIFunctionTool {
+  return {
+    type: "function",
+    function: {
+      name: COMPOSE_MINI_DASHBOARD_TOOL_NAME,
+      description:
+        "Compose one ContextualMiniDashboard card for the phrase an engineer highlighted in a ticket. " +
+        "Use only the supplied selection descriptor (row count, columns, aggregates, source query, candidate KPIs). " +
+        'Set rows to { "dataPtr": "<the descriptor pointer>" } and never write rows yourself. ' +
+        "2-4 KPIs, 2-5 breakdown bars whose pct values describe the matched rows, 1-8 columns that exist in the descriptor, " +
+        "and one suggested action with a concrete PowerShell or Graph command. No prose outside the tool call.",
+      parameters: zodToToolParameters(ContextualMiniDashboardModelArgsSchema),
+    },
+  };
 }

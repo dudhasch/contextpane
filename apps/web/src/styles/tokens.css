@@ -15,6 +15,8 @@
   --color-warning: #f59e0b;
   --color-critical: #f43f5e;
   --color-meta: #a855f7;
+  /* Cyan: a ContextualMiniDashboard spawned from highlighted text, and its selection badge. */
+  --color-selection: #06b6d4;
 
   --color-text: #e5e7eb;
   --color-muted: #94a3b8;
@@ -41,6 +43,7 @@
   --cp-warning: #f59e0b;
   --cp-critical: #f43f5e;
   --cp-meta: #a855f7;
+  --cp-selection: #06b6d4;
   --cp-text: #e5e7eb;
   --cp-text-muted: #94a3b8;
   --cp-text-faint: #64748b;

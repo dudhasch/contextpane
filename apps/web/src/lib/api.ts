@@ -3,7 +3,10 @@ import type {
   ActionApprovalDrawer,
   AuditEntry,
   ComponentType,
+  ContextualMiniDashboard,
   Convergence,
+  ScenarioId,
+  TicketExtraction,
   EntityType,
   HoverDiagnosticPopover,
   Layout,
@@ -107,6 +110,48 @@ export interface TimelineResponse { timeline: { scenarioId: string; slices: Arra
 export interface SkillDef { id: string; scenarioId: string; tier: number; tokenCost: number; latencyMs: number; fuzz: { cases: number; passed: number }; badge: string }
 export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
 
+export interface ExploreSelectionResponse {
+  card: ContextualMiniDashboard;
+  dataPtr: string;
+  latencyMs: number;
+  tier: RouterTelemetry["tier"];
+  modelId: string;
+  provider: RouterTelemetry["provider"];
+  tokenCount: number;
+  slice: { kind: string; matchedBy: "rows" | "dataset" | "none"; rowCount: number; searched: Array<{ kind: string; rows: number; matched: number }> };
+  telemetry: RouterTelemetry;
+}
+
+export interface TriageCustomResponse {
+  scenario: ScenarioListItem;
+  brief: ScenarioBrief;
+  extraction: TicketExtraction;
+  dataPtrs: string[];
+  dataPlane: { datasets: number; bytes: number; piiMetrics: PiiMetrics };
+  verification: { formal: { passed: boolean; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean }; baseScenarioId: ScenarioId };
+  timelineSlices: number;
+  latencyMs: number;
+  telemetry: RouterTelemetry;
+}
+
+export interface SampleTicket { id: string; title: string; body: string; customerName: string }
+
+export interface PsaResolutionNote {
+  scenarioId: string;
+  ticketTitle: string;
+  tenantName: string;
+  status: "RESOLVED & VERIFIED" | "CLOSED";
+  resolvedAt: string;
+  execution: "live-graph" | "simulated";
+  customerSummary: string;
+  rootCause: string;
+  resolution: string;
+  technicalAuditTrail: string[];
+  markdown: string;
+  closed: { closedAt: string; closedBy: string } | null;
+  remediationId: string;
+}
+
 export interface TelemetryStats {
   totalRequests: number;
   totalTokens: number;
@@ -194,6 +239,12 @@ export const api = {
   fleet: (scenarioId: string) => request<{ fleet: Fleet }>(`/api/fleet/immunize/${scenarioId}`),
   campaign: (scenarioId: string) => request<{ campaign: { campaignId: string; branches: Array<{ tenant: string; branch: string }>; verified: boolean; latencyMs: number } }>(`/api/fleet/campaign/${scenarioId}`, { method: "POST", body: "{}" }),
   runbookUrl: (scenarioId: string) => `/api/runbooks/${scenarioId}.md`,
+  exploreSelection: (body: { scenarioId: string; selectedText: string; customTicketText?: string }) =>
+    request<ExploreSelectionResponse>("/api/explore-selection", { method: "POST", body: JSON.stringify(body) }),
+  triageCustom: (body: { title: string; body: string; customerName?: string }) => request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),
+  ticketSamples: () => request<{ samples: SampleTicket[] }>("/api/tickets/samples"),
+  resolutionNote: (scenarioId: string) => request<{ note: PsaResolutionNote }>(`/api/tickets/${encodeURIComponent(scenarioId)}/resolution-note`),
+  closeTicket: (scenarioId: string, closedBy?: string) => request<{ ok: boolean; note: PsaResolutionNote; audit: AuditEntry }>("/api/tickets/close", { method: "POST", body: JSON.stringify({ scenarioId, ...(closedBy ? { closedBy } : {}) }) }),
 };
 
 /* -------------------------------------------------------------------------- */

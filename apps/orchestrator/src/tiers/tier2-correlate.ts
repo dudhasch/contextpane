@@ -89,7 +89,7 @@ export function bindDataPlane(raw: unknown, ctx: CorrelationContext, snapshot: D
     const props = { ...c.props };
     for (const key of datasetsFor(reference.type as CanvasComponentType)) {
       const { prop } = DATASETS[key];
-      const ptr = dataPtr(ctx.scenarioId, key);
+      const ptr = dataPtr(ctx.ticketId, key);
       const sent = props[prop];
       const sentPtr = sent && typeof sent === "object" && !Array.isArray(sent) ? (sent as { dataPtr?: unknown }).dataPtr : undefined;
       if (sent !== undefined && sent !== null && sentPtr !== ptr) binding.rejected.push(`${reference.type}.${prop}: ${typeof sentPtr === "string" ? sentPtr : "inline rows"}`);
@@ -131,7 +131,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
   const scenarioCards = scenarioComponents(ctx);
   const snapshot = publishDataPlane(ctx);
   const datasetRows = snapshot.descriptors.reduce((n, d) => n + d.rowCount, 0);
-  report("dataplane", `${snapshot.descriptors.length} datasets held under ptr://${ctx.scenarioId.toLowerCase()}/… · ${(snapshot.bytes / 1024).toFixed(1)} KB kept out of the prompt`, {
+  report("dataplane", `${snapshot.descriptors.length} datasets held under ptr://${ctx.ticketId.toLowerCase()}/… · ${(snapshot.bytes / 1024).toFixed(1)} KB kept out of the prompt`, {
     datasets: snapshot.descriptors.map((d) => ({ ptr: d.ptr, rowCount: d.rowCount, bytes: d.bytes })),
     bytes: snapshot.bytes,
   });
@@ -237,7 +237,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       }
     }
     layout = LayoutSchema.parse({
-      layoutId: `layout-${ctx.scenarioId.toLowerCase()}-${Date.now().toString(36)}`,
+      layoutId: `layout-${ctx.ticketId.toLowerCase()}-${Date.now().toString(36)}`,
       tenantId: ctx.tenantId,
       ticketId: ctx.ticketId,
       components,

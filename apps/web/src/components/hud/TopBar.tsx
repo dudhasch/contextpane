@@ -1,6 +1,6 @@
-import { Activity, Building2, ChevronDown, Mic, Pin, PinOff, Radar, RotateCcw, Ticket } from "lucide-react";
-import { SCENARIO_REGISTRY, scenariosOfKind, type ScenarioId, type ScenarioKind } from "@contextpane/catalog";
-import { useWorkbench } from "@/store";
+import { Activity, Building2, ChevronDown, FilePlus2, Mic, Pin, PinOff, Radar, RotateCcw, Ticket } from "lucide-react";
+import { getScenarioEntry, scenariosOfKind, type ScenarioKind } from "@contextpane/catalog";
+import { useWorkbench, type ScenarioId } from "@/store";
 import { Button } from "../ui/Button";
 
 /** Operational top bar: mode, scenario, recipe, voice, drift reset; everything meta lives behind System & Audit. */
@@ -22,8 +22,11 @@ export function TopBar() {
   const resetting = useWorkbench((s) => s.resetting);
   const wsConnected = useWorkbench((s) => s.wsConnected);
   const live = useWorkbench((s) => s.health?.liveCloudMode);
+  const composerOpen = useWorkbench((s) => s.composerOpen);
+  const setComposerOpen = useWorkbench((s) => s.setComposerOpen);
 
-  const ids = scenariosOfKind(mode);
+  // Built-in scenarios first, then the unscripted tickets the orchestrator registered.
+  const ids: ScenarioId[] = [...scenariosOfKind(mode), ...scenarios.filter((s) => s.kind === mode && s.custom).map((s) => s.scenarioId)];
   const resolved = (id: ScenarioId) => scenarios.find((s) => s.scenarioId === id)?.resolved;
   const open = (kind: ScenarioKind) => (scenarios.length ? scenarios.filter((s) => s.kind === kind && !s.resolved).length : scenariosOfKind(kind).filter((id) => !resolved(id)).length);
 
@@ -50,7 +53,7 @@ export function TopBar() {
         >
           {ids.map((id) => (
             <option key={id} value={id}>
-              #{id} · {SCENARIO_REGISTRY[id].title}
+              #{id} · {getScenarioEntry(id)?.title ?? scenarios.find((s) => s.scenarioId === id)?.title ?? id}
               {resolved(id) ? " · resolved" : ""}
             </option>
           ))}
@@ -59,6 +62,9 @@ export function TopBar() {
       </label>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <Button variant={composerOpen ? "primary" : "outline"} icon={<FilePlus2 />} onClick={() => setComposerOpen(!composerOpen)} title="Paste any support ticket and triage it live (n)" data-testid="new-ticket-button">
+          + Triage Unscripted Ticket
+        </Button>
         {activeRecipeId ? (
           <Button variant="primary" icon={<PinOff />} onClick={unpinRecipe} title="Release the pinned recipe (p)">
             Recipe Pinned

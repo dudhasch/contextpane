@@ -1,4 +1,4 @@
-import { ExternalLink, FileCheck2, GitBranch, History, RotateCcw, ShieldCheck, ShieldX, Zap } from "lucide-react";
+import { CircleCheckBig, ExternalLink, FileCheck2, GitBranch, History, RotateCcw, ShieldCheck, ShieldX, Zap } from "lucide-react";
 import type { AuditActionType, AuditEntry } from "@contextpane/catalog";
 import { fmtMs } from "@/lib/format";
 import { useWorkbench } from "@/store";
@@ -11,6 +11,7 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "drift-reset": { label: "Demo drift reset", tone: "muted", icon: <RotateCcw /> },
   "autonomous-rollback": { label: "Autonomous rollback (f⁻¹)", tone: "critical", icon: <History /> },
   "fleet-campaign": { label: "Fleet GitOps campaign", tone: "warning", icon: <Zap /> },
+  "ticket-closed": { label: "ticket.closed (PSA)", tone: "healthy", icon: <CircleCheckBig /> },
 };
 
 function check(v: boolean | null): { text: string; className: string } {

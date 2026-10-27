@@ -1,4 +1,4 @@
-import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, ImageIcon, ListChecks, Radar, ScanEye, Ticket, UserRound } from "lucide-react";
+import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, ImageIcon, ListChecks, Radar, ScanEye, Sparkles, Ticket, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { CATEGORY_META, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
@@ -8,6 +8,8 @@ import { selectConvergence, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill } from "../ui/Pill";
 import { EntityPill } from "./EntityPill";
+import { ResolutionNoteBox } from "./ResolutionNote";
+import { SelectionTrigger } from "./SelectionTrigger";
 
 /**
  * Left pane. In three seconds: what the issue is (summary), what MCP enriched
@@ -76,15 +78,22 @@ export function ScenarioPane() {
 
 function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
   const resolved = Boolean(useWorkbench(selectConvergence));
+  const closed = useWorkbench((s) => Boolean(s.resolutionNote?.closed && s.resolutionNote.scenarioId === brief.scenarioId));
   const ticket = brief.kind === "ticket";
+  const unscripted = Boolean(brief.extraction);
   return (
     <header>
       <div className="flex flex-wrap items-center gap-2">
         {ticket ? <Ticket className="size-4 text-primary" /> : <Radar className="size-4 text-primary" />}
         <span className="font-mono text-[13px] font-semibold">#{brief.scenarioId}</span>
-        <Pill tone={resolved ? "healthy" : ticket ? "warning" : "critical"} icon={resolved ? <Check /> : <AlertOctagon />}>
-          {resolved ? "Resolved" : brief.status}
+        <Pill tone={resolved ? "healthy" : ticket ? "critical" : "warning"} icon={resolved ? <Check /> : <AlertOctagon />} mono={false} className="font-semibold tracking-wide" flashKey={resolved ? "resolved" : "open"}>
+          {closed ? "CLOSED IN PSA ✓" : resolved ? "RESOLVED & VERIFIED ✓" : ticket ? "OPEN" : "ACTIVE DRIFT"}
         </Pill>
+        {unscripted && (
+          <Pill tone="primary" icon={<Sparkles />} title={brief.extraction?.rationale}>
+            unscripted · base {brief.extraction?.baseScenarioId}
+          </Pill>
+        )}
         <span className="truncate text-[11px] text-faint">{brief.origin}</span>
       </div>
       <h2 className="mt-1.5 text-[15px] leading-snug font-semibold">{brief.title}</h2>
@@ -129,6 +138,7 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
         ))}
       </ol>
       <FleetPill />
+      {resolved && <ResolutionNoteBox />}
     </section>
   );
 }
@@ -179,14 +189,24 @@ function PlanStep({ step, index, resolved }: { step: ResolutionStep; index: numb
   );
 }
 
+const NO_SELECTIONS: Array<{ id: string; text: string; index: number }> = [];
+
 /** The ticket description or the anomaly narrative, with every enriched entity as an inline pill. */
 function ScenarioText({ brief }: { brief: ScenarioBrief }) {
+  const selections = useWorkbench((s) => s.selections[s.scenarioId] ?? NO_SELECTIONS);
   return (
     <section className="card">
-      <div className="section-label mb-1.5">{brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</div>
-      <p className="text-[12.5px] leading-relaxed text-text">
-        <EnrichedText text={brief.body} entities={brief.entities} />
-      </p>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="section-label">{brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
+        <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-faint" title="Highlight 3-120 characters of the text, then click the pill to spawn a live mini-dashboard">
+          <Wand2 className="size-3 text-selection" /> highlight any phrase → Generate Context UI
+        </span>
+      </div>
+      <SelectionTrigger>
+        <p className="text-[12.5px] leading-relaxed text-text" data-testid="scenario-body">
+          <EnrichedText text={brief.body} entities={brief.entities} selections={selections} />
+        </p>
+      </SelectionTrigger>
       {brief.signals.length > 0 && (
         <ul className="mt-2.5 space-y-1">
           {brief.signals.map((sig) => (
@@ -304,24 +324,60 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
   );
 }
 
-/** Replaces enriched entity ids (and their longer labels) inside free text with inline pills. */
-function EnrichedText({ text, entities }: { text: string; entities: EnrichedEntity[] }) {
-  const { parts, byNeedle } = useMemo(() => {
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Replaces enriched entity ids (and their longer labels) inside free text with inline pills, and
+ * wraps every phrase the engineer explored in a cyan "Selection #n" provenance badge that links
+ * to its mini-dashboard on the canvas.
+ */
+function EnrichedText({ text, entities, selections = [] }: { text: string; entities: EnrichedEntity[]; selections?: Array<{ id: string; text: string; index: number }> }) {
+  const { parts, byNeedle, bySelection } = useMemo(() => {
     const byNeedle = new Map<string, EnrichedEntity>();
     for (const e of entities) {
       for (const needle of [e.id, e.label]) if (needle.length >= 6 && !byNeedle.has(needle)) byNeedle.set(needle, e);
     }
-    const needles = [...byNeedle.keys()].sort((a, b) => b.length - a.length);
-    if (!needles.length) return { parts: [text], byNeedle };
-    const re = new RegExp(`(${needles.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
-    return { parts: text.split(re), byNeedle };
-  }, [text, entities]);
+    const bySelection = new Map<string, { id: string; text: string; index: number }>();
+    for (const s of selections) bySelection.set(s.text.toLowerCase(), s);
+    // Selections first: an explored phrase is marked even when it overlaps an entity id.
+    const selectionNeedles = [...bySelection.values()].map((s) => s.text).sort((a, b) => b.length - a.length);
+    const entityNeedles = [...byNeedle.keys()].filter((n) => !bySelection.has(n.toLowerCase())).sort((a, b) => b.length - a.length);
+    const all = [...selectionNeedles.map(escapeRe), ...entityNeedles.map(escapeRe)];
+    if (!all.length) return { parts: [text], byNeedle, bySelection };
+    const re = new RegExp(`(${all.join("|")})`, selectionNeedles.length ? "gi" : "g");
+    return { parts: text.split(re), byNeedle, bySelection };
+  }, [text, entities, selections]);
   return (
     <>
       {parts.map((part, i) => {
+        if (part === undefined || part === "") return null;
+        const selection = bySelection.get(part.toLowerCase());
+        if (selection) return <SelectionBadge key={`sel-${part}-${i}`} selection={selection} text={part} />;
         const entity = byNeedle.get(part);
         return entity ? <EntityPill key={`${part}-${i}`} entity={{ ...entity, label: part }} inline /> : <Fragment key={i}>{part}</Fragment>;
       })}
     </>
+  );
+}
+
+/** Cyan provenance badge on an explored phrase; hovering it pulses the mini-dashboard it spawned. */
+function SelectionBadge({ selection, text }: { selection: { id: string; text: string; index: number }; text: string }) {
+  const setLinked = useWorkbench((s) => s.setLinkedSelection);
+  const mounted = useWorkbench((s) => s.miniDashboards.some((m) => m.id === selection.id));
+  const explore = useWorkbench((s) => s.exploreSelection);
+  return (
+    <button
+      type="button"
+      data-selection={selection.id}
+      onMouseEnter={() => setLinked(selection.id)}
+      onMouseLeave={() => setLinked(null)}
+      onClick={() => (mounted ? document.getElementById(`mini-${selection.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) : void explore(selection.text))}
+      title={mounted ? `Selection #${selection.index} · click to scroll to its mini-dashboard` : `Selection #${selection.index} · dismissed; click to generate it again`}
+      className={`inline-flex h-5 max-w-full items-center gap-1 rounded border px-1.5 align-middle font-mono text-[11px] transition-colors hover:brightness-125 ${mounted ? "border-selection/60 bg-selection/14 text-selection" : "border-selection/30 bg-selection/6 text-selection/70"}`}
+    >
+      <Sparkles className="size-3 shrink-0" />
+      <span className="truncate">{text}</span>
+      <span className="shrink-0 font-sans text-[9.5px] opacity-80">#{selection.index}</span>
+    </button>
   );
 }

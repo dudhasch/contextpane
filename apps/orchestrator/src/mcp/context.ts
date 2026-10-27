@@ -1,10 +1,16 @@
 import {
   SCENARIO_REGISTRY,
+  getCustomScenario,
+  isAnyScenarioId,
+  isCustomScenarioId,
   isScenarioId,
   scenarioForTenant,
+  type CanvasComponentType,
+  type CustomScenarioEntry,
   type ScenarioId,
   type ScenarioKind,
   type TenantId,
+  type WorkbenchScenarioId,
 } from "@contextpane/catalog";
 import type { AvdEstate, IacResult, NsgDrift } from "@contextpane/mcp-azure-iac";
 import type { ErpContract, ErpTenant, ErpTicket } from "@contextpane/mcp-erp";
@@ -21,11 +27,16 @@ import { sources, type McpDataSources } from "./clients.ts";
  * so hover → correlate → remediate never wait on Graph or ARM twice.
  */
 export interface CorrelationContext {
+  /** The built-in scenario the data, remediation template and invariants come from (the base of a custom ticket). */
   scenarioId: ScenarioId;
   kind: ScenarioKind;
   tenantId: TenantId;
-  /** Scenario id under its historic name: ERP ticket (INC-4092) or anomaly (ANOM-LIC-101). */
+  /** Workbench id: the ERP ticket (INC-4092), the anomaly (ANOM-LIC-101) or the unscripted ticket (CUSTOM-<hash>). */
   ticketId: string;
+  /** The unscripted ticket this context was gathered for; null for the built-in scenarios. */
+  custom: CustomScenarioEntry | null;
+  /** Cards this context renders, in canvas order (a custom ticket picks its own subset). */
+  components: CanvasComponentType[];
   erp: { tenant: ErpTenant; contract: ErpContract; ticket: ErpTicket | null };
   license: GraphResult<LicenseInventory> | null;
   policies: GraphResult<CaPolicySummary[]> | null;
@@ -50,16 +61,26 @@ const FRESH_MS = 30_000;
 const STALE_MAX_MS = 10 * 60_000;
 const cache = new Map<string, { at: number; value: Promise<CorrelationContext>; revalidating: boolean }>();
 
-/** Accepts a scenario id, or a tenant id (its ticket scenario), for older callers. */
-export function resolveScenarioId(value: string | undefined | null): ScenarioId {
-  if (isScenarioId(value)) return value;
+/** Accepts a scenario id (built-in or registered CUSTOM-<hash>), or a tenant id (its ticket scenario), for older callers. */
+export function resolveScenarioId(value: string | undefined | null): WorkbenchScenarioId {
+  if (isAnyScenarioId(value)) return value;
   return scenarioForTenant(value ?? "tenant-contoso-01");
 }
 
-/** Drops the cached context of one scenario, every scenario of a tenant, or everything. */
+/** Drops the cached context of one scenario (a custom ticket drops its base too), every scenario of a tenant, or everything. */
 export function invalidateContext(key?: string) {
   if (!key) return cache.clear();
-  if (isScenarioId(key)) return void cache.delete(key);
+  if (isScenarioId(key)) {
+    cache.delete(key);
+    for (const id of cache.keys()) if (isCustomScenarioId(id) && getCustomScenario(id)?.baseScenarioId === key) cache.delete(id);
+    return;
+  }
+  if (isCustomScenarioId(key)) {
+    cache.delete(key);
+    const base = getCustomScenario(key)?.baseScenarioId;
+    if (base) cache.delete(base);
+    return;
+  }
   for (const id of cache.keys()) if (isScenarioId(id) && SCENARIO_REGISTRY[id].tenantId === key) cache.delete(id);
 }
 
@@ -87,37 +108,44 @@ export async function gatherContext(scenarioOrTenant: string, options: { fresh?:
 
 const none = Promise.resolve(null);
 
-function load(scenarioId: ScenarioId): Promise<CorrelationContext> {
+function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
   return (async () => {
     const started = performance.now();
+    const custom = isCustomScenarioId(workbenchId) ? (getCustomScenario(workbenchId) ?? null) : null;
+    const scenarioId: ScenarioId = custom ? custom.baseScenarioId : (workbenchId as ScenarioId);
     const entry = SCENARIO_REGISTRY[scenarioId];
-    const tenantId = entry.tenantId;
-    const cards = new Set(entry.components);
-    const ticketScenario = entry.kind === "ticket";
+    const tenantId = custom?.tenantId ?? entry.tenantId;
+    const components = custom ? custom.components : entry.components;
+    const cards = new Set(components);
+    // A custom ticket gathers like a ticket: every source its cards need, plus licenses for the user hover.
+    const ticketScenario = entry.kind === "ticket" || Boolean(custom);
+    const intuneKey = scenarioId === "INC-4099" ? "INC-4099" : "ANOM-INT-309";
     const [erp, license, policies, signIns, caPosture, intune, drift, avd] = await Promise.all([
       sources.erp.getTenantContext(tenantId),
       // Ticket scenarios read licenses for the user hover even when they show no license card.
       cards.has("LicenseDriftCard") || ticketScenario ? sources.msgraph.getLicenseInventory(tenantId, scenarioId) : none,
       ticketScenario ? sources.msgraph.getConditionalAccessPolicies(tenantId) : none,
       ticketScenario ? sources.msgraph.getSignInEvents(tenantId, { top: 50 }) : none,
-      scenarioId === "ANOM-CA-204" ? sources.msgraph.getCaPosture(tenantId) : none,
-      scenarioId === "ANOM-INT-309" || scenarioId === "INC-4099" ? sources.msgraph.getIntuneDrift(scenarioId) : none,
+      scenarioId === "ANOM-CA-204" || (custom && cards.has("EntraSignInTimeline") && custom.extraction.intents.some((i) => i === "break-glass" || i === "legacy-auth")) ? sources.msgraph.getCaPosture(tenantId) : none,
+      scenarioId === "ANOM-INT-309" || scenarioId === "INC-4099" || (custom && cards.has("IntuneDriftCard")) ? sources.msgraph.getIntuneDrift(intuneKey) : none,
       cards.has("IaCDriftBanner") ? sources.azure.getNsgDrift(tenantId) : none,
       cards.has("IaCDriftBanner") ? sources.azure.getAvdEstate(tenantId) : none,
     ]);
     const used: Record<string, { source: string; fallbackReason?: string } | null> = { license, policies, signIns, caPosture, intune, drift, avd };
     return {
       scenarioId,
-      kind: entry.kind,
+      kind: custom ? "ticket" : entry.kind,
       tenantId,
-      ticketId: scenarioId,
-      erp: { tenant: erp.tenant, contract: erp.contract, ticket: ticketScenario ? erp.ticket : null },
+      ticketId: workbenchId,
+      custom,
+      components,
+      erp: { tenant: erp.tenant, contract: erp.contract, ticket: ticketScenario && entry.kind === "ticket" ? erp.ticket : null },
       license,
       policies,
       signIns,
       caPosture,
       intune,
-      workloadIdentity: scenarioId === "ANOM-APP-401" ? WORKLOAD_IDENTITY : null,
+      workloadIdentity: scenarioId === "ANOM-APP-401" || (custom && custom.extraction.intents.includes("workload-identity")) ? WORKLOAD_IDENTITY : null,
       drift,
       avd,
       groupsByUpn: groupsByUpn(scenarioId, tenantId),
@@ -158,7 +186,7 @@ function groupsByUpn(scenarioId: ScenarioId, tenantId: string): Map<string, stri
 export function contextForModel(ctx: CorrelationContext) {
   const { ticket, contract, tenant } = ctx.erp;
   return {
-    scenario: { scenarioId: ctx.scenarioId, kind: ctx.kind, title: SCENARIO_REGISTRY[ctx.scenarioId].title, cards: SCENARIO_REGISTRY[ctx.scenarioId].components },
+    scenario: { scenarioId: ctx.ticketId, kind: ctx.kind, title: ctx.custom?.title ?? SCENARIO_REGISTRY[ctx.scenarioId].title, cards: ctx.components, ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}) },
     tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, entraTenantId: tenant.entraTenantId, verifiedDomain: tenant.verifiedDomain },
     ...(ticket
       ? {
@@ -279,7 +307,7 @@ export function contextForModel(ctx: CorrelationContext) {
 export function contextForCorrelation(ctx: CorrelationContext, datasets: DatasetDescriptor[]) {
   const { ticket, contract, tenant } = ctx.erp;
   return {
-    scenario: { scenarioId: ctx.scenarioId, kind: ctx.kind, title: SCENARIO_REGISTRY[ctx.scenarioId].title, cards: SCENARIO_REGISTRY[ctx.scenarioId].components },
+    scenario: { scenarioId: ctx.ticketId, kind: ctx.kind, title: ctx.custom?.title ?? SCENARIO_REGISTRY[ctx.scenarioId].title, cards: ctx.components, ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}) },
     tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, verifiedDomain: tenant.verifiedDomain },
     ...(ticket
       ? {

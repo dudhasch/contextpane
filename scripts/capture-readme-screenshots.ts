@@ -1,13 +1,17 @@
 /**
- * Captures the five README screenshots (1600x900) from the running workbench with a
+ * Captures the README screenshots (1600x900) from the running workbench with a
  * headless Edge/Chrome driven over the DevTools protocol (no extra dependencies).
  *
- *   bun run scripts/capture-readme-screenshots.ts [--url http://localhost:5173] [--out docs/screenshots]
+ *   bun run scripts/capture-readme-screenshots.ts [--url http://localhost:5173] [--out docs/screenshots] [--closure]
  *
  * Needs the orchestrator (:4000) and the web app (:5173) running. Shot 3 runs a real
  * Tier 3 remediation for INC-4092 (stages the local fix/INC-4092-contoso-remediation
  * branch, never approves); shot 5 pins the ANOM-CA-204 canvas as a View Recipe, switches
- * to ANOM-INT-309 through Tier 0 and releases the pin again.
+ * to ANOM-INT-309 through Tier 0 and releases the pin again. Shot 6 highlights a phrase in
+ * the INC-4092 ticket and spawns its ContextualMiniDashboard; shot 7 triages an unscripted
+ * ticket from the composer. With --closure, shot 8 approves INC-4092 as Emergency Break-Glass
+ * (a live lab write in LIVE_CLOUD_MODE), captures the RESOLVED & VERIFIED badge with the
+ * auto-drafted PSA resolution note, then resets the drift.
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +23,7 @@ const arg = (name: string, fallback: string) => {
   return i > 0 && process.argv[i + 1] ? process.argv[i + 1]! : fallback;
 };
 const URL_BASE = arg("--url", "http://localhost:5173");
+const CLOSURE = process.argv.includes("--closure");
 const OUT = resolve(arg("--out", "docs/screenshots"));
 const PORT = 9333;
 const WIDTH = 1600;
@@ -181,6 +186,75 @@ try {
   await cdp.key("Escape");
   await cdp.key("p");
   await sleep(300);
+
+  /* 6 · highlight any text → Generate Context UI: a cyan mini-dashboard spawned from "temporary RDP" */
+  await cdp.key("1");
+  await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
+  await sleep(800);
+  const trigger = await cdp.eval<{ x: number; y: number } | null>(`(() => {
+    const surface = document.querySelector('[data-testid="selection-surface"]');
+    if (!surface) return null;
+    surface.scrollIntoView({ block: "center" });
+    const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+    let node, hit = null;
+    while ((node = walker.nextNode())) { const i = node.textContent.indexOf("temporary RDP"); if (i >= 0) { hit = { node, i }; break; } }
+    if (!hit) return null;
+    const range = document.createRange(); range.setStart(hit.node, hit.i); range.setEnd(hit.node, hit.i + "temporary RDP".length);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    surface.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    return true;
+  })()`);
+  if (!trigger) throw new Error("ticket text not found for the selection shot");
+  await cdp.waitFor(`document.querySelector('[data-testid="selection-trigger"]')`, 5_000, "the selection trigger pill");
+  await sleep(400);
+  await cdp.eval(`document.querySelector('[data-testid="selection-trigger"]').click(), true`);
+  await cdp.waitFor(`document.querySelector('[data-mini-dashboard]') && !document.querySelector('[data-testid="mini-dashboard-loading"]')`, 30_000, "the mini-dashboard");
+  await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
+  const badge = await cdp.eval<{ x: number; y: number } | null>(`(() => {
+    const el = document.querySelector('[data-selection]');
+    if (!el) return null;
+    el.scrollIntoView({ block: "center" });
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()`);
+  if (badge) {
+    await cdp.mouseTo(badge.x - 3, badge.y);
+    await sleep(80);
+    await cdp.mouseTo(badge.x, badge.y);
+    await sleep(350);
+  }
+  await cdp.shot(join(OUT, "06-highlight-generate-context-ui.png"));
+
+  /* 7 · unscripted ticket: the composer triages the ERP-sync sample live into CUSTOM-<hash> */
+  await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
+  await cdp.key("n");
+  await cdp.waitFor(`document.querySelector('[data-sample="erp-secret"]')`, 10_000, "the ticket composer");
+  await cdp.eval(`document.querySelector('[data-sample="erp-secret"]').click(), true`);
+  await sleep(300);
+  await cdp.eval(`document.querySelector('[data-testid="composer-submit"]').click(), true`);
+  await cdp.waitFor(`document.querySelector('[data-testid="tenant-breadcrumb"]')?.innerText.includes("#CUSTOM-") && document.querySelectorAll("section[data-component]").length >= 1 && !document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("correlating")`, 90_000, "the custom ticket canvas");
+  await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
+  await cdp.eval(`document.querySelector('[data-testid="scenario-pane"]').scrollTo({ top: 0 }), true`);
+  await sleep(600);
+  await cdp.shot(join(OUT, "07-unscripted-ticket-triage.png"));
+
+  /* 8 (--closure) · approve INC-4092 as Break-Glass → RESOLVED & VERIFIED, PSA resolution note; then reset the drift */
+  if (CLOSURE) {
+    await cdp.key("1");
+    await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
+    await sleep(500);
+    await cdp.key("f");
+    await cdp.waitFor(`/Verified Safe|Verified With Warnings/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
+    await cdp.key("x");
+    await cdp.waitFor(`document.querySelector('[data-testid="resolution-note"]')`, 60_000, "the PSA resolution note");
+    await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 14_000, "the toasts to clear");
+    await cdp.eval(`document.querySelector('[data-testid="scenario-pane"]').scrollTo({ top: 0 }), true`);
+    await sleep(600);
+    await cdp.shot(join(OUT, "08-ticket-closure-psa-note.png"));
+    await cdp.key("0");
+    await cdp.waitFor(`document.body.innerText.includes("Demo drift restored")`, 60_000, "the drift reset");
+    await sleep(500);
+  }
   cdp.close();
 } finally {
   browser.kill();

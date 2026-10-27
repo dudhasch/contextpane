@@ -10,6 +10,12 @@
     GET /api/audit and GET /api/telemetry/stats for one scenario, then prints a formatted table with
     status, latency, router tier/provider and a schema verdict.
 
+    Live agency: POST /api/explore-selection (highlight → ContextualMiniDashboard, rows under
+    ptr://<scenario>/selection/<hash>), POST /api/tickets/triage-custom (an unscripted ticket becomes a
+    CUSTOM-<hash> scenario with ptr://custom-<hash>/... pointers, brief, correlate, formal proof and timeline),
+    and after a break-glass approval GET /api/tickets/:id/resolution-note + POST /api/tickets/close
+    (ticket.closed in the audit ledger).
+
     With LIVE_CLOUD_MODE=true a -Mode break-glass approval writes the scenario's lab objects (license
     extension, Conditional Access, Intune, and INC-4092's NSG over ARM) and commits a reconcile
     commit on the fix branch; the reset-drift check right after it puts them back, so a run leaves
@@ -54,6 +60,15 @@ $ScenarioCards = @{
     'ANOM-APP-401' = @('EntraSignInTimeline')
 }
 $TenantId = $(if ($ScenarioId -eq 'INC-4099') { 'tenant-fabrikam-02' } else { 'tenant-contoso-01' })
+# A phrase an engineer would highlight in each scenario's text, and the dataset it must resolve to.
+$SelectionProbe = @{
+    'INC-4092'     = @{ text = 'port 3389'; kind = 'azure-nsg-rules' }
+    'INC-4099'     = @{ text = 'uncompliant device'; kind = 'intune-devices' }
+    'ANOM-LIC-101' = @{ text = 'disabled accounts'; kind = 'entra-users' }
+    'ANOM-CA-204'  = @{ text = 'SG-BreakGlass-Accounts'; kind = 'entra-ca-policies' }
+    'ANOM-INT-309' = @{ text = 'ASR'; kind = 'intune-settings' }
+    'ANOM-APP-401' = @{ text = 'expired client secret'; kind = 'workload-identity' }
+}
 $results = [System.Collections.Generic.List[object]]::new()
 
 function Invoke-Check {
@@ -130,9 +145,11 @@ if ($health) {
 $null = Invoke-Check -Name scenarios -Method GET -Path '/api/scenarios' -Schema {
     param($r)
     $i = @()
-    if (@($r.scenarios).Count -ne 6) { $i += "expected 6 scenarios, got $(@($r.scenarios).Count)" }
-    if (@($r.scenarios | Where-Object kind -eq 'ticket').Count -ne 2) { $i += 'expected 2 tickets' }
-    if (@($r.scenarios | Where-Object kind -eq 'anomaly').Count -ne 4) { $i += 'expected 4 anomalies' }
+    $builtIn = @($r.scenarios | Where-Object { -not $_.custom })
+    if ($builtIn.Count -ne 6) { $i += "expected 6 built-in scenarios, got $($builtIn.Count)" }
+    if (@($builtIn | Where-Object kind -eq 'ticket').Count -ne 2) { $i += 'expected 2 built-in tickets' }
+    if (@($builtIn | Where-Object kind -eq 'anomaly').Count -ne 4) { $i += 'expected 4 anomalies' }
+    foreach ($c in @($r.scenarios | Where-Object custom)) { if ($c.scenarioId -notmatch '^CUSTOM-[A-Z0-9]{4,12}$' -or $c.kind -ne 'ticket') { $i += "custom scenario $($c.scenarioId) malformed" } }
     $i
 }
 
@@ -274,17 +291,43 @@ if (-not $SkipRemediate) {
             }
             $i
         }
+        # --- Live agency 4: end-to-end closure (a converged scenario drafts its PSA note, then closes) ---
+        if ($Mode -eq 'break-glass') {
+            $null = Invoke-Check -Name resolution-note -Method GET -Path "/api/tickets/$ScenarioId/resolution-note" -Schema {
+                param($r)
+                $n = $r.note
+                $i = @()
+                if (-not $n) { return @('note missing') }
+                if ($n.status -ne 'RESOLVED & VERIFIED') { $i += "status $($n.status)" }
+                if (-not $n.customerSummary) { $i += 'customerSummary empty' }
+                $trail = @($n.technicalAuditTrail) -join "`n"
+                foreach ($k in 'Formal invariants', 'Canary probes', 'Git:', 'Inverse rollback', 'Pre-flight') { if ($trail -notmatch [regex]::Escape($k)) { $i += "audit trail lacks '$k'" } }
+                if ($trail -notmatch 'CONVERGED') { $i += 'canary trace not CONVERGED' }
+                if ($n.markdown -notmatch '## Technical audit trail') { $i += 'markdown lacks audit trail' }
+                $i
+            }
+            $null = Invoke-Check -Name ticket-close -Method POST -Path '/api/tickets/close' -Body @{ scenarioId = $ScenarioId } -Schema {
+                param($r)
+                $i = @()
+                if (-not $r.ok) { $i += 'close not ok' }
+                if ($r.note.status -ne 'CLOSED') { $i += "note status $($r.note.status)" }
+                if ($r.audit.actionType -ne 'ticket-closed') { $i += "audit $($r.audit.actionType) != ticket-closed" }
+                if ($r.audit.detail -notmatch 'ticket\.closed') { $i += 'audit detail lacks ticket.closed' }
+                $i
+            }
+        }
         $null = Invoke-Check -Name reset -Method POST -Path '/api/lab/reset-drift' -Body @{ scenarioId = $ScenarioId } -Schema {
             param($r)
             $i = @()
             if (-not $r.ok) { $i += "reset failed: $(($r.results.failed | ForEach-Object { $_.id }) -join ', ')" }
             $i
         }
-        $null = Invoke-Check -Name audit -Method GET -Path '/api/audit?limit=5' -Schema {
+        $null = Invoke-Check -Name audit -Method GET -Path '/api/audit?limit=8' -Schema {
             param($r)
             $i = @()
             $types = @($r.entries.actionType)
-            foreach ($t in 'remediation-verified', 'hitl-approval', 'drift-reset') { if ($t -notin $types) { $i += "audit lacks $t" } }
+            $expected = @('remediation-verified', 'hitl-approval', 'drift-reset') + $(if ($Mode -eq 'break-glass') { @('ticket-closed') } else { @() })
+            foreach ($t in $expected) { if ($t -notin $types) { $i += "audit lacks $t" } }
             $i
         }
     }
@@ -347,6 +390,103 @@ $null = Invoke-Check -Name dataplane-pii -Method GET -Path "/api/dataplane/$Scen
     if ($null -eq $r.piiMetrics) { $i += 'piiMetrics missing' }
     elseif ($r.piiMetrics.zeroRawPiiInLlmPrompt -ne $true) { $i += 'zeroRawPiiInLlmPrompt != true' }
     $i
+}
+
+# --- Live agency 1: highlight any text -> ContextualMiniDashboard --------------------------------
+$probe = $SelectionProbe[$ScenarioId]
+$explore = Invoke-Check -Name explore-selection -Method POST -Path '/api/explore-selection' -Body @{ scenarioId = $ScenarioId; selectedText = $probe.text } -BudgetMs 8000 -Schema {
+    param($r)
+    $c = $r.card
+    $i = @()
+    if (-not $c) { return @('card missing') }
+    if ($c.provenanceCategory -ne 'selection') { $i += "provenanceCategory $($c.provenanceCategory) != selection" }
+    if ($c.selectionText -ne $probe.text) { $i += "selectionText '$($c.selectionText)'" }
+    if (@($c.kpis).Count -lt 2 -or @($c.kpis).Count -gt 4) { $i += "kpis $(@($c.kpis).Count) not 2-4" }
+    if (@($c.breakdown).Count -lt 2 -or @($c.breakdown).Count -gt 5) { $i += "breakdown $(@($c.breakdown).Count) not 2-5" }
+    foreach ($k in $c.kpis) { if ($k.tone -notin @('default', 'warning', 'critical', 'success')) { $i += "kpi tone $($k.tone)" } }
+    if ($c.rowsPtr -notlike "ptr://$($ScenarioId.ToLower())/selection/*") { $i += "rowsPtr $($c.rowsPtr)" }
+    if ($c.rowsPtr -ne $r.dataPtr) { $i += 'rowsPtr != dataPtr' }
+    if (@($c.rows).Count -lt 1) { $i += 'no rows matched' }
+    if (@($c.rows).Count -ne $r.slice.rowCount) { $i += "rows $(@($c.rows).Count) != slice.rowCount $($r.slice.rowCount)" }
+    if ($r.slice.kind -ne $probe.kind) { $i += "slice $($r.slice.kind) != $($probe.kind)" }
+    if (-not $c.sourceQuery) { $i += 'sourceQuery missing' }
+    if (-not $c.suggestedAction.scriptPreview) { $i += 'suggestedAction.scriptPreview missing' }
+    if ($r.tier -ne 'Tier 1B') { $i += "tier $($r.tier) != Tier 1B" }
+    if ($r.telemetry.endpoint -ne '/api/explore-selection') { $i += 'telemetry endpoint' }
+    $i
+}
+if ($explore) {
+    Write-Host "  explore: '$($probe.text)' -> $($explore.slice.kind) · $($explore.slice.rowCount) rows · $($explore.modelId) · $($explore.tokenCount) tok · $($explore.latencyMs) ms · $($explore.dataPtr)" -ForegroundColor DarkGray
+    $selPtr = [uri]::EscapeDataString($explore.dataPtr)
+    $null = Invoke-Check -Name explore-ptr -Method GET -Path "/api/dataplane?ptr=$selPtr" -Schema {
+        param($r)
+        $i = @()
+        if (@($r.rows).Count -ne @($explore.card.rows).Count) { $i += "pointer rows $(@($r.rows).Count) != card rows $(@($explore.card.rows).Count)" }
+        if ($r.descriptor.selectedText -ne $probe.text) { $i += 'descriptor.selectedText mismatch' }
+        if ($r.descriptor.aggregates.PSObject.Properties.Name -contains 'upn') { $i += 'descriptor aggregates upn' }
+        $i
+    }
+}
+
+# --- Live agency 2: unscripted ticket -> CUSTOM-<hash> ---------------------------------------
+$samples = Invoke-RestMethod -Method GET -Uri "$BaseUrl/api/tickets/samples" -TimeoutSec $TimeoutSec
+$sample = $samples.samples | Where-Object id -eq 'avd-diego' | Select-Object -First 1
+$triage = Invoke-Check -Name triage-custom -Method POST -Path '/api/tickets/triage-custom' -Body @{ title = $sample.title; body = $sample.body; customerName = $sample.customerName } -Schema {
+    param($r)
+    $i = @()
+    if ($r.scenario.scenarioId -notmatch '^CUSTOM-[A-Z0-9]{4,12}$') { $i += "scenarioId $($r.scenario.scenarioId)" }
+    if ($r.brief.scenarioId -ne $r.scenario.scenarioId) { $i += 'brief.scenarioId mismatch' }
+    if ($r.extraction.baseScenarioId -ne 'INC-4092') { $i += "base $($r.extraction.baseScenarioId) != INC-4092" }
+    if ($r.extraction.tenantId -ne 'tenant-contoso-01') { $i += "tenant $($r.extraction.tenantId)" }
+    if (@($r.extraction.entities).Count -lt 4) { $i += "only $(@($r.extraction.entities).Count) entities extracted" }
+    if (@($r.extraction.entities | Where-Object resolvedTo).Count -lt 3) { $i += 'fewer than 3 entities resolved live' }
+    if (-not ($r.extraction.entities | Where-Object { $_.type -eq 'upn' -and $_.resolvedTo -like 'diego.siciliani*' })) { $i += 'Diego not resolved to a live UPN' }
+    if (-not ($r.extraction.entities | Where-Object id -eq 'AADSTS53003')) { $i += 'AADSTS53003 not extracted' }
+    if ($r.extraction.intents -notcontains 'nsg') { $i += 'nsg intent missing' }
+    if ($r.extraction.components -notcontains 'IaCDriftBanner') { $i += 'IaCDriftBanner not selected' }
+    if (@($r.dataPtrs).Count -lt 1) { $i += 'no ptr://custom pointers' }
+    foreach ($p in $r.dataPtrs) { if ($p -notlike "ptr://$($r.scenario.scenarioId.ToLower())/*") { $i += "pointer $p" } }
+    if (-not $r.verification.formal.passed) { $i += 'formal invariants failed' }
+    if (-not $r.verification.idempotency.passed) { $i += 'idempotency failed' }
+    if ($r.telemetry.tier -ne 'Tier 0' -or $r.telemetry.tokensUsed.total -ne 0) { $i += 'extraction not Tier 0 / 0 tokens' }
+    $i
+}
+if ($triage) {
+    $customId = $triage.scenario.scenarioId
+    Write-Host "  triage: $customId · base $($triage.extraction.baseScenarioId) · $(@($triage.extraction.entities).Count) entities ($(@($triage.extraction.entities | Where-Object resolvedTo).Count) live) · intents $($triage.extraction.intents -join ',') · $($triage.latencyMs) ms" -ForegroundColor DarkGray
+    $null = Invoke-Check -Name custom-brief -Method GET -Path "/api/scenarios/$customId/brief" -Schema {
+        param($r)
+        $i = @()
+        if ($r.brief.kind -ne 'ticket') { $i += "kind $($r.brief.kind)" }
+        if ($r.brief.title -ne $sample.title) { $i += 'title mismatch' }
+        if (@($r.brief.steps).Count -lt 1) { $i += 'no steps' }
+        foreach ($e in $r.brief.entities) { if ($triage.scenario.custom.components -notcontains $e.target) { $i += "entity $($e.id) targets $($e.target)" } }
+        if ($null -eq $r.brief.extraction) { $i += 'brief.extraction missing' }
+        $i
+    }
+    $null = Invoke-Check -Name custom-correlate -Method POST -Path '/api/correlate' -Body @{ scenarioId = $customId } -Schema {
+        param($r)
+        $i = Test-Layout $r.layout
+        if ($r.layout.ticketId -ne $customId) { $i += "layout.ticketId $($r.layout.ticketId)" }
+        $types = @($r.layout.components | ForEach-Object type)
+        foreach ($t in $triage.scenario.custom.components) { if ($types -notcontains $t) { $i += "missing $t" } }
+        foreach ($c in $r.layout.components) { foreach ($ptr in $c.dataPtrs.PSObject.Properties.Value) { if ($ptr -notlike "ptr://$($customId.ToLower())/*") { $i += "$($c.type) pointer $ptr" } } }
+        $i
+    }
+    $null = Invoke-Check -Name custom-formal -Method GET -Path "/api/formal/$customId" -Schema {
+        param($r)
+        $i = @()
+        if (-not $r.formal.passed) { $i += 'formal failed for custom ticket' }
+        if ($r.baseScenarioId -ne 'INC-4092') { $i += "baseScenarioId $($r.baseScenarioId)" }
+        $i
+    }
+    $null = Invoke-Check -Name custom-timeline -Method GET -Path "/api/timeline/$customId" -Schema {
+        param($r)
+        $i = @()
+        if ($r.timeline.scenarioId -ne $customId) { $i += 'timeline not re-keyed to the custom ticket' }
+        if (@($r.timeline.slices).Count -lt 4) { $i += 'fewer than 4 slices' }
+        $i
+    }
 }
 
 $null = Invoke-Check -Name reconcile-commercial -Method GET -Path "/api/reconcile/commercial/$ScenarioId" -Schema {

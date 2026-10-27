@@ -17,7 +17,7 @@ import type { CorrelationContext } from "../mcp/context.ts";
 
 const DEMO_PREFIX = "[ContextPane-Demo] ";
 const short = (name: string) => name.replace(DEMO_PREFIX, "");
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const plural = (n: number, word: string) => `${n} ${n === 1 ? word : word.endsWith("y") ? `${word.slice(0, -1)}ies` : `${word}s`}`;
 
 function entity(
   id: string,
@@ -333,7 +333,7 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
   const { tenant, contract, ticket } = ctx.erp;
   const { summary, steps } = summaryAndSteps(ctx);
   const base = {
-    scenarioId: ctx.scenarioId,
+    scenarioId: ctx.ticketId,
     kind: ctx.kind,
     tenantId: ctx.tenantId,
     tenantName: tenant.displayName,
@@ -342,7 +342,9 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     steps,
     entities: scenarioEntities(ctx).slice(0, 24),
     sources: ctx.sourcesUsed,
+    extraction: null,
   };
+  if (ctx.custom) return buildCustomBrief(ctx, base);
   if (ticket) {
     return {
       ...base,
@@ -383,8 +385,68 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
 
 /** Entity ids that spawned a card, for its "Triggered by" badge. */
 export function triggeredBy(ctx: CorrelationContext, type: CanvasComponentType): string[] {
-  return scenarioEntities(ctx)
+  return (ctx.custom ? customEntities(ctx) : scenarioEntities(ctx))
     .filter((e) => e.target === type)
     .map((e) => e.id)
     .slice(0, 8);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Unscripted tickets                                                          */
+/* -------------------------------------------------------------------------- */
+
+const EXTRACTED_TARGET: Record<string, CanvasComponentType> = { licensing: "LicenseDriftCard", identity: "EntraSignInTimeline", intune: "IntuneDriftCard", azure: "IaCDriftBanner" };
+
+/**
+ * The pills of a custom ticket: the base scenario's entities for the cards it renders,
+ * then what the extractor found in the pasted text. Extracted mentions are hoverable only
+ * when they resolved to a live object the hover tier knows (a user, a policy, a code).
+ */
+export function customEntities(ctx: CorrelationContext): EnrichedEntity[] {
+  const custom = ctx.custom!;
+  const cards = new Set(custom.components);
+  const inherited = scenarioEntities(ctx).filter((e) => cards.has(e.target));
+  const seen = new Set(inherited.map((e) => e.id.toLowerCase()));
+  const extracted: EnrichedEntity[] = [];
+  for (const x of custom.extraction.entities) {
+    const id = x.resolvedTo ?? x.id;
+    if (seen.has(id.toLowerCase())) continue;
+    const target = EXTRACTED_TARGET[x.category];
+    if (!target || !cards.has(target)) continue;
+    const type: EnrichedEntity["type"] = x.type === "name" ? "upn" : x.type === "keyword" ? "setting" : x.type;
+    const hoverable = Boolean(x.resolvedTo) && (type === "upn" || type === "errorCode" || type === "policy" || type === "group" || type === "sku" || type === "resource");
+    seen.add(id.toLowerCase());
+    extracted.push(entity(id, type, x.category, target, { label: x.label, hoverable, note: x.resolvedTo ? "matched live" : "from ticket text" }));
+  }
+  return [...extracted, ...inherited].slice(0, 24);
+}
+
+function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "title" | "status" | "openedAt" | "origin" | "body" | "signals" | "requester" | "contract" | "infrastructureSpec" | "timeline" | "attachments">): ScenarioBrief {
+  const custom = ctx.custom!;
+  const cards = new Set(custom.components);
+  const inheritedSteps = base.steps.filter((s) => cards.has(s.target));
+  const x = custom.extraction;
+  const matched = x.entities.filter((e) => e.resolvedTo);
+  const summary = `Unscripted ticket triaged live against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "no intent keywords"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`.slice(0, 400);
+  return {
+    ...base,
+    summary,
+    steps: inheritedSteps.length ? inheritedSteps : base.steps.slice(0, 1),
+    entities: customEntities(ctx),
+    extraction: x,
+    title: custom.ticket.title,
+    status: "Open",
+    openedAt: custom.createdAt,
+    origin: `Unscripted ticket · ${custom.ticket.customerName ?? ctx.erp.tenant.displayName} · base pattern ${ctx.scenarioId}`,
+    body: custom.ticket.body,
+    signals: [
+      { label: "Entity & intent extraction", value: `${plural(x.entities.length, "entity")} found, ${matched.length} resolved live · intents: ${x.intents.join(", ") || "none"}`, category: "identity", source: "mcp-msgraph · users, policies, devices · mcp-azure-iac · NSG" },
+      { label: "Base pattern", value: x.rationale, category: "identity", source: `scenario ${ctx.scenarioId}` },
+    ],
+    requester: null,
+    contract: { contractId: ctx.erp.contract.contractId, title: ctx.erp.contract.title, lines: ctx.erp.contract.lines.map((l) => ({ description: l.description, skuPartNumber: l.skuPartNumber, quantity: l.quantity })), terms: ctx.erp.contract.terms },
+    infrastructureSpec: null,
+    timeline: [{ at: custom.createdAt, actor: custom.ticket.customerName ?? "Engineer", note: "Ticket pasted into the unscripted composer and triaged live" }],
+    attachments: [],
+  };
 }

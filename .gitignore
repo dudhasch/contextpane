@@ -17,6 +17,7 @@ data/recipes.json
 data/hover-cache.json
 data/audit-log.json
 data/remediations/
+data/custom-scenarios.json
 data/router-debug.jsonl
 data/test-voice-command.*
 .contextpane/

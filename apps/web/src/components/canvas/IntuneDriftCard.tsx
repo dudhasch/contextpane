@@ -1,10 +1,41 @@
 import { MonitorCog, Wrench } from "lucide-react";
+import { useCallback } from "react";
 import type { IntuneDevice, IntuneDriftCard as Props } from "@contextpane/catalog";
 import { fmtTimeUtc } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, type Tone } from "../ui/Pill";
 import { CardShell, DataTable, Stat } from "./CardShell";
+import { FilterChips, IdentityCell, rowHighlightClass, useStatusFilter, type RowStatus } from "./TableFilter";
+
+const classifyDevice = (d: IntuneDevice): RowStatus => (d.complianceState === "Compliant" ? "good" : "bad");
+
+/** Devices tab: status chips and clickable device / user cells that highlight the identity across the canvas. */
+function DevicesTable({ devices }: { devices: IntuneDevice[] }) {
+  const classify = useCallback(classifyDevice, []);
+  const { chip, setChip, counts, filtered } = useStatusFilter(devices, classify);
+  const rowFilter = useWorkbench((s) => s.rowFilter);
+  return (
+    <div>
+      <FilterChips chip={chip} counts={counts} onChange={setChip} testId="intune-filter-chips" />
+      <DataTable
+        head={["Device", "User", "Compliance", "Last check-in", "Detail"]}
+        rowClassName={(i) => rowHighlightClass(rowFilter, { upn: filtered[i]?.upn ?? null, deviceName: filtered[i]?.deviceName ?? null })}
+        rows={filtered.map((d) => [
+          <IdentityCell kind="device" value={d.deviceName}>
+            <span className="font-mono">{d.deviceName}</span>
+          </IdentityCell>,
+          <IdentityCell kind="upn" value={d.upn}>
+            <span className="font-mono text-[10.5px] text-muted">{d.upn.split("@")[0]}</span>
+          </IdentityCell>,
+          <Pill tone={COMPLIANCE_TONE[d.complianceState]}>{d.complianceState}</Pill>,
+          <span className="font-mono text-faint">{fmtTimeUtc(d.lastCheckIn)}</span>,
+          <span className="text-[11px] text-muted">{d.detail}</span>,
+        ])}
+      />
+    </div>
+  );
+}
 
 const COMPLIANCE_TONE: Record<IntuneDevice["complianceState"], Tone> = {
   Compliant: "healthy",
@@ -61,16 +92,7 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
     >
       {(tab) =>
         tab === "devices" ? (
-          <DataTable
-            head={["Device", "User", "Compliance", "Last check-in", "Detail"]}
-            rows={props.devices.map((d) => [
-              <span className="font-mono">{d.deviceName}</span>,
-              <span className="font-mono text-[10.5px] text-muted">{d.upn.split("@")[0]}</span>,
-              <Pill tone={COMPLIANCE_TONE[d.complianceState]}>{d.complianceState}</Pill>,
-              <span className="font-mono text-faint">{fmtTimeUtc(d.lastCheckIn)}</span>,
-              <span className="text-[11px] text-muted">{d.detail}</span>,
-            ])}
-          />
+          <DevicesTable devices={props.devices} />
         ) : (
           <div className="space-y-2">
             {props.errorMeaning && <div className="rounded-md border border-meta/40 bg-meta/8 px-2.5 py-1.5 text-[11.5px] text-text">{props.errorMeaning}</div>}

@@ -20,8 +20,10 @@ verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 | **1 · Ticket mode + inline hover.** INC-4092's left pane opens with the Summary & Resolution Plan and the *Detected & Enriched Context* pills, coloured by provenance (amber licensing, rose identity / CA, violet Intune, teal Azure). Hovering Lynne's UPN opens the `HoverDiagnosticPopover` from the Muse Glimmer 30B cache: assigned vs expected SKU, assignment state, group memberships and the last AADSTS53003 block with its policy, plus `[Inspect Blocking CA Policy]` and `[Stage License Fix]`. | **2 · IaC diff.** The live `nsg-contoso-avd-hostpool-01` in Azure against `demo-iac/main.tf`: tag drift plus a rogue RDP rule open to `*`. |
 | ![Tier 3 approval drawer with Path A copy and dry-run proof and Path B with the Break-Glass / GitOps switch](docs/screenshots/03-tier3-approval-drawer.png) | ![ANOM-CA-204 tenant anomaly with the Conditional Access card expanded on its policies](docs/screenshots/04-tenant-anomaly-ca-policy.png) |
 | **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle and the pre-flight (PowerShell AST, static `-WhatIf` proof, `terraform fmt` + `validate`) says **Verified Safe**. Path A copies the script or the Terraform with a `[Dry-Run (-WhatIf) Verified]` badge; Path B approves it as **Emergency Break-Glass** (live write + reconcile commit) or **Pure GitOps** (PR and sandbox plan only). The fix is staged on `fix/INC-4092-contoso-remediation`. | **4 · Tenant anomaly.** ANOM-CA-204: step 1 of the plan expands the Conditional Access card on its policy tab. CA-001 lacks the break-glass exclusion and CA-004 is still Report-Only; the CodeLens in the card header (`conditional-access/CA-001.json:L9-L11`) opens the diff against the golden baseline. |
-| ![ANOM-INT-309 hydrated from a pinned recipe with 0 LLM tokens, System & Audit drawer open](docs/screenshots/05-recipe-switch-system-audit.png) | |
-| **5 · Zero-token recipe switch.** The canvas pinned on ANOM-CA-204 re-hydrates ANOM-INT-309 (ASR rule in Audit, firewall conflict on 11 devices) through Tier 0 with 0 LLM tokens; the System & Audit drawer tallies the router savings per tier. | |
+| ![ANOM-INT-309 hydrated from a pinned recipe with 0 LLM tokens, System & Audit drawer open](docs/screenshots/05-recipe-switch-system-audit.png) | ![A cyan ContextualMiniDashboard spawned from the highlighted phrase "temporary RDP" in the INC-4092 ticket](docs/screenshots/06-highlight-generate-context-ui.png) |
+| **5 · Zero-token recipe switch.** The canvas pinned on ANOM-CA-204 re-hydrates ANOM-INT-309 (ASR rule in Audit, firewall conflict on 11 devices) through Tier 0 with 0 LLM tokens; the System & Audit drawer tallies the router savings per tier. | **6 · Highlight any text → Generate Context UI.** The engineer highlighted *temporary RDP* in the ticket; the orchestrator sliced the live NSG read (`ptr://inc-4092/selection/<hash>`) and `muse-spark-1.3` composed the cyan `ContextualMiniDashboard`: KPIs, breakdown, the rogue rule row and a targeted `Remove-AzNetworkSecurityRuleConfig`. The cyan *Selection #1* badge in the text pulses the card. |
+| ![An unscripted ticket pasted into the composer, triaged live into CUSTOM-<hash>](docs/screenshots/07-unscripted-ticket-triage.png) | ![INC-4092 after a Break-Glass approval: RESOLVED & VERIFIED badge, every step checked, the auto-drafted Customer & PSA Resolution Note](docs/screenshots/08-ticket-closure-psa-note.png) |
+| **7 · Unscripted ticket.** *ERP sync app failing with expired secret AADSTS7000222 and contractor still listed as owner* pasted into `[+ Triage Unscripted Ticket]`: the Tier 0 entity & intent extractor resolves the SPN, the owner UPN and the error code against the live tenant, registers `CUSTOM-<hash>` with `ptr://custom-<hash>/…` pointers and inherits the ANOM-APP-401 pattern (bundle, invariants, timeline). | **8 · End-to-end closure.** After *Approve · Execute Live & Reconcile* the status badge turns `RESOLVED & VERIFIED ✓`, the plan is checked off and the *Customer & PSA Resolution Note* is drafted from the ledger: formal invariants, canary probes, Git branch @ commit, archived `f⁻¹`. *Mark Ticket Closed in PSA* logs `ticket.closed`. |
 
 Screenshots are 1600×900 captures of the live workbench (`bun run scripts/capture-readme-screenshots.ts`).
 
@@ -68,6 +70,38 @@ Four upgrades, all kept off the main canvas cards (see `DESIGN.md`):
 
 - **Intune CSP-IR + Proactive Remediation verifier:** Intune settings in INC-4099 (`0x87D1FDE8`) and ANOM-INT-309 now carry `cspUri` (`./Device/Vendor/MSFT/BitLocker/EncryptionMethodByDriveType`, `./Vendor/MSFT/Policy/Config/Defender/AttackSurfaceReductionRules`), `registryPath` (`HKLM\SOFTWARE\Policies\Microsoft\FVE\…`) and `tattooedOnUnassign`. `GET /api/intune/health-script/:scenarioId` returns the paired `Detect.ps1`/`Remediate.ps1`; the formal verifier proves Detect is 100% read-only (no `Set-*`/`Remove-*`/`New-*`, no mutating Graph calls, `exit 0/1`, <2048 chars) and `Detect(Remediate(S_broken)) == 0`, with the tattoo scrub + `syncDevice` in Remediate. For ANOM-INT-309 the Blast-Radius Matrix stages a per-rule exclusion: flipping ASR to Block without it would block 14 legitimate `LexwareUpdater.exe` executions on 4 Finance workstations.
 - **ANOM-APP-401 — Workload Identity / Shadow-Admin / OIDC:** expired SPN secret (`AADSTS7000222`) where GitHub Actions OIDC federation belongs, 90-day activity proving only `User.Read.All` + `Sites.Selected` are used (vs `Directory.ReadWrite.All` etc. granted), and a 2-hop shadow-admin path `alex.wilber → OWNS_APP → ADD_CREDENTIAL → ASSUME_SPN → GLOBAL_ADMIN`. The 4th formal invariant proves `TransitiveTier0ShadowAdmins(P_post) == EMPTY` after owner/grant removal and right-sizing; the Tier 3 bundle stages `azuread_application_federated_identity_credential` with provenance `golden-tenant/entra/apps/spn-contoso-erp-sync.json:L12-L34`. Hover pills for the new scenario are seeded deterministically in `data/hover-cache.seed.json` — the L40S GPU stays at 0 containers.
+
+### Live agency & end-to-end closure
+
+The last layer makes the workbench answer *any* question an engineer asks of the ticket, not only the scripted ones.
+The default view stays calm: nothing new renders until the engineer highlights text or opens the composer.
+
+1. **`ContextualMiniDashboard` primitive** (`packages/catalog/src/schemas/mini-dashboard.ts`): a Zod-validated, polymorphic card
+   (`selectionText`, `title`, `subtitle`, `sourceQuery`, `provenanceCategory: "selection"`, 2–4 `kpis`, 2–5 `breakdown` bars,
+   dynamic `columns`, `rowsPtr: ptr://<scenario>/selection/<hash>`, bound `rows`, one `suggestedAction` with a `scriptPreview`).
+   `compose_contextual_mini_dashboard` is the forced tool `muse-spark-1.3` answers with; its `rows` slot is `{ dataPtr }` only.
+2. **Highlight any text → Generate Context UI** (`POST /api/explore-selection`, `apps/orchestrator/src/local/selection.ts`,
+   `tiers/explore.ts`): selecting 3–120 characters in the ticket or anomaly text shows a floating `✨ Generate Context UI for "…"` pill.
+   The deterministic slicer searches every dataset of the gathered MCP context (Entra users & SKU pools, sign-ins, Conditional
+   Access, Intune devices & settings, the workload identity, NSG rules, AVD session hosts, Azure Policy), publishes the matching rows
+   under `ptr://<scenario>/selection/<hash>` with the PII vault applied, and the model composes the card from the descriptor
+   (pseudonymised sample, aggregates, reference card). The card mounts at the top of the canvas with a cyan `border-l-4`,
+   a `Spawned from selection: "…" · <ms>` badge, `[Copy Graph/PowerShell Query]` and `[× Dismiss]`; the phrase in the text
+   becomes a cyan *Selection #n* badge whose hover pulses the card (`ring-2`). Deterministic fallback, Tier 1B, no GPU.
+3. **Unscripted tickets** (`POST /api/tickets/triage-custom`, `local/custom-ticket.ts`): `[+ Triage Unscripted Ticket]` opens a
+   modal with subject, body, customer and three 1-click samples. The Tier 0 entity & intent extractor (0 tokens, <5 ms) matches
+   UPNs, first/last names, `AADSTS*` / `0x87D*` codes, SKUs, groups, policies, devices and resources against the live-seeded tenant
+   objects and votes for a base pattern (INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309 or ANOM-APP-401). The
+   `CUSTOM-<hash>` scenario keeps its own id everywhere — brief, `ptr://custom-<hash>/…` data plane, layout, hovers (cache
+   shared with the base), remediation bundle, convergence, audit rows — while gathering, formal invariants and bi-temporal slices
+   are inherited from the base. Custom tickets survive a restart (`data/custom-scenarios.json`, capped at 12).
+4. **Interactive cross-card filtering & PSA closure**: expanded tables carry `All (N) | Drifted / Error (M) | Compliant / Active (K)`
+   chips (0 ms, local), and clicking a UPN or device highlights that identity on every open card with a `Filtered by: … [×]` pill.
+   When a Break-Glass approval reaches `CONVERGED`, the left-pane badge flips from `OPEN` / `ACTIVE DRIFT` to `RESOLVED & VERIFIED ✓`,
+   every plan step is checked, and the collapsible *Customer & PSA Resolution Note* is drafted by `GET /api/tickets/:id/resolution-note`:
+   a plain-English root cause and resolution plus the technical trail (formal invariants proved, canary probe trace, pre-flight verdict,
+   Git branch @ commit / PR, archived `f⁻¹`). `[Copy PSA Resolution Note]` copies the Markdown; `[Mark Ticket Closed in PSA]`
+   (`POST /api/tickets/close`) logs `ticket.closed` to the audit ledger.
 
 ## Reproduce the Demo in 60 Seconds
 
@@ -119,6 +153,8 @@ hover cache that now ships in the repo.
 | **Break-Glass approve** (INC-4092) → 3 Graph writes + ARM rule delete and tag update, each polled to completion → reconcile commit | 3.6 s end to end | 0 |
 | **Pure GitOps approve** (ANOM-CA-204) → warm Modal pre-flight re-run, nothing written live | 0.34 s end to end | 0 |
 | **Reset demo drift** (3 live Graph PATCHes; the canvas reverts at once) | 0.56–1.3 s | 0 |
+| **Highlight → Generate Context UI** (`POST /api/explore-selection`: deterministic slice + `muse-spark-1.3` composition, Oct 27) | 2.8–3.0 s (deterministic fallback <20 ms) | ~3.3k |
+| **Unscripted ticket triage** (`POST /api/tickets/triage-custom`: Tier 0 extraction + fresh MCP gather + formal proof, Oct 27) | 0.3–0.7 s (extraction itself <5 ms) | 0 |
 
 ---
 
@@ -148,10 +184,15 @@ hydrates the same catalog components from `demo-iac/demo-lab-manifest.json` and 
 anomaly fixtures in `packages/mcp-msgraph/src/fixtures.ts`. Paste keys
 later and the router starts calling Meta models with no code change.
 
-Smoke-test every endpoint and its Zod schema (`-ScenarioId` picks the scenario, INC-4092 by default):
+Smoke-test every endpoint and its Zod schema (`-ScenarioId` picks the scenario, INC-4092 by default;
+`-Mode break-glass|gitops` picks how the approval lands). Both modes cover the live-agency endpoints:
+`POST /api/explore-selection` (+ the selection pointer on the data plane), `POST /api/tickets/triage-custom`
+(+ the custom brief, correlate, formal proof and timeline), and in break-glass mode the resolution note and
+`POST /api/tickets/close`:
 
 ```bash
-pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1
+pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1 -Mode break-glass
+pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1 -Mode gitops
 ```
 
 ---
@@ -519,7 +560,9 @@ Press `?` in the workbench for the overlay.
 
 | Key | Beat |
 |---|---|
-| `1`–`5` | Open INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309 |
+| `1`–`6` | Open INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309, ANOM-APP-401 |
+| `n` | Triage Unscripted Ticket composer (paste any ticket, or pick a sample) |
+| `g` | Generate Context UI for the hero phrase (same as highlighting it) |
 | `m` | Switch Tickets / Tenant Anomalies |
 | `h` | Hover the hero entity → Tier 1A diagnostic popover |
 | `e` | Run step 1 of the resolution plan (its card expands on the right tab) |
