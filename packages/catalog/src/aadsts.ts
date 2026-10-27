@@ -88,6 +88,16 @@ export const AADSTS_CATALOG: Record<string, AadstsEntry> = {
     likelyCause: "User denied or timed out on the MFA prompt, or the Authenticator app is not reachable.",
     docsUrl: DOCS,
   },
+  AADSTS7000222: {
+    numeric: 7000222,
+    code: "AADSTS7000222",
+    category: "credentials",
+    severity: "critical",
+    meaning: "The provided value for the 'client_assertion' or 'client_secret' is expired. The workload identity credential is no longer valid, so no token is issued.",
+    likelyCause:
+      "The app registration's passwordCredential (client secret) or certificate passed its endDateTime. Rotate or remove the expired secret; for CI such as GitHub Actions prefer a federated identity credential (OIDC) so no long-lived secret can expire.",
+    docsUrl: DOCS,
+  },
   AADSTS700016: {
     numeric: 700016,
     code: "AADSTS700016",

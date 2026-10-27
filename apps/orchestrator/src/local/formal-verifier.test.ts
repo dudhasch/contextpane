@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import {
   baselineNsgRules,
   blastRadiusMatrix,
@@ -10,6 +11,8 @@ import {
   verifyFormalInvariants,
   verifyIdempotency,
   verifyInverseRollback,
+  verifyProactiveRemediationInvariant,
+  verifyShadowAdminInvariant,
 } from "./formal-verifier.ts";
 
 describe("Tier 3C formal blast-radius prover", () => {
@@ -75,5 +78,70 @@ describe("Tier 3C formal blast-radius prover", () => {
       expect(verifyFormalInvariants(id).passed).toBe(true);
     }
     expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  test("other scenarios keep exactly 3 invariants (no shadow-admin leak)", () => {
+    for (const id of ["INC-4092", "INC-4099", "ANOM-LIC-101", "ANOM-CA-204", "ANOM-INT-309"] as const) {
+      const r = verifyFormalInvariants(id);
+      expect(r.invariants).toHaveLength(3);
+      expect(r.invariants.some((i) => i.id === "shadow-admin-zero-transitive")).toBe(false);
+    }
+  });
+
+  test("shadow-admin invariant: statement, pass on P_post, pre paths in evidence", () => {
+    const inv = verifyShadowAdminInvariant("ANOM-APP-401");
+    expect(inv.id).toBe("shadow-admin-zero-transitive");
+    expect(inv.statement).toBe("TransitiveTier0ShadowAdmins(P_post)==EMPTY");
+    expect(inv.passed).toBe(true);
+    expect(inv.counterexamples).toEqual([]);
+    expect(inv.evidence.join(" ")).toContain("alex.wilber");
+    expect(inv.evidence.join(" ")).toContain("OWNS_APP");
+    expect(verifyShadowAdminInvariant("NOPE-000").passed).toBe(false);
+  });
+
+  test("ANOM-APP-401 gets 4 invariants and passes (when catalog id available)", () => {
+    // ANOM-APP-401 is added to the catalog concurrently; cast via string.
+    const id = "ANOM-APP-401" as ScenarioId;
+    const r = verifyFormalInvariants(id);
+    expect(r.invariants).toHaveLength(4);
+    expect(r.invariants.map((i) => i.id)).toContain("shadow-admin-zero-transitive");
+    expect(r.passed).toBe(true);
+    if (isScenarioId("ANOM-APP-401")) {
+      expect(r.scenarioId).toBe("ANOM-APP-401");
+    }
+  });
+
+  test("proactive-remediation detect verifier: read-only pass, mutating fail", () => {
+    const good = [
+      "try { $v = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Contoso' -Name Flag -ErrorAction Stop } catch { exit 1 }",
+      "if ($v.Flag -eq 1) { Write-Output 'Compliant'; exit 0 } else { Write-Output 'NonCompliant'; exit 1 }",
+    ].join("\n");
+    const ok = verifyProactiveRemediationInvariant(good);
+    expect(ok.passed).toBe(true);
+    expect(ok.detectReadOnly).toBe(true);
+    expect(ok.hasExitContract).toBe(true);
+    expect(ok.outputWithinLimit).toBe(true);
+
+    const mutating = verifyProactiveRemediationInvariant("Set-MgUser -UserId x -AccountEnabled $false\nexit 0\nexit 1");
+    expect(mutating.passed).toBe(false);
+    expect(mutating.detectReadOnly).toBe(false);
+    expect(mutating.counterexamples.some((c) => c.context === "mutating-cmdlet")).toBe(true);
+
+    const rest = verifyProactiveRemediationInvariant("Invoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/users' -Method Post -Body '{}'\nexit 0\nexit 1");
+    expect(rest.passed).toBe(false);
+    expect(rest.counterexamples.some((c) => c.context === "mutating-rest-call")).toBe(true);
+
+    const noExit = verifyProactiveRemediationInvariant("Get-Process | Out-Null");
+    expect(noExit.passed).toBe(false);
+    expect(noExit.hasExitContract).toBe(false);
+    expect(noExit.counterexamples.some((c) => c.context === "exit-contract")).toBe(true);
+
+    const oversized = verifyProactiveRemediationInvariant(`Write-Output '${"x".repeat(2100)}'\nexit 0\nexit 1`);
+    expect(oversized.passed).toBe(false);
+    expect(oversized.outputWithinLimit).toBe(false);
+
+    // Read-only REST GET + commented-out mutating cmdlet stay clean.
+    const commented = verifyProactiveRemediationInvariant("# Set-MgUser -AccountEnabled $false\nInvoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/users' -Method Get | Out-Null\nexit 0\nexit 1");
+    expect(commented.passed).toBe(true);
   });
 });

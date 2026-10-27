@@ -75,16 +75,25 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
           <div className="space-y-2">
             {props.errorMeaning && <div className="rounded-md border border-meta/40 bg-meta/8 px-2.5 py-1.5 text-[11.5px] text-text">{props.errorMeaning}</div>}
             <DataTable
-              head={["Setting", "Golden (Git)", "Live (Graph)", "Status"]}
-              rows={props.settings.map((s) => [
-                <div title={s.settingId}>
-                  <div className="leading-tight">{s.settingName}</div>
-                  <div className="font-mono text-[10px] text-faint">{s.policyName}</div>
-                </div>,
-                <span className="font-mono text-healthy">{s.golden}</span>,
-                <span className={`font-mono ${s.status === "in-sync" ? "text-healthy" : "text-critical"}`}>{s.live}</span>,
-                <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{s.status}</Pill>,
-              ])}
+              head={["Setting", "Golden (Git)", "Live (Graph)", "Status", "CSP / Registry"]}
+              rows={props.settings.map((s) => {
+                const csp = s as { cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean };
+                return [
+                  <div title={s.settingId}>
+                    <div className="leading-tight">{s.settingName}</div>
+                    <div className="font-mono text-[10px] text-faint">{s.policyName}</div>
+                  </div>,
+                  <span className="font-mono text-healthy">{s.golden}</span>,
+                  <span className={`font-mono ${s.status === "in-sync" ? "text-healthy" : "text-critical"}`}>{s.live}</span>,
+                  <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{s.status}</Pill>,
+                  <div className="space-y-1">
+                    {csp.cspUri && <div className="font-mono text-[10px] text-faint">{csp.cspUri}</div>}
+                    {csp.registryPath && <div className="font-mono text-[10px] text-faint">{csp.registryPath}</div>}
+                    {csp.tattooedOnUnassign && <Pill tone="warning">tattooed on unassign</Pill>}
+                    {!csp.cspUri && !csp.registryPath && !csp.tattooedOnUnassign && <span className="text-faint">—</span>}
+                  </div>,
+                ];
+              })}
             />
             <div className="flex flex-wrap gap-1.5">
               {props.policies.map((p) => (

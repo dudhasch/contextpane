@@ -1,5 +1,5 @@
 import type { RemediationBundleArgs } from "@contextpane/catalog";
-import { CA_POSTURE, INTUNE_SCENARIOS, demoName } from "@contextpane/mcp-msgraph";
+import { CA_POSTURE, INTUNE_SCENARIOS, WORKLOAD_IDENTITY, demoName } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 
 /**
@@ -428,6 +428,126 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* ANOM-APP-401 · shadow-admin owner, overprivileged scopes, expired secret     */
+/* -------------------------------------------------------------------------- */
+
+function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
+  const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+  const tenant = ctx.erp.tenant;
+  const graphAppId = "00000003-0000-0000-c000-000000000000";
+  const L: string[] = [
+    ...header(ctx, ["Microsoft.Graph.Applications", "Microsoft.Graph.Identity.DirectoryManagement"], "remove shadow-admin owner, right-size Graph scopes, federate OIDC", [
+      `1. Remove app owner ${w.owner.upn} (0 directory roles) from '${w.spn.displayName}'.`,
+      `2. Revoke the delegated oauth2PermissionGrant '${w.oauth2PermissionGrant.scope}' (unverified publisher).`,
+      `3. Remove appRoleAssignments ${w.appPermissions.join(", ")}; add only ${w.requiredPermissions.join(", ")}.`,
+      `4. Create the GitHub Actions federated identity credential '${w.federatedCredential.subject}' and retire the expired secret.`,
+    ]),
+    "param(",
+    `    [string]$TenantId = ${ps(tenant.entraTenantId)},`,
+    `    [string]$ApplicationObjectId = ${ps(w.spn.objectId)},`,
+    `    [string]$ServicePrincipalId = ${ps(w.spn.servicePrincipalId)},`,
+    `    [string]$OwnerUpn = ${ps(w.owner.upn)},`,
+    `    [string]$GrantId = ${ps(w.oauth2PermissionGrant.id)},`,
+    `    [string]$GraphAppId = ${ps(graphAppId)}`,
+    ")",
+    "",
+    ...connectGuard(["Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "DelegatedPermissionGrant.ReadWrite.All"]),
+    "# --- 1. Remove the shadow-admin app owner --------------------------------------",
+    "$owner = Get-MgUser -UserId $OwnerUpn -Property Id,UserPrincipalName",
+    'if (-not $owner) { throw "Owner $OwnerUpn not found" }',
+    'if ($PSCmdlet.ShouldProcess($OwnerUpn, "Remove-MgApplicationOwnerByRef from application $ApplicationObjectId")) {',
+    "    Remove-MgApplicationOwnerByRef -ApplicationId $ApplicationObjectId -DirectoryObjectId $owner.Id",
+    '    Write-Host "[OK] $OwnerUpn removed as app owner" -ForegroundColor Green',
+    "}",
+    "",
+    "# --- 2. Revoke the unverified delegated permission grant ------------------------",
+    'if ($PSCmdlet.ShouldProcess($GrantId, "Remove-MgOauth2PermissionGrant (revoke delegated grant)")) {',
+    "    Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId $GrantId",
+    '    Write-Host "[OK] oauth2PermissionGrant revoked" -ForegroundColor Green',
+    "}",
+    "",
+    "# --- 3. Right-size application permissions --------------------------------------",
+    "$assignments = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -All",
+    "foreach ($assignment in $assignments) {",
+    '    if ($PSCmdlet.ShouldProcess($assignment.Id, "Remove-MgServicePrincipalAppRoleAssignment (overprivileged scope)")) {',
+    "        Remove-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -AppRoleAssignmentId $assignment.Id",
+    "    }",
+    "}",
+    "$graphSp = Get-MgServicePrincipal -Filter \"appId eq '$GraphAppId'\" -Top 1",
+    'if (-not $graphSp) { throw "Microsoft Graph service principal not found" }',
+    `foreach ($roleName in @(${w.requiredPermissions.map(ps).join(", ")})) {`,
+    "    $role = $graphSp.AppRoles | Where-Object Value -eq $roleName | Select-Object -First 1",
+    '    if (-not $role) { throw "App role $roleName not found on Microsoft Graph" }',
+    '    if ($PSCmdlet.ShouldProcess($roleName, "New-MgServicePrincipalAppRoleAssignment (least privilege)")) {',
+    "        New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -PrincipalId $ServicePrincipalId -ResourceId $graphSp.Id -AppRoleId $role.Id | Out-Null",
+    '        Write-Host "[OK] granted $roleName" -ForegroundColor Green',
+    "    }",
+    "}",
+    "",
+    "# --- 4. Federate GitHub Actions OIDC and retire the expired secret ---------------",
+    `$federatedBody = @{ name = ${ps(w.federatedCredential.name)}; issuer = ${ps(w.federatedCredential.issuer)}; subject = ${ps(w.federatedCredential.subject)}; audiences = @(${w.federatedCredential.audiences.map(ps).join(", ")}) }`,
+    'if ($PSCmdlet.ShouldProcess($ApplicationObjectId, "New-MgApplicationFederatedIdentityCredential (GitHub Actions OIDC)")) {',
+    "    New-MgApplicationFederatedIdentityCredential -ApplicationId $ApplicationObjectId -BodyParameter $federatedBody | Out-Null",
+    '    Write-Host "[OK] federated identity credential created" -ForegroundColor Green',
+    "}",
+    'if ($PSCmdlet.ShouldProcess($ApplicationObjectId, "Remove-MgApplicationPassword (expired secret)")) {',
+    `    Remove-MgApplicationPassword -ApplicationId $ApplicationObjectId -KeyId ${ps(w.passwordCredential.keyId)}`,
+    '    Write-Host "[OK] expired secret removed" -ForegroundColor Green',
+    "}",
+    "",
+    `Write-Host 'ContextPane remediation ${ctx.scenarioId} complete.' -ForegroundColor Cyan`,
+  ];
+  const terraformDiff = [
+    `--- a/golden-tenant/entra/apps/${w.spn.displayName}.tf`,
+    `+++ b/golden-tenant/entra/apps/${w.spn.displayName}.tf`,
+    "@@ workload identity federation @@",
+    `+resource "azuread_application_federated_identity_credential" "github_actions" {`,
+    `+  application_id = "/applications/${w.spn.objectId}"`,
+    `+  display_name   = "${w.federatedCredential.name}"`,
+    `+  description    = "GitHub Actions OIDC for ${w.spn.displayName}"`,
+    `+  issuer         = "${w.federatedCredential.issuer}"`,
+    `+  subject        = "${w.federatedCredential.subject}"`,
+    `+  audiences      = ["${w.federatedCredential.audiences[0]}"]`,
+    "+}",
+    `-# passwordCredential '${w.passwordCredential.displayName}' (expired ${w.passwordCredential.endDateTime})`,
+    "+# no client secret: workload identity federation only",
+    "",
+  ].join("\n");
+  return {
+    bundle: {
+      title: `Fix ${ctx.scenarioId}: de-privilege ${w.spn.displayName} and federate GitHub Actions OIDC`,
+      summary: `Removes shadow-admin owner ${w.owner.upn} (0 directory roles) from ${w.spn.displayName}, revokes the unverified delegated grant (${w.oauth2PermissionGrant.scope}), replaces overprivileged application permissions (${w.appPermissions.join(", ")}) with ${w.requiredPermissions.join(", ")} per 90-day activity, and federates GitHub Actions via OIDC (${w.federatedCredential.subject}) so the expired secret behind ${w.errorCodeLabel} can be retired.`.slice(0, 600),
+      powershellScript: `${L.join("\n")}\n`,
+      terraformDiff,
+      graphPatch: graphPatch([
+        { method: "DELETE", url: `/applications/${w.spn.objectId}/owners/${w.owner.objectId}/$ref`, note: `remove shadow-admin owner ${w.owner.upn}` },
+        { method: "DELETE", url: `/oauth2PermissionGrants/${w.oauth2PermissionGrant.id}`, note: `revoke ${w.oauth2PermissionGrant.scope}` },
+        ...w.appPermissions.map((scope) => ({ method: "DELETE", url: `/servicePrincipals/${w.spn.servicePrincipalId}/appRoleAssignments/<${scope} assignmentId>`, note: `remove ${scope}` })),
+        ...w.requiredPermissions.map((scope) => ({ method: "POST", url: `/servicePrincipals/${w.spn.servicePrincipalId}/appRoleAssignments`, body: { principalId: w.spn.servicePrincipalId, resourceId: "<Microsoft Graph servicePrincipalId>", appRoleId: `<${scope} appRoleId>` } })),
+        { method: "POST", url: `/applications/${w.spn.objectId}/federatedIdentityCredentials`, body: { name: w.federatedCredential.name, issuer: w.federatedCredential.issuer, subject: w.federatedCredential.subject, audiences: w.federatedCredential.audiences } },
+        { method: "POST", url: `/applications/${w.spn.objectId}/removePassword`, body: { keyId: w.passwordCredential.keyId } },
+      ]),
+      affectedEntities: [
+        { type: "resource" as const, id: w.spn.displayName, change: `owner removed; scopes ${w.appPermissions.join(", ")} → ${w.requiredPermissions.join(", ")}` },
+        { type: "upn" as const, id: w.owner.upn, change: "app owner removed (0 directory roles, shadow admin)" },
+        { type: "errorCode" as const, id: w.errorCodeLabel, change: "expired secret retired; OIDC federation replaces it" },
+        ...w.appPermissions.map((scope) => ({ type: "setting" as const, id: scope, change: "appRoleAssignment removed" })),
+        ...w.requiredPermissions.map((scope) => ({ type: "setting" as const, id: scope, change: "appRoleAssignment added (least privilege)" })),
+      ].slice(0, 20),
+      riskNotes: [
+        "GitHub Actions runs fail until the workflow exchanges its OIDC token via the new federated credential; update the workflow in the same change window.",
+        "Sites.Selected grants no site access by itself: grant the SPN access to the finance site (sites/{fin-site-id}) or list writes will 403.",
+        `${w.owner.upn} loses all control of the app registration; confirm no manual portal step depends on that owner.`,
+        "Removing Mail.ReadWrite breaks any undocumented mail flow of the ERP sync; the 90-day activity log shows none.",
+      ],
+    },
+    requiredCommands: ["remove-mgapplicationownerbyref", "remove-mgoauth2permissiongrant", "remove-mgserviceprincipalapproleassignment", "new-mgserviceprincipalapproleassignment", "new-mgapplicationfederatedidentitycredential"],
+    remediatedUpns: [],
+    reclaimedUpns: [],
+  };
+}
+
 export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
   switch (ctx.scenarioId) {
     case "INC-4092":
@@ -436,6 +556,8 @@ export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
       return licenseAnomaly(ctx);
     case "ANOM-CA-204":
       return caAnomaly(ctx);
+    case "ANOM-APP-401":
+      return workloadIdentityFix(ctx);
     case "INC-4099":
     case "ANOM-INT-309":
       return intuneFix(ctx);

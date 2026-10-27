@@ -259,6 +259,18 @@ const DETAILS: Record<Exclude<ScenarioId, "INC-4092">, ScenarioDetail> = {
     },
     failure: "First failure: legacy IMAP/SMTP sign-ins pass while CA-004-Block-Legacy-Auth is Report-Only.",
   },
+  "ANOM-APP-401": {
+    nowIso: "2026-10-26T06:10:00.000Z",
+    entities: {
+      drifted: [
+        ent("AADSTS7000222", "nightly failures", "critical", "Expired client secret"),
+        ent("spn-contoso-erp-sync", "overprivileged", "critical", "Shadow-admin owner, excess Graph scopes"),
+        ent("Directory.ReadWrite.All", "granted ≠ required", "warning"),
+      ],
+      healthyStatus: "in sync",
+    },
+    failure: "First failure: nightly GitHub Actions token requests fail with AADSTS7000222 (expired secret).",
+  },
   "ANOM-INT-309": {
     nowIso: "2026-10-26T05:58:00.000Z",
     entities: {

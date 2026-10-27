@@ -27,6 +27,7 @@ export const SIGNATURE_BY_SCENARIO: Record<ScenarioId, string> = {
   "ANOM-LIC-101": "LIC-SPE-E5-CountViolation-Orphaned-Seats",
   "ANOM-CA-204": "CA-BreakGlass-Exclusion-Missing",
   "ANOM-INT-309": "Intune-ASR-LSASS-Audit-Weakening",
+  "ANOM-APP-401": "Entra-WorkloadIdentity-ShadowAdmin-Overprivileged-Secret",
 };
 
 export const SCENARIO_BY_SIGNATURE: Record<string, ScenarioId> = Object.fromEntries(

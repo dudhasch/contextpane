@@ -29,7 +29,7 @@ export function onDemo(handler: (beat: DemoBeat, claim: () => boolean) => void):
 }
 
 export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> = [
-  { key: "1-5", label: "Open INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309", beat: "Tickets & tenant anomalies" },
+  { key: "1-6", label: "Open scenario by position in the scenario list", beat: "Tickets & tenant anomalies" },
   { key: "m", label: "Switch Tickets / Tenant Anomalies", beat: "Mode switcher" },
   { key: "h", label: "Hover the hero entity", beat: "Tier 1A · inline hover diagnostics" },
   { key: "e", label: "Run step 1 of the resolution plan", beat: "Left pane → card expands" },

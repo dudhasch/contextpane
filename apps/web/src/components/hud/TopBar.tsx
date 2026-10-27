@@ -25,7 +25,7 @@ export function TopBar() {
 
   const ids = scenariosOfKind(mode);
   const resolved = (id: ScenarioId) => scenarios.find((s) => s.scenarioId === id)?.resolved;
-  const open = (kind: ScenarioKind) => scenariosOfKind(kind).filter((id) => !resolved(id)).length;
+  const open = (kind: ScenarioKind) => (scenarios.length ? scenarios.filter((s) => s.kind === kind && !s.resolved).length : scenariosOfKind(kind).filter((id) => !resolved(id)).length);
 
   return (
     <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">

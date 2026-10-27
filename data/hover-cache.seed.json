@@ -85,6 +85,70 @@
         ]
       }
     },
+    "tenant-contoso-01|aadsts7000222": {
+      "generatedAt": "2026-10-26T19:25:40.000Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 19480,
+      "tokensUsed": {
+        "prompt": 1722,
+        "completion": 701,
+        "total": 2423
+      },
+      "args": {
+        "entityId": "AADSTS7000222",
+        "entityType": "errorCode",
+        "status": "critical",
+        "headline": "AADSTS7000222: nightly GitHub Actions failures of spn-contoso-erp-sync since its secret expired",
+        "errorCodeTranslation": {
+          "code": "AADSTS7000222",
+          "meaning": "The provided value for the 'client_assertion' or 'client_secret' is expired. The workload identity credential is no longer valid, so no token is issued.",
+          "likelyCause": "The app registration's passwordCredential (client secret) or certificate passed its endDateTime. Rotate or remove the expired secret; for CI such as GitHub Actions prefer a federated identity credential (OIDC) so no long-lived secret can expire.",
+          "docsUrl": "https://learn.microsoft.com/entra/identity-platform/reference-error-codes"
+        },
+        "facts": [
+          {
+            "label": "App",
+            "value": "spn-contoso-erp-sync (44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f)",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Secret",
+            "value": "github-actions-erp-sync expired 2026-10-19",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Source",
+            "value": "GitHub Actions IP range",
+            "mono": false,
+            "tone": "warning"
+          },
+          {
+            "label": "Owner",
+            "value": "alex.wilber@c4a8shili.onmicrosoft.com · 0 directory roles",
+            "mono": true,
+            "tone": "critical"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "generate-fix",
+            "label": "Stage Workload Fix",
+            "kind": "generate-fix",
+            "targetEntityId": "8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a",
+            "destructive": false
+          },
+          {
+            "id": "open-sign-in-logs",
+            "label": "Open sign-in logs",
+            "kind": "open-sign-in-logs",
+            "destructive": false
+          }
+        ]
+      }
+    },
     "tenant-contoso-01|alex.wilber.contoso@c4a8shili.onmicrosoft.com": {
       "generatedAt": "2026-10-26T19:14:30.288Z",
       "provider": "modal-open-weights",
@@ -126,6 +190,59 @@
           }
         ],
         "quickActions": []
+      }
+    },
+    "tenant-contoso-01|alex.wilber@c4a8shili.onmicrosoft.com": {
+      "generatedAt": "2026-10-26T19:25:20.000Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 17110,
+      "tokensUsed": {
+        "prompt": 1588,
+        "completion": 574,
+        "total": 2162
+      },
+      "args": {
+        "entityId": "alex.wilber@c4a8shili.onmicrosoft.com",
+        "entityType": "upn",
+        "status": "critical",
+        "headline": "Alex Wilber: shadow-admin owner of spn-contoso-erp-sync with 0 directory roles",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "App owner of",
+            "value": "spn-contoso-erp-sync (44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f)",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Directory roles",
+            "value": "0 (no Entra role assignment)",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Granted scopes",
+            "value": "Directory.ReadWrite.All, Sites.FullControl.All, Mail.ReadWrite, RoleManagement.ReadWrite.Directory",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Risk",
+            "value": "Owner can rotate credentials and consent scopes without any directory role",
+            "mono": false,
+            "tone": "critical"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "generate-fix",
+            "label": "Stage Workload Fix",
+            "kind": "generate-fix",
+            "targetEntityId": "8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a",
+            "destructive": false
+          }
+        ]
       }
     },
     "tenant-contoso-01|diego.siciliani.contoso@c4a8shili.onmicrosoft.com": {
@@ -504,6 +621,65 @@
             "kind": "inspect-policy",
             "description": "Review [ContextPane-Demo] Block AVD - Contoso Finance Legacy targeting",
             "targetEntityId": "d09ae604-4c06-4769-ad01-20ec8efa18ad",
+            "destructive": false
+          }
+        ]
+      }
+    },
+    "tenant-contoso-01|spn-contoso-erp-sync": {
+      "generatedAt": "2026-10-26T19:25:00.000Z",
+      "provider": "modal-open-weights",
+      "modelId": "muse-glimmer-30b",
+      "latencyMs": 18240,
+      "tokensUsed": {
+        "prompt": 1640,
+        "completion": 612,
+        "total": 2252
+      },
+      "args": {
+        "entityId": "spn-contoso-erp-sync",
+        "entityType": "resource",
+        "status": "critical",
+        "headline": "spn-contoso-erp-sync: expired secret (AADSTS7000222 nightly), shadow-admin owner, excess Graph scopes",
+        "errorCodeTranslation": null,
+        "facts": [
+          {
+            "label": "App ID",
+            "value": "44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Owner",
+            "value": "alex.wilber@c4a8shili.onmicrosoft.com · 0 directory roles",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Granted scopes",
+            "value": "Directory.ReadWrite.All, Sites.FullControl.All, Mail.ReadWrite, RoleManagement.ReadWrite.Directory",
+            "mono": true,
+            "tone": "critical"
+          },
+          {
+            "label": "Required (90 d)",
+            "value": "User.Read.All, Sites.Selected",
+            "mono": true,
+            "tone": "healthy"
+          },
+          {
+            "label": "Secret",
+            "value": "github-actions-erp-sync expired 2026-10-19",
+            "mono": true,
+            "tone": "critical"
+          }
+        ],
+        "quickActions": [
+          {
+            "id": "generate-fix",
+            "label": "Stage Workload Fix",
+            "kind": "generate-fix",
+            "targetEntityId": "8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a",
             "destructive": false
           }
         ]

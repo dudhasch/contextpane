@@ -53,9 +53,10 @@ export interface Toast {
   hrefLabel?: string;
 }
 
-export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback" | "commercial" | "fleet";
+export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback" | "commercial" | "fleet" | "deviceHealthScript";
 export type SystemTab = "savings" | "audit" | "providers" | "skills";
 export type FormalData = import("./lib/api").FormalResponse;
+export type IntuneHealthData = import("./lib/api").IntuneHealthScript;
 export type TimelineData = import("./lib/api").TimelineResponse["timeline"];
 export type SkillDef = import("./lib/api").SkillDef;
 export type PiiMetrics = import("./lib/api").PiiMetrics;
@@ -114,6 +115,7 @@ interface WorkbenchState {
   /** UPN the drawer was opened for from a hover [Stage License Fix]. */
   drawerFocusUpn: string | null;
   formal: FormalData | null;
+  intuneHealth: IntuneHealthData | null;
   canary: import("./lib/api").CanaryTrace | null;
   commercial: import("./lib/api").Commercial | null;
   reverseResult: import("./lib/api").ReverseResult | null;
@@ -192,6 +194,7 @@ interface WorkbenchState {
   loadAudit(): Promise<void>;
   setDrawerTab(tab: DrawerTab): void;
   loadDrawerExtras(): Promise<void>;
+  loadIntuneHealth(): Promise<void>;
   loadOps(): Promise<void>;
   stageCampaign(): Promise<void>;
   setSimulateCanaryFailure(v: boolean): void;
@@ -238,6 +241,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   drawerTab: "powershell",
   drawerFocusUpn: null,
   formal: null,
+  intuneHealth: null,
   canary: null,
   commercial: null,
   reverseResult: null,
@@ -641,12 +645,22 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async loadDrawerExtras() {
     const scenarioId = get().scenarioId;
+    void get().loadIntuneHealth();
     try {
       const [formal, tl, dp, skills] = await Promise.all([api.formal(scenarioId), api.timeline(scenarioId), api.dataplaneDetail(scenarioId), api.skills()]);
       if (get().scenarioId !== scenarioId) return;
       set({ formal, timeline: tl.timeline, timelineSliceId: get().timelineSliceId ?? tl.timeline.slices.at(-2)?.id ?? tl.timeline.slices.at(-1)?.id ?? null, piiMetrics: dp.piiMetrics, compiledSkills: skills.skills });
       void get().loadOps();
     } catch { /* extras are drawer-only; canvas stays clean */ }
+  },
+  async loadIntuneHealth() {
+    const scenarioId = get().scenarioId;
+    try {
+      const intuneHealth = await api.intuneHealthScript(scenarioId);
+      if (get().scenarioId === scenarioId) set({ intuneHealth });
+    } catch {
+      if (get().scenarioId === scenarioId) set({ intuneHealth: null });
+    }
   },
   setSimulateCanaryFailure: (simulateCanaryFailure) => set({ simulateCanaryFailure }),
   async loadOps() {

@@ -90,6 +90,12 @@ function forwardScript(scenarioId: ScenarioId, signature: string): string {
       "# 2. Enforce the legacy-auth block (report-only -> enabled)",
       "if ($PSCmdlet.ShouldProcess('CA-004 legacy-auth policy', 'Update-MgIdentityConditionalAccessPolicy state=enabled')) { Update-MgIdentityConditionalAccessPolicy -BodyParameter @{ state = 'enabled' } | Out-Null }",
     ],
+    "ANOM-APP-401": [
+      "# 1. Remove the shadow-admin app owner and revoke the unverified delegated grant (ptr://anom-app-401/entra/ca-policies)",
+      "if ($PSCmdlet.ShouldProcess('workload identity', 'Remove-MgApplicationOwnerByRef + Remove-MgOauth2PermissionGrant')) { Remove-MgApplicationOwnerByRef -ApplicationId '<app-object-id-from-ptr>' -DirectoryObjectId '<owner-id-from-ptr>' }",
+      "# 2. Right-size Graph app roles to User.Read.All + Sites.Selected and federate GitHub Actions OIDC",
+      "if ($PSCmdlet.ShouldProcess('workload identity', 'New-MgApplicationFederatedIdentityCredential GitHub Actions OIDC')) { New-MgApplicationFederatedIdentityCredential -ApplicationId '<app-object-id-from-ptr>' -BodyParameter @{} | Out-Null }",
+    ],
     "ANOM-INT-309": [
       "# 1. ASR: restore the LSASS credential-stealing rule Audit -> Block (ptr://anom-int-309/intune/settings)",
       "if ($PSCmdlet.ShouldProcess('Win11 ASR baseline', 'Invoke-MgGraphRequest PUT configurationPolicies settings LSASS rule = Block')) { Invoke-MgGraphRequest -Method PUT -Uri 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/<policy-id>' -Body '{}' | Out-Null }",

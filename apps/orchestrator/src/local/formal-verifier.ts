@@ -1,4 +1,12 @@
 import { isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import {
+  SHADOW_ADMIN_SCENARIO_ID,
+  SHADOW_ADMIN_USER_UPN,
+  findShadowAdminPaths,
+  shadowAdminGraphPost,
+  shadowAdminGraphPre,
+  transitiveTier0ShadowAdmins,
+} from "./shadow-admin.ts";
 
 /**
  * Place 1 · Tier 3C formal blast-radius prover.
@@ -64,7 +72,7 @@ export interface Counterexample {
 }
 
 export interface InvariantResult {
-  id: "break-glass-non-lockout" | "target-remediation" | "nsg-reachability";
+  id: "break-glass-non-lockout" | "target-remediation" | "nsg-reachability" | "shadow-admin-zero-transitive" | "proactive-remediation-detect-read-only";
   statement: string;
   passed: boolean;
   checked: number;
@@ -138,6 +146,10 @@ const U = (id: string, groups: string[], pre: Compliance, post: Compliance): Aff
 const D = (id: string, pre: Compliance, post: Compliance): AffectedEntity => ({ kind: "device", id, groups: [], pre, post });
 
 function affectedFor(scenarioId: ScenarioId): AffectedEntity[] {
+  // ANOM-APP-401 may not be a catalog ScenarioId yet; compare as string.
+  if ((scenarioId as string) === SHADOW_ADMIN_SCENARIO_ID) {
+    return [U(SHADOW_ADMIN_USER_UPN, [], "Drift", "Allow")];
+  }
   switch (scenarioId) {
     case "INC-4092":
       return [
@@ -157,6 +169,7 @@ function affectedFor(scenarioId: ScenarioId): AffectedEntity[] {
     case "ANOM-INT-309":
       return Array.from({ length: 11 }, (_, i) => D(`CONTOSO-WS-${2201 + i * 7}`, "Conflict", "Compliant"));
   }
+  return [];
 }
 
 /** Pre-remediation (drifted) symbolic state S. */
@@ -176,7 +189,8 @@ export function preState(scenarioId: ScenarioId): SymbolicState {
 
 /** Proposed post-remediation symbolic state P_post(S). */
 export function postState(scenarioId: ScenarioId): SymbolicState {
-  if (!isScenarioId(scenarioId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+  // ANOM-APP-401 is modelled locally (shadow-admin.ts) until the catalog lands it.
+  if (!isScenarioId(scenarioId) && (scenarioId as string) !== SHADOW_ADMIN_SCENARIO_ID) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
   const affected = affectedFor(scenarioId);
   return {
     scenarioId,
@@ -312,10 +326,152 @@ export function verifyNsgReachability(state: SymbolicState): InvariantResult {
   };
 }
 
+/* --------------------- invariant 4: shadow-admin (ANOM-APP-401) --------------------- */
+
+/**
+ * Formal Invariant 4 (ANOM-APP-401 only): no non-admin user can
+ * transitively reach Tier 0 in P_post. Counterexamples are the
+ * escalation paths still present in P_post (witnesses cite the P_pre
+ * paths they descend from).
+ */
+export function verifyShadowAdminInvariant(scenarioId: string): InvariantResult {
+  const rawId: string = scenarioId;
+  // Guard with isScenarioId: ANOM-APP-401 may not be a catalog id yet.
+  const known = isScenarioId(rawId) || rawId === SHADOW_ADMIN_SCENARIO_ID;
+  if (!known) {
+    return {
+      id: "shadow-admin-zero-transitive",
+      statement: "TransitiveTier0ShadowAdmins(P_post)==EMPTY",
+      passed: false,
+      checked: 0,
+      counterexamples: [{
+        invariant: "shadow-admin-zero-transitive", entity: rawId, context: "scenario",
+        detail: `unknown scenarioId: ${rawId}`,
+        witness: { scenarioId: rawId },
+      }],
+      evidence: [],
+    };
+  }
+  const pre = shadowAdminGraphPre();
+  const post = shadowAdminGraphPost();
+  const prePaths = findShadowAdminPaths(pre);
+  const postPaths = findShadowAdminPaths(post);
+  const postAdmins = transitiveTier0ShadowAdmins(post);
+  const prePathText = prePaths.map((p) => p.edges.map((e, i) => `${p.nodes[i]} -${e.kind}-> ${p.nodes[i + 1]}`).join(" "));
+  const counterexamples: Counterexample[] = postPaths.map((p) => ({
+    invariant: "shadow-admin-zero-transitive",
+    entity: p.start,
+    context: "Tier0 escalation path in P_post",
+    detail: `TransitiveTier0ShadowAdmins(P_post) must be EMPTY, found ${p.start} -> ${p.target} in ${p.hops} hop(s): ${p.nodes.join(" -> ")}`,
+    witness: { start: p.start, target: p.target, hops: p.hops, nodes: p.nodes, kinds: p.kinds, prePaths: prePathText },
+  }));
+  return {
+    id: "shadow-admin-zero-transitive",
+    statement: "TransitiveTier0ShadowAdmins(P_post)==EMPTY",
+    passed: postAdmins.length === 0,
+    checked: prePaths.length,
+    counterexamples,
+    evidence: postAdmins.length === 0
+      ? [`TransitiveTier0ShadowAdmins(P_pre)=[${transitiveTier0ShadowAdmins(pre).join(", ")}] via ${prePaths.length} path(s): ${prePathText.join(" | ")}`, "TransitiveTier0ShadowAdmins(P_post)==EMPTY (owner removed, OAuth grant revoked, scopes right-sized)"]
+      : [],
+  };
+}
+
+/* ----------------- proactive-remediation detect-script check ----------------- */
+
+export interface ProactiveRemediationInvariantResult extends InvariantResult {
+  id: "proactive-remediation-detect-read-only";
+  detectReadOnly: boolean;
+  hasExitContract: boolean;
+  outputWithinLimit: boolean;
+}
+
+const MUTATING_CMDLET_RE = /\b(?:Set|Remove|New)-[A-Za-z][\w-]*/g;
+const REST_MUTATION_RE = /Invoke-RestMethod[^;\n]{0,200}?-Method\s*:?\s*['"]?(Post|Patch|Delete)\b/gi;
+export const DETECT_OUTPUT_LIMIT = 2048;
+
+function stripPowerShellComments(script: string): string {
+  return script
+    .replace(/<#[\s\S]*?#>/g, " ")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+}
+
+/**
+ * Local detect-read-only checker for Intune Proactive Remediation
+ * detect scripts (mirrors the intune-remediation rules; implemented
+ * inline so it does not depend on that module existing). A detect
+ * script must: (1) call no mutating cmdlet (Set-/Remove-/New-*),
+ * (2) make no mutating REST call (Invoke-RestMethod Post|Patch|Delete),
+ * (3) signal via exit 0 (compliant) / exit 1 (non-compliant), and
+ * (4) keep any literal output under 2048 characters.
+ * `remediateApplied` (bool, or the separate remediation script text)
+ * never relaxes the detect-script rules.
+ */
+export function verifyProactiveRemediationInvariant(detectScript: string, remediateApplied?: boolean | string): ProactiveRemediationInvariantResult {
+  const code = stripPowerShellComments(detectScript ?? "");
+  const counterexamples: Counterexample[] = [];
+  const mutating = [...new Set([...code.matchAll(MUTATING_CMDLET_RE)].map((m) => m[0]))].sort();
+  for (const cmdlet of mutating) {
+    counterexamples.push({
+      invariant: "proactive-remediation-detect-read-only", entity: "detect-script", context: "mutating-cmdlet",
+      detail: `detect script must be read-only, found mutating cmdlet ${cmdlet}`,
+      witness: { cmdlet },
+    });
+  }
+  const restMutations = [...code.matchAll(REST_MUTATION_RE)].map((m) => m[0]);
+  for (const call of restMutations) {
+    counterexamples.push({
+      invariant: "proactive-remediation-detect-read-only", entity: "detect-script", context: "mutating-rest-call",
+      detail: `detect script must be read-only, found mutating REST call: ${call.trim()}`,
+      witness: { call: call.trim() },
+    });
+  }
+  const detectReadOnly = mutating.length === 0 && restMutations.length === 0;
+  const hasExit0 = /\bexit\s+0\b/.test(code);
+  const hasExit1 = /\bexit\s+1\b/.test(code);
+  const hasExitContract = hasExit0 && hasExit1;
+  if (!hasExitContract) {
+    counterexamples.push({
+      invariant: "proactive-remediation-detect-read-only", entity: "detect-script", context: "exit-contract",
+      detail: `detect script must signal with exit 0 (compliant) and exit 1 (non-compliant); found exit 0: ${hasExit0}, exit 1: ${hasExit1}`,
+      witness: { hasExit0, hasExit1 },
+    });
+  }
+  const oversized = [...code.matchAll(/'[^'\n]{2048,}'|"[^"\n]{2048,}"/g)].map((m) => m[0].length);
+  const outputWithinLimit = oversized.length === 0;
+  if (!outputWithinLimit) {
+    counterexamples.push({
+      invariant: "proactive-remediation-detect-read-only", entity: "detect-script", context: "output-limit",
+      detail: `detect script output must stay under ${DETECT_OUTPUT_LIMIT} characters, found literal of ${oversized[0]} characters`,
+      witness: { literalLength: oversized[0]!, limit: DETECT_OUTPUT_LIMIT },
+    });
+  }
+  const passed = counterexamples.length === 0;
+  return {
+    id: "proactive-remediation-detect-read-only",
+    statement: "Detect script is read-only (no Set-/Remove-/New-*, no Invoke-RestMethod Post|Patch|Delete), signals exit 0/1, output <2048 chars",
+    passed,
+    checked: 4,
+    counterexamples,
+    evidence: passed
+      ? ["detect script read-only: no mutating cmdlets or REST mutations", "exit 0/1 contract present", `output literals <${DETECT_OUTPUT_LIMIT} chars${typeof remediateApplied === "string" ? "; remediation script supplied separately" : remediateApplied ? "; remediation applied separately" : ""}`]
+      : [],
+    detectReadOnly,
+    hasExitContract,
+    outputWithinLimit,
+  };
+}
+export const checkDetectReadOnly = verifyProactiveRemediationInvariant;
+
 export function verifyFormalInvariants(scenarioId: ScenarioId, options?: FormalVerifyOptions): FormalVerificationResult {
   const started = performance.now();
   const state = resolveOptions(scenarioId, options);
-  const invariants = [verifyBreakGlassNonLockout(state), verifyTargetRemediation(state), verifyNsgReachability(state)];
+  const invariants: InvariantResult[] = [verifyBreakGlassNonLockout(state), verifyTargetRemediation(state), verifyNsgReachability(state)];
+  // 4th invariant ONLY for ANOM-APP-401 (string compare: the catalog id
+  // may not exist yet; verifyShadowAdminInvariant guards with isScenarioId).
+  if ((scenarioId as string) === SHADOW_ADMIN_SCENARIO_ID) invariants.push(verifyShadowAdminInvariant(scenarioId as string));
   const counterexamples = invariants.flatMap((i) => i.counterexamples);
   return { scenarioId, passed: counterexamples.length === 0, invariants, counterexamples, latencyMs: Math.round((performance.now() - started) * 1000) / 1000, prover: "symbolic-formal-verifier" };
 }

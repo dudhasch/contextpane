@@ -98,7 +98,11 @@ export interface VoiceResponse {
   telemetry: RouterTelemetry;
 }
 
-export interface FormalResponse { scenarioId: string; formal: { passed: boolean; latencyMs: number; invariants: Array<{ id: string; statement: string; passed: boolean; checked: number; evidence: string[]; counterexamples: unknown[] }> }; blastRadius: { targetBlockedToAllowed: number; breakGlassAllowedToAllowed: number; collateralChanges: number; rows: Array<{ cohort: string; entities: string[]; before: string; after: string; attempts: number }> }; rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[] }; idempotency: { passed: boolean; idempotent: boolean } }
+export interface AsrBlast { executions: number; workstations: number; binary: string; exclusionStaged: boolean; detail: string }
+export interface FormalResponse { scenarioId: string; formal: { passed: boolean; latencyMs: number; invariants: Array<{ id: string; statement: string; passed: boolean; checked: number; evidence: string[]; counterexamples: unknown[] }>; asrBlast?: AsrBlast | null }; blastRadius: { targetBlockedToAllowed: number; breakGlassAllowedToAllowed: number; collateralChanges: number; rows: Array<{ cohort: string; entities: string[]; before: string; after: string; attempts: number }> }; rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[] }; idempotency: { passed: boolean; idempotent: boolean }; asrBlast?: AsrBlast | null }
+export interface IntuneHealthCsp { settingName: string; cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean }
+export interface IntuneHealthScript { scenarioId: string; detect: string; remediate: string; verification: { passed: boolean; detectReadOnly: boolean; proof: string }; csp: IntuneHealthCsp[]; asrBlast: AsrBlast | null }
+export type IntuneHealthScriptResponse = IntuneHealthScript;
 export interface TimelineResponse { timeline: { scenarioId: string; slices: Array<{ id: string; label: string; relativeLabel: string; timestamp: string; validFrom: string; validTo: string | null; changedCardId: string | null; state: { summary: string; health: string } }> } }
 export interface SkillDef { id: string; scenarioId: string; tier: number; tokenCost: number; latencyMs: number; fuzz: { cases: number; passed: number }; badge: string }
 export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
@@ -179,6 +183,7 @@ export const api = {
     request<VoiceResponse>("/api/voice-steer", { method: "POST", body: JSON.stringify(body) }),
   telemetryStats: () => request<TelemetryStats>("/api/telemetry/stats"),
   formal: (scenarioId: string) => request<FormalResponse>(`/api/formal/${scenarioId}`),
+  intuneHealthScript: (scenarioId: string) => request<IntuneHealthScript>(`/api/intune/health-script/${scenarioId}`),
   timeline: (scenarioId: string) => request<TimelineResponse>(`/api/timeline/${scenarioId}`),
   skills: () => request<{ skills: SkillDef[] }>("/api/skills"),
   compileSkill: (scenarioId: string) => request<{ skill: SkillDef; promoted: boolean }>("/api/skills/compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),

@@ -9,7 +9,7 @@ import type { TenantId } from "./tenants.ts";
  * Every endpoint that renders, remediates or resets is keyed by scenario id; the
  * tenant only decides which MCP data and which lab tenant it reads.
  */
-export const SCENARIO_IDS = ["INC-4092", "INC-4099", "ANOM-LIC-101", "ANOM-CA-204", "ANOM-INT-309"] as const;
+export const SCENARIO_IDS = ["INC-4092", "INC-4099", "ANOM-LIC-101", "ANOM-CA-204", "ANOM-INT-309", "ANOM-APP-401"] as const;
 export type ScenarioId = (typeof SCENARIO_IDS)[number];
 
 export const ScenarioKindSchema = z.enum(["ticket", "anomaly"]);
@@ -67,6 +67,14 @@ export const SCENARIO_REGISTRY: Record<ScenarioId, ScenarioRegistryEntry> = {
     title: "Intune ASR Baseline & Firewall Policy Drift",
     remediationScope: "Intune ASR baseline drift & firewall conflict",
     components: ["IntuneDriftCard"],
+  },
+  "ANOM-APP-401": {
+    scenarioId: "ANOM-APP-401",
+    kind: "anomaly",
+    tenantId: "tenant-contoso-01",
+    title: "Entra Workload Identity: Shadow-Admin App Owner, Overprivileged Graph Scopes & Expired Secret (AADSTS7000222)",
+    remediationScope: "workload identity shadow-admin owner, overprivileged Graph scopes & expired secret",
+    components: ["EntraSignInTimeline"],
   },
 };
 

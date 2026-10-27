@@ -1,6 +1,6 @@
 import type { ScenarioId } from "@contextpane/catalog";
 import { azureIacService, type NsgWriteResult } from "@contextpane/mcp-azure-iac";
-import { getManifestTenant, msgraphService, type LabLicenseState } from "@contextpane/mcp-msgraph";
+import { WORKLOAD_IDENTITY, getManifestTenant, msgraphService, type LabLicenseState } from "@contextpane/mcp-msgraph";
 import { SCENARIO_REGISTRY } from "@contextpane/catalog";
 
 /**
@@ -63,6 +63,18 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
     case "ANOM-CA-204": {
       const w = await msgraphService.setCaPostureState(state);
       return { ...pick(w), results: w.results, summary: fixed ? "CA-001 excludes SG-BreakGlass-Accounts, CA-004 enabled" : "CA-001 exclusion removed, CA-004 back to Report-Only" };
+    }
+    case "ANOM-APP-401": {
+      // Fixture-only scenario: no lab write exists for the SPN, so both states simulate.
+      return {
+        source: "simulated",
+        fallbackReason: "workload identity fixture (no lab SPN seeded)",
+        latencyMs: 0,
+        results: [{ id: WORKLOAD_IDENTITY.spn.displayName, ok: true, status: 0 }],
+        summary: fixed
+          ? `${WORKLOAD_IDENTITY.spn.displayName}: owner ${WORKLOAD_IDENTITY.owner.upn} removed, delegated grant revoked, scopes right-sized to ${WORKLOAD_IDENTITY.requiredPermissions.join(", ")}, GitHub Actions OIDC federated`
+          : `${WORKLOAD_IDENTITY.spn.displayName}: shadow-admin owner, overprivileged scopes and expired secret restored (fixture)`,
+      };
     }
     case "ANOM-INT-309":
     case "INC-4099": {

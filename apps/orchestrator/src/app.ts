@@ -32,6 +32,7 @@ import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "./telemetry.ts";
 import { runCanaryConvergence } from "./local/canary-convergence.ts";
+import { asrBlastRadius, buildDeviceHealthScripts, getCspMetadata, verifyProactiveRemediation } from "./local/intune-remediation.ts";
 import { reconcileCommercial, reverseCompile } from "./local/commercial-reconciler.ts";
 import { immunizeFleet, stageFleetCampaign } from "./local/fleet-immunizer.ts";
 import { buildInverseRollback, counterfactualReplay, verifyFormalInvariants, verifyIdempotency } from "./local/formal-verifier.ts";
@@ -148,7 +149,7 @@ app.get("/api/dataplane/:scenarioId", async (c) => {
 app.get("/api/formal/:scenarioId", (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
   const formal = verifyFormalInvariants(scenarioId);
-  return c.json({ scenarioId, formal, blastRadius: counterfactualReplay(scenarioId), rollback: buildInverseRollback(scenarioId), idempotency: verifyIdempotency(scenarioId), telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
+  return c.json({ scenarioId, formal, blastRadius: counterfactualReplay(scenarioId), rollback: buildInverseRollback(scenarioId), idempotency: verifyIdempotency(scenarioId), asrBlast: scenarioId === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
 });
 
 app.post("/api/rollback", async (c) => {
@@ -159,6 +160,12 @@ app.post("/api/rollback", async (c) => {
   const check = verifyIdempotency(scenarioId);
   if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
   return c.json({ ok: true, executed: "simulated", latencyMs: Math.round((performance.now() - started) * 10) / 10, rollback, idempotency: check });
+});
+
+app.get("/api/intune/health-script/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const scripts = buildDeviceHealthScripts(scenarioId);
+  return c.json({ scenarioId, detect: scripts.detect, remediate: scripts.remediate, verification: verifyProactiveRemediation(scenarioId), csp: getCspMetadata(scenarioId), asrBlast: scenarioId === "ANOM-INT-309" ? asrBlastRadius() : null });
 });
 
 app.get("/api/timeline/:scenarioId", (c) => {

@@ -19,7 +19,11 @@ import {
   type QuickAction,
   type SignInEvent,
 } from "@contextpane/catalog";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { locateJsonPath, type SourceRef } from "@contextpane/catalog";
 import type { CaPolicySummary, SignInSummary } from "@contextpane/mcp-msgraph";
+import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { triggeredBy } from "./brief.ts";
 
@@ -121,7 +125,104 @@ function inspectTicketPolicy(ctx: CorrelationContext, p: CaPolicySummary, blocke
   };
 }
 
+/* --------------------- ANOM-APP-401 workload identity ---------------------- */
+
+const WORKLOAD_GOLDEN_FILE = "golden-tenant/entra/apps/spn-contoso-erp-sync.json";
+let workloadRefCache: SourceRef | null = null;
+
+/** Golden-baseline lines of the SPN's observed state (L12-L34), via the catalog locator. */
+export function workloadSourceRef(): SourceRef {
+  if (workloadRefCache) return workloadRefCache;
+  const fallback: SourceRef = { file: WORKLOAD_GOLDEN_FILE, startLine: 12, endLine: 34, ref: "main" };
+  try {
+    for (const anchor of [process.cwd(), import.meta.dir]) {
+      let dir = resolve(anchor);
+      for (let i = 0; i < 8; i++) {
+        const abs = join(dir, WORKLOAD_GOLDEN_FILE);
+        if (existsSync(abs)) {
+          const text = readFileSync(abs, "utf8").replace(/\r\n/g, "\n");
+          const range = locateJsonPath(text, ["observedState"]);
+          workloadRefCache = range ? { file: WORKLOAD_GOLDEN_FILE, ...range, ref: "main" } : fallback;
+          return workloadRefCache;
+        }
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    }
+  } catch {
+    /* fall through to the committed line range */
+  }
+  workloadRefCache = fallback;
+  return workloadRefCache;
+}
+
+function buildWorkloadIdentityTimeline(ctx: CorrelationContext): EntraSignInTimeline {
+  const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+  const ref = workloadSourceRef();
+  const events = workloadIdentitySignIns();
+  const translation = lookupAadsts(w.errorCode);
+  const required = w.requiredPermissions.join(", ");
+  const granted = w.appPermissions.join(", ");
+  const drift: CaPolicyInspector["drift"] = [
+    { field: "requiredResourceAccess", expected: required, actual: granted, severity: "critical", sourceRef: ref },
+    { field: "owners", expected: "no standing non-admin owner", actual: `${w.owner.upn} (0 directory roles)`, severity: "critical", sourceRef: ref },
+    { field: "passwordCredentials", expected: "federated identity credential (OIDC, GitHub Actions)", actual: `expired secret '${w.passwordCredential.displayName}' (ended ${w.passwordCredential.endDateTime})`, severity: "critical", sourceRef: ref },
+    { field: "oauth2PermissionGrants", expected: "verified publisher, least privilege", actual: `${w.oauth2PermissionGrant.scope} (unverified publisher)`, severity: "high", sourceRef: ref },
+  ];
+  return {
+    headline: `AADSTS7000222 nightly failures · ${w.spn.displayName} secret expired · shadow-admin owner ${w.owner.upn} (0 directory roles) with overprivileged Graph scopes`.slice(0, 200),
+    focusUpn: w.owner.upn,
+    windowStart: events[0]?.timestamp ?? ctx.gatheredAt,
+    windowEnd: events.at(-1)?.timestamp ?? ctx.gatheredAt,
+    events: events.map((e) => signInEvent(e, true)),
+    rootCause: {
+      errorCodeLabel: w.errorCodeLabel,
+      targetApp: `Microsoft Graph (${w.spn.displayName})`,
+      explanation: `${translation ? `${translation.meaning} ${translation.likelyCause}` : "Expired client secret."} Owner ${w.owner.upn} holds no directory role yet controls the app (shadow admin); 90-day activity needs only ${required}, not ${granted}.`.slice(0, 400),
+    },
+    // App permission grants shown as one inspector entry for the SPN (no new card type).
+    policies: [
+      {
+        id: w.spn.servicePrincipalId,
+        displayName: w.spn.displayName,
+        state: "enabled",
+        role: "drifted",
+        includeGroups: [w.owner.upn],
+        excludeGroups: [],
+        targetApps: ["Microsoft Graph"],
+        clientAppTypes: ["GitHub Actions"],
+        grantControls: w.appPermissions.slice(0, 6),
+        drift,
+        modifiedDateTime: w.passwordCredential.endDateTime,
+        sourceRef: ref,
+      },
+    ],
+    microActions: [
+      { id: "inspect-policy", label: "Inspect App Grants", kind: "inspect-policy", targetEntityId: w.spn.servicePrincipalId, destructive: false },
+      { id: "generate-fix", label: "Stage Workload Fix", kind: "generate-fix", description: `Remove owner ${w.owner.upn}, revoke the delegated grant, right-size to ${required} and federate OIDC`, destructive: false },
+    ],
+    state: "critical",
+    sourceRef: ref,
+    baselineDiff: [
+      `--- tenant-live/${WORKLOAD_GOLDEN_FILE} (live app state)`,
+      `+++ ${WORKLOAD_GOLDEN_FILE} (golden baseline)`,
+      "@@ workload identity @@",
+      `- owners: ${w.owner.upn}`,
+      "+ owners: (none)",
+      `- applicationPermissions: ${granted}`,
+      `+ applicationPermissions: ${required}`,
+      `- oauth2PermissionGrant: ${w.oauth2PermissionGrant.scope}`,
+      "+ oauth2PermissionGrant: (none)",
+      `- passwordCredential: ${w.passwordCredential.displayName} (expired ${w.passwordCredential.endDateTime})`,
+      `+ federatedIdentityCredential: ${w.federatedCredential.subject}`,
+      "",
+    ].join("\n"),
+  };
+}
+
 export function buildEntraSignInTimeline(ctx: CorrelationContext): EntraSignInTimeline | null {
+  if (ctx.workloadIdentity) return buildWorkloadIdentityTimeline(ctx);
   if (ctx.caPosture) return buildCaPostureTimeline(ctx);
   if (!ctx.signIns || !ctx.policies) return null;
   const focusUpn = ctx.erp.ticket?.requester.upn ?? "";

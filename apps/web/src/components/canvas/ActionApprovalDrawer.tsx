@@ -1,4 +1,4 @@
-import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, History, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
+import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, HeartPulse, History, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
 import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench, type DrawerTab as Tab } from "@/store";
@@ -158,6 +158,7 @@ export function ActionApprovalDrawerSheet() {
               <TabButton active={tab === "graph"} onClick={() => setTab("graph")} icon={<Braces />} label="Graph JSON" />
               {drawer.terraformDiff && <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform diff" />}
               <TabButton active={tab === "entities"} onClick={() => setTab("entities")} icon={<Users />} label={`Entities (${drawer.affectedEntities.length})`} />
+              {(drawer.ticketId === "INC-4099" || drawer.ticketId === "ANOM-INT-309") && <TabButton active={tab === "deviceHealthScript"} onClick={() => setTab("deviceHealthScript")} icon={<HeartPulse />} label="Detect.ps1 / Remediate.ps1" />}
               <TabButton active={tab === "formal"} onClick={() => setTab("formal")} icon={<ShieldCheck />} label="Formal proof" />
               <TabButton active={tab === "rollback"} onClick={() => setTab("rollback")} icon={<History />} label="Inverse Rollback (f⁻¹)" />
               <TabButton active={tab === "commercial"} onClick={() => setTab("commercial")} icon={<Users />} label="3-Way Commercial" />
@@ -178,6 +179,7 @@ export function ActionApprovalDrawerSheet() {
               {tab === "terraform" && drawer.terraformDiff && (
                 <CodeBlock code={drawer.terraformDiff} render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="max-h-none" wrap={wrap} className="pt-8" />} />
               )}
+              {tab === "deviceHealthScript" && <DeviceHealthScriptTab />}
               {tab === "formal" && <FormalProof />}
               {tab === "rollback" && <RollbackTab />}
               {tab === "commercial" && <CommercialTab />}
@@ -332,11 +334,64 @@ function FleetTab() {
   );
 }
 
+function DeviceHealthScriptTab() {
+  const health = useWorkbench((s) => s.intuneHealth);
+  if (!health) return <div className="text-[12px] text-muted">Device health script loading…</div>;
+  const verified = health.verification.passed && health.verification.detectReadOnly;
+  return (
+    <div className="space-y-3 text-[12px]" data-testid="device-health-script">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Pill tone={verified ? "healthy" : "critical"} icon={<ShieldCheck />}>{verified ? "Detect read-only AST verified" : "Detect read-only AST not verified"}</Pill>
+        {health.verification.proof && <span className="font-mono text-[10.5px] text-faint">{health.verification.proof}</span>}
+      </div>
+      <div>
+        <div className="section-label mb-1">Detect.ps1</div>
+        <CodeBlock code={health.detect} />
+      </div>
+      <div>
+        <div className="section-label mb-1">Remediate.ps1</div>
+        <CodeBlock code={health.remediate} />
+      </div>
+      {health.csp.length > 0 && (
+        <div>
+          <div className="section-label mb-1">CSP mapping</div>
+          <div className="overflow-x-auto rounded-md border border-border-subtle">
+            <table className="w-full text-[11.5px]">
+              <thead className="bg-surface text-[10px] tracking-wider text-faint uppercase">
+                <tr>
+                  <th className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">Setting</th>
+                  <th className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">CSP URI</th>
+                  <th className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">Registry path</th>
+                  <th className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">Tattooed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {health.csp.map((c) => (
+                  <tr key={c.settingName} className="border-t border-border-subtle align-middle">
+                    <td className="px-2.5 py-1.5">{c.settingName}</td>
+                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] text-faint">{c.cspUri ?? "—"}</td>
+                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] text-faint">{c.registryPath ?? "—"}</td>
+                    <td className="px-2.5 py-1.5">{c.tattooedOnUnassign ? <Pill tone="warning">tattooed on unassign</Pill> : <span className="text-faint">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      <p className="rounded-md border border-border-subtle bg-canvas px-2.5 py-1.5 text-[11.5px] text-muted">
+        After assignment, trigger <span className="font-mono text-text">syncDevice</span> on the affected devices so Detect.ps1 / Remediate.ps1 run on the next Intune check-in; tattooed settings persist after unassign and need Remediate.ps1 to revert.
+      </p>
+    </div>
+  );
+}
+
 function FormalProof() {
   const formal = useWorkbench((s) => s.formal);
   const compileSkill = useWorkbench((s) => s.compileSkill);
   if (!formal) return <div className="text-[12px] text-muted">Formal proof loading…</div>;
   const b = formal.blastRadius;
+  const asrBlast = formal.asrBlast ?? formal.formal.asrBlast ?? null;
   return (
     <div className="space-y-3 text-[12px]" data-testid="formal-proof">
       <div className="flex flex-wrap gap-1.5">
@@ -356,6 +411,11 @@ function FormalProof() {
           <div>0 collateral user lockouts · {b.collateralChanges} collateral changes</div>
         </div>
       </div>
+      {asrBlast && (
+        <div className="rounded-md border border-border-subtle p-2 font-mono text-[11px] text-muted" data-testid="asr-blast">
+          ASR Audit→Block without exclusion: {asrBlast.executions} legitimate executions of {asrBlast.binary} on {asrBlast.workstations} workstations — per-rule exclusion staged
+        </div>
+      )}
     </div>
   );
 }

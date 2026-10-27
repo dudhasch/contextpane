@@ -125,6 +125,6 @@ describe("scenario registry", () => {
       expect(SCENARIO_REGISTRY[id].components.length).toBeGreaterThan(0);
       expect(SCENARIO_REGISTRY[id].remediationScope.length).toBeGreaterThan(5);
     }
-    expect(SCENARIO_IDS.filter((id) => SCENARIO_REGISTRY[id].kind === "anomaly")).toHaveLength(3);
+    expect(SCENARIO_IDS.filter((id) => SCENARIO_REGISTRY[id].kind === "anomaly")).toHaveLength(4);
   });
 });

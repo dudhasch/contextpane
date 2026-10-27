@@ -169,6 +169,12 @@ export const IntuneSettingDriftSchema = z.object({
   status: z.enum(["drifted", "conflict", "in-sync"]),
   severity: SeveritySchema,
   sourceRef: SourceRefSchema.optional().describe("Lines of the golden baseline that declare the setting"),
+  cspUri: z.string().optional().describe("OMA-URI of the CSP backing the setting, e.g. ./Device/Vendor/MSFT/BitLocker/EncryptionMethodByDriveType"),
+  registryPath: z.string().optional().describe("Registry path/value the CSP writes on device, e.g. HKLM\\SOFTWARE\\Policies\\Microsoft\\FVE"),
+  tattooedOnUnassign: z
+    .boolean()
+    .optional()
+    .describe("True when the value tattoos (persists under PolicyManager\\current\\device) after the assigning profile is unassigned"),
 });
 export type IntuneSettingDrift = z.infer<typeof IntuneSettingDriftSchema>;
 

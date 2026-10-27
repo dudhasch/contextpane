@@ -32,7 +32,8 @@ export function useDemoHotkeys() {
         case "2":
         case "3":
         case "4":
-        case "5": {
+        case "5":
+        case "6": {
           const scenarioId = SCENARIO_IDS[Number(e.key) - 1];
           if (scenarioId) void s.selectScenario(scenarioId);
           break;

@@ -8,8 +8,8 @@ import {
 } from "@contextpane/catalog";
 import type { AvdEstate, IacResult, NsgDrift } from "@contextpane/mcp-azure-iac";
 import type { ErpContract, ErpTenant, ErpTicket } from "@contextpane/mcp-erp";
-import type { CaPolicySummary, CaPosture, GraphResult, IntuneDrift, LicenseInventory, SignInSummary } from "@contextpane/mcp-msgraph";
-import { CA_POSTURE, LICENSE_ANOMALY, getManifestTenant } from "@contextpane/mcp-msgraph";
+import type { CaPolicySummary, CaPosture, GraphResult, IntuneDrift, LicenseInventory, SignInSummary, WorkloadIdentityFixture } from "@contextpane/mcp-msgraph";
+import { CA_POSTURE, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { DatasetDescriptor } from "@contextpane/catalog";
 import { sources, type McpDataSources } from "./clients.ts";
 
@@ -32,6 +32,8 @@ export interface CorrelationContext {
   signIns: GraphResult<SignInSummary[]> | null;
   caPosture: GraphResult<CaPosture> | null;
   intune: GraphResult<IntuneDrift> | null;
+  /** ANOM-APP-401 workload identity fixture; null for every other scenario. */
+  workloadIdentity: WorkloadIdentityFixture | null;
   drift: IacResult<NsgDrift> | null;
   avd: IacResult<AvdEstate> | null;
   /** Entra security groups per UPN (lower-cased), for the user hover. */
@@ -115,13 +117,17 @@ function load(scenarioId: ScenarioId): Promise<CorrelationContext> {
       signIns,
       caPosture,
       intune,
+      workloadIdentity: scenarioId === "ANOM-APP-401" ? WORKLOAD_IDENTITY : null,
       drift,
       avd,
       groupsByUpn: groupsByUpn(scenarioId, tenantId),
       gatheredAt: new Date().toISOString(),
       gatherLatencyMs: Math.round(performance.now() - started),
       transport: sources.transport,
-      sourcesUsed: Object.fromEntries(Object.entries(used).filter(([, r]) => r).map(([k, r]) => [k, r!.source])),
+      sourcesUsed: {
+        ...Object.fromEntries(Object.entries(used).filter(([, r]) => r).map(([k, r]) => [k, r!.source])),
+        ...(scenarioId === "ANOM-APP-401" ? { workloadIdentity: "fixture" } : {}),
+      },
       fallbackReasons: Object.values(used).flatMap((r) => (r?.fallbackReason ? [r.fallbackReason] : [])),
     } satisfies CorrelationContext;
   })();
@@ -138,6 +144,9 @@ function groupsByUpn(scenarioId: ScenarioId, tenantId: string): Map<string, stri
   if (scenarioId === "ANOM-CA-204") {
     add(CA_POSTURE.breakGlassAccount, CA_POSTURE.breakGlassGroup);
     add(CA_POSTURE.breakGlassAccount, CA_POSTURE.adminGroup);
+  }
+  if (scenarioId === "ANOM-APP-401") {
+    add(WORKLOAD_IDENTITY.owner.upn, `${WORKLOAD_IDENTITY.spn.displayName} owners`);
   }
   return map;
 }
@@ -226,6 +235,22 @@ export function contextForModel(ctx: CorrelationContext) {
           },
         }
       : {}),
+    ...(ctx.workloadIdentity
+      ? {
+          workloadIdentity: {
+            source: "fixture",
+            spn: ctx.workloadIdentity.spn,
+            owner: ctx.workloadIdentity.owner,
+            passwordCredential: ctx.workloadIdentity.passwordCredential,
+            errorCodeLabel: ctx.workloadIdentity.errorCodeLabel,
+            appPermissions: ctx.workloadIdentity.appPermissions,
+            oauth2PermissionGrant: ctx.workloadIdentity.oauth2PermissionGrant,
+            activity: ctx.workloadIdentity.activity,
+            requiredPermissions: ctx.workloadIdentity.requiredPermissions,
+            federatedCredential: ctx.workloadIdentity.federatedCredential,
+          },
+        }
+      : {}),
     ...(ctx.drift
       ? {
           azureNsgDrift: {
@@ -272,6 +297,19 @@ export function contextForCorrelation(ctx: CorrelationContext, datasets: Dataset
         : {}),
       ...(ctx.intune
         ? { intune: { source: ctx.intune.source, issueKind: ctx.intune.data.issueKind, errorCode: ctx.intune.data.errorCode ?? null, goldenSource: ctx.intune.data.goldenSource, affectedDeviceCount: ctx.intune.data.affectedDeviceCount, resolved: ctx.intune.data.resolved } }
+        : {}),
+      ...(ctx.workloadIdentity
+        ? {
+            workloadIdentity: {
+              source: "fixture",
+              spn: ctx.workloadIdentity.spn.displayName,
+              appId: ctx.workloadIdentity.spn.appId,
+              owner: ctx.workloadIdentity.owner.upn,
+              errorCodeLabel: ctx.workloadIdentity.errorCodeLabel,
+              secretExpired: ctx.workloadIdentity.passwordCredential.expired,
+              goldenSource: ctx.workloadIdentity.goldenSource,
+            },
+          }
         : {}),
       ...(ctx.drift
         ? {

@@ -41,7 +41,32 @@ export function inferEntityType(entityId: string): EntityType {
   return "upn";
 }
 
+function hoverWorkloadSpn(ctx: CorrelationContext, entityType: EntityType): HoverDiagnosticArgs {
+  const w = ctx.workloadIdentity!;
+  return {
+    entityId: w.spn.displayName,
+    entityType,
+    status: "critical",
+    headline: `${w.spn.displayName}: expired secret (${w.errorCodeLabel} nightly), shadow-admin owner, overprivileged Graph scopes`.slice(0, 120),
+    errorCodeTranslation: null,
+    facts: [
+      fact("App ID", w.spn.appId, true, "critical"),
+      fact("Owner", `${w.owner.upn} · 0 directory roles`, true, "critical"),
+      fact("Granted scopes", w.appPermissions.join(", "), true, "critical"),
+      fact("Required (90 d)", w.requiredPermissions.join(", "), true, "healthy"),
+      fact("Activity (90 d)", w.activity.calls.map((c) => `${c.method} ${c.endpoint}`).join("; "), true),
+      fact("Delegated grant", `${w.oauth2PermissionGrant.scope} · unverified`, true, "warning"),
+      fact("Secret", `'${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}`, true, "critical"),
+    ].slice(0, 8),
+    quickActions: [{ id: "generate-fix", label: "Stage Workload Fix", kind: "generate-fix", targetEntityId: w.spn.servicePrincipalId, destructive: false }],
+  };
+}
+
 export function buildHoverDiagnostic(ctx: CorrelationContext, target: HoverTarget): HoverDiagnosticArgs {
+  const w = ctx.workloadIdentity;
+  if (w && (target.entityId === w.spn.displayName || target.entityId === w.spn.appId || target.entityId === w.spn.servicePrincipalId)) {
+    return hoverWorkloadSpn(ctx, target.entityType);
+  }
   switch (target.entityType) {
     case "upn":
       return hoverUser(ctx, target.entityId);
@@ -76,6 +101,23 @@ function knownPolicies(ctx: CorrelationContext): Array<{ id: string; displayName
  * the last blocking sign-in, with [Inspect Blocking CA Policy] and [Stage License Fix].
  */
 function hoverUser(ctx: CorrelationContext, upn: string): HoverDiagnosticArgs {
+  const w = ctx.workloadIdentity;
+  if (w && upn.toLowerCase() === w.owner.upn.toLowerCase()) {
+    return {
+      entityId: upn,
+      entityType: "upn",
+      status: "critical",
+      headline: `${w.owner.displayName}: shadow-admin owner of ${w.spn.displayName} with 0 directory roles`.slice(0, 120),
+      errorCodeTranslation: null,
+      facts: [
+        fact("App owner of", `${w.spn.displayName} (${w.spn.appId})`, true, "critical"),
+        fact("Directory roles", "0 (no Entra role assignment)", true, "critical"),
+        fact("Granted scopes", w.appPermissions.join(", "), true, "critical"),
+        fact("Risk", "Owner can rotate credentials and consent scopes without any directory role", false, "critical"),
+      ],
+      quickActions: [{ id: "generate-fix", label: "Stage Workload Fix", kind: "generate-fix", targetEntityId: w.spn.servicePrincipalId, destructive: false }],
+    };
+  }
   const key = upn.toLowerCase();
   const user = ctx.license?.data.users.find((u) => u.upn.toLowerCase() === key);
   const groups = ctx.groupsByUpn.get(key) ?? [];
@@ -219,6 +261,23 @@ function hoverErrorCode(ctx: CorrelationContext, code: string): HoverDiagnosticA
     };
   }
   const entry = lookupAadsts(code);
+  const w = ctx.workloadIdentity;
+  if (w && upper === w.errorCodeLabel) {
+    return {
+      entityId: upper,
+      entityType: "errorCode",
+      status: "critical",
+      headline: `${upper}: nightly GitHub Actions failures of ${w.spn.displayName} since its secret expired`.slice(0, 120),
+      errorCodeTranslation: entry ? { code: entry.code, meaning: entry.meaning, likelyCause: entry.likelyCause, docsUrl: entry.docsUrl } : null,
+      facts: [
+        fact("App", `${w.spn.displayName} (${w.spn.appId})`, true, "critical"),
+        fact("Secret", `'${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}`, true, "critical"),
+        fact("Source", w.failureSource, false, "warning"),
+        fact("Owner", `${w.owner.upn} · 0 directory roles`, true, "critical"),
+      ],
+      quickActions: [{ id: "generate-fix", label: "Stage Workload Fix", kind: "generate-fix", targetEntityId: w.spn.servicePrincipalId, destructive: false }],
+    };
+  }
   const occurrences = (ctx.signIns?.data ?? []).filter((e) => (e.errorCodeLabel ?? "").toUpperCase() === upper);
   const policies = [...new Set(occurrences.map((e) => e.blockingPolicyName).filter((p): p is string => Boolean(p)))];
   const policyIds = [...new Set(occurrences.map((e) => e.blockingPolicyId).filter((p): p is string => Boolean(p)))];

@@ -6,7 +6,7 @@ import {
   type ScenarioBrief,
   type ScenarioSignal,
 } from "@contextpane/catalog";
-import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY } from "@contextpane/mcp-msgraph";
+import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 
 /**
@@ -86,6 +86,17 @@ export function scenarioEntities(ctx: CorrelationContext): EnrichedEntity[] {
         entity(CA_POSTURE.breakGlassAccount, "upn", "identity", "EntraSignInTimeline", { label: "bg-admin-01", tab: "policies" }),
         entity("Legacy auth (IMAP4 / SMTP)", "setting", "identity", "EntraSignInTimeline", { tab: "signins", hoverable: false, note: `${ctx.caPosture?.data.legacySignIns.length ?? 0} in 24 h` }),
         entity(`ext-maint-02@${CA_POSTURE.breakGlassAccount.split("@")[1]}`, "upn", "identity", "EntraSignInTimeline", { label: "ext-maint-02", tab: "policies", note: "changed both" }),
+      ];
+    }
+    case "ANOM-APP-401": {
+      const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+      return [
+        entity(w.spn.displayName, "resource", "identity", "EntraSignInTimeline", { tab: "policies", note: "overprivileged" }),
+        entity(w.owner.upn, "upn", "identity", "EntraSignInTimeline", { label: w.owner.displayName, tab: "policies", note: "owner · 0 roles" }),
+        entity(w.errorCodeLabel, "errorCode", "identity", "EntraSignInTimeline", { tab: "signins", note: "nightly" }),
+        ...w.appPermissions.map((s) => entity(s, "setting", "identity", "EntraSignInTimeline", { tab: "policies", note: "granted" })),
+        ...w.requiredPermissions.map((s) => entity(s, "setting", "identity", "EntraSignInTimeline", { tab: "policies", note: "required" })),
+        entity(w.oauth2PermissionGrant.scope, "setting", "identity", "EntraSignInTimeline", { label: "Delegated grant", tab: "policies", note: "unverified" }),
       ];
     }
     case "ANOM-INT-309": {
@@ -205,6 +216,17 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
         ],
       };
     }
+    case "ANOM-APP-401": {
+      const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+      return {
+        summary: `${w.spn.displayName} (appId ${w.spn.appId}) is owned by ${w.owner.upn}, who holds 0 directory roles yet can rotate credentials and consent scopes (shadow admin). Its secret '${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}, so nightly GitHub Actions runs fail with ${w.errorCodeLabel}; granted scopes ${w.appPermissions.join(", ")} far exceed the ${w.requiredPermissions.join(", ")} its 90-day activity needs.`,
+        steps: [
+          step("owner", "identity", "Remove Shadow-Admin Owner", `Remove ${w.owner.upn} (0 directory roles) as owner of ${w.spn.displayName} so a non-admin no longer controls the workload identity.`, "EntraSignInTimeline", { label: "Stage Workload Fix", kind: "stage-fix" }, "policies"),
+          step("scopes", "identity", "Revoke Grant, Right-Size", `Revoke the unverified delegated grant (${w.oauth2PermissionGrant.scope}) and replace ${w.appPermissions.join(", ")} with ${w.requiredPermissions.join(", ")} per 90-day activity.`, "EntraSignInTimeline", { label: "Inspect App Grants", kind: "inspect" }, "policies"),
+          step("oidc", "identity", "Federate OIDC, Retire Secret", `Add the GitHub Actions federated credential (${w.federatedCredential.subject}) and remove the expired secret '${w.passwordCredential.displayName}' (${w.errorCodeLabel} clears).`, "EntraSignInTimeline", { label: "Stage Workload Fix", kind: "stage-fix" }, "signins"),
+        ],
+      };
+    }
     case "ANOM-INT-309": {
       const intune = ctx.intune?.data;
       const asr = intune?.settings.find((s) => s.settingId === "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2");
@@ -261,6 +283,24 @@ function anomalyBody(ctx: CorrelationContext): { title: string; origin: string; 
         signals: [
           ...audit.map((a) => ({ label: `${a.activity} · ${a.at.slice(5, 16).replace("T", " ")}Z`, value: `${a.actor}: ${a.detail}`.slice(0, 240), category: "identity" as const, source: "GET /auditLogs/directoryAudits" })),
           { label: "Legacy sign-ins (24 h)", value: `${ctx.caPosture?.data.legacySignIns.length ?? 0} IMAP4 / SMTP AUTH successes, 3 from AS 60729 (NL)`, category: "identity", source: "GET /auditLogs/signIns?$filter=clientAppUsed" },
+        ],
+      };
+    }
+    case "ANOM-APP-401": {
+      const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+      return {
+        title: "Workload identity shadow-admin owner, overprivileged Graph scopes & expired secret",
+        origin: "Detected from Entra service principal sign-in activity, owners, appRoleAssignments + oauth2PermissionGrants",
+        openedAt: "2026-10-26T06:10:00Z",
+        body:
+          `${w.spn.displayName} (appId ${w.spn.appId}) is owned by ${w.owner.upn} with 0 directory roles (shadow admin). ` +
+          `Nightly GitHub Actions token requests fail with ${w.errorCodeLabel} since the secret '${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}. ` +
+          `Granted application permissions ${w.appPermissions.join(", ")} and the unverified delegated grant ${w.oauth2PermissionGrant.scope} exceed what 90-day activity uses: ${w.activity.calls.map((c) => `${c.method} ${c.endpoint}`).join(" and ")} needs only ${w.requiredPermissions.join(", ")}.`,
+        signals: [
+          { label: "SPN sign-in failures", value: `${w.errorCodeLabel} nightly from ${w.failureSource} (expired secret '${w.passwordCredential.displayName}', ended ${w.passwordCredential.endDateTime.slice(0, 10)})`, category: "identity", source: "GET /auditLogs/signIns?$filter=servicePrincipalId" },
+          { label: "App activity (90 days)", value: w.activity.calls.map((c) => `${c.method} ${c.endpoint} ×${c.count}`).join("; "), category: "identity", source: "GET /reports/servicePrincipalSignInActivities" },
+          { label: "Granted vs required scopes", value: `${w.appPermissions.join(", ")} granted; ${w.requiredPermissions.join(", ")} required`, category: "identity", source: "GET /servicePrincipals/{id}/appRoleAssignments" },
+          { label: "Owner & secret expiry", value: `${w.owner.upn} · 0 directory roles · secret expired ${w.passwordCredential.endDateTime.slice(0, 10)}`, category: "identity", source: "GET /applications/{id}/owners + passwordCredentials" },
         ],
       };
     }

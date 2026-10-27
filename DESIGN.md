@@ -160,6 +160,12 @@ All deep proof lives off-canvas. Cards never gain verification, vault or compile
   NOW · T+Fix`, Tier 0, 0 tokens). Selecting a slice rings only the card that changed
   (`Δ <card>` in the same line). Converged scenarios add one
   `[1-Click Undo / Rollback (f⁻¹)]` button at the right end of that bar — nowhere else.
+- **MSP domain depth (final pass):** Intune CSP-IR (`cspUri`, `registryPath`,
+  `tattooedOnUnassign`) appears only inside the expanded Intune settings tab and the
+  drawer's `Detect.ps1 / Remediate.ps1` tab (Intune scenarios only). Workload Identity
+  findings (`ANOM-APP-401`) render through the existing Entra Sign-In / Identity card —
+  no new macro-card type, and the 4-card layout is unchanged. The ASR exclusion preview
+  is one mono line in the drawer's Blast-Radius Matrix.
 - **Canary convergence (Places 5–8):** the *Simulate Canary Probe Failure* checkbox, the
   mono 4-stage canary trace (`APPLIED → CANARY_RING_0 → SYNTHETIC_PROBED → CONVERGED /
   AUTO_ROLLED_BACK`), the `3-Way Commercial` and `Fleet & Reverse-IaC` drawer tabs, and

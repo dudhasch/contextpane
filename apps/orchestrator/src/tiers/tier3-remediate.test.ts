@@ -114,7 +114,8 @@ describe("every scenario (offline fixtures)", () => {
       const plan = buildRemediationPlan(ctx);
       expect(checkWhatIfSafety(plan.bundle.powershellScript)).toEqual({ safe: true, unguarded: [] });
       for (const cmd of plan.requiredCommands) expect(plan.bundle.powershellScript.toLowerCase()).toContain(cmd);
-      expect(Boolean(plan.bundle.terraformDiff)).toBe(cards.includes("IaCDriftBanner"));
+      // Terraform ships with the IaC card, plus ANOM-APP-401's OpenTofu OIDC federation resource.
+      expect(Boolean(plan.bundle.terraformDiff)).toBe(cards.includes("IaCDriftBanner") || scenarioId === "ANOM-APP-401");
       expect(() => JSON.parse(plan.bundle.graphPatch)).not.toThrow();
     });
   }

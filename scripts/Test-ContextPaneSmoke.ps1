@@ -32,7 +32,7 @@
 param(
     # 127.0.0.1 on purpose: Windows resolves "localhost" to ::1 first and burns ~2 s per request on the IPv6 fallback.
     [string]$BaseUrl = $(if ($env:CTX_ORCHESTRATOR_URL) { $env:CTX_ORCHESTRATOR_URL } else { 'http://127.0.0.1:4000' }),
-    [ValidateSet('INC-4092', 'INC-4099', 'ANOM-LIC-101', 'ANOM-CA-204', 'ANOM-INT-309')]
+    [ValidateSet('INC-4092', 'INC-4099', 'ANOM-LIC-101', 'ANOM-CA-204', 'ANOM-INT-309', 'ANOM-APP-401')]
     [string]$ScenarioId = 'INC-4092',
     # break-glass: live write + reconcile commit + convergence. gitops: no live write, pre-flight re-run, approval.state 'staged'.
     [ValidateSet('break-glass', 'gitops')]
@@ -51,6 +51,7 @@ $ScenarioCards = @{
     'ANOM-LIC-101' = @('LicenseDriftCard')
     'ANOM-CA-204'  = @('EntraSignInTimeline')
     'ANOM-INT-309' = @('IntuneDriftCard')
+    'ANOM-APP-401' = @('EntraSignInTimeline')
 }
 $TenantId = $(if ($ScenarioId -eq 'INC-4099') { 'tenant-fabrikam-02' } else { 'tenant-contoso-01' })
 $results = [System.Collections.Generic.List[object]]::new()
@@ -129,9 +130,9 @@ if ($health) {
 $null = Invoke-Check -Name scenarios -Method GET -Path '/api/scenarios' -Schema {
     param($r)
     $i = @()
-    if (@($r.scenarios).Count -ne 5) { $i += "expected 5 scenarios, got $(@($r.scenarios).Count)" }
+    if (@($r.scenarios).Count -ne 6) { $i += "expected 6 scenarios, got $(@($r.scenarios).Count)" }
     if (@($r.scenarios | Where-Object kind -eq 'ticket').Count -ne 2) { $i += 'expected 2 tickets' }
-    if (@($r.scenarios | Where-Object kind -eq 'anomaly').Count -ne 3) { $i += 'expected 3 anomalies' }
+    if (@($r.scenarios | Where-Object kind -eq 'anomaly').Count -ne 4) { $i += 'expected 4 anomalies' }
     $i
 }
 
@@ -416,6 +417,61 @@ if ($deadmanRem) {
         if (-not $r.ok) { $i += 'reset after dead-man failed' }
         $i
     }
+}
+
+$null = Invoke-Check -Name intune-health-script -Method GET -Path '/api/intune/health-script/INC-4099' -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.verification.passed) { $i += 'proactive remediation proof failed' }
+    if (-not $r.verification.detectReadOnly) { $i += 'Detect.ps1 not read-only' }
+    if ($r.detect -match 'Set-\w+|Remove-\w+') { $i += 'Detect.ps1 contains mutating verb' }
+    if (-not ($r.csp | Where-Object cspUri -match 'BitLocker')) { $i += 'no BitLocker CSP URI' }
+    if (-not ($r.csp | Where-Object tattooedOnUnassign -eq $true)) { $i += 'no tattooed-on-unassign setting' }
+    $i
+}
+
+$null = Invoke-Check -Name formal-asr-blast -Method GET -Path '/api/formal/ANOM-INT-309' -Schema {
+    param($r)
+    $i = @()
+    if ($r.asrBlast.executions -ne 14) { $i += "ASR executions $($r.asrBlast.executions) != 14" }
+    if ($r.asrBlast.workstations -ne 4) { $i += 'ASR workstations != 4' }
+    if (-not $r.asrBlast.exclusionStaged) { $i += 'ASR exclusion not staged' }
+    $i
+}
+
+$null = Invoke-Check -Name app401-brief -Method GET -Path '/api/scenarios/ANOM-APP-401/brief' -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.brief) { return @('APP-401 brief missing') }
+    if (@($r.brief.entities).Count -lt 3) { $i += 'APP-401 entities missing' }
+    $i
+}
+
+$null = Invoke-Check -Name app401-correlate -Method POST -Path '/api/correlate' -Body @{ scenarioId = 'ANOM-APP-401' } -Schema {
+    param($r)
+    $i = Test-Layout $r.layout
+    $types = @($r.layout.components | ForEach-Object type)
+    if ($types -notcontains 'EntraSignInTimeline') { $i += 'APP-401 missing EntraSignInTimeline' }
+    if ($types.Count -ne 1) { $i += "APP-401 must render 1 existing card, got $($types.Count)" }
+    $i
+}
+
+$null = Invoke-Check -Name app401-formal -Method GET -Path '/api/formal/ANOM-APP-401' -Schema {
+    param($r)
+    $i = @()
+    if (@($r.formal.invariants).Count -ne 4) { $i += "APP-401 invariants $(@($r.formal.invariants).Count) != 4" }
+    $shadow = $r.formal.invariants | Where-Object id -eq 'shadow-admin-zero-transitive'
+    if (-not $shadow -or -not $shadow.passed) { $i += 'Shadow-Admin invariant not proved' }
+    $i
+}
+
+$null = Invoke-Check -Name app401-remediate -Method POST -Path '/api/remediate' -Body @{ scenarioId = 'ANOM-APP-401' } -Schema {
+    param($r)
+    $i = @()
+    if ($r.drawer.terraformDiff -notmatch 'azuread_application_federated_identity_credential') { $i += 'no OIDC federated credential in Terraform' }
+    if ($r.drawer.powershellScript -notmatch 'User\.Read\.All') { $i += 'least-privilege right-sizing missing' }
+    if ($r.drawer.verificationStatus.verdict -eq 'Verification Failed') { $i += 'APP-401 verification failed' }
+    $i
 }
 
 $null = Invoke-Check -Name rollback -Method POST -Path '/api/rollback' -Body @{ scenarioId = $ScenarioId } -Schema {
