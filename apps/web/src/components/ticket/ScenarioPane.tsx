@@ -128,7 +128,20 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
           <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} />
         ))}
       </ol>
+      <FleetPill />
     </section>
+  );
+}
+
+/** Subtle fleet-immunity pill inside the Resolution Plan only; stages the cross-tenant GitOps campaign. */
+function FleetPill() {
+  const fleet = useWorkbench((s) => s.fleet);
+  const stage = useWorkbench((s) => s.stageCampaign);
+  if (!fleet || fleet.affectedCount === 0) return null;
+  return (
+    <button type="button" onClick={() => void stage()} className="mt-2 inline-flex h-5 items-center rounded border border-warning/40 bg-warning/10 px-1.5 font-mono text-[10.5px] text-warning" data-testid="fleet-pill">
+      Stage Fleet GitOps Campaign ({fleet.affectedCount} Tenants) · {fleet.signature}
+    </button>
   );
 }
 

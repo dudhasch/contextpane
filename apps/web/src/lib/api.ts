@@ -58,10 +58,15 @@ export interface RemediateResponse {
   telemetry: RouterTelemetry;
 }
 
+export interface CanaryTrace { scenarioId: string; mode: string; finalState: "CONVERGED" | "AUTO_ROLLED_BACK"; canaryCohort: string; tenantRestored?: boolean; stages: Array<{ stage: string; detail: string; probes?: unknown }>; probes: { identity: { passed: boolean }; network: { tcp3389Closed?: boolean; tcp443Open?: boolean; intuneConflicts?: number } } }
 export interface ApproveResponse {
   drawer: ActionApprovalDrawer & { executionLog: string[] };
   convergence: Convergence | null;
+  canary?: CanaryTrace | null;
 }
+export interface Commercial { contractId: string; pathA: { label: string; reclaim: Record<string, number>; netDeltaMonthly: number; wasteEliminatedMonthly: number }; pathB: { label: string; increment: Record<string, number>; netDeltaMonthly: number }; recommendation: string }
+export interface ReverseResult { hcl: string; imports: string[]; tofuPlanSummary?: string; expectedPlanSummary?: string; shadowFindings: Array<{ kind: string; resources: string[]; detail: string }> }
+export interface Fleet { signature: string; affectedCount: number; tenants: Array<{ tenant: string; affected: boolean }> }
 
 export interface ResetDriftResponse {
   ok: boolean;
@@ -110,6 +115,8 @@ export interface TelemetryStats {
   liveCloudMode: boolean;
 }
 
+export interface OpenWeightInference { grammarConstrained: boolean; kvCacheQuant: string; speculativeDraftMax: number; speculativeDraftMin: number; maxContainers: number }
+
 export interface HealthResponse {
   ok: boolean;
   liveCloudMode: boolean;
@@ -117,6 +124,7 @@ export interface HealthResponse {
   providers: Array<{ id: string; label: string; hasKey: boolean }>;
   mcp: { transport: string; servers: Array<{ name: string; ok: boolean; tools?: number }> };
   github?: { origin: string | null; ghInstalled: boolean; ghAuthenticated: boolean; account: string | null; prOnApprove: boolean; prBase: string };
+  openWeightInference?: OpenWeightInference;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -160,7 +168,7 @@ export const api = {
   hover: (body: { scenarioId: string; entityId: string; entityType?: EntityType }) => request<HoverResponse>("/api/hover", { method: "POST", body: JSON.stringify(body) }),
   correlate: (body: { scenarioId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
   remediate: (body: { scenarioId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
-  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean; mode?: ExecutionMode }) =>
+  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean; mode?: ExecutionMode; simulateCanaryFailure?: boolean }) =>
     request<ApproveResponse>("/api/remediate/approve", { method: "POST", body: JSON.stringify(body) }),
   labState: () => request<{ convergence: Convergence[] }>("/api/lab/state"),
   resetDrift: (scenarioId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(scenarioId ? { scenarioId } : {}) }),
@@ -176,6 +184,11 @@ export const api = {
   compileSkill: (scenarioId: string) => request<{ skill: SkillDef; promoted: boolean }>("/api/skills/compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   rollback: (scenarioId: string) => request<{ ok: boolean; latencyMs: number }>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   dataplaneDetail: (scenarioId: string) => request<{ piiMetrics: PiiMetrics }>(`/api/dataplane/${scenarioId}`),
+  commercial: (scenarioId: string) => request<{ reconciliation: Commercial }>(`/api/reconcile/commercial/${scenarioId}`),
+  reverseCompile: (scenarioId: string) => request<{ result: ReverseResult }>("/api/iac/reverse-compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
+  fleet: (scenarioId: string) => request<{ fleet: Fleet }>(`/api/fleet/immunize/${scenarioId}`),
+  campaign: (scenarioId: string) => request<{ campaign: { campaignId: string; branches: Array<{ tenant: string; branch: string }>; verified: boolean; latencyMs: number } }>(`/api/fleet/campaign/${scenarioId}`, { method: "POST", body: "{}" }),
+  runbookUrl: (scenarioId: string) => `/api/runbooks/${scenarioId}.md`,
 };
 
 /* -------------------------------------------------------------------------- */

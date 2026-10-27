@@ -153,13 +153,15 @@ export function ActionApprovalDrawerSheet() {
               </div>
             </div>
 
-            <div className="flex shrink-0 gap-1 border-b border-border px-4 pt-2">
+            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-4 pt-2">
               <TabButton active={tab === "powershell"} onClick={() => setTab("powershell")} icon={<Terminal />} label="PowerShell" />
               <TabButton active={tab === "graph"} onClick={() => setTab("graph")} icon={<Braces />} label="Graph JSON" />
               {drawer.terraformDiff && <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform diff" />}
               <TabButton active={tab === "entities"} onClick={() => setTab("entities")} icon={<Users />} label={`Entities (${drawer.affectedEntities.length})`} />
               <TabButton active={tab === "formal"} onClick={() => setTab("formal")} icon={<ShieldCheck />} label="Formal proof" />
               <TabButton active={tab === "rollback"} onClick={() => setTab("rollback")} icon={<History />} label="Inverse Rollback (f⁻¹)" />
+              <TabButton active={tab === "commercial"} onClick={() => setTab("commercial")} icon={<Users />} label="3-Way Commercial" />
+              <TabButton active={tab === "fleet"} onClick={() => setTab("fleet")} icon={<Zap />} label="Fleet & Reverse-IaC" />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -178,6 +180,8 @@ export function ActionApprovalDrawerSheet() {
               )}
               {tab === "formal" && <FormalProof />}
               {tab === "rollback" && <RollbackTab />}
+              {tab === "commercial" && <CommercialTab />}
+              {tab === "fleet" && <FleetTab />}
               {tab === "entities" && (
                 <ul className="divide-y divide-border-subtle rounded-md border border-border-subtle">
                   {drawer.affectedEntities.map((e) => (
@@ -204,6 +208,7 @@ export function ActionApprovalDrawerSheet() {
                 <span className="text-[12px] font-semibold">Approve in Portal (HITL)</span>
               </div>
               <ExecutionModeSwitch drawer={drawer} />
+              <CanaryControls />
               <p className="text-[11px] leading-snug text-muted" data-testid="mode-detail">
                 {mode === "break-glass" ? (
                   <>
@@ -270,6 +275,59 @@ export function ActionApprovalDrawerSheet() {
           </>
         )}
       </aside>
+    </div>
+  );
+}
+
+function CanaryControls() {
+  const simulate = useWorkbench((s) => s.simulateCanaryFailure);
+  const setSimulate = useWorkbench((s) => s.setSimulateCanaryFailure);
+  const canary = useWorkbench((s) => s.canary);
+  const scenarioId = useWorkbench((s) => s.scenarioId);
+  return (
+    <div className="space-y-1.5" data-testid="canary-controls">
+      <label className="flex items-center gap-2 text-[11px] text-muted">
+        <input type="checkbox" className="size-3.5 accent-warning" checked={simulate} onChange={(e) => setSimulate(e.target.checked)} />
+        Simulate Canary Probe Failure (Test Dead-Man's Switch)
+      </label>
+      {canary && (
+        <div className="flex flex-wrap items-center gap-1 font-mono text-[10.5px]" data-testid="canary-trace">
+          {canary.stages.map((s) => <span key={s.stage} className={`rounded border px-1.5 py-0.5 ${s.stage === "AUTO_ROLLED_BACK" ? "border-critical/40 text-critical" : "border-border text-muted"}`}>{s.stage}</span>)}
+          <span className={canary.finalState === "CONVERGED" ? "text-healthy" : "text-critical"}>{canary.finalState}</span>
+        </div>
+      )}
+      <a href={`/api/runbooks/${scenarioId}.md`} download className="inline-flex text-[11px] text-primary hover:underline">Export Runbook (.md)</a>
+    </div>
+  );
+}
+
+export function CommercialTab() {
+  const rec = useWorkbench((s) => s.commercial);
+  if (!rec) return <div className="text-[12px] text-muted">Reconciler loading…</div>;
+  return (
+    <div className="space-y-2 text-[12px]" data-testid="commercial-reconciler">
+      <div className="section-label">3-Way Commercial &amp; Seat Reconciler · {rec.contractId}</div>
+      <div className="rounded-md border border-healthy/30 p-2"><span className="font-semibold text-healthy">Path A · {rec.pathA.label}</span><div className="text-muted">Reclaim {Object.entries(rec.pathA.reclaim).map(([k, v]) => `${v} ${k}`).join(" + ")} from disabled accounts · $0/mo net delta · ${rec.pathA.wasteEliminatedMonthly}/mo waste eliminated</div></div>
+      <div className="rounded-md border border-border-subtle p-2"><span className="font-semibold">Path B · {rec.pathB.label}</span><div className="text-muted">Stage {Object.entries(rec.pathB.increment).map(([k, v]) => `+${v} ${k}`).join(", ")} · +${rec.pathB.netDeltaMonthly}/mo prorated amendment</div></div>
+      <Pill tone="healthy">Recommended: Path {rec.recommendation}</Pill>
+    </div>
+  );
+}
+
+function FleetTab() {
+  const fleet = useWorkbench((s) => s.fleet);
+  const rev = useWorkbench((s) => s.reverseResult);
+  const stage = useWorkbench((s) => s.stageCampaign);
+  return (
+    <div className="space-y-3 text-[12px]" data-testid="fleet-tab">
+      <section>
+        <div className="section-label mb-1">Cross-tenant fleet immunization</div>
+        {fleet ? <><div className="mb-1.5 flex flex-wrap gap-1.5"><Pill tone="warning">{fleet.signature}</Pill><Pill tone="muted">{fleet.affectedCount} affected tenants</Pill></div><Button size="sm" variant="outline" icon={<Zap />} onClick={() => void stage()}>Stage Fleet GitOps Campaign ({fleet.affectedCount} Tenants)</Button></> : <div className="text-muted">Fleet scan loading…</div>}
+      </section>
+      <section>
+        <div className="section-label mb-1">Reverse-Compile Live State to OpenTofu</div>
+        {rev ? <><div className="mb-1.5 flex flex-wrap gap-1.5"><Pill tone="healthy">{rev.tofuPlanSummary ?? rev.expectedPlanSummary ?? "0 to add, 0 to destroy"}</Pill><Pill tone="muted">{rev.imports.length} import blocks</Pill>{rev.shadowFindings.map((f) => <Pill key={f.detail} tone="warning">{f.kind}: {f.resources.join(" / ")}</Pill>)}</div><CodeBlock code={`${rev.imports.join("\n")}\n\n${rev.hcl}`} /></> : <div className="text-muted">Reverse compiler loading…</div>}
+      </section>
     </div>
   );
 }
@@ -401,7 +459,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
     <button
       type="button"
       onClick={onClick}
-      className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 py-1.5 text-[12px] [&>svg]:size-3.5 ${active ? "border-primary text-text" : "border-transparent text-muted hover:text-text"}`}
+      className={`-mb-px inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-1.5 text-[12px] [&>svg]:size-3.5 ${active ? "border-primary text-text" : "border-transparent text-muted hover:text-text"}`}
     >
       {icon}
       {label}

@@ -31,7 +31,12 @@ import { convergenceStore } from "./store/convergence.ts";
 import { recipeStore, slugify } from "./store/recipes.ts";
 import { remediationStore } from "./store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "./telemetry.ts";
+import { runCanaryConvergence } from "./local/canary-convergence.ts";
+import { reconcileCommercial, reverseCompile } from "./local/commercial-reconciler.ts";
+import { immunizeFleet, stageFleetCampaign } from "./local/fleet-immunizer.ts";
 import { buildInverseRollback, counterfactualReplay, verifyFormalInvariants, verifyIdempotency } from "./local/formal-verifier.ts";
+import { generateRunbook } from "./local/runbook.ts";
+import { OPEN_WEIGHT_INFERENCE_CONFIG } from "./router/glimmer-payload.ts";
 import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skill-compiler.ts";
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
@@ -97,6 +102,7 @@ app.get("/api/health", async (c) => {
     providers: Object.values(providers).map((p) => ({ id: p.id, label: p.label, hasKey: p.hasKey })),
     mcp,
     telemetrySubscribers: telemetry.stats().subscribers,
+    openWeightInference: { ...OPEN_WEIGHT_INFERENCE_CONFIG, hoverTiers: [...config.openWeightTiers], maxContainers: 1 },
   });
 });
 
@@ -342,6 +348,7 @@ const ApproveBodySchema = z.object({
   decision: z.enum(["approve", "reject"]).optional(),
   openPullRequest: z.boolean().optional(),
   mode: ExecutionModeSchema.optional(),
+  simulateCanaryFailure: z.boolean().optional(),
 });
 
 /**
@@ -352,8 +359,47 @@ const ApproveBodySchema = z.object({
 const approveHandler = async (c: Context) => {
   const body = ApproveBodySchema.parse(await c.req.json());
   const { convergence, ...drawer } = await approve(body);
-  return c.json({ drawer, convergence });
+  if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
+  const scenarioId = drawer.ticketId as ScenarioId;
+  const canary = runCanaryConvergence(scenarioId, { mode: body.mode ?? "break-glass", simulateCanaryFailure: body.simulateCanaryFailure ?? false });
+  if (canary.finalState === "AUTO_ROLLED_BACK") {
+    convergenceStore.clear(scenarioId, drawer.tenantId);
+    auditLedger.append({ tenantId: drawer.tenantId, ticketId: drawer.ticketId, actionType: "autonomous-rollback", delegatedIdentity: body.approvedBy ?? drawer.approval.requiredIdentity, modalSandboxVerified: false, astPass: null, tfValidatePass: null, gitBranch: drawer.staging?.branchName ?? null, prUrl: null, latencyMs: 0, execution: "none", detail: "Dead-man's switch: AADSTS53003 spike in Canary Ring 0; f^-1 inverse rollback applied, tenant restored to pre-change state" });
+    return c.json({ drawer, convergence: null, canary });
+  }
+  return c.json({ drawer, convergence, canary });
 };
+
+/* --------------------- Day-2 Places 5-8: reconcile / iac / fleet / runbook --------------------- */
+
+app.get("/api/reconcile/commercial/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  return c.json({ reconciliation: reconcileCommercial(scenarioId) });
+});
+
+app.post("/api/iac/reverse-compile", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
+  return c.json({ result: reverseCompile(scenarioOf(body)) });
+});
+
+app.get("/api/fleet/immunize/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  return c.json({ fleet: immunizeFleet(scenarioId) });
+});
+
+app.post("/api/fleet/campaign/:scenarioId", (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId")) as ScenarioId;
+  const campaign = stageFleetCampaign(scenarioId);
+  const fleet = immunizeFleet(scenarioId);
+  auditLedger.append({ tenantId: SCENARIO_REGISTRY[scenarioId].tenantId, ticketId: scenarioId, actionType: "fleet-campaign", delegatedIdentity: "contextpane-fleet", modalSandboxVerified: true, astPass: true, tfValidatePass: null, gitBranch: campaign.branches[0]?.branch ?? null, prUrl: null, latencyMs: Math.round(campaign.latencyMs), execution: "none", detail: `Fleet GitOps campaign staged for ${campaign.branches.length} tenants (${fleet.signature})` });
+  return c.json({ campaign, fleet });
+});
+
+app.get("/api/runbooks/:file", (c) => {
+  const file = c.req.param("file");
+  const scenarioId = ScenarioIdSchema.parse(file.replace(/\.md$/, "")) as ScenarioId;
+  return c.text(generateRunbook(scenarioId), 200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="${scenarioId}-runbook.md"` });
+});
 app.post("/api/remediate/approve", approveHandler);
 app.post("/api/approve", approveHandler);
 

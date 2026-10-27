@@ -30,6 +30,8 @@ Modal prints https://<workspace>--contextpane-glimmer-serve.modal.run; wire it i
 
 from __future__ import annotations
 
+import copy
+import json
 import os
 import re
 import subprocess
@@ -51,6 +53,145 @@ MAX_CONTAINERS = 1
 PORT = 8080
 WEIGHTS_DIR = "/weights"
 
+# Speculative decoding + KV-cache quantisation (llama-server flags in build_llama_server_cmd).
+# CTX_GLIMMER_DRAFT_MODEL is a draft GGUF filename under /weights or an absolute path; unset disables it.
+DRAFT_MODEL = os.environ.get("CTX_GLIMMER_DRAFT_MODEL", "")
+DRAFT_MAX = 8
+DRAFT_MIN = 2
+KV_CACHE_QUANT = "q8_0"
+
+_ENTITY_TYPES = ["upn", "group", "device", "policy", "errorCode", "sku", "resource", "setting", "ticket", "contract"]
+_HEALTH_STATES = ["healthy", "warning", "critical", "unknown"]
+_ACTION_KINDS = ["inspect-policy", "stage-license-fix", "stage-intune-fix", "view-diff", "generate-fix", "open-sign-in-logs", "custom"]
+_NO_PTR = "Plain text only; never emit a ptr:// data-plane pointer (the hover diagnostic carries no dataPtr)."
+
+# Strict JSON Schema mirroring HoverDiagnosticArgs in packages/catalog (HoverDiagnosticPopover
+# minus providerTelemetry/latencyBudgetMs, which the orchestrator stamps). additionalProperties:false
+# everywhere + every property required (optionals are nullable) is what strict/GBNF decoding needs,
+# and it leaves no slot for a hallucinated dataPtr/ptr:// field.
+HOVER_JSON_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "entityId": {"type": "string", "minLength": 1, "description": _NO_PTR},
+        "entityType": {"type": "string", "enum": _ENTITY_TYPES},
+        "status": {"type": "string", "enum": _HEALTH_STATES},
+        "headline": {"type": "string", "maxLength": 120, "description": _NO_PTR},
+        "errorCodeTranslation": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "code": {"type": "string", "description": _NO_PTR},
+                        "meaning": {"type": "string", "maxLength": 240},
+                        "likelyCause": {"type": "string", "maxLength": 300},
+                        "docsUrl": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                    },
+                    "required": ["code", "meaning", "likelyCause", "docsUrl"],
+                },
+                {"type": "null"},
+            ]
+        },
+        "facts": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "label": {"type": "string", "maxLength": 40},
+                    "value": {"type": "string", "maxLength": 200, "description": _NO_PTR},
+                    "mono": {"type": "boolean"},
+                    "tone": {"anyOf": [{"type": "string", "enum": _HEALTH_STATES}, {"type": "null"}]},
+                },
+                "required": ["label", "value", "mono", "tone"],
+            },
+        },
+        "quickActions": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 40},
+                    "kind": {"type": "string", "enum": _ACTION_KINDS},
+                    "description": {"anyOf": [{"type": "string", "maxLength": 200}, {"type": "null"}]},
+                    "targetEntityId": {"anyOf": [{"type": "string", "description": _NO_PTR}, {"type": "null"}]},
+                    "destructive": {"type": "boolean"},
+                },
+                "required": ["id", "label", "kind", "description", "targetEntityId", "destructive"],
+            },
+        },
+    },
+    "required": ["entityId", "entityType", "status", "headline", "errorCodeTranslation", "facts", "quickActions"],
+}
+
+HOVER_RESPONSE_FORMAT: dict = {
+    "type": "json_schema",
+    "json_schema": {"name": "HoverDiagnostic", "strict": True, "schema": HOVER_JSON_SCHEMA},
+}
+
+# Surfaced in the serve() log line (llama-server owns /health, so there is no Python health route to embed it in).
+INFERENCE_CONFIG: dict = {
+    "grammarConstrained": True,
+    "kvCacheQuant": KV_CACHE_QUANT,
+    "cacheTypeK": KV_CACHE_QUANT,
+    "cacheTypeV": KV_CACHE_QUANT,
+    "speculativeDraftMax": DRAFT_MAX,
+    "speculativeDraftMin": DRAFT_MIN,
+    "speculativeEnabled": bool(DRAFT_MODEL),
+    "draftModel": DRAFT_MODEL or None,
+    "responseFormatName": "HoverDiagnostic",
+    "maxContainers": MAX_CONTAINERS,
+}
+
+
+def build_hover_response_format() -> dict:
+    """Fresh copy of the strict response_format for one hover chat call (llama-server turns it into a GBNF grammar)."""
+    return copy.deepcopy(HOVER_RESPONSE_FORMAT)
+
+
+def build_open_weight_hover_payload(model: str, messages: list, max_tokens: int = 3000, temperature: float = 0.0) -> dict:
+    """OpenAI-compatible hover chat payload carrying the strict HoverDiagnostic response_format."""
+    return {
+        "model": model,
+        "messages": messages,
+        "response_format": build_hover_response_format(),
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+
+
+def build_llama_server_cmd(model_path: str, draft_model: str = "", api_key: str = "") -> list[str]:
+    """llama-server command: always q8_0 KV cache; --model-draft speculative decoding only when a draft is set."""
+    cmd = [
+        "/app/llama-server",
+        "-m", model_path,
+        "-a", SERVED_MODEL_NAME,
+        "-ngl", "99",
+        "-np", str(SLOTS),
+        "-c", str(SLOTS * CONTEXT_PER_SLOT),
+        "--jinja",
+        "--chat-template-kwargs", f'{{"reasoning_strength":"{REASONING_STRENGTH}"}}',
+        "--reasoning-budget", str(REASONING_BUDGET),
+        "--temp", "1.0", "--top-p", "0.95", "--top-k", "64",
+        "--cache-type-k", KV_CACHE_QUANT,
+        "--cache-type-v", KV_CACHE_QUANT,
+        "--host", "0.0.0.0",
+        "--port", str(PORT),
+    ]  # fmt: skip
+    draft = (draft_model or "").strip()
+    if draft:
+        draft_path = draft if draft.startswith("/") else os.path.join(WEIGHTS_DIR, draft)
+        cmd += ["--model-draft", draft_path, "--draft-max", str(DRAFT_MAX), "--draft-min", str(DRAFT_MIN)]
+    if api_key:
+        cmd += ["--api-key", api_key]
+    return cmd
+
 image = (
     # Rolling CUDA build of llama-server; the build number is checked at start-up against MIN_LLAMA_BUILD
     modal.Image.from_registry("ghcr.io/ggml-org/llama.cpp:server-cuda", add_python="3.12")
@@ -65,6 +206,7 @@ image = (
             "CTX_GLIMMER_GPU": GPU,
             "CTX_GLIMMER_REASONING_STRENGTH": REASONING_STRENGTH,
             "CTX_GLIMMER_REASONING_BUDGET": str(REASONING_BUDGET),
+            "CTX_GLIMMER_DRAFT_MODEL": DRAFT_MODEL,
         }
     )
 )
@@ -117,22 +259,6 @@ class Glimmer:
         model_path = os.path.join(WEIGHTS_DIR, GGUF_FILE)
         if not os.path.exists(model_path):
             model_path = ensure_weights()
-        cmd = [
-            "/app/llama-server",
-            "-m", model_path,
-            "-a", SERVED_MODEL_NAME,
-            "-ngl", "99",
-            "-np", str(SLOTS),
-            "-c", str(SLOTS * CONTEXT_PER_SLOT),
-            "--jinja",
-            "--chat-template-kwargs", f'{{"reasoning_strength":"{REASONING_STRENGTH}"}}',
-            "--reasoning-budget", str(REASONING_BUDGET),
-            "--temp", "1.0", "--top-p", "0.95", "--top-k", "64",
-            "--host", "0.0.0.0",
-            "--port", str(PORT),
-        ]  # fmt: skip
-        api_key = os.environ.get("CTX_OPEN_WEIGHT_API_KEY", "")
-        if api_key:
-            cmd += ["--api-key", api_key]
-        print(f"llama.cpp b{build}: loading {model_path}")
+        cmd = build_llama_server_cmd(model_path, draft_model=DRAFT_MODEL, api_key=os.environ.get("CTX_OPEN_WEIGHT_API_KEY", ""))
+        print(f"llama.cpp b{build}: loading {model_path} inference={json.dumps(INFERENCE_CONFIG)}")
         subprocess.Popen(cmd)

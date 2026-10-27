@@ -52,6 +52,11 @@ function Tab({ id, active, icon, label }: { id: SystemTab; active: SystemTab; ic
   );
 }
 
+function RunbookExport() {
+  const scenarioId = useWorkbench((s) => s.scenarioId);
+  return <a href={`/api/runbooks/${scenarioId}.md`} download className="mt-2 inline-flex rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] text-primary" data-testid="runbook-export">Export Runbook (.md)</a>;
+}
+
 function SkillsPiiBody() {
   const skills = useWorkbench((s) => s.compiledSkills);
   const pii = useWorkbench((s) => s.piiMetrics);
@@ -155,6 +160,15 @@ function ProvidersBody() {
           ))}
         </ul>
         <div className="mt-1 text-[10.5px] text-faint">The open-weight Muse Glimmer GPU is scale-to-zero and only woken by an explicit hover refresh; cached answers are served without it.</div>
+        {health?.openWeightInference && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="glimmer-config">
+            <Pill tone="healthy">grammarConstrained: {String(health.openWeightInference.grammarConstrained)}</Pill>
+            <Pill tone="muted">kvCacheQuant: {health.openWeightInference.kvCacheQuant}</Pill>
+            <Pill tone="muted">speculativeDraftMax: {health.openWeightInference.speculativeDraftMax}</Pill>
+            <Pill tone="muted">maxContainers: {health.openWeightInference.maxContainers}</Pill>
+          </div>
+        )}
+        <RunbookExport />
       </section>
 
       {health?.github && (

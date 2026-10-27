@@ -258,6 +258,8 @@ if (-not $SkipRemediate) {
             param($r)
             $i = @()
             if ($r.drawer.approval.mode -ne $Mode) { $i += "approval.mode $($r.drawer.approval.mode)" }
+            if ($r.canary.finalState -ne 'CONVERGED') { $i += "canary $($r.canary.finalState) != CONVERGED" }
+            if (@($r.canary.stages.stage) -join ',' -ne 'APPLIED,CANARY_RING_0,SYNTHETIC_PROBED,CONVERGED') { $i += 'canary stage order wrong' }
             if ($Mode -eq 'gitops') {
                 if ($r.drawer.approval.state -ne 'staged') { $i += "approval.state $($r.drawer.approval.state) != staged" }
                 if ($r.convergence) { $i += 'GitOps must not converge the canvas' }
@@ -344,6 +346,76 @@ $null = Invoke-Check -Name dataplane-pii -Method GET -Path "/api/dataplane/$Scen
     if ($null -eq $r.piiMetrics) { $i += 'piiMetrics missing' }
     elseif ($r.piiMetrics.zeroRawPiiInLlmPrompt -ne $true) { $i += 'zeroRawPiiInLlmPrompt != true' }
     $i
+}
+
+$null = Invoke-Check -Name reconcile-commercial -Method GET -Path "/api/reconcile/commercial/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    $x = $r.reconciliation
+    if ($x.contractId -ne 'CNT-2026-884') { $i += "contract $($x.contractId)" }
+    if ($x.pathA.netDeltaMonthly -ne 0) { $i += 'Path A not $0/mo' }
+    if ($ScenarioId -eq 'INC-4092' -and $x.pathA.wasteEliminatedMonthly -ne 285) { $i += "waste $($x.pathA.wasteEliminatedMonthly) != 285" }
+    if ($x.pathB.netDeltaMonthly -ne 171) { $i += "Path B $($x.pathB.netDeltaMonthly) != +171" }
+    $i
+}
+
+$null = Invoke-Check -Name iac-reverse-compile -Method POST -Path '/api/iac/reverse-compile' -Body @{ scenarioId = $ScenarioId } -Schema {
+    param($r)
+    $i = @()
+    if (@($r.result.imports).Count -lt 1) { $i += 'no import {} blocks' }
+    elseif ($r.result.imports[0] -notmatch 'import \{') { $i += 'first import malformed' }
+    if (-not $r.result.hcl) { $i += 'no HCL main.tf' }
+    $i
+}
+
+$null = Invoke-Check -Name fleet-immunize -Method GET -Path "/api/fleet/immunize/$ScenarioId" -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.fleet.signature) { $i += 'no causal signature' }
+    if (@($r.fleet.tenants).Count -ne 5) { $i += "fleet tenants $(@($r.fleet.tenants).Count) != 5" }
+    if ($r.fleet.signature -match '@') { $i += 'signature leaks PII' }
+    $i
+}
+
+$null = Invoke-Check -Name fleet-campaign -Method POST -Path "/api/fleet/campaign/$ScenarioId" -Body @{} -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.campaign.verified) { $i += 'campaign not formal-verified' }
+    if (@($r.campaign.branches).Count -lt 1) { $i += 'no fleet branches staged' }
+    $i
+}
+
+$null = Invoke-Check -Name runbook -Method GET -Path "/api/runbooks/$ScenarioId.md" -Schema {
+    param($r)
+    $i = @()
+    if ($r -isnot [string]) { $i += 'runbook is not markdown text' }
+    elseif ($r -notmatch 'Executive Root-Cause' -or $r -notmatch 'Inverse Rollback') { $i += 'runbook sections missing' }
+    $i
+}
+
+$deadmanRem = Invoke-Check -Name remediate-deadman -Method POST -Path '/api/remediate' -Body @{ scenarioId = $ScenarioId } -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.drawer.remediationId) { $i += 'no remediation for dead-man test' }
+    $i
+}
+if ($deadmanRem) {
+    $null = Invoke-Check -Name approve-deadman -Method POST -Path '/api/remediate/approve' -Body @{ remediationId = $deadmanRem.drawer.remediationId; mode = $Mode; simulateCanaryFailure = $true } -Schema {
+        param($r)
+        $i = @()
+        if ($r.canary.finalState -ne 'AUTO_ROLLED_BACK') { $i += "canary $($r.canary.finalState) != AUTO_ROLLED_BACK" }
+        if ($r.convergence) { $i += 'dead-man rollback must not converge canvas' }
+        $stages = @($r.canary.stages.stage)
+        if ($stages -notcontains 'SYNTHETIC_PROBED') { $i += 'no SYNTHETIC_PROBED stage' }
+        if ($stages[-1] -ne 'AUTO_ROLLED_BACK') { $i += 'last stage not AUTO_ROLLED_BACK' }
+        $i
+    }
+    $null = Invoke-Check -Name reset-after-deadman -Method POST -Path '/api/lab/reset-drift' -Body @{ scenarioId = $ScenarioId } -Schema {
+        param($r)
+        $i = @()
+        if (-not $r.ok) { $i += 'reset after dead-man failed' }
+        $i
+    }
 }
 
 $null = Invoke-Check -Name rollback -Method POST -Path '/api/rollback' -Body @{ scenarioId = $ScenarioId } -Schema {

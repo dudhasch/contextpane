@@ -28,6 +28,19 @@ export function shortSku(sku: string, max = 16): string {
   return out.length <= max + 6 ? out : `${out.slice(0, max + 5)}…`;
 }
 
+/** Expanded-tab only: Git ↔ Live Graph ↔ Pax8 contract seat paths. Nothing on the collapsed card. */
+function CommercialSubTab() {
+  const rec = useWorkbench((s) => s.commercial);
+  const loadOps = useWorkbench((s) => s.loadOps);
+  if (!rec) return <button type="button" onClick={() => void loadOps()} className="text-[11.5px] text-primary hover:underline">Load 3-Way Commercial &amp; Seat Reconciler…</button>;
+  return (
+    <div className="space-y-1.5 text-[11.5px]" data-testid="commercial-subtab">
+      <div><span className="text-healthy">Path A · {rec.pathA.label}:</span> <span className="text-muted">$0/mo net · ${rec.pathA.wasteEliminatedMonthly}/mo waste eliminated</span></div>
+      <div><span>Path B · {rec.pathB.label}:</span> <span className="text-muted">+${rec.pathB.netDeltaMonthly}/mo prorated ({rec.contractId})</span></div>
+    </div>
+  );
+}
+
 function SkuBadges({ skus, muted = false }: { skus: string; muted?: boolean }) {
   const list = skus.split(",").map((s) => s.trim());
   return (
@@ -59,6 +72,7 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       tabs={[
         { id: "users", label: "Assignments", badge: props.users.length },
         { id: "pool", label: "SKU Pools", badge: props.skuPools.length },
+        { id: "commercial", label: "3-Way Reconciler" },
       ]}
       summary={
         <div className="space-y-1">
@@ -84,7 +98,9 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       }
     >
       {(tab) =>
-        tab === "pool" ? (
+        tab === "commercial" ? (
+          <CommercialSubTab />
+        ) : tab === "pool" ? (
           <div className="space-y-2">
             <DataTable
               head={["SKU", "Enabled", "Consumed", "Available", "Source"]}

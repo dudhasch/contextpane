@@ -56,6 +56,13 @@ Four upgrades, all kept off the main canvas cards (see `DESIGN.md`):
 
 `CTX_OPEN_WEIGHT_TIERS=hover` stays set throughout: none of this wakes the Modal L40S GPU.
 
+### Places 5–8
+
+5. **Closed-Loop Canary Convergence & Dead-Man's Switch** (`apps/orchestrator/src/local/canary-convergence.ts`): every approval returns a 4-stage trace `APPLIED → CANARY_RING_0 (SG-Canary-Ring0) → SYNTHETIC_PROBED → CONVERGED`. Synthetic probes run a CA What-If over target + break-glass personas and check `TCP/3389` closed, `TCP/443` open, 0 Intune conflicts. The drawer's *Simulate Canary Probe Failure* checkbox (or `simulateCanaryFailure: true` on `POST /api/remediate/approve`) makes Stage 3 detect an `AADSTS53003` spike, fire the pre-verified `f⁻¹` rollback, land on `AUTO_ROLLED_BACK`, and log `autonomous-rollback` to the audit ledger.
+6. **3-Way Commercial Reconciler & Reverse-IaC** (`commercial-reconciler.ts`): `GET /api/reconcile/commercial/:scenarioId` reconciles Git baseline ↔ live Graph `subscribedSkus` ↔ Pax8 contract `CNT-2026-884` — Path A reclaims 3 `SPE_E5` + 2 Copilot orphaned seats ($0/mo, $285/mo waste eliminated) vs Path B +3 `SPE_E5` (+$171/mo). Shown only in the expanded License card tab and the drawer. `POST /api/iac/reverse-compile` emits OpenTofu HCL + `import {}` blocks (plan: `0 to add, 0 to destroy`) with semantic shadow/duplicate findings.
+7. **Fleet Immunization & Runbooks** (`fleet-immunizer.ts`, `runbook.ts`): `GET /api/fleet/immunize/:scenarioId` extracts a zero-PII causal signature (e.g. `AVD-E3-SKU-Mismatch-With-Open-RDP`) and matches 5 fleet tenants; `POST /api/fleet/campaign/:scenarioId` formal-verifies and stages fleet GitOps branches. `GET /api/runbooks/:scenarioId.md` exports the verified SOP (root cause, `T-18m→T+Fix` timeline, zero-PII `ptr://` queries, formal proofs, forward + `f⁻¹` scripts) via the drawer's and System & Audit's *Export Runbook (.md)*.
+8. **Glimmer Grammar-Constrained Sampling** (`modal-sandbox/glimmer_open_weights.py`, `apps/orchestrator/src/router/glimmer-payload.ts`): open-weight hover calls carry strict `response_format: {type:"json_schema", json_schema:{name:"HoverDiagnostic", strict:true}}` (GBNF on llama-server, no `ptr://` slot), plus `--cache-type-k/v q8_0` and optional `--model-draft --draft-max 8 --draft-min 2` via `CTX_GLIMMER_DRAFT_MODEL`. Config is exposed in `/api/health` (`openWeightInference`) and System & Audit. `max_containers=1`; no GPU is booted by tests.
+
 ## Reproduce the Demo in 60 Seconds
 
 ```bash

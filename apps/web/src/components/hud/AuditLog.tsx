@@ -1,4 +1,4 @@
-import { ExternalLink, FileCheck2, GitBranch, RotateCcw, ShieldCheck, ShieldX } from "lucide-react";
+import { ExternalLink, FileCheck2, GitBranch, History, RotateCcw, ShieldCheck, ShieldX, Zap } from "lucide-react";
 import type { AuditActionType, AuditEntry } from "@contextpane/catalog";
 import { fmtMs } from "@/lib/format";
 import { useWorkbench } from "@/store";
@@ -9,6 +9,8 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "hitl-approval": { label: "HITL approval", tone: "healthy", icon: <ShieldCheck /> },
   "hitl-rejection": { label: "HITL rejection", tone: "critical", icon: <ShieldX /> },
   "drift-reset": { label: "Demo drift reset", tone: "muted", icon: <RotateCcw /> },
+  "autonomous-rollback": { label: "Autonomous rollback (f⁻¹)", tone: "critical", icon: <History /> },
+  "fleet-campaign": { label: "Fleet GitOps campaign", tone: "warning", icon: <Zap /> },
 };
 
 function check(v: boolean | null): { text: string; className: string } {

@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { OpenAIFunctionTool } from "@contextpane/catalog";
 import { config, type ProviderConfig } from "../config.ts";
+import { buildHoverResponseFormat } from "./glimmer-payload.ts";
 
 /** CTX_ROUTER_DEBUG=1 appends every model answer (no headers, no keys) to data/router-debug.jsonl. */
 const DEBUG_DIR = config.dataDir;
@@ -103,6 +104,9 @@ function reasoningParams(provider: ProviderConfig, effort: ReasoningEffort | und
  */
 const autoToolChoiceOnly = new Set<string>(["meta"]);
 
+/** Open-weight Glimmer hover calls carry the strict HoverDiagnostic JSON schema (GBNF on llama-server). */
+const OPEN_WEIGHT_PROVIDER_IDS = new Set(["modal-open-weights", "runpod", "local-glimmer-30b"]);
+
 function rejectsNamedToolChoice(error: unknown): boolean {
   return error instanceof ProviderHttpError && error.status === 400 && /tool_choice/i.test(error.message);
 }
@@ -127,6 +131,7 @@ export async function chatWithForcedTool(
         // With "auto" the single tool is still the only way to answer; say so explicitly.
         messages: named ? messages : [...messages, { role: "system", content: `Answer by calling the ${tool.function.name} tool exactly once. Do not reply with text.` }],
         tools: [tool],
+        ...(OPEN_WEIGHT_PROVIDER_IDS.has(provider.id) && tool.function.name === "emit_hover_diagnostic" ? { response_format: buildHoverResponseFormat() } : {}),
         tool_choice: named ? { type: "function", function: { name: tool.function.name } } : "auto",
         temperature: options.temperature ?? 0.1,
         max_tokens: options.maxTokens ?? 4096,

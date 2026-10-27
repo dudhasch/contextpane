@@ -160,6 +160,15 @@ All deep proof lives off-canvas. Cards never gain verification, vault or compile
   NOW · T+Fix`, Tier 0, 0 tokens). Selecting a slice rings only the card that changed
   (`Δ <card>` in the same line). Converged scenarios add one
   `[1-Click Undo / Rollback (f⁻¹)]` button at the right end of that bar — nowhere else.
+- **Canary convergence (Places 5–8):** the *Simulate Canary Probe Failure* checkbox, the
+  mono 4-stage canary trace (`APPLIED → CANARY_RING_0 → SYNTHETIC_PROBED → CONVERGED /
+  AUTO_ROLLED_BACK`), the `3-Way Commercial` and `Fleet & Reverse-IaC` drawer tabs, and
+  *Export Runbook (.md)* all live inside the Action Approval drawer. The expanded License
+  card gains one `3-Way Reconciler` tab (expanded state only; collapsed card unchanged).
+  The left-pane Resolution Plan may carry one subtle fleet pill
+  (`Stage Fleet GitOps Campaign (N Tenants)`). System & Audit's Providers tab shows the
+  Glimmer inference pills (`grammarConstrained`, `kvCacheQuant: q8_0`,
+  `speculativeDraftMax: 8`, `maxContainers: 1`) and a runbook export link.
 - **Skills & PII Vault tab (System & Audit):** compiled-skill badges
   (`Tier 0 Compiled Skill (100/100 fuzz verified)`), the compile button, vaulted-field
   count, `zeroRawPiiInLlmPrompt: true`, and token ↔ raw sample mappings in mono.

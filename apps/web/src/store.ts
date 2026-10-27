@@ -53,7 +53,7 @@ export interface Toast {
   hrefLabel?: string;
 }
 
-export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback";
+export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback" | "commercial" | "fleet";
 export type SystemTab = "savings" | "audit" | "providers" | "skills";
 export type FormalData = import("./lib/api").FormalResponse;
 export type TimelineData = import("./lib/api").TimelineResponse["timeline"];
@@ -114,6 +114,11 @@ interface WorkbenchState {
   /** UPN the drawer was opened for from a hover [Stage License Fix]. */
   drawerFocusUpn: string | null;
   formal: FormalData | null;
+  canary: import("./lib/api").CanaryTrace | null;
+  commercial: import("./lib/api").Commercial | null;
+  reverseResult: import("./lib/api").ReverseResult | null;
+  fleet: import("./lib/api").Fleet | null;
+  simulateCanaryFailure: boolean;
   timeline: TimelineData | null;
   timelineSliceId: string | null;
   compiledSkills: SkillDef[];
@@ -187,6 +192,9 @@ interface WorkbenchState {
   loadAudit(): Promise<void>;
   setDrawerTab(tab: DrawerTab): void;
   loadDrawerExtras(): Promise<void>;
+  loadOps(): Promise<void>;
+  stageCampaign(): Promise<void>;
+  setSimulateCanaryFailure(v: boolean): void;
   compileSkill(): Promise<void>;
   loadSkills(): Promise<void>;
   selectTimelineSlice(sliceId: string): void;
@@ -230,6 +238,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   drawerTab: "powershell",
   drawerFocusUpn: null,
   formal: null,
+  canary: null,
+  commercial: null,
+  reverseResult: null,
+  fleet: null,
+  simulateCanaryFailure: false,
   timeline: null,
   timelineSliceId: null,
   compiledSkills: [],
@@ -421,10 +434,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         remediationId: drawer.remediationId,
         decision,
         approvedBy: drawer.approval.requiredIdentity,
-        ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode } : {}),
+        ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode, simulateCanaryFailure: get().simulateCanaryFailure } : {}),
       });
       const { executionLog, ...updated } = result.drawer;
-      set({ drawer: updated, approveLog: executionLog });
+      set({ drawer: updated, approveLog: executionLog, canary: result.canary ?? null });
+      if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
+        get().toast({ tone: "critical", title: "Dead-man's switch: auto-rolled back (f⁻¹)", detail: "AADSTS53003 spike in Canary Ring 0; tenant restored to pre-change state. See Audit Log." });
+        return;
+      }
       if (decision === "reject" || !result.convergence) {
         const prUrl = updated.staging?.prUrl;
         get().toast({
@@ -628,7 +645,22 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const [formal, tl, dp, skills] = await Promise.all([api.formal(scenarioId), api.timeline(scenarioId), api.dataplaneDetail(scenarioId), api.skills()]);
       if (get().scenarioId !== scenarioId) return;
       set({ formal, timeline: tl.timeline, timelineSliceId: get().timelineSliceId ?? tl.timeline.slices.at(-2)?.id ?? tl.timeline.slices.at(-1)?.id ?? null, piiMetrics: dp.piiMetrics, compiledSkills: skills.skills });
+      void get().loadOps();
     } catch { /* extras are drawer-only; canvas stays clean */ }
+  },
+  setSimulateCanaryFailure: (simulateCanaryFailure) => set({ simulateCanaryFailure }),
+  async loadOps() {
+    const scenarioId = get().scenarioId;
+    try {
+      const [rec, rev, fl] = await Promise.all([api.commercial(scenarioId), api.reverseCompile(scenarioId), api.fleet(scenarioId)]);
+      if (get().scenarioId === scenarioId) set({ commercial: rec.reconciliation, reverseResult: rev.result, fleet: fl.fleet });
+    } catch { /* drawer-only extras */ }
+  },
+  async stageCampaign() {
+    try {
+      const { campaign } = await api.campaign(get().scenarioId);
+      get().toast({ tone: campaign.verified ? "healthy" : "warning", title: `Fleet GitOps campaign staged (${campaign.branches.length} tenants)`, detail: `${campaign.branches.map((b) => b.branch).join(", ")} · verified in ${campaign.latencyMs} ms` });
+    } catch (e) { get().toast({ tone: "critical", title: "Campaign failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
   async loadSkills() {
     try { const { skills } = await api.skills(); set({ compiledSkills: skills }); } catch { /* offline */ }
