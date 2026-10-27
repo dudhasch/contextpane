@@ -1,0 +1,3 @@
+===================================================================
+--- azure-live/nsg-contoso-avd-hostpool-01.tf	live state (Azure)
++++ demo-iac/main.tf	expected state (Terraform)

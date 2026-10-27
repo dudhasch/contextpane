@@ -1,0 +1,16 @@
+[
+  {
+    "method": "PATCH",
+    "url": "/identity/conditionalAccess/policies/d09ae604-4c06-4769-ad01-20ec8efa18ad",
+    "body": {
+      "state": "enabledForReportingButNotEnforced",
+      "conditions": {
+        "users": {
+          "excludeGroups": [
+            "<SG-Contoso-Finance-AVD id>"
+          ]
+        }
+      }
+    }
+  }
+]
