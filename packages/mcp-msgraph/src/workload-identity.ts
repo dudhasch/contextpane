@@ -55,6 +55,8 @@ export interface WorkloadIdentityFixture {
   failureSource: string;
   /** Application permissions (app roles) currently granted on Microsoft Graph. */
   appPermissions: string[];
+  /** The appRoleAssignments on Microsoft Graph behind appPermissions, one per permission. */
+  appRoleAssignments: Array<{ id: string; permission: string; appRoleId: string }>;
   /** Delegated grant held by the SPN. */
   oauth2PermissionGrant: {
     id: string;
@@ -102,6 +104,12 @@ export const WORKLOAD_IDENTITY: WorkloadIdentityFixture = {
   errorCodeLabel: "AADSTS7000222",
   failureSource: "GitHub Actions IP range",
   appPermissions: ["Directory.ReadWrite.All", "Sites.FullControl.All", "Mail.ReadWrite", "RoleManagement.ReadWrite.Directory"],
+  appRoleAssignments: [
+    { id: "ara-spn-contoso-erp-sync-directory-readwrite-all", permission: "Directory.ReadWrite.All", appRoleId: "19dbc75e-c2e2-444c-a770-ec69d8559fc7" },
+    { id: "ara-spn-contoso-erp-sync-sites-fullcontrol-all", permission: "Sites.FullControl.All", appRoleId: "a82116e5-55eb-4c41-a434-62fe8a61c773" },
+    { id: "ara-spn-contoso-erp-sync-mail-readwrite", permission: "Mail.ReadWrite", appRoleId: "e2a3a72e-5f79-4c64-b1b1-878b674786c9" },
+    { id: "ara-spn-contoso-erp-sync-rolemanagement-readwrite-directory", permission: "RoleManagement.ReadWrite.Directory", appRoleId: "9e3f62cf-ca93-4989-b6ce-bf83c28f9fe8" },
+  ],
   oauth2PermissionGrant: {
     id: "grant-spn-contoso-erp-sync-001",
     scope: "Mail.ReadWrite offline_access",

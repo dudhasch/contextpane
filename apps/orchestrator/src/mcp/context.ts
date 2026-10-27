@@ -272,6 +272,7 @@ export function contextForModel(ctx: CorrelationContext) {
             passwordCredential: ctx.workloadIdentity.passwordCredential,
             errorCodeLabel: ctx.workloadIdentity.errorCodeLabel,
             appPermissions: ctx.workloadIdentity.appPermissions,
+            appRoleAssignments: ctx.workloadIdentity.appRoleAssignments,
             oauth2PermissionGrant: ctx.workloadIdentity.oauth2PermissionGrant,
             activity: ctx.workloadIdentity.activity,
             requiredPermissions: ctx.workloadIdentity.requiredPermissions,

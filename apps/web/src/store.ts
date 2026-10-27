@@ -7,6 +7,7 @@ import {
   getScenarioEntry,
   isAnyScenarioId,
   isCanvasComponentType,
+  isCustomScenarioId,
   registerCustomScenario,
   resolveTenantId,
   scenarioForTenant,
@@ -276,6 +277,8 @@ interface WorkbenchState {
   setRowFilter(filter: RowFilter | null): void;
   loadResolutionNote(): Promise<void>;
   closeTicket(): Promise<void>;
+  /** Clears the resolved / closed state so the ticket can be remediated again. */
+  reopenTicket(): Promise<void>;
   toast(toast: Omit<Toast, "id">): void;
   dismissToast(id: number): void;
 }
@@ -603,11 +606,24 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async remediate() {
     const scenarioId = get().scenarioId;
     if (get().remediateStatus === "loading") return;
+    // A resolved ticket is not remediated twice: show what ran, or point at Reopen.
+    if (get().convergence[scenarioId]) {
+      if (get().drawer?.ticketId === scenarioId) set({ drawerOpen: true });
+      else get().toast({ tone: "warning", title: `${scenarioId} is already resolved`, detail: "Reopen the ticket or reset drift before running remediation again." });
+      return;
+    }
     set({ remediateStatus: "loading", remediateProgress: [], drawerOpen: true, approveLog: [] });
     try {
       const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) => set((s) => ({ remediateProgress: [...s.remediateProgress, event] })));
       // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
-      set({ drawer: result.drawer, remediateStatus: "ready", executionMode: (getScenarioEntry(scenarioId)?.kind ?? "ticket") === "ticket" ? "break-glass" : "gitops" });
+      const github = get().health?.github;
+      set({
+        drawer: result.drawer,
+        remediateStatus: "ready",
+        executionMode: (getScenarioEntry(scenarioId)?.kind ?? "ticket") === "ticket" ? "break-glass" : "gitops",
+        // Ad-hoc CUSTOM-/ERP- runs never open a PR unless the box is ticked for that run.
+        openPrOnApprove: !isCustomScenarioId(scenarioId) && Boolean(github?.prOnApprove && github.origin && github.ghAuthenticated),
+      });
       void get().loadDrawerExtras();
     } catch (error) {
       set({ remediateStatus: "error" });
@@ -628,7 +644,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const { executionLog, ...updated } = result.drawer;
       set({ drawer: updated, approveLog: executionLog, canary: result.canary ?? null });
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
-        get().toast({ tone: "critical", title: "Dead-man's switch: auto-rolled back (f⁻¹)", detail: "AADSTS53003 spike in Canary Ring 0; tenant restored to pre-change state. See Audit Log." });
+        const restored = result.canary.tenantRestored ?? false;
+        get().toast({
+          tone: "critical",
+          title: restored ? "Dead-man's switch fired · tenant unchanged" : "Dead-man's switch fired · live change still applied",
+          detail: restored
+            ? "AADSTS53003 spike in Canary Ring 0; nothing was written live, f⁻¹ bundle kept. See Audit Log."
+            : "AADSTS53003 spike in Canary Ring 0; f⁻¹ bundle prepared but not applied. Reset the scenario to restore. See Audit Log.",
+        });
         return;
       }
       if (decision === "reject" || !result.convergence) {
@@ -990,6 +1013,19 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({ tone: "healthy", title: `${scenarioId} marked closed in the PSA`, detail: `ticket.closed logged to the audit ledger (${result.audit.id}) with the resolution note attached` });
     } catch (error) {
       get().toast({ tone: "critical", title: "Close failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+  async reopenTicket() {
+    const scenarioId = get().scenarioId;
+    try {
+      const result = await api.reopenTicket(scenarioId);
+      get().applyConvergence(scenarioId, null);
+      set((s) => ({ drawer: s.drawer?.ticketId === scenarioId ? null : s.drawer, drawerOpen: false, approveLog: [], canary: null, remediateStatus: "idle" }));
+      void get().loadScenarios();
+      void get().loadAudit();
+      get().toast({ tone: "warning", title: `${scenarioId} reopened`, detail: `ticket.reopened logged (${result.audit.id}). The lab objects stay remediated until you reset drift.` });
+    } catch (error) {
+      get().toast({ tone: "critical", title: "Reopen failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
 

@@ -3,11 +3,15 @@ import { dirname, join } from "node:path";
 import {
   LayoutComponentSchema,
   SCENARIO_REGISTRY,
+  dataPtr,
+  datasetsFor,
+  isCanvasComponentType,
   isScenarioId,
   validateComponents,
   type LayoutComponent,
   type ScenarioId,
 } from "@contextpane/catalog";
+import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 
 /**
  * Place 2 — Tier3 -> Tier0 Skill Compiler.
@@ -16,14 +20,24 @@ import {
  * the skill (100 cases), and promotes passing skills to the registry.
  */
 
+/** What a symptom is made of, taken only from the target scenario's own fixtures and pointers. */
 export interface SymptomSignature {
   scenarioId: ScenarioId;
   tenantId: string;
   components: string[];
-  skuPartNumber: string;
-  groupName: string;
+  /** Object names, UPNs, Graph scopes and CSP URIs the symptom involves. */
+  requiredEntities: string[];
+  errorCodes: string[];
+  skus: string[];
+  groupNames: string[];
+  /** Conditional Access, Intune or OAuth grant ids. */
   policyIds: string[];
+  /** ptr:// datasets the Tier-0 skill binds its cards from. */
+  dataPtrs: string[];
 }
+
+/** A lookup: the scenario plus any subset of the signature's values. */
+export type SignatureQuery = { scenarioId: string } & Partial<Omit<SymptomSignature, "scenarioId">>;
 
 export interface TraceStep { phase: "hydrate" | "remediate"; action: string; detail: string; }
 export interface CapturedTrace {
@@ -47,7 +61,7 @@ export interface CompiledSkillDef {
 }
 
 export interface CompiledSkill extends CompiledSkillDef {
-  match: (sig: Partial<SymptomSignature> & { scenarioId: string }) => boolean;
+  match: (sig: SignatureQuery) => boolean;
   hydrate: (params?: Partial<FuzzParams>) => LayoutComponent[];
   remediate: (params?: Partial<FuzzParams>) => { scenarioId: ScenarioId; title: string; steps: string[]; affectedUpns: string[] };
 }
@@ -121,37 +135,111 @@ export function fuzzParamsFor(seed: number): FuzzParams {
   };
 }
 
-const DEFAULT_SIG = (scenarioId: ScenarioId): SymptomSignature => {
+const uniq = (values: Array<string | undefined | null>) => [...new Set(values.filter((v): v is string => Boolean(v)))];
+
+/** The scenario's own symptom: nothing here may come from another scenario's fixtures. */
+export function signatureFor(scenarioId: ScenarioId): SymptomSignature {
   const e = SCENARIO_REGISTRY[scenarioId];
-  return { scenarioId, tenantId: e.tenantId, components: [...e.components], skuPartNumber: "SPE_E5", groupName: "SG-Contoso-Finance-AVD", policyIds: ["ca-policy-001"] };
-};
+  const dataPtrs = e.components.filter(isCanvasComponentType).flatMap((c) => datasetsFor(c)).map((k) => dataPtr(scenarioId, k));
+  const base = { scenarioId, tenantId: e.tenantId, components: [...e.components], dataPtrs: uniq(dataPtrs) };
+  switch (scenarioId) {
+    case "INC-4092": {
+      const t = getManifestTenant(e.tenantId);
+      return {
+        ...base,
+        requiredEntities: uniq([t.azure?.nsg.name, t.azure?.resourceGroup, ...t.conditionalAccessPolicies.map((p) => p.displayName)]),
+        errorCodes: uniq(t.signInEvents.filter((s) => s.status.errorCode).map((s) => `AADSTS${s.status.errorCode}`)),
+        skus: uniq([t.licenses.skuPartNumber, t.licenses.legacySkuPartNumber]),
+        groupNames: uniq([...t.groups.map((g) => g.displayName), ...t.conditionalAccessPolicies.flatMap((p) => p.conditions.users.includeGroupNames)]),
+        policyIds: uniq(t.conditionalAccessPolicies.map((p) => p.id)),
+      };
+    }
+    case "INC-4099":
+    case "ANOM-INT-309": {
+      const f = INTUNE_SCENARIOS[scenarioId];
+      return {
+        ...base,
+        requiredEntities: uniq([...f.policies.map((p) => p.name), ...f.settings.map((s) => s.cspUri)]),
+        errorCodes: uniq([f.errorCode]),
+        skus: [],
+        groupNames: uniq(f.policies.flatMap((p) => p.assignedTo)),
+        policyIds: uniq(f.policies.map((p) => p.id)),
+      };
+    }
+    case "ANOM-LIC-101":
+      return {
+        ...base,
+        requiredEntities: uniq(LICENSE_ANOMALY.users.filter((u) => !u.accountEnabled).map((u) => u.upn)),
+        errorCodes: ["CountViolation"],
+        skus: [LICENSE_ANOMALY.sku.skuPartNumber],
+        groupNames: [LICENSE_ANOMALY.groupName],
+        policyIds: [],
+      };
+    case "ANOM-CA-204":
+      return {
+        ...base,
+        requiredEntities: uniq([CA_POSTURE.breakGlassAccount, ...CA_POSTURE.policies.map((p) => p.displayName)]),
+        errorCodes: [],
+        skus: [],
+        groupNames: uniq([CA_POSTURE.breakGlassGroup, CA_POSTURE.adminGroup]),
+        policyIds: uniq(CA_POSTURE.policies.map((p) => p.key)),
+      };
+    case "ANOM-APP-401": {
+      const w = WORKLOAD_IDENTITY;
+      return {
+        ...base,
+        requiredEntities: uniq([w.spn.displayName, w.owner.upn, ...w.appPermissions]),
+        errorCodes: [w.errorCodeLabel],
+        skus: [],
+        groupNames: [],
+        policyIds: uniq([w.oauth2PermissionGrant.id, ...w.appRoleAssignments.map((a) => a.id)]),
+      };
+    }
+  }
+}
 
 /* ---------------- layout builders (always Zod-valid) ---------------- */
 export function buildFuzzLayout(sig: SymptomSignature, p: FuzzParams): LayoutComponent[] {
+  const id = sig.scenarioId.toLowerCase();
+  const sku = sig.skus[0] ?? "FUZZ_SKU";
   const users = Array.from({ length: Math.min(p.userCount, 50) }, (_, i) => ({
     upn: `user${i}@${p.tenantId}.example.com`, displayName: `Fuzz User ${i}`, jobTitle: "",
-    accountEnabled: true, currentSku: "SPE_E3", expectedSku: sig.skuPartNumber,
+    accountEnabled: true, currentSku: sig.skus[1] ?? "", expectedSku: sku,
     assignmentPath: "Group" as const, assignmentState: "Drifted" as const, driftStatus: "drifted" as const,
   }));
-  const lic: LayoutComponent = {
-    type: "LicenseDriftCard", id: `license-drift-card-${sig.scenarioId.toLowerCase()}`, triggeredBy: [p.groupName], dataPtrs: {},
-    props: {
-      headline: `${users.length} users in ${p.groupName} on SPE_E3 instead of ${sig.skuPartNumber}`.slice(0, 200),
-      skuName: "Microsoft 365 E5", skuPartNumber: sig.skuPartNumber, groupName: p.groupName,
-      skuPools: [{ skuPartNumber: sig.skuPartNumber, skuName: "Microsoft 365 E5", enabled: p.skuEnabled, consumed: p.skuConsumed, available: p.skuEnabled - p.skuConsumed, source: "fixture" as const }],
-      groupErrors: [], users, state: "warning" as const,
-    },
-  };
-  const comps: LayoutComponent[] = [lic];
+  const comps: LayoutComponent[] = [];
+  if (sig.components.includes("LicenseDriftCard")) {
+    comps.push({
+      type: "LicenseDriftCard", id: `license-drift-card-${id}`, triggeredBy: [p.groupName], dataPtrs: {},
+      props: {
+        headline: `${users.length} users in ${p.groupName} drifted from ${sku}`.slice(0, 200),
+        skuName: sku, skuPartNumber: sku, groupName: p.groupName,
+        skuPools: [{ skuPartNumber: sku, skuName: sku, enabled: p.skuEnabled, consumed: p.skuConsumed, available: p.skuEnabled - p.skuConsumed, source: "fixture" as const }],
+        groupErrors: [], users, state: "warning" as const,
+      },
+    });
+  }
   if (sig.components.includes("EntraSignInTimeline")) {
     comps.push({
-      type: "EntraSignInTimeline", id: `entra-sign-in-timeline-${sig.scenarioId.toLowerCase()}`, triggeredBy: [p.policyId], dataPtrs: {},
+      type: "EntraSignInTimeline", id: `entra-sign-in-timeline-${id}`, triggeredBy: [p.policyId], dataPtrs: {},
       props: {
-        headline: "AADSTS53003 blocked by CA policy".slice(0, 200), focusUpn: users[0]?.upn ?? "",
+        headline: `${sig.errorCodes[0] ?? "Sign-in failures"} on ${sig.requiredEntities[0] ?? sig.scenarioId}`.slice(0, 200), focusUpn: users[0]?.upn ?? "",
         windowStart: "2026-10-26T08:00:00Z", windowEnd: "2026-10-26T09:00:00Z", events: [],
         rootCause: null,
-        policies: [{ id: p.policyId, displayName: "CA-001 Require compliant device", state: "enabled" as const, role: "blocking" as const, includeGroups: [p.groupName], excludeGroups: [], targetApps: ["Office 365"], clientAppTypes: [], grantControls: ["Block"], drift: [], modifiedDateTime: null }],
+        policies: [{ id: p.policyId, displayName: `Fuzz policy ${p.seed}`, state: "enabled" as const, role: "blocking" as const, includeGroups: [p.groupName], excludeGroups: [], targetApps: ["Office 365"], clientAppTypes: [], grantControls: ["Block"], drift: [], modifiedDateTime: null }],
         microActions: [], state: "warning" as const, sourceRef: null, baselineDiff: "",
+      },
+    });
+  }
+  if (sig.components.includes("IntuneDriftCard")) {
+    comps.push({
+      type: "IntuneDriftCard", id: `intune-drift-card-${id}`, triggeredBy: [p.policyId], dataPtrs: {},
+      props: {
+        headline: `${sig.errorCodes[0] ?? "Intune drift"} · fuzz case ${p.seed}`.slice(0, 200), issueKind: "policy-conflict" as const,
+        ...(sig.errorCodes[0] ? { errorCode: sig.errorCodes[0] } : {}),
+        goldenSource: "golden-tenant/intune/fuzz.json @ main",
+        policies: [{ id: p.policyId, name: `Fuzz-Policy-${p.seed}`, kind: "Settings Catalog" as const, assignedTo: [p.groupName], role: "conflicting" as const, source: "fixture" as const }],
+        settings: [], devices: [], affectedDeviceCount: 0, comparedAgainst: "fixture" as const, state: "warning" as const, sourceRef: null, baselineDiff: "",
       },
     });
   }
@@ -173,7 +261,7 @@ export function buildFuzzLayout(sig: SymptomSignature, p: FuzzParams): LayoutCom
 export function captureTrace(scenarioId: string): CapturedTrace {
   if (!isScenarioId(scenarioId)) throw new Error(`Invalid trace: unknown scenarioId '${scenarioId}'`);
   const e = SCENARIO_REGISTRY[scenarioId];
-  const signature = DEFAULT_SIG(scenarioId);
+  const signature = signatureFor(scenarioId);
   return {
     scenarioId, tenantId: e.tenantId, kind: e.kind, title: e.title,
     components: [...e.components], remediationScope: e.remediationScope,
@@ -193,28 +281,38 @@ export function assertValidTrace(trace: unknown): asserts trace is CapturedTrace
   if (!t.signature || t.signature.scenarioId !== t.scenarioId) throw new Error("Invalid trace: signature mismatch");
 }
 
-function signatureMatches(sig: SymptomSignature, q: Partial<SymptomSignature> & { scenarioId: string }): boolean {
+const SIGNATURE_LISTS = ["components", "requiredEntities", "errorCodes", "skus", "groupNames", "policyIds", "dataPtrs"] as const;
+
+/** Same scenario and tenant, and every value the query names is part of the signature. */
+function signatureMatches(sig: SymptomSignature, q: SignatureQuery): boolean {
   if (sig.scenarioId !== q.scenarioId) return false;
-  if (q.skuPartNumber && q.skuPartNumber !== sig.skuPartNumber) return false;
-  if (q.groupName && q.groupName !== sig.groupName) return false;
   if (q.tenantId && q.tenantId !== sig.tenantId) return false;
-  return true;
+  return SIGNATURE_LISTS.every((k) => (q[k] ?? []).every((v) => sig[k].includes(v)));
 }
 
 function makeSkill(def: CompiledSkillDef): CompiledSkill {
   return {
     ...def,
     match: (q) => signatureMatches(def.signature, q),
-    hydrate: (params) => buildFuzzLayout(def.signature, { ...fuzzParamsFor(1), tenantId: def.signature.tenantId, groupName: def.signature.groupName, policyId: def.signature.policyIds[0] ?? "ca-policy-001", ...params }),
+    hydrate: (params) => {
+      const fuzz = fuzzParamsFor(1);
+      return buildFuzzLayout(def.signature, { ...fuzz, tenantId: def.signature.tenantId, groupName: def.signature.groupNames[0] ?? fuzz.groupName, policyId: def.signature.policyIds[0] ?? fuzz.policyId, ...params });
+    },
     remediate: (params) => {
-      const p = { ...fuzzParamsFor(1), ...params };
-      return { scenarioId: def.scenarioId, title: `Fix ${def.scenarioId}: ${SCENARIO_REGISTRY[def.scenarioId].remediationScope}`, steps: [`Assign ${def.signature.skuPartNumber} to drifted members of ${p.groupName}`, `Reconcile policy ${p.policyId}`], affectedUpns: Array.from({ length: Math.min(p.userCount, 50) }, (_, i) => `user${i}@${p.tenantId}.example.com`) };
+      const fuzz = fuzzParamsFor(1);
+      const sig = def.signature;
+      const p = { ...fuzz, groupName: sig.groupNames[0] ?? fuzz.groupName, policyId: sig.policyIds[0] ?? fuzz.policyId, ...params };
+      const steps = [
+        ...(sig.skus[0] ? [`Assign ${sig.skus[0]} to drifted members of ${p.groupName}`] : [`Remediate ${sig.requiredEntities.slice(0, 3).join(", ")}`]),
+        `Reconcile ${p.policyId}`,
+      ];
+      return { scenarioId: def.scenarioId, title: `Fix ${def.scenarioId}: ${SCENARIO_REGISTRY[def.scenarioId].remediationScope}`, steps, affectedUpns: Array.from({ length: Math.min(p.userCount, 50) }, (_, i) => `user${i}@${p.tenantId}.example.com`) };
     },
   };
 }
 
 export async function runPropertyFuzzer(scenarioId: ScenarioId, cases = 100): Promise<{ cases: number; passed: number; failures: string[] }> {
-  const sig = DEFAULT_SIG(scenarioId);
+  const sig = signatureFor(scenarioId);
   const failures: string[] = [];
   let passed = 0;
   for (let i = 0; i < cases; i++) {
@@ -248,7 +346,8 @@ export function loadRegistry(): CompiledSkillDef[] {
   try {
     const raw = JSON.parse(readFileSync(REGISTRY_PATH, "utf8")) as CompiledSkillDef[];
     if (!Array.isArray(raw)) return [];
-    for (const d of raw) if (d && isScenarioId(d.scenarioId)) memory.set(d.id, makeSkill(d));
+    // Skills compiled before signatures were per-scenario carry another scenario's fields: drop them, a recompile replaces them.
+    for (const d of raw) if (d && isScenarioId(d.scenarioId) && Array.isArray(d.signature?.requiredEntities)) memory.set(d.id, makeSkill(d));
     return raw;
   } catch { return []; }
 }
@@ -271,13 +370,13 @@ function loadRegistryIfNeeded() { if (!registryLoaded) { loadRegistry(); registr
 
 export function listCompiledSkills(): CompiledSkill[] { loadRegistryIfNeeded(); return [...memory.values()]; }
 
-export function lookupTier0Skill(signature: Partial<SymptomSignature> & { scenarioId: string }): { skill: CompiledSkill; latencyMs: number } | null {
+export function lookupTier0Skill(signature: SignatureQuery): { skill: CompiledSkill; latencyMs: number } | null {
   loadRegistryIfNeeded();
   const t0 = performance.now();
   for (const s of memory.values()) if (s.match(signature)) return { skill: s, latencyMs: performance.now() - t0 };
   return null;
 }
-export function matchCompiledSkill(signature: Partial<SymptomSignature> & { scenarioId: string }): CompiledSkill | null {
+export function matchCompiledSkill(signature: SignatureQuery): CompiledSkill | null {
   return lookupTier0Skill(signature)?.skill ?? null;
 }
 

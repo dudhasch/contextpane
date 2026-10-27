@@ -14,6 +14,31 @@ describe("Tier3->Tier0 skill compiler (unit, POST-compile logic)", () => {
     expect(t.signature.scenarioId).toBe("INC-4092");
   });
 
+  test("each skill signature comes from its own scenario: ANOM-APP-401 carries no INC-4092 fields", async () => {
+    const app = await compileSkill("ANOM-APP-401");
+    expect(app.id).toBe("skill-anom-app-401-tier0");
+    const sig = app.signature;
+    expect(sig.requiredEntities).toEqual(expect.arrayContaining(["spn-contoso-erp-sync", "RoleManagement.ReadWrite.Directory", "Mail.ReadWrite", "alex.wilber@c4a8shili.onmicrosoft.com"]));
+    expect(sig.errorCodes).toEqual(["AADSTS7000222"]);
+    expect(sig.skus).toEqual([]);
+    expect(sig.dataPtrs.every((p) => p.startsWith("ptr://anom-app-401/"))).toBe(true);
+    const flat = JSON.stringify(sig);
+    for (const leak of ["SG-Contoso-Finance-AVD", "SPE_E5", "SPE_E3", "ca-policy-001", "INC-4092", "inc-4092"]) expect(flat).not.toContain(leak);
+    // Its Tier-0 layout is the sign-in timeline only, no borrowed license card.
+    expect(app.hydrate().map((c) => c.type)).toEqual(["EntraSignInTimeline"]);
+
+    expect(captureTrace("ANOM-CA-204").signature).toMatchObject({ policyIds: ["CA-001", "CA-004"], groupNames: expect.arrayContaining(["SG-BreakGlass-Accounts"]) });
+    expect(captureTrace("ANOM-LIC-101").signature).toMatchObject({ errorCodes: ["CountViolation"], skus: ["SPE_E5"], groupNames: ["SG-Contoso-M365-E5"] });
+    const intune = captureTrace("INC-4099").signature;
+    expect(intune.errorCodes).toEqual(["0x87D1FDE8"]);
+    expect(intune.policyIds).toContain("cfg-fab-legacy-bl");
+    expect(captureTrace("ANOM-INT-309").signature.requiredEntities).toContain("./Vendor/MSFT/Firewall/MdmStore/DomainProfile/EnableFirewall");
+    for (const id of ["INC-4099", "ANOM-INT-309", "ANOM-CA-204", "ANOM-LIC-101"]) {
+      const r = await runPropertyFuzzer(id as "INC-4099", 20);
+      expect(r.failures).toEqual([]);
+    }
+  });
+
   test("invalid trace rejection", async () => {
     await expect(compileFromTrace(null)).rejects.toThrow(/Invalid trace/);
     await expect(compileFromTrace({ scenarioId: "BAD", components: ["LicenseDriftCard"], signature: { scenarioId: "BAD" } })).rejects.toThrow(/Invalid trace/);

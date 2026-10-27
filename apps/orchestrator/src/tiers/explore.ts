@@ -52,6 +52,9 @@ const SYSTEM_PROMPT = `You compose one ContextualMiniDashboard card for the phra
 You get the selection descriptor (pointer, row count, columns, aggregates, a pseudonymised sample) and a deterministic reference card built from the same rows.
 Call compose_contextual_mini_dashboard exactly once. Keep every identifier verbatim, keep the reference's sourceQuery and columns unless they are wrong, write a sharper title and subtitle, 2-4 KPIs and 2-5 breakdown bars that add up over the matched rows, and one concrete suggested action. Set rows to {"dataPtr": "<pointer>"}; never write rows.`;
 
+/** `<Mail-ReadWrite-assignment-id>`, `<upn>`, `<SG-BreakGlass-Accounts objectId>`: an id the model did not have. */
+export const PLACEHOLDER_RE = /<[A-Za-z][^<>\n]{0,80}>/;
+
 function chainSteps(): ChainStep[] {
   return [{ provider: "meta", modelId: models.metaCatalog, hasKey: providers.meta.hasKey, tier: "Tier 1B" }];
 }
@@ -118,7 +121,10 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         kpis: args.kpis,
         breakdown: args.breakdown,
         columns: columns.length ? columns : reference.columns,
-        suggestedAction: { ...args.suggestedAction, ...(args.suggestedAction.targetStepIndex !== undefined && args.suggestedAction.targetStepIndex < brief.steps.length ? {} : { targetStepIndex: reference.suggestedAction.targetStepIndex }) },
+        // A model script with a <placeholder> is not runnable as-is: keep the reference action, which carries the real ids.
+        suggestedAction: PLACEHOLDER_RE.test(args.suggestedAction.scriptPreview)
+          ? reference.suggestedAction
+          : { ...args.suggestedAction, ...(args.suggestedAction.targetStepIndex !== undefined && args.suggestedAction.targetStepIndex < brief.steps.length ? {} : { targetStepIndex: reference.suggestedAction.targetStepIndex }) },
         rows: slice.rows,
         rowsPtr: ptr,
       });

@@ -33,7 +33,7 @@ describe("Place 5 canary convergence + dead-man's switch", () => {
     expect(probed?.probes?.network.tcp3389Closed).toBe(true);
   });
 
-  test("dead-man rollback: AADSTS53003 spike -> AUTO_ROLLED_BACK with inverse bundle, pre-state restored", () => {
+  test("dead-man rollback: AADSTS53003 spike -> AUTO_ROLLED_BACK with inverse bundle, nothing live so tenant unchanged", () => {
     const r = runCanaryConvergence("INC-4092", { simulateCanaryFailure: true });
     expect(r.stages.map((s) => s.stage)).toEqual(["APPLIED", "CANARY_RING_0", "SYNTHETIC_PROBED", "AUTO_ROLLED_BACK"]);
     expect(r.stages.find((s) => s.stage === "SYNTHETIC_PROBED")?.detail).toContain("AADSTS53003 spike in Canary Ring 0");
@@ -44,8 +44,27 @@ describe("Place 5 canary convergence + dead-man's switch", () => {
     expect(r.rollback!.scenarioId).toBe("INC-4092");
     expect(r.tenantRestored).toBe(true);
     expect(r.stages.find((s) => s.stage === "AUTO_ROLLED_BACK")?.tenantRestored).toBe(true);
-    expect(r.rollbackExecuted).toBe(true);
+    expect(r.stages[0]!.detail).toContain("nothing written live");
+    expect(r.rollbackExecuted).toBe(false);
     expect(r.auditAction).toBe("canary-auto-rolled-back");
+  });
+
+  test("dead-man after a live break-glass write never claims the tenant was restored", () => {
+    const r = runCanaryConvergence("INC-4092", { simulateCanaryFailure: true, liveWriteApplied: true });
+    expect(r.finalState).toBe("AUTO_ROLLED_BACK");
+    expect(r.stages[0]!.detail).toContain("live write");
+    const rolledBack = r.stages.find((s) => s.stage === "AUTO_ROLLED_BACK");
+    expect(rolledBack?.detail).toContain("NOT applied");
+    expect(rolledBack?.detail).not.toContain("restored");
+    expect(rolledBack?.tenantRestored).toBe(false);
+    expect(r.tenantRestored).toBe(false);
+    expect(r.rollbackExecuted).toBe(false);
+    expect(r.rollback!.powershellScript.length).toBeGreaterThan(0);
+  });
+
+  test("gitops ignores liveWriteApplied: nothing is written live", () => {
+    const r = runCanaryConvergence("INC-4092", { mode: "gitops", simulateCanaryFailure: true, liveWriteApplied: true });
+    expect(r.tenantRestored).toBe(true);
   });
 
   test("normal has no rollback execution", () => {

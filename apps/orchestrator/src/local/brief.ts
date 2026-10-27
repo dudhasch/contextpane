@@ -427,8 +427,8 @@ export function customEntities(ctx: CorrelationContext): EnrichedEntity[] {
     if (seen.has(id.toLowerCase())) continue;
     const target = EXTRACTED_TARGET[x.category];
     if (!target || !cards.has(target)) continue;
-    const type: EnrichedEntity["type"] = x.type === "name" ? "upn" : x.type === "keyword" ? "setting" : x.type;
-    const hoverable = Boolean(x.resolvedTo) && (type === "upn" || type === "errorCode" || type === "policy" || type === "group" || type === "sku" || type === "resource");
+    const type: EnrichedEntity["type"] = x.type === "name" ? "upn" : x.type === "keyword" || x.type === "permission" ? "setting" : x.type;
+    const hoverable = Boolean(x.resolvedTo) && (type === "upn" || type === "errorCode" || type === "policy" || type === "group" || type === "sku" || type === "resource" || x.type === "permission");
     seen.add(id.toLowerCase());
     extracted.push(entity(id, type, x.category, target, { label: x.label, hoverable, note: x.resolvedTo ? "matched live" : "from ticket text" }));
   }

@@ -1,4 +1,4 @@
-import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, HeartPulse, History, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
+import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, HeartPulse, History, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
 import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench, type DrawerTab as Tab } from "@/store";
@@ -39,6 +39,10 @@ export function ActionApprovalDrawerSheet() {
   const toast = useWorkbench((s) => s.toast);
   const mode = useWorkbench((s) => s.executionMode);
   const formalPassed = useWorkbench((s) => s.formal?.formal.passed);
+  // The ticket this drawer fixes already converged (or was closed in the PSA): a second approval would run against nothing.
+  const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
+  const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.resolutionNote.scenarioId === s.drawer.ticketId));
+  const reopenTicket = useWorkbench((s) => s.reopenTicket);
   if (!open) return null;
   const prPossible = Boolean(github?.origin && github.ghAuthenticated);
   const copy = async (text: string, what: string) => {
@@ -252,7 +256,16 @@ export function ActionApprovalDrawerSheet() {
                   {github?.origin ? <span className="truncate font-mono text-faint">({github.origin.replace(/^https:\/\/github\.com\//, "")})</span> : <span className="font-mono text-faint">(no remote origin)</span>}
                 </label>
               )}
-              {drawer.approval.state === "pending" ? (
+              {drawer.approval.state === "pending" && resolved ? (
+                <div className="flex gap-2" data-testid="already-resolved">
+                  <Button variant="outline" size="md" icon={<Check />} className="flex-1" disabled title="Reopen the ticket or reset drift to run this remediation again">
+                    {closed ? "Already Resolved & Closed" : "Already Resolved & Verified"}
+                  </Button>
+                  <Button variant="outline" size="md" icon={<RotateCcw />} onClick={() => void reopenTicket()}>
+                    Reopen Ticket
+                  </Button>
+                </div>
+              ) : drawer.approval.state === "pending" ? (
                 <div className="flex gap-2">
                   <Button variant="danger" size="md" icon={<XCircle />} onClick={() => void approve("reject")}>
                     Reject

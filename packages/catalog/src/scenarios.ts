@@ -138,7 +138,7 @@ export function displayScenarioId(scenarioId: string): string {
   return scenarioId.startsWith("ERP-") ? `#${scenarioId.slice(4)}` : `#${scenarioId}`;
 }
 
-export const ExtractedEntityTypeSchema = z.enum(["upn", "name", "errorCode", "sku", "keyword", "group", "resource", "device", "policy"]);
+export const ExtractedEntityTypeSchema = z.enum(["upn", "name", "errorCode", "sku", "keyword", "group", "resource", "device", "policy", "permission"]);
 export type ExtractedEntityType = z.infer<typeof ExtractedEntityTypeSchema>;
 
 export const TicketIntentSchema = z.enum([

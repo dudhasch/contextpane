@@ -268,6 +268,7 @@ export const api = {
   visionTriage: (body: { scenarioId: string; fileName?: string }) => request<VisionTriageResponse>("/api/vision/triage", { method: "POST", body: JSON.stringify(body) }),
   resolutionNote: (scenarioId: string) => request<{ note: PsaResolutionNote }>(`/api/tickets/${encodeURIComponent(scenarioId)}/resolution-note`),
   closeTicket: (scenarioId: string, closedBy?: string) => request<{ ok: boolean; note: PsaResolutionNote; audit: AuditEntry }>("/api/tickets/close", { method: "POST", body: JSON.stringify({ scenarioId, ...(closedBy ? { closedBy } : {}) }) }),
+  reopenTicket: (scenarioId: string) => request<{ ok: boolean; scenarioId: string; audit: AuditEntry }>("/api/tickets/reopen", { method: "POST", body: JSON.stringify({ scenarioId }) }),
 };
 
 /* -------------------------------------------------------------------------- */
@@ -285,7 +286,10 @@ export async function streamPost<T>(path: string, body: unknown, onProgress: (ev
     body: JSON.stringify(body),
     signal,
   });
-  if (!response.ok || !response.body) throw new ApiError(`${response.status} ${response.statusText}`, response.status);
+  if (!response.ok || !response.body) {
+    const detail = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(detail?.error ?? `${response.status} ${response.statusText}`, response.status);
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

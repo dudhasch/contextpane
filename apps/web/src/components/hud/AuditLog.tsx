@@ -12,6 +12,7 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "autonomous-rollback": { label: "Autonomous rollback (f⁻¹)", tone: "critical", icon: <History /> },
   "fleet-campaign": { label: "Fleet GitOps campaign", tone: "warning", icon: <Zap /> },
   "ticket-closed": { label: "ticket.closed (PSA)", tone: "healthy", icon: <CircleCheckBig /> },
+  "ticket-reopened": { label: "ticket.reopened", tone: "warning", icon: <RotateCcw /> },
 };
 
 function check(v: boolean | null): { text: string; className: string } {

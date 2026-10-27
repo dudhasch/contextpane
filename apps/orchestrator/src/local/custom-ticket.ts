@@ -83,6 +83,8 @@ interface KnownObject {
   tenantId: string | null;
   /** Lower-cased needles that mean this object (display name, first/last name, short id). */
   needles: string[];
+  /** The built-in pattern this object belongs to, when it is specific to one. */
+  scenarioId?: ScenarioId;
 }
 
 function knownObjects(): KnownObject[] {
@@ -102,9 +104,9 @@ function knownObjects(): KnownObject[] {
     if (rg) out.push({ id: rg, label: rg, type: "resource", category: "azure", source: "mcp-azure-iac · ARM resourceGroups", tenantId, needles: [rg.toLowerCase()] });
     if (tenantId === "tenant-contoso-01") out.push({ id: "vdpool-contoso-fin-01", label: "vdpool-contoso-fin-01", type: "resource", category: "azure", source: "mcp-azure-iac · ARM hostPools", tenantId, needles: ["vdpool-contoso-fin-01", "host pool"] });
   }
-  for (const u of LICENSE_ANOMALY.users) out.push({ id: u.upn, label: u.displayName, type: "upn", category: "licensing", source: "mcp-msgraph · GET /users?$filter=accountEnabled", tenantId: "tenant-contoso-01", needles: [u.upn.toLowerCase(), ...nameNeedles(u.displayName)] });
+  for (const u of LICENSE_ANOMALY.users) out.push({ id: u.upn, label: u.displayName, type: "upn", category: "licensing", source: "mcp-msgraph · GET /users?$filter=accountEnabled", tenantId: "tenant-contoso-01", needles: [u.upn.toLowerCase(), ...nameNeedles(u.displayName)], scenarioId: "ANOM-LIC-101" });
   out.push({ id: LICENSE_ANOMALY.groupName, label: LICENSE_ANOMALY.groupName, type: "group", category: "licensing", source: "mcp-msgraph · GET /groups", tenantId: "tenant-contoso-01", needles: [LICENSE_ANOMALY.groupName.toLowerCase()] });
-  out.push({ id: CA_POSTURE.breakGlassAccount, label: "bg-admin-01", type: "upn", category: "identity", source: "mcp-msgraph · GET /users", tenantId: "tenant-contoso-01", needles: ["bg-admin-01", CA_POSTURE.breakGlassAccount.toLowerCase()] });
+  out.push({ id: CA_POSTURE.breakGlassAccount, label: "bg-admin-01", type: "upn", category: "identity", source: "mcp-msgraph · GET /users", tenantId: "tenant-contoso-01", needles: ["bg-admin-01", CA_POSTURE.breakGlassAccount.toLowerCase()], scenarioId: "ANOM-CA-204" });
   out.push({ id: CA_POSTURE.breakGlassGroup, label: CA_POSTURE.breakGlassGroup, type: "group", category: "identity", source: "mcp-msgraph · GET /groups", tenantId: "tenant-contoso-01", needles: [CA_POSTURE.breakGlassGroup.toLowerCase(), "break-glass group", "breakglass"] });
   for (const p of CA_POSTURE.policies) out.push({ id: p.displayName, label: p.displayName.replace("[ContextPane-Demo] ", ""), type: "policy", category: "identity", source: "mcp-msgraph · GET /identity/conditionalAccess/policies", tenantId: "tenant-contoso-01", needles: [p.displayName.toLowerCase().replace("[contextpane-demo] ", ""), p.key.toLowerCase()] });
   for (const [key, fixture] of Object.entries(INTUNE_SCENARIOS)) {
@@ -114,7 +116,7 @@ function knownObjects(): KnownObject[] {
     for (const g of new Set(fixture.policies.flatMap((p) => p.assignedTo))) out.push({ id: g, label: g, type: "group", category: "intune", source: "mcp-msgraph · GET /groups", tenantId, needles: [g.toLowerCase()] });
   }
   out.push({ id: WORKLOAD_IDENTITY.spn.displayName, label: WORKLOAD_IDENTITY.spn.displayName, type: "resource", category: "identity", source: "mcp-msgraph · GET /servicePrincipals", tenantId: "tenant-contoso-01", needles: [WORKLOAD_IDENTITY.spn.displayName.toLowerCase(), "erp sync", "erp-sync", "sync app"] });
-  out.push({ id: WORKLOAD_IDENTITY.owner.upn, label: WORKLOAD_IDENTITY.owner.displayName, type: "upn", category: "identity", source: "mcp-msgraph · GET /applications/{id}/owners", tenantId: "tenant-contoso-01", needles: [WORKLOAD_IDENTITY.owner.upn.toLowerCase(), ...nameNeedles(WORKLOAD_IDENTITY.owner.displayName), "contractor", "app owner"] });
+  out.push({ id: WORKLOAD_IDENTITY.owner.upn, label: WORKLOAD_IDENTITY.owner.displayName, type: "upn", category: "identity", source: "mcp-msgraph · GET /applications/{id}/owners", tenantId: "tenant-contoso-01", needles: [WORKLOAD_IDENTITY.owner.upn.toLowerCase(), ...nameNeedles(WORKLOAD_IDENTITY.owner.displayName), "contractor", "app owner"], scenarioId: "ANOM-APP-401" });
   return out;
 }
 
@@ -126,6 +128,37 @@ const SKU_WORDS: Array<[RegExp, string]> = [
   [/\bspe_e3\b|\bm365 e3\b|\bmicrosoft 365 e3\b|\be3\b/i, "SPE_E3"],
   [/microsoft_365_copilot|\bcopilot\b/i, "Microsoft_365_Copilot"],
 ];
+
+/** Graph permission scopes: Resource(.Segment).Verb(.Qualifier)(.All), e.g. Mail.ReadWrite, User.Read.All, Sites.Selected. */
+const GRAPH_SCOPE_RE = /\b[A-Z][A-Za-z]+(?:\.[A-Z][A-Za-z]+){1,3}\b|\boffline_access\b/g;
+const SCOPE_VERBS = new Set(["Read", "ReadWrite", "ReadBasic", "Write", "FullControl", "Manage", "Selected", "Send", "Create", "AccessAsUser", "Invite"]);
+
+export function isGraphScope(token: string): boolean {
+  if (token === "offline_access") return true;
+  const parts = token.split(".");
+  return parts.length >= 2 && (parts.slice(1).some((p) => SCOPE_VERBS.has(p)) || parts.at(-1) === "All");
+}
+
+/** Scopes the workload-identity fixture actually grants or needs; anything else is only text. */
+const KNOWN_SCOPES = new Set([...WORKLOAD_IDENTITY.appPermissions, ...WORKLOAD_IDENTITY.requiredPermissions, ...WORKLOAD_IDENTITY.oauth2PermissionGrant.scope.split(" ")]);
+
+/**
+ * One person, one pill: when a display name matched several UPNs, keep the one the ticket spelled
+ * out, else the one that belongs to the chosen pattern (the app owner for a workload-identity ticket),
+ * else the first match.
+ */
+function dedupeUpns(entities: ExtractedEntity[], lower: string, baseScenarioId: ScenarioId): ExtractedEntity[] {
+  const hint = new Map(known().filter((k) => k.type === "upn").map((k) => [k.id.toLowerCase(), k.scenarioId]));
+  const byName = new Map<string, ExtractedEntity[]>();
+  for (const e of entities) if (e.type === "upn") byName.set(e.label.toLowerCase(), [...(byName.get(e.label.toLowerCase()) ?? []), e]);
+  const drop = new Set<ExtractedEntity>();
+  for (const group of byName.values()) {
+    if (group.length < 2) continue;
+    const keep = group.find((e) => lower.includes(e.id.toLowerCase())) ?? group.find((e) => hint.get(e.id.toLowerCase()) === baseScenarioId) ?? group[0]!;
+    for (const e of group) if (e !== keep) drop.add(e);
+  }
+  return entities.filter((e) => !drop.has(e));
+}
 
 function hasWord(text: string, needle: string): boolean {
   const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -184,6 +217,14 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
   }
   if (/countviolation/i.test(text)) push({ id: "CountViolation", label: "CountViolation", type: "errorCode", category: "licensing", resolvedTo: "CountViolation", source: "mcp-msgraph · GET /groups/{id}?$select=licenseProcessingState", confidence: 1 });
   for (const [re, sku] of SKU_WORDS) if (re.test(text)) push({ id: sku, label: sku === "Microsoft_365_Copilot" ? "Copilot" : sku, type: "sku", category: "licensing", resolvedTo: sku, source: "mcp-msgraph · GET /subscribedSkus", confidence: 1 });
+  for (const m of text.matchAll(GRAPH_SCOPE_RE)) {
+    const scope = m[0];
+    if (!isGraphScope(scope)) continue;
+    const knownScope = KNOWN_SCOPES.has(scope);
+    push({ id: scope, label: scope, type: "permission", category: "identity", resolvedTo: knownScope ? scope : null, source: knownScope ? "mcp-msgraph · servicePrincipals/{id}/appRoleAssignments" : "ticket text (Graph permission scope)", confidence: knownScope ? 1 : 0.8 });
+    components.add("EntraSignInTimeline");
+    base["ANOM-APP-401"] = (base["ANOM-APP-401"] ?? 0) + 1;
+  }
   for (const m of text.matchAll(/\b(?:CONTOSO|FAB|FABRIKAM)-[A-Z]{2,4}-\d{3,4}\b/gi)) {
     const name = m[0].toUpperCase();
     const hit = known().find((k) => k.type === "device" && k.id === name);
@@ -215,9 +256,10 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
   if (tenantId === "tenant-fabrikam-02") components.delete("IaCDriftBanner");
   const ordered = COMPONENT_ORDER.filter((c) => components.has(c));
   const finalComponents = ordered.length ? ordered : [...SCENARIO_REGISTRY[baseScenarioId].components];
-  const matched = entities.filter((e) => e.resolvedTo).length;
-  const rationale = `${why.length ? `intents ${why.join(", ")}` : "no intent keywords"}; ${matched}/${entities.length} entities resolved against ${tenantId}; closest pattern ${baseScenarioId} (${SCENARIO_REGISTRY[baseScenarioId].remediationScope})`.slice(0, 300);
-  return TicketExtractionSchema.parse({ tenantId, baseScenarioId, intents, entities, components: finalComponents, rationale });
+  const finalEntities = dedupeUpns(entities, lower, baseScenarioId);
+  const matched = finalEntities.filter((e) => e.resolvedTo).length;
+  const rationale = `${why.length ? `intents ${why.join(", ")}` : "no intent keywords"}; ${matched}/${finalEntities.length} entities resolved against ${tenantId}; closest pattern ${baseScenarioId} (${SCENARIO_REGISTRY[baseScenarioId].remediationScope})`.slice(0, 300);
+  return TicketExtractionSchema.parse({ tenantId, baseScenarioId, intents, entities: finalEntities, components: finalComponents, rationale });
 }
 
 /* ------------------------------- registration ------------------------------- */

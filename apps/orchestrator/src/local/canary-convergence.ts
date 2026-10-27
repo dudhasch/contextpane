@@ -16,9 +16,11 @@ import {
  * (SG-Canary-Ring0), synthetic identity/network probes run against the
  * Place 1 formal verifier, and only then is the tenant declared CONVERGED.
  * If the synthetic probes detect an AADSTS53003 spike in the canary ring,
- * the dead-man's switch fires automatically: the inverse rollback bundle
- * (f^-1 from buildInverseRollback) is attached and the tenant is reported
- * restored to its pre-remediation state — no human in the loop.
+ * the dead-man's switch fires automatically and attaches the inverse rollback
+ * bundle (f^-1 from buildInverseRollback). This module performs no I/O, so it
+ * never claims the bundle ran: when a live write landed (liveWriteApplied) the
+ * change is reported as still in the tenant; otherwise nothing left the
+ * pre-remediation state and the tenant is reported unchanged.
  */
 
 export const CANARY_COHORT = "SG-Canary-Ring0" as const;
@@ -30,6 +32,8 @@ export type CanaryFinalState = "CONVERGED" | "AUTO_ROLLED_BACK";
 export interface CanaryConvergenceOptions {
   mode?: CanaryMode;
   simulateCanaryFailure?: boolean;
+  /** True only when the approval actually wrote to the live tenant (approval state "executed"). */
+  liveWriteApplied?: boolean;
 }
 
 export interface IdentityProbes {
@@ -116,6 +120,7 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
   if (!isScenarioId(scenarioId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
   const mode: CanaryMode = options.mode ?? "break-glass";
   const simulateCanaryFailure = options.simulateCanaryFailure ?? false;
+  const liveWriteApplied = mode === "break-glass" && (options.liveWriteApplied ?? false);
   const tenantId = SCENARIO_REGISTRY[scenarioId].tenantId;
   const at = new Date().toISOString();
   const probes = buildProbes(scenarioId, simulateCanaryFailure);
@@ -123,7 +128,9 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
   const appliedDetail =
     mode === "gitops"
       ? `Remediation staged for ${scenarioId} (${tenantId}) via Pure GitOps: patch staged for the pipeline, nothing written live`
-      : `Remediation applied to tenant ${tenantId} for ${scenarioId} via Emergency Break-Glass live write`;
+      : liveWriteApplied
+        ? `Remediation applied to tenant ${tenantId} for ${scenarioId} via Emergency Break-Glass live write`
+        : `Remediation simulated for ${scenarioId} (${tenantId}) via Emergency Break-Glass: nothing written live`;
 
   const stages: CanaryStage[] = [
     { stage: "APPLIED", at, detail: appliedDetail },
@@ -145,9 +152,11 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
     stages.push({
       stage: "AUTO_ROLLED_BACK",
       at,
-      detail: `Dead-man's switch auto-rolled back ${scenarioId} using inverse rollback bundle (f^-1); tenant restored to pre-remediation state`,
+      detail: liveWriteApplied
+        ? `Dead-man's switch fired for ${scenarioId}: inverse rollback bundle (f^-1) prepared but NOT applied; the live break-glass change is still in tenant ${tenantId}`
+        : `Dead-man's switch fired for ${scenarioId}: nothing was written live, so tenant ${tenantId} is unchanged; inverse rollback bundle (f^-1) kept for reference`,
       probes,
-      tenantRestored: true,
+      tenantRestored: !liveWriteApplied,
     });
     return {
       scenarioId,
@@ -157,8 +166,8 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
       canaryCohort: CANARY_COHORT,
       probes,
       rollback,
-      rollbackExecuted: true,
-      tenantRestored: true,
+      rollbackExecuted: false,
+      tenantRestored: !liveWriteApplied,
       auditAction: "canary-auto-rolled-back",
     };
   }

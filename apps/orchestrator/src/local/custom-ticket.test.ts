@@ -49,6 +49,23 @@ describe("dynamic entity & intent extraction", () => {
     expect(x.components).toEqual(["EntraSignInTimeline"]);
   });
 
+  test("the ERP sync ticket names Alex Wilber once, as the app owner, and extracts every Graph scope it mentions", () => {
+    const x = extractTicket(erp);
+    const alex = x.entities.filter((e) => e.type === "upn" && e.label === "Alex Wilber");
+    expect(alex.map((e) => e.id)).toEqual(["alex.wilber@c4a8shili.onmicrosoft.com"]);
+    const scopes = x.entities.filter((e) => e.type === "permission").map((e) => e.id);
+    expect(scopes).toEqual(expect.arrayContaining(["Directory.ReadWrite.All", "Sites.FullControl.All", "Mail.ReadWrite"]));
+    expect(x.entities.filter((e) => e.type === "permission").every((e) => e.resolvedTo === e.id && e.category === "identity")).toBe(true);
+    const more = extractTicket({ title: "Right-size the sync app", body: "Replace RoleManagement.ReadWrite.Directory with User.Read.All and Sites.Selected, drop offline_access. Microsoft.Network stays." });
+    expect(more.entities.filter((e) => e.type === "permission").map((e) => e.id)).toEqual(["RoleManagement.ReadWrite.Directory", "User.Read.All", "Sites.Selected", "offline_access"]);
+  });
+
+  test("an AVD ticket that names Alex Wilber keeps the tenant user, not the app owner", () => {
+    const x = extractTicket({ title: "AVD down", body: "Alex Wilber cannot reach the AVD host pool, AADSTS53003 since this morning." });
+    expect(x.baseScenarioId).toBe("INC-4092");
+    expect(x.entities.filter((e) => e.type === "upn" && e.label === "Alex Wilber").map((e) => e.id)).toEqual(["alex.wilber.contoso@c4a8shili.onmicrosoft.com"]);
+  });
+
   test("a break-glass / legacy-auth ticket and an ASR ticket pick their anomaly patterns", () => {
     expect(extractTicket({ title: "CA policy edited", body: "CA-001 lost the SG-BreakGlass-Accounts exclusion and CA-004 is report-only, IMAP sign-ins keep coming." }).baseScenarioId).toBe("ANOM-CA-204");
     expect(extractTicket({ title: "ASR rule weakened", body: "The LSASS credential stealing ASR rule is Audit on SG-All-Workstations and the firewall profile conflicts." }).baseScenarioId).toBe("ANOM-INT-309");

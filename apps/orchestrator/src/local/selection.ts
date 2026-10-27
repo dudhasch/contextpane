@@ -198,11 +198,13 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       action: (m) => {
         const first = m.find(open) ?? m[0];
         const orphaned = first?.assignmentState === "Orphaned";
+        const sku = `$sku = Get-MgSubscribedSku -All | Where-Object SkuPartNumber -eq '${inv.sku.skuPartNumber}'`;
+        if (!first) return { label: `List ${inv.sku.skuPartNumber} holders`, scriptPreview: `${sku}\nGet-MgUser -All -Property UserPrincipalName, AccountEnabled, AssignedLicenses | Where-Object { $_.AssignedLicenses.SkuId -contains $sku.SkuId } | Select-Object UserPrincipalName, AccountEnabled` };
         return {
           label: orphaned ? "Reclaim orphaned seats" : `Assign ${inv.sku.skuPartNumber}`,
           scriptPreview: orphaned
-            ? `$sku = Get-MgSubscribedSku -All | Where-Object SkuPartNumber -eq '${inv.sku.skuPartNumber}'\nSet-MgUserLicense -UserId '${first?.upn ?? "<upn>"}' -AddLicenses @() -RemoveLicenses @($sku.SkuId)`
-            : `$sku = Get-MgSubscribedSku -All | Where-Object SkuPartNumber -eq '${inv.sku.skuPartNumber}'\nSet-MgUserLicense -UserId '${first?.upn ?? "<upn>"}' -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @()`,
+            ? `${sku}\nSet-MgUserLicense -UserId '${first.upn}' -AddLicenses @() -RemoveLicenses @($sku.SkuId)`
+            : `${sku}\nSet-MgUserLicense -UserId '${first.upn}' -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @()`,
           ...(stepIndex(steps, "licensing") !== undefined ? { targetStepIndex: stepIndex(steps, "licensing") } : {}),
         };
       },
@@ -280,22 +282,48 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
   }
 
   const caRows: Row[] = [];
+  const caFailures = [...(ctx.signIns?.data ?? []), ...(ctx.caPosture?.data.legacySignIns ?? [])].filter((e) => e.status === "failure" && (e.blockingPolicyId || e.blockingPolicyName));
+  const blockedBy = (id: string, displayName: string) => caFailures.filter((e) => e.blockingPolicyId === id || e.blockingPolicyName === displayName);
+  const postureIds = new Set((ctx.caPosture?.data.policies ?? []).map((p) => p.id));
   for (const p of ctx.caPosture?.data.policies ?? []) {
-    caRows.push({ displayName: short(p.displayName), state: p.state, role: p.role, includeGroups: p.includeGroups.join(", "), excludeGroups: p.excludeGroups.join(", ") || "(none)", targetApps: p.targetApps.join(", "), grantControls: p.grantControls.join(", "), drift: p.drift.map((d) => `${d.field}: ${d.actual} → ${d.expected}`).join("; ") || "in sync", id: p.id });
+    caRows.push({ displayName: short(p.displayName), state: p.state, role: p.role, includeGroups: p.includeGroups.join(", "), excludeGroups: p.excludeGroups.join(", ") || "(none)", targetApps: p.targetApps.join(", "), grantControls: p.grantControls.join(", "), blockedSignIns: blockedBy(p.id, p.displayName).length, drift: p.drift.map((d) => `${d.field}: ${d.actual} → ${d.expected}`).join("; ") || "in sync", id: p.id });
   }
+  const entitlement = ctx.license?.data;
   for (const p of ctx.policies?.data ?? []) {
     if (caRows.some((r) => r.id === p.id)) continue;
-    caRows.push({ displayName: short(p.displayName), state: p.state, role: p.blocks ? "blocking" : "in-scope", includeGroups: p.includeGroupNames.join(", "), excludeGroups: p.excludeGroupNames.join(", ") || "(none)", targetApps: p.targetApps.map((a) => a.displayName).join(", "), grantControls: p.grant.builtInControls.join(", "), drift: p.blocks ? "blocks the affected users" : "in sync", id: p.id });
+    // A Block grant only rejects sign-ins while the policy is enforced; report-only never blocks anyone.
+    const blocked = blockedBy(p.id, p.displayName);
+    const blocking = blocked.length > 0 || (p.blocks && p.state === "enabled");
+    // Blocked sign-ins of the entitlement group's members tie the policy to that group even when it targets another one.
+    const members = new Set(blocked.filter((e) => entitlement?.users.some((u) => u.upn === e.upn)).map((e) => e.upn));
+    caRows.push({
+      displayName: short(p.displayName),
+      state: p.state,
+      role: blocking ? "blocking" : p.blocks && p.state === "enabledForReportingButNotEnforced" ? "report-only" : "in-scope",
+      includeGroups: p.includeGroupNames.join(", "),
+      excludeGroups: p.excludeGroupNames.join(", ") || "(none)",
+      targetApps: p.targetApps.map((a) => a.displayName).join(", "),
+      grantControls: p.grant.builtInControls.join(", "),
+      blockedSignIns: blocked.length,
+      ...(members.size && entitlement ? { blocksMembersOf: `${entitlement.groupName} (${plural(members.size, "member")})` } : {}),
+      drift: blocked.length ? `blocked ${plural(blocked.length, "sign-in")} of the affected users` : blocking ? "blocks in-scope users" : "in sync",
+      id: p.id,
+    });
   }
+  // The policy that actually blocks leads, so the title and the suggested action follow it.
+  caRows.sort((a, b) => Number(b.role === "blocking") - Number(a.role === "blocking"));
   if (caRows.length) {
     const drifted = caRows.filter((r) => r.drift !== "in sync");
     out.push({
       kind: "entra-ca-policies",
       rows: caRows,
       focus: drifted.length ? drifted : caRows,
-      columns: [col("displayName", "Policy"), col("state", "State", { isBadge: true }), col("role", "Role", { isBadge: true }), col("excludeGroups", "Exclude", { mono: true }), col("grantControls", "Grant"), col("drift", "Drift vs golden")],
+      columns: [col("displayName", "Policy"), col("state", "State", { isBadge: true }), col("role", "Role", { isBadge: true }), col("excludeGroups", "Exclude", { mono: true }), col("grantControls", "Grant"), col("blockedSignIns", "Blocked sign-ins", { mono: true }), col("drift", "Drift vs golden")],
       sourceQuery: "GET /v1.0/identity/conditionalAccess/policies?$select=displayName,state,conditions,grantControls",
-      title: (m) => (m.length === 1 ? `Conditional Access · ${m[0]!.displayName}` : "Conditional Access policies"),
+      title: (m) => {
+        const b = m.find((r) => r.role === "blocking");
+        return m.length === 1 ? `Conditional Access · ${m[0]!.displayName}` : b ? `Conditional Access · ${b.displayName} is blocking` : "Conditional Access policies";
+      },
       subtitle: (m) => `Live query across identity/conditionalAccess/policies · ${plural(m.length, "policy").replace("policys", "policies")} matched`,
       kpis: (m) => [
         { label: "Policies", value: String(m.length) },
@@ -305,11 +333,31 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       ],
       breakdown: (m) => breakdownBy(m, "state", (v) => (v === "enabled" ? "success" : v === "enabledForReportingButNotEnforced" ? "warning" : "default")),
       action: (m) => {
-        const first = m.find((r) => r.drift !== "in sync") ?? m[0];
+        const target = stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {};
+        const posture = m.find((r) => postureIds.has(String(r.id)) && r.drift !== "in sync");
+        if (posture) {
+          return {
+            label: "Patch CA policy",
+            scriptPreview: `$bg = Get-MgGroup -Filter "displayName eq '${(ctx.caPosture?.data.breakGlassGroup ?? "SG-BreakGlass-Accounts").replace(/'/g, "''")}'"; Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${posture.id}' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ excludeGroups = @($bg.Id) } } }`,
+            ...target,
+          };
+        }
+        const blocking = m.find((r) => r.role === "blocking" && r.blocksMembersOf);
+        const policy = blocking && ctx.policies?.data.find((p) => p.id === blocking.id);
+        if (policy && entitlement) {
+          // Same change the remediation stages: exclude the entitlement group and switch the block to report-only.
+          const keep = policy.excludeGroupIds.map((id) => `'${id}'`);
+          return {
+            label: `Exclude ${entitlement.groupName} (report-only)`.slice(0, 48),
+            scriptPreview: `$g = Get-MgGroup -Filter "displayName eq '${entitlement.groupName.replace(/'/g, "''")}'"; Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${policy.id}' -BodyParameter @{ state = 'enabledForReportingButNotEnforced'; conditions = @{ users = @{ excludeGroups = @(${[...keep, "$g.Id"].join(", ")}) } } }`,
+            ...target,
+          };
+        }
+        const first = m.find((r) => r.role === "blocking") ?? m[0];
         return {
-          label: "Patch CA policy",
-          scriptPreview: `Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${first?.id ?? "<id>"}' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ excludeGroups = @('<SG-BreakGlass-Accounts objectId>') } } }`,
-          ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
+          label: "Inspect CA policy",
+          scriptPreview: `Get-MgIdentityConditionalAccessPolicy ${first ? `-ConditionalAccessPolicyId '${first.id}'` : "-All"} | Select-Object DisplayName, State, @{n='IncludeGroups';e={$_.Conditions.Users.IncludeGroups}}, @{n='ExcludeGroups';e={$_.Conditions.Users.ExcludeGroups}}, @{n='Grant';e={$_.GrantControls.BuiltInControls}}`,
+          ...target,
         };
       },
     });
@@ -360,12 +408,18 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       breakdown: (m) => breakdownBy(m, "status", (v) => (v === "in-sync" ? "success" : v === "drifted" ? "warning" : "critical")),
       action: (m) => {
         const conflicting = d.policies.find((p) => p.role === "conflicting" || p.role === "duplicate");
-        const first = m[0];
+        // Restore the first drifted setting that names both its policy and its definition; otherwise only read.
+        const fixable = m
+          .filter((r) => r.status !== "in-sync")
+          .map((r) => ({ row: r, policy: d.policies.find((p) => p.name === r.policyName), definition: d.settings.find((s) => s.settingName === r.settingName && s.policyName === r.policyName)?.settingId ?? r.cspUri }))
+          .find((x) => x.policy && x.definition);
         return {
-          label: conflicting ? `Unassign ${conflicting.name}` : "Restore golden value",
+          label: conflicting ? `Unassign ${conflicting.name}`.slice(0, 48) : fixable ? "Restore golden value" : "Inspect Intune policies",
           scriptPreview: conflicting
             ? `Invoke-MgGraphRequest -Method POST -Uri "/v1.0/deviceManagement/deviceConfigurations/${conflicting.id}/assign" -Body @{ assignments = @() }`
-            : `Invoke-MgGraphRequest -Method PUT -Uri "/beta/deviceManagement/configurationPolicies/<id>/settings" -Body @{ settings = @(@{ settingInstance = @{ settingDefinitionId = '${first?.cspUri ?? "<definitionId>"}'; choiceSettingValue = @{ value = '${first?.golden ?? "<golden>"}' } } }) }`,
+            : fixable
+              ? `Invoke-MgGraphRequest -Method PUT -Uri "/beta/deviceManagement/configurationPolicies/${fixable.policy!.id}/settings" -Body @{ settings = @(@{ settingInstance = @{ settingDefinitionId = '${fixable.definition}'; choiceSettingValue = @{ value = '${fixable.row.golden}' } } }) }`
+              : d.policies.map((p) => `Invoke-MgGraphRequest -Method GET -Uri "/beta/deviceManagement/configurationPolicies/${p.id}/settings"   # ${p.name}`).join("\n") || `Get-MgDeviceManagementDeviceConfiguration | Select-Object Id, DisplayName`,
           ...(stepIndex(steps, "intune") !== undefined ? { targetStepIndex: stepIndex(steps, "intune") } : {}),
         };
       },
@@ -400,11 +454,21 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       breakdown: (m) => breakdownBy(m, "kind", (v) => (v === "client secret" || v === "owner" ? "critical" : v === "delegated grant" ? "warning" : "default")),
       action: (m) => {
         const secret = m.some((r) => r.expired === true);
+        // A highlighted scope revokes exactly its own assignment and the delegated grant naming it, by their real ids.
+        const assignments = w.appRoleAssignments.filter((a) => m.some((r) => r.kind === "application permission" && r.name === a.permission && r.required === false));
+        const grant = m.some((r) => r.kind === "delegated grant");
+        const revoke = [
+          ...assignments.map((a) => `Remove-MgServicePrincipalAppRoleAssignment -ServicePrincipalId '${w.spn.servicePrincipalId}' -AppRoleAssignmentId '${a.id}'   # ${a.permission}`),
+          ...(grant ? [`Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId '${w.oauth2PermissionGrant.id}'   # ${w.oauth2PermissionGrant.scope}`] : []),
+        ];
+        const revokeLabel = assignments.length === 1 ? `Revoke ${assignments[0]!.permission}` : assignments.length ? `Revoke ${assignments.length} unused scopes` : "Revoke unverified grant";
         return {
-          label: secret ? "Federate OIDC, retire secret" : "Remove shadow-admin owner",
+          label: secret ? "Federate OIDC, retire secret" : revoke.length ? revokeLabel.slice(0, 48) : "Remove shadow-admin owner",
           scriptPreview: secret
             ? `New-MgApplicationFederatedIdentityCredential -ApplicationId '${w.spn.objectId}' -BodyParameter @{ name = '${w.federatedCredential.name}'; issuer = '${w.federatedCredential.issuer}'; subject = '${w.federatedCredential.subject}'; audiences = @('${w.federatedCredential.audiences[0]}') }\nRemove-MgApplicationPassword -ApplicationId '${w.spn.objectId}' -KeyId '${w.passwordCredential.keyId}'`
-            : `Remove-MgApplicationOwnerByRef -ApplicationId '${w.spn.objectId}' -DirectoryObjectId '${w.owner.objectId}'`,
+            : revoke.length
+              ? revoke.join("\n")
+              : `Remove-MgApplicationOwnerByRef -ApplicationId '${w.spn.objectId}' -DirectoryObjectId '${w.owner.objectId}'`,
           ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
         };
       },

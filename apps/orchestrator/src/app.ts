@@ -364,6 +364,39 @@ app.post("/api/tickets/close", async (c) => {
   return c.json({ ok: true, note, audit: entry });
 });
 
+const ReopenBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional(), reopenedBy: z.string().max(120).optional() });
+
+/**
+ * Reopens a resolved or closed ticket so it can be remediated again: clears the closure and the
+ * convergence. The lab objects stay as the approval left them; a drift reset restores those.
+ */
+app.post("/api/tickets/reopen", async (c) => {
+  const body = ReopenBodySchema.parse(await c.req.json().catch(() => ({})));
+  const scenarioId = scenarioOf(body);
+  const tenantId = tenantOf(scenarioId);
+  const closed = closureStore.closedState(scenarioId);
+  const convergence = convergenceStore.get(scenarioId);
+  if (!closed && !convergence) return c.json({ ok: false, error: `${scenarioId} is not resolved; nothing to reopen` }, 409);
+  closureStore.clear(scenarioId);
+  convergenceStore.clear(scenarioId, tenantId);
+  invalidateContext(scenarioId);
+  const entry = auditLedger.append({
+    tenantId,
+    ticketId: scenarioId,
+    actionType: "ticket-reopened",
+    delegatedIdentity: body.reopenedBy ?? config.lab.delegatedIdentity,
+    modalSandboxVerified: false,
+    astPass: null,
+    tfValidatePass: null,
+    gitBranch: convergence?.gitBranch ?? null,
+    prUrl: convergence?.prUrl ?? null,
+    latencyMs: 0,
+    execution: "none",
+    detail: `ticket.reopened${closed ? ` (closed ${closed.closedAt} by ${closed.closedBy})` : ""} · lab objects left as remediated; reset drift to restore the drifted state`.slice(0, 300),
+  });
+  return c.json({ ok: true, scenarioId, audit: entry });
+});
+
 /* -------- Day-2: formal prover, rollback, timeline, skill compiler -------- */
 
 app.get("/api/formal/:scenarioId", (c) => {
@@ -549,9 +582,18 @@ const RemediateBodySchema = z.object({
   fresh: z.boolean().optional(),
 });
 
+/** A converged or PSA-closed ticket refuses another remediation until it is reopened or its drift is reset. */
+function resolvedConflict(scenarioId: string): string | null {
+  if (closureStore.closedState(scenarioId)) return "Ticket is already resolved and closed. Reopen or reset drift before running remediation again.";
+  if (convergenceStore.get(scenarioId)) return "Ticket is already resolved and verified. Reopen or reset drift before running remediation again.";
+  return null;
+}
+
 app.post("/api/remediate", async (c) => {
   const parsed = RemediateBodySchema.parse(await c.req.json().catch(() => ({})));
   const body = { scenarioId: scenarioOf(parsed), ...(parsed.fresh !== undefined ? { fresh: parsed.fresh } : {}) };
+  const conflict = resolvedConflict(body.scenarioId);
+  if (conflict) return c.json({ error: conflict, scenarioId: body.scenarioId }, 409);
   if (!wantsSse(c)) return c.json(await remediate(body));
   return streamSSE(c, async (stream) => {
     const send = (event: string, data: unknown) => stream.writeSSE({ event, data: JSON.stringify(data) });
@@ -588,14 +630,19 @@ const ApproveBodySchema = z.object({
  */
 const approveHandler = async (c: Context) => {
   const body = ApproveBodySchema.parse(await c.req.json());
+  const pending = remediationStore.get(body.remediationId);
+  const conflict = body.decision !== "reject" && pending ? resolvedConflict(pending.ticketId) : null;
+  if (conflict) return c.json({ error: conflict, scenarioId: pending!.ticketId }, 409);
   const { convergence, ...drawer } = await approve(body);
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
   const scenarioId = drawer.ticketId;
-  const canary = { ...runCanaryConvergence(baseScenarioOf(scenarioId), { mode: body.mode ?? "break-glass", simulateCanaryFailure: body.simulateCanaryFailure ?? false }), scenarioId: scenarioId as ScenarioId };
+  // Only an "executed" approval wrote to the live tenant; the canary report must not claim more than that.
+  const canary = { ...runCanaryConvergence(baseScenarioOf(scenarioId), { mode: body.mode ?? "break-glass", simulateCanaryFailure: body.simulateCanaryFailure ?? false, liveWriteApplied: drawer.approval.state === "executed" }), scenarioId: scenarioId as ScenarioId };
   closureStore.setCanary(scenarioId, canary);
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
-    auditLedger.append({ tenantId: drawer.tenantId, ticketId: drawer.ticketId, actionType: "autonomous-rollback", delegatedIdentity: body.approvedBy ?? drawer.approval.requiredIdentity, modalSandboxVerified: false, astPass: null, tfValidatePass: null, gitBranch: drawer.staging?.branchName ?? null, prUrl: null, latencyMs: 0, execution: "none", detail: "Dead-man's switch: AADSTS53003 spike in Canary Ring 0; f^-1 inverse rollback applied, tenant restored to pre-change state" });
+    const rolledBack = canary.stages.find((s) => s.stage === "AUTO_ROLLED_BACK");
+    auditLedger.append({ tenantId: drawer.tenantId, ticketId: drawer.ticketId, actionType: "autonomous-rollback", delegatedIdentity: body.approvedBy ?? drawer.approval.requiredIdentity, modalSandboxVerified: false, astPass: null, tfValidatePass: null, gitBranch: drawer.staging?.branchName ?? null, prUrl: null, latencyMs: 0, execution: "none", detail: `Simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}` });
     return c.json({ drawer, convergence: null, canary });
   }
   return c.json({ drawer, convergence, canary });
@@ -751,7 +798,7 @@ app.get("/", (c) =>
       "POST /api/correlate  (Accept: text/event-stream for progress)",
       "POST /api/explore-selection · POST /api/tickets/triage-custom · GET /api/tickets/samples",
       "GET  /api/tickets/inbox · GET /api/tickets/inbox-attachment/:folder/:file · POST /api/tickets/simulate-drop · POST /api/vision/triage",
-      "GET  /api/tickets/:scenarioId/resolution-note · POST /api/tickets/close",
+      "GET  /api/tickets/:scenarioId/resolution-note · POST /api/tickets/close · POST /api/tickets/reopen",
       "POST /api/remediate  (Accept: text/event-stream for progress)",
       "POST /api/remediate/approve  (alias POST /api/approve)",
       "POST /api/lab/reset-drift · GET /api/lab/state",

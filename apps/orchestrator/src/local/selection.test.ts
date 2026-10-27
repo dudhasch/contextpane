@@ -8,7 +8,7 @@ const { gatherContext } = await import("../mcp/context.ts");
 const { buildScenarioBrief } = await import("./brief.ts");
 const { buildSelectionSlice, sliceToCard } = await import("./selection.ts");
 const { resolveDataPtr, resolveSelectionPtr } = await import("./dataplane.ts");
-const { exploreSelection } = await import("../tiers/explore.ts");
+const { PLACEHOLDER_RE, exploreSelection } = await import("../tiers/explore.ts");
 
 async function slice(scenarioId: string, text: string) {
   const ctx = await gatherContext(scenarioId);
@@ -59,6 +59,51 @@ describe("highlight → selection slice", () => {
     expect(secret.kind).toBe("workload-identity");
     expect(secret.rows.some((r) => r.expired === true)).toBe(true);
     expect((await slice("ANOM-CA-204", "SG-BreakGlass-Accounts")).slice.kind).toBe("entra-ca-policies");
+  });
+
+  test('"SG-Contoso-Finance-AVD" on INC-4092 leads with the enforced policy that blocks it, never a report-only one', async () => {
+    // Mirror the lab tenant: beside the enforced legacy block it holds CA-001 and a report-only CA-004 that names the group.
+    const ctx = await gatherContext("INC-4092");
+    const base = ctx.policies!.data[0]!;
+    const extra = [
+      { ...base, id: "ca-001-test", displayName: "[ContextPane-Demo] CA-001-Require-PhishingResistant-MFA-Admins", includeGroupNames: ["SG-Contoso-Admins"], includeGroupIds: ["g-admins"], grant: { operator: "OR", builtInControls: ["mfa"] }, blocks: false },
+      { ...base, id: "ca-004-test", displayName: "[ContextPane-Demo] CA-004-Block-Legacy-Auth", state: "enabledForReportingButNotEnforced", includeGroupNames: ["SG-Contoso-Finance-AVD"], includeGroupIds: ["g-avd"], blocks: true },
+    ];
+    const live = { ...ctx, policies: { ...ctx.policies!, data: [...ctx.policies!.data, ...extra] } };
+    const s = buildSelectionSlice(live, "SG-Contoso-Finance-AVD", buildScenarioBrief(live).steps);
+    expect(s.kind).toBe("entra-ca-policies");
+    expect(s.rows.find((r) => r.id === "ca-004-test")?.role).toBe("report-only");
+    expect(s.rows.some((r) => r.state === "enabledForReportingButNotEnforced" && r.role === "blocking")).toBe(false);
+    const lead = s.rows[0]!;
+    expect(lead.role).toBe("blocking");
+    expect(lead.state).toBe("enabled");
+    expect(Number(lead.blockedSignIns)).toBeGreaterThan(0);
+    expect(s.suggestedAction.scriptPreview).toContain(`'${lead.id}'`);
+    expect(s.suggestedAction.scriptPreview).toContain("enabledForReportingButNotEnforced");
+    expect(s.suggestedAction.scriptPreview).not.toContain("state = 'enabled'");
+    expect(ContextualMiniDashboardSchema.safeParse(sliceToCard(live, "SG-Contoso-Finance-AVD", s)).success).toBe(true);
+  });
+
+  test('"Mail.ReadWrite" on ANOM-APP-401 revokes that assignment and the delegated grant by their real ids', async () => {
+    const { slice: s } = await slice("ANOM-APP-401", "Mail.ReadWrite");
+    expect(s.kind).toBe("workload-identity");
+    expect(s.suggestedAction.label).toBe("Revoke Mail.ReadWrite");
+    const script = s.suggestedAction.scriptPreview;
+    expect(script).toContain("Remove-MgServicePrincipalAppRoleAssignment -ServicePrincipalId '8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a' -AppRoleAssignmentId 'ara-spn-contoso-erp-sync-mail-readwrite'");
+    expect(script).toContain("Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId 'grant-spn-contoso-erp-sync-001'");
+    expect(PLACEHOLDER_RE.test(script)).toBe(false);
+  });
+
+  test("no suggested action of any slice carries a <placeholder>", async () => {
+    const probes: Array<[string, string]> = [
+      ["INC-4092", "SG-Contoso-Finance-AVD"], ["INC-4092", "SPE_E3"], ["INC-4092", "port 3389"], ["INC-4092", "AADSTS53003"], ["INC-4092", "zzz-quantum-flux-capacitor"],
+      ["INC-4099", "BitLocker"], ["INC-4099", "uncompliant device"], ["ANOM-INT-309", "firewall"], ["ANOM-LIC-101", "disabled accounts"],
+      ["ANOM-CA-204", "CA-004"], ["ANOM-CA-204", "SG-BreakGlass-Accounts"], ["ANOM-APP-401", "Mail.ReadWrite"], ["ANOM-APP-401", "Sites.FullControl.All"], ["ANOM-APP-401", "alex.wilber"],
+    ];
+    for (const [id, text] of probes) {
+      const { slice: s } = await slice(id, text);
+      expect({ id, text, script: s.suggestedAction.scriptPreview, placeholder: PLACEHOLDER_RE.test(s.suggestedAction.scriptPreview) }).toMatchObject({ placeholder: false });
+    }
   });
 
   test("a phrase nothing matches yields a valid zero-row card", async () => {

@@ -21,6 +21,7 @@ export const AuditActionTypeSchema = z.enum([
   "autonomous-rollback",
   "fleet-campaign",
   "ticket-closed",
+  "ticket-reopened",
 ]);
 export type AuditActionType = z.infer<typeof AuditActionTypeSchema>;
 

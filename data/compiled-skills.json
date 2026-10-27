@@ -1,5 +1,50 @@
 [
   {
+    "id": "skill-anom-app-401-tier0",
+    "scenarioId": "ANOM-APP-401",
+    "signature": {
+      "scenarioId": "ANOM-APP-401",
+      "tenantId": "tenant-contoso-01",
+      "components": [
+        "EntraSignInTimeline"
+      ],
+      "dataPtrs": [
+        "ptr://anom-app-401/entra/signins",
+        "ptr://anom-app-401/entra/ca-policies",
+        "ptr://anom-app-401/entra/ca-baseline-diff"
+      ],
+      "requiredEntities": [
+        "spn-contoso-erp-sync",
+        "alex.wilber@c4a8shili.onmicrosoft.com",
+        "Directory.ReadWrite.All",
+        "Sites.FullControl.All",
+        "Mail.ReadWrite",
+        "RoleManagement.ReadWrite.Directory"
+      ],
+      "errorCodes": [
+        "AADSTS7000222"
+      ],
+      "skus": [],
+      "groupNames": [],
+      "policyIds": [
+        "grant-spn-contoso-erp-sync-001",
+        "ara-spn-contoso-erp-sync-directory-readwrite-all",
+        "ara-spn-contoso-erp-sync-sites-fullcontrol-all",
+        "ara-spn-contoso-erp-sync-mail-readwrite",
+        "ara-spn-contoso-erp-sync-rolemanagement-readwrite-directory"
+      ]
+    },
+    "tier": 0,
+    "tokenCost": 0,
+    "latencyMs": 0.01,
+    "fuzz": {
+      "cases": 100,
+      "passed": 100
+    },
+    "createdAt": "2026-10-27T12:05:25.030Z",
+    "version": 1
+  },
+  {
     "id": "skill-inc-4092-tier0",
     "scenarioId": "INC-4092",
     "signature": {
@@ -10,20 +55,220 @@
         "EntraSignInTimeline",
         "IaCDriftBanner"
       ],
-      "skuPartNumber": "SPE_E5",
-      "groupName": "SG-Contoso-Finance-AVD",
+      "dataPtrs": [
+        "ptr://inc-4092/entra/users",
+        "ptr://inc-4092/entra/sku-pools",
+        "ptr://inc-4092/entra/group-errors",
+        "ptr://inc-4092/entra/signins",
+        "ptr://inc-4092/entra/ca-policies",
+        "ptr://inc-4092/entra/ca-baseline-diff",
+        "ptr://inc-4092/iac/drift-diff",
+        "ptr://inc-4092/iac/rogue-rules",
+        "ptr://inc-4092/iac/tag-drift",
+        "ptr://inc-4092/iac/host-pool",
+        "ptr://inc-4092/iac/azure-policies"
+      ],
+      "requiredEntities": [
+        "nsg-contoso-avd-hostpool-01",
+        "rg-contoso-avd-prod",
+        "[ContextPane-Demo] Block AVD - Contoso Finance Legacy"
+      ],
+      "errorCodes": [
+        "AADSTS53003"
+      ],
+      "skus": [
+        "SPE_E5",
+        "SPE_E3"
+      ],
+      "groupNames": [
+        "SG-Contoso-Finance-AVD",
+        "SG-Contoso-Finance-Legacy"
+      ],
       "policyIds": [
-        "ca-policy-001"
+        "d09ae604-4c06-4769-ad01-20ec8efa18ad"
       ]
     },
     "tier": 0,
     "tokenCost": 0,
-    "latencyMs": 0.001,
+    "latencyMs": 0.02,
     "fuzz": {
       "cases": 100,
       "passed": 100
     },
-    "createdAt": "2026-10-27T01:47:13.291Z",
+    "createdAt": "2026-10-27T12:10:07.607Z",
+    "version": 1
+  },
+  {
+    "id": "skill-inc-4099-tier0",
+    "scenarioId": "INC-4099",
+    "signature": {
+      "scenarioId": "INC-4099",
+      "tenantId": "tenant-fabrikam-02",
+      "components": [
+        "IntuneDriftCard",
+        "EntraSignInTimeline"
+      ],
+      "dataPtrs": [
+        "ptr://inc-4099/intune/devices",
+        "ptr://inc-4099/intune/settings",
+        "ptr://inc-4099/intune/policies",
+        "ptr://inc-4099/intune/baseline-diff",
+        "ptr://inc-4099/entra/signins",
+        "ptr://inc-4099/entra/ca-policies",
+        "ptr://inc-4099/entra/ca-baseline-diff"
+      ],
+      "requiredEntities": [
+        "Fabrikam-EndpointSecurity-DiskEncryption",
+        "Fabrikam-Legacy-BitLocker-DeviceConfig",
+        "Fabrikam-Win11-Compliance",
+        "./Device/Vendor/MSFT/BitLocker/EncryptionMethodByDriveType",
+        "./Device/Vendor/MSFT/BitLocker/AllowWarningForOtherDiskEncryption"
+      ],
+      "errorCodes": [
+        "0x87D1FDE8"
+      ],
+      "skus": [],
+      "groupNames": [
+        "SG-Fabrikam-Win11-Devices"
+      ],
+      "policyIds": [
+        "cfg-fab-diskenc",
+        "cfg-fab-legacy-bl",
+        "cmp-fab-win11"
+      ]
+    },
+    "tier": 0,
+    "tokenCost": 0,
+    "latencyMs": 0.012,
+    "fuzz": {
+      "cases": 100,
+      "passed": 100
+    },
+    "createdAt": "2026-10-27T12:05:25.019Z",
+    "version": 1
+  },
+  {
+    "id": "skill-anom-lic-101-tier0",
+    "scenarioId": "ANOM-LIC-101",
+    "signature": {
+      "scenarioId": "ANOM-LIC-101",
+      "tenantId": "tenant-contoso-01",
+      "components": [
+        "LicenseDriftCard"
+      ],
+      "dataPtrs": [
+        "ptr://anom-lic-101/entra/users",
+        "ptr://anom-lic-101/entra/sku-pools",
+        "ptr://anom-lic-101/entra/group-errors"
+      ],
+      "requiredEntities": [
+        "henrietta.mueller.contoso@c4a8shili.onmicrosoft.com",
+        "pradeep.gupta.contoso@c4a8shili.onmicrosoft.com",
+        "christie.cline.contoso@c4a8shili.onmicrosoft.com"
+      ],
+      "errorCodes": [
+        "CountViolation"
+      ],
+      "skus": [
+        "SPE_E5"
+      ],
+      "groupNames": [
+        "SG-Contoso-M365-E5"
+      ],
+      "policyIds": []
+    },
+    "tier": 0,
+    "tokenCost": 0,
+    "latencyMs": 0.015,
+    "fuzz": {
+      "cases": 100,
+      "passed": 100
+    },
+    "createdAt": "2026-10-27T12:05:25.024Z",
+    "version": 1
+  },
+  {
+    "id": "skill-anom-ca-204-tier0",
+    "scenarioId": "ANOM-CA-204",
+    "signature": {
+      "scenarioId": "ANOM-CA-204",
+      "tenantId": "tenant-contoso-01",
+      "components": [
+        "EntraSignInTimeline"
+      ],
+      "dataPtrs": [
+        "ptr://anom-ca-204/entra/signins",
+        "ptr://anom-ca-204/entra/ca-policies",
+        "ptr://anom-ca-204/entra/ca-baseline-diff"
+      ],
+      "requiredEntities": [
+        "bg-admin-01@c4a8shili.onmicrosoft.com",
+        "[ContextPane-Demo] CA-001-Require-PhishingResistant-MFA-Admins",
+        "[ContextPane-Demo] CA-004-Block-Legacy-Auth"
+      ],
+      "errorCodes": [],
+      "skus": [],
+      "groupNames": [
+        "SG-BreakGlass-Accounts",
+        "SG-ContextPane-Demo-Admins"
+      ],
+      "policyIds": [
+        "CA-001",
+        "CA-004"
+      ]
+    },
+    "tier": 0,
+    "tokenCost": 0,
+    "latencyMs": 0.008,
+    "fuzz": {
+      "cases": 100,
+      "passed": 100
+    },
+    "createdAt": "2026-10-27T12:05:25.026Z",
+    "version": 1
+  },
+  {
+    "id": "skill-anom-int-309-tier0",
+    "scenarioId": "ANOM-INT-309",
+    "signature": {
+      "scenarioId": "ANOM-INT-309",
+      "tenantId": "tenant-contoso-01",
+      "components": [
+        "IntuneDriftCard"
+      ],
+      "dataPtrs": [
+        "ptr://anom-int-309/intune/devices",
+        "ptr://anom-int-309/intune/settings",
+        "ptr://anom-int-309/intune/policies",
+        "ptr://anom-int-309/intune/baseline-diff"
+      ],
+      "requiredEntities": [
+        "Intune-Win11-ASR-Baseline",
+        "EndpointSecurity-Firewall-Prod",
+        "Win11-Firewall-MDM",
+        "./Vendor/MSFT/Policy/Config/Defender/AttackSurfaceReductionRules",
+        "./Vendor/MSFT/Firewall/MdmStore/DomainProfile/EnableFirewall",
+        "./Vendor/MSFT/Firewall/MdmStore/PrivateProfile/EnableFirewall"
+      ],
+      "errorCodes": [],
+      "skus": [],
+      "groupNames": [
+        "SG-All-Workstations"
+      ],
+      "policyIds": [
+        "cfg-asr-baseline",
+        "cfg-fw-prod",
+        "cfg-fw-mdm"
+      ]
+    },
+    "tier": 0,
+    "tokenCost": 0,
+    "latencyMs": 0.007,
+    "fuzz": {
+      "cases": 100,
+      "passed": 100
+    },
+    "createdAt": "2026-10-27T12:05:25.027Z",
     "version": 1
   }
 ]

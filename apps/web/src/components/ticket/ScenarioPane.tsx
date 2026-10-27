@@ -1,4 +1,4 @@
-import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, ListChecks, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
+import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { CATEGORY_META, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
@@ -120,28 +120,48 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
 /** The 3-second view: root cause in 1-2 sentences, then the numbered, clickable resolution plan. */
 function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
   const resolved = Boolean(useWorkbench(selectConvergence));
+  const selections = useWorkbench((s) => s.selections[s.scenarioId] ?? NO_SELECTIONS);
+  const reopenTicket = useWorkbench((s) => s.reopenTicket);
   return (
     <section className={`rounded-[10px] border-2 p-3 ${resolved ? "border-healthy/50 bg-healthy/6" : "border-primary/45 bg-primary/6"}`} data-testid="summary-plan">
       <div className="mb-1.5 flex items-center gap-2">
         <ClipboardList className={`size-4 ${resolved ? "text-healthy" : "text-primary"}`} />
         <span className="text-[12px] font-semibold tracking-wide uppercase">Summary &amp; Resolution Plan</span>
         {resolved && (
-          <span className="ml-auto inline-flex h-5 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[10.5px] text-healthy">
-            <CircleCheckBig className="size-3" />
-            Resolved
-          </span>
+          <>
+            <span className="ml-auto inline-flex h-5 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[10.5px] text-healthy">
+              <CircleCheckBig className="size-3" />
+              Resolved
+            </span>
+            <button
+              type="button"
+              onClick={() => void reopenTicket()}
+              className="inline-flex h-5 items-center gap-1 rounded border border-border px-1.5 text-[10.5px] text-muted hover:text-text"
+              title="Clear the resolved state so the remediation can run again"
+              data-testid="reopen-ticket"
+            >
+              <RotateCcw className="size-3" />
+              Reopen Ticket
+            </button>
+          </>
         )}
       </div>
-      <p className="text-[13px] leading-relaxed text-text">{brief.summary}</p>
+      <SelectionTrigger>
+        <p className="text-[13px] leading-relaxed text-text" data-testid="summary-text">
+          <EnrichedText text={brief.summary} entities={NO_ENTITIES} selections={selections} />
+        </p>
+      </SelectionTrigger>
       <div className="mt-2.5 mb-1 flex items-center gap-1.5 text-[11px] text-muted">
         <ListChecks className="size-3.5" />
         Steps to resolve
       </div>
-      <ol className="space-y-1">
-        {brief.steps.map((step, i) => (
-          <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} />
-        ))}
-      </ol>
+      <SelectionTrigger>
+        <ol className="space-y-1">
+          {brief.steps.map((step, i) => (
+            <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} />
+          ))}
+        </ol>
+      </SelectionTrigger>
       <FleetPill />
       {resolved && <ResolutionNoteBox />}
     </section>
@@ -160,7 +180,7 @@ function FleetPill() {
   );
 }
 
-function PlanStep({ step, index, resolved }: { step: ResolutionStep; index: number; resolved: boolean }) {
+function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep; index: number; resolved: boolean; selections: Array<{ id: string; text: string; index: number }> }) {
   const scenarioId = useWorkbench((s) => s.scenarioId);
   const checked = useWorkbench((s) => Boolean(s.stepsDone[`${scenarioId}:${step.id}`])) || resolved;
   const toggle = useWorkbench((s) => s.toggleStep);
@@ -183,11 +203,37 @@ function PlanStep({ step, index, resolved }: { step: ResolutionStep; index: numb
       >
         {checked ? <Check className="size-3" /> : index}
       </button>
-      <button type="button" onClick={() => focusCard(step.target, step.tab)} className="min-w-0 flex-1 text-left" title="Open the card for this step">
+      {/* Selectable text, not a <button>: dragging over a step highlights it for Generate Context UI instead of clicking. */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => {
+          if (window.getSelection()?.toString().trim()) return;
+          focusCard(step.target, step.tab);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          focusCard(step.target, step.tab);
+        }}
+        className="min-w-0 flex-1 cursor-pointer text-left select-text"
+        title="Open the card for this step"
+        data-testid="plan-step-text"
+      >
         <span className={`mr-1.5 text-[12px] font-semibold ${CAT_TEXT}`}>{step.title}:</span>
-        <span className={`text-[12.5px] ${checked ? "text-muted line-through decoration-healthy/60" : "text-text"}`}>{step.detail}</span>
-      </button>
-      <Button size="xs" variant="outline" icon={<ChevronRight />} className="shrink-0 opacity-80 group-hover:opacity-100" onClick={() => runStep(step)}>
+        <span className={`text-[12.5px] ${checked ? "text-muted line-through decoration-healthy/60" : "text-text"}`}>
+          <EnrichedText text={step.detail} entities={NO_ENTITIES} selections={selections} />
+        </span>
+      </div>
+      <Button
+        size="xs"
+        variant="outline"
+        icon={<ChevronRight />}
+        className="shrink-0 opacity-80 group-hover:opacity-100"
+        disabled={resolved && step.action.kind === "stage-fix"}
+        title={resolved && step.action.kind === "stage-fix" ? "Already resolved: reopen the ticket to run it again" : undefined}
+        onClick={() => runStep(step)}
+      >
         {step.action.label}
       </Button>
     </li>
@@ -195,6 +241,7 @@ function PlanStep({ step, index, resolved }: { step: ResolutionStep; index: numb
 }
 
 const NO_SELECTIONS: Array<{ id: string; text: string; index: number }> = [];
+const NO_ENTITIES: EnrichedEntity[] = [];
 
 /** The ticket description or the anomaly narrative, with every enriched entity as an inline pill. */
 function ScenarioText({ brief }: { brief: ScenarioBrief }) {

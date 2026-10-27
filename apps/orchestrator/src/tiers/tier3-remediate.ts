@@ -10,6 +10,7 @@ import {
   formatIssues,
   getScenarioEntry,
   getRemediationBundleToolDefinition,
+  isCustomScenarioId,
   parseToolArguments,
   formatSourceRef,
   zodToToolParameters,
@@ -469,6 +470,9 @@ function ms(v: number | undefined): string {
   return v === undefined ? "–" : `${Math.round(v)} ms`;
 }
 
+/** Title and body badge of a break-glass approval whose write was simulated: nothing live changed. */
+export const SIMULATED_BADGE = "[Simulated Target / GitOps Staged — No Live Cloud Write]";
+
 export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log: string[], ctx: CorrelationContext | null, repoUrl: string | null): string {
   const v = drawer.verificationStatus;
   const registry = getScenarioEntry(drawer.ticketId);
@@ -524,7 +528,9 @@ export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log
   for (const e of policies) changes.push(`- ${ctx?.intune ? "Intune" : "`Update-MgIdentityConditionalAccessPolicy`"} · \`${e.id}\`: ${e.change}`);
   if (devices.length) changes.push(`- \`Sync-MgDeviceManagementManagedDevice\` · ${devices.length} device(s): ${devices.map((d) => d.id).join(", ")}`);
 
+  const simulated = state === "simulated";
   return [
+    ...(simulated ? [`> **${SIMULATED_BADGE}** The break-glass approval ran against a simulated target: no live Graph or ARM resource was changed. This branch only stages the intended state.`, ""] : []),
     `## #${drawer.ticketId}${ticket ? ` × #${contractId}` : ""} · ${tenantName}`,
     "",
     drawer.summary,
@@ -584,7 +590,9 @@ export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log
     "",
     drawer.approval.mode === "gitops"
       ? "- 🔀 **Pure GitOps**: nothing was written to Graph or ARM. Merging this PR is the deployment."
-      : `- ⚡ **Emergency Break-Glass**: the live resources were changed on approval; the reconcile commit on this branch records the state they were left in${reconciledPath ? ` (${link(reconciledPath)})` : ""}.`,
+      : simulated
+        ? `- 🧪 **Emergency Break-Glass, simulated**: no live Graph or ARM resource was changed; the reconcile commit on this branch records the intended state${reconciledPath ? ` (${link(reconciledPath)})` : ""}.`
+        : `- ⚡ **Emergency Break-Glass**: the live resources were changed on approval; the reconcile commit on this branch records the state they were left in${reconciledPath ? ` (${link(reconciledPath)})` : ""}.`,
     `- Approved by **${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity}** at ${drawer.approval.approvedAt ?? "n/a"} → \`${state}\``,
     `- Remediation \`${drawer.remediationId}\`${drawer.staging?.commitSha ? ` · commit \`${drawer.staging.commitSha.slice(0, 7)}\`` : ""}`,
     ...log.map((l) => `- ${l}`),
@@ -623,7 +631,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   // The lab objects a custom ticket's fix writes are those of the built-in scenario it inherits.
   const labScenarioId = baseScenarioOf(scenarioId);
   const mode: ExecutionMode = input.mode ?? "break-glass";
-  const wantPullRequest = input.openPullRequest ?? config.github.prOnApprove;
+  // Ad-hoc CUSTOM-/ERP- tickets never open a PR unless the engineer asks for one.
+  const wantPullRequest = input.openPullRequest ?? (isCustomScenarioId(drawer.ticketId) ? false : config.github.prOnApprove);
   // The PR body quotes the ticket and the convergence names the users: read both before the Graph write invalidates the context.
   const before = await gatherContext(scenarioId).catch(() => null);
   const plan = before ? buildRemediationPlan(before) : null;
@@ -694,10 +703,13 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     updated = { ...updated, staging: reconciled.staging };
   }
 
+  if (state === "simulated") log.unshift(`${SIMULATED_BADGE} ${writeSummary || "execution simulated"}`.trim());
+
   /* ---- optional: real GitHub PR on the staged branch ---- */
   if (wantPullRequest) {
     if (updated.staging) {
-      const pr = await openPullRequest(updated.staging, pullRequestBody(updated, state, log, before, await githubRepoUrl()));
+      const staging = state === "simulated" && !updated.staging.prTitle.startsWith(SIMULATED_BADGE) ? { ...updated.staging, prTitle: `${SIMULATED_BADGE} ${updated.staging.prTitle}` } : updated.staging;
+      const pr = await openPullRequest(staging, pullRequestBody(updated, state, log, before, await githubRepoUrl()));
       log.push(...pr.log);
       updated = { ...updated, staging: pr.staging };
     } else {
