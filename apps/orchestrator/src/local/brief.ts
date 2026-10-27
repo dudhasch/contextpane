@@ -1,5 +1,6 @@
 import {
   SCENARIO_REGISTRY,
+  displayScenarioId,
   type CanvasComponentType,
   type EnrichedEntity,
   type ResolutionStep,
@@ -353,6 +354,9 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     entities: scenarioEntities(ctx).slice(0, 24),
     sources: ctx.sourcesUsed,
     extraction: null,
+    originKind: ctx.custom ? ctx.custom.origin : ctx.kind === "ticket" ? ("psa" as const) : ("anomaly" as const),
+    displayId: displayScenarioId(ctx.ticketId),
+    priority: null,
   };
   if (ctx.custom) return buildCustomBrief(ctx, base);
   if (ticket) {
@@ -437,8 +441,18 @@ function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "ti
   const inheritedSteps = base.steps.filter((s) => cards.has(s.target));
   const x = custom.extraction;
   const matched = x.entities.filter((e) => e.resolvedTo);
-  const rawSummary = `Unscripted ticket triaged live against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "no intent keywords"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`;
+  const drop = custom.origin === "erp-drop" ? custom.erpDrop : undefined;
+  const displayId = displayScenarioId(custom.scenarioId);
+  const how = drop ? `ERP ticket ${displayId} dropped into input/tickets/${drop.folder}/ and triaged live` : "Unscripted ticket triaged live";
+  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "no intent keywords"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`;
   const summary = cleanTruncate(rawSummary, 700);
+  const customer = custom.ticket.customerName ?? ctx.erp.tenant.displayName;
+  const timeline = drop
+    ? [
+        { at: custom.createdAt, actor: custom.ticket.requester?.displayName ?? customer, note: `Ticket ${displayId} opened in the ERP${custom.ticket.priority ? ` (priority ${custom.ticket.priority})` : ""}` },
+        { at: drop.ingestedAt, actor: "ERP inbox watcher", note: `${drop.folder}/ticketbody.json ingested${drop.attachments.length ? ` with ${plural(drop.attachments.length, "attachment")} (${drop.attachments.map((a) => a.fileName).join(", ")})` : ""}; Tier 0 extraction, 0 tokens` },
+      ]
+    : [{ at: custom.createdAt, actor: customer, note: "Ticket pasted into the unscripted composer and triaged live" }];
   return {
     ...base,
     summary,
@@ -446,18 +460,22 @@ function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "ti
     entities: customEntities(ctx),
     extraction: x,
     title: custom.ticket.title,
-    status: "Open",
+    status: drop ? "New" : "Open",
     openedAt: custom.createdAt,
-    origin: `Unscripted ticket · ${custom.ticket.customerName ?? ctx.erp.tenant.displayName} · base pattern ${ctx.scenarioId}`,
+    origin: drop ? `ERP file drop · input/tickets/${drop.folder} · ${customer} · base pattern ${ctx.scenarioId}` : `Unscripted ticket · ${customer} · base pattern ${ctx.scenarioId}`,
     body: custom.ticket.body,
     signals: [
+      ...(drop
+        ? [{ label: "ERP file drop", value: `${drop.folder}/ticketbody.json${drop.attachments.length ? ` + ${drop.attachments.map((a) => a.fileName).join(", ")}` : ""} · ingested ${drop.ingestedAt.slice(11, 19)}Z`, category: "azure" as const, source: `fs.watch + 1 s scan · ${drop.folder}` }]
+        : []),
       { label: "Entity & intent extraction", value: `${plural(x.entities.length, "entity")} found, ${matched.length} resolved live · intents: ${x.intents.join(", ") || "none"}`, category: "identity", source: "mcp-msgraph · users, policies, devices · mcp-azure-iac · NSG" },
       { label: "Base pattern", value: x.rationale, category: "identity", source: `scenario ${ctx.scenarioId}` },
     ],
-    requester: null,
+    requester: custom.ticket.requester ?? null,
+    priority: custom.ticket.priority ?? null,
     contract: { contractId: ctx.erp.contract.contractId, title: ctx.erp.contract.title, lines: ctx.erp.contract.lines.map((l) => ({ description: l.description, skuPartNumber: l.skuPartNumber, quantity: l.quantity })), terms: ctx.erp.contract.terms },
     infrastructureSpec: null,
-    timeline: [{ at: custom.createdAt, actor: custom.ticket.customerName ?? "Engineer", note: "Ticket pasted into the unscripted composer and triaged live" }],
-    attachments: [],
+    timeline,
+    attachments: drop?.attachments ?? [],
   };
 }

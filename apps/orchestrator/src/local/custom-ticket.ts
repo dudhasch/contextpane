@@ -5,12 +5,16 @@ import {
   TENANT_REGISTRY,
   TicketExtractionSchema,
   customScenarioId,
+  displayScenarioId,
   getCustomScenario,
   isTenantId,
   listCustomScenarios,
   registerCustomScenario,
+  unregisterCustomScenario,
   type CanvasComponentType,
   type CustomScenarioEntry,
+  type CustomScenarioId,
+  type ErpDropSource,
   type ExtractedEntity,
   type ScenarioId,
   type ScenarioListItem,
@@ -32,6 +36,16 @@ export interface CustomTicketRequest {
   title: string;
   body: string;
   customerName?: string;
+  requester?: { displayName: string; upn: string; role: string };
+  priority?: string;
+}
+
+/** How a ticket enters the registry: pasted (CUSTOM-<hash>) or dropped into the inbox (ERP-<id>). */
+export interface RegisterOptions {
+  scenarioId?: CustomScenarioId;
+  origin?: "unscripted" | "erp-drop";
+  createdAt?: string;
+  erpDrop?: ErpDropSource;
 }
 
 interface Vote {
@@ -242,10 +256,11 @@ export function loadCustomScenarios(): number {
     const raw = JSON.parse(readFileSync(FILE, "utf8")) as { scenarios?: CustomScenarioEntry[] };
     let n = 0;
     for (const s of raw.scenarios ?? []) {
-      if (!s?.scenarioId?.startsWith("CUSTOM-") || !isTenantId(s.tenantId) || !(s.baseScenarioId in SCENARIO_REGISTRY)) continue;
+      if (!(s?.scenarioId?.startsWith("CUSTOM-") || s?.scenarioId?.startsWith("ERP-")) || !isTenantId(s.tenantId) || !(s.baseScenarioId in SCENARIO_REGISTRY)) continue;
       const extraction = TicketExtractionSchema.safeParse(s.extraction);
       if (!extraction.success) continue;
-      registerCustomScenario({ ...s, extraction: extraction.data });
+      // Entries written before origins existed were all pasted tickets.
+      registerCustomScenario({ ...s, origin: s.origin ?? (s.scenarioId.startsWith("ERP-") ? "erp-drop" : "unscripted"), extraction: extraction.data });
       n++;
     }
     return n;
@@ -255,38 +270,68 @@ export function loadCustomScenarios(): number {
   }
 }
 
-export function registerCustomTicket(input: CustomTicketRequest): CustomScenarioEntry {
+export function registerCustomTicket(input: CustomTicketRequest, options: RegisterOptions = {}): CustomScenarioEntry {
   const title = input.title.trim().slice(0, 140);
   const body = input.body.trim().slice(0, 6000);
-  const extraction = extractTicket({ title, body, ...(input.customerName ? { customerName: input.customerName } : {}) });
-  const id = customScenarioId(shortHash(`${title}\n${body}`));
+  // The requester is evidence too: an ERP ticket names them in a field, not in the prose.
+  const probe = input.requester ? `${body}\n${input.requester.displayName} ${input.requester.upn}` : body;
+  const extraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
+  const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
   const base = SCENARIO_REGISTRY[extraction.baseScenarioId];
   const entry = registerCustomScenario({
     scenarioId: id,
     kind: "ticket",
+    origin: options.origin ?? "unscripted",
     tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
     title,
     remediationScope: base.remediationScope,
     components: extraction.components,
     baseScenarioId: extraction.baseScenarioId,
-    shortHash: id.slice("CUSTOM-".length),
-    createdAt: new Date().toISOString(),
-    ticket: { title, body, ...(input.customerName ? { customerName: input.customerName.trim().slice(0, 80) } : {}) },
+    shortHash: id.slice(id.indexOf("-") + 1),
+    createdAt: options.createdAt ?? new Date().toISOString(),
+    ticket: {
+      title,
+      body,
+      ...(input.customerName ? { customerName: input.customerName.trim().slice(0, 80) } : {}),
+      ...(input.requester ? { requester: input.requester } : {}),
+      ...(input.priority ? { priority: input.priority.slice(0, 12) } : {}),
+    },
     extraction,
+    ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
   });
   save();
   return entry;
+}
+
+/** Drops a custom ticket (an ERP folder that disappeared from the inbox) and persists the registry. */
+export function removeCustomTicket(scenarioId: string): boolean {
+  const removed = unregisterCustomScenario(scenarioId);
+  if (removed) save();
+  return removed;
 }
 
 export function customScenarioListItem(entry: CustomScenarioEntry, resolved: boolean): ScenarioListItem {
   return {
     scenarioId: entry.scenarioId,
     kind: "ticket",
+    origin: entry.origin,
+    displayId: displayScenarioId(entry.scenarioId),
     tenantId: entry.tenantId,
     tenantName: TENANT_REGISTRY[entry.tenantId].displayName,
     title: entry.title,
     resolved,
-    custom: { baseScenarioId: entry.baseScenarioId, shortHash: entry.shortHash, createdAt: entry.createdAt, ticket: entry.ticket, extraction: entry.extraction, components: entry.components },
+    // Queue order is arrival: a drop ranks by when it landed in the inbox, not by the ERP's own timestamp.
+    createdAt: entry.erpDrop?.ingestedAt ?? entry.createdAt,
+    custom: {
+      origin: entry.origin,
+      baseScenarioId: entry.baseScenarioId,
+      shortHash: entry.shortHash,
+      createdAt: entry.createdAt,
+      ticket: entry.ticket,
+      extraction: entry.extraction,
+      components: entry.components,
+      ...(entry.erpDrop ? { erpDrop: entry.erpDrop } : {}),
+    },
   };
 }
 

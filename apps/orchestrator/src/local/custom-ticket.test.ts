@@ -154,7 +154,17 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" && e.clientApp === "GitHub Actions")).toBe(true);
     expect(props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" && e.clientApp.includes("retry"))).toBe(true);
     expect(props.events.some((e) => e.errorCodeLabel === "OAuth Grant" || e.appDisplayName.includes("Mail.ReadWrite"))).toBe(true);
-    expect(props.events.some((e) => e.errorCodeLabel === "Scope Audit" || e.appDisplayName.includes("RoleManagement"))).toBe(true);
-    expect(props.events.some((e) => e.displayName === "Alex Wilber")).toBe(true);
+    expect(props.events.some((e) => e.errorCodeLabel === "Scope Audit" && e.appDisplayName.includes("Directory.ReadWrite.All"))).toBe(true);
+    expect(props.events.some((e) => e.displayName === "Alex Wilber" && /App Owner/.test(e.failureReason ?? ""))).toBe(true);
+
+    // The spec's clock: 02:15:00Z expired secret, 02:10:14Z retry, 01:42:19Z OAuth grant, yesterday 18:05Z scope audit, yesterday 11:20Z owner review.
+    const times = (label: string | RegExp) => props.events.filter((e) => (typeof label === "string" ? e.appDisplayName === label : label.test(e.appDisplayName))).map((e) => e.timestamp.slice(11, 19));
+    expect(times(/^Microsoft Graph$/)).toEqual(expect.arrayContaining(["02:10:14", "02:15:00"]));
+    expect(times(/^Grant:/)).toEqual(["01:42:19"]);
+    expect(times(/scope audit/)).toEqual(["18:05:00"]);
+    expect(times(/Access review/)).toEqual(["11:20:00"]);
+    const day = (e: { timestamp: string }) => e.timestamp.slice(0, 10);
+    const today = props.events.find((e) => e.appDisplayName === "Microsoft Graph")!;
+    expect(props.events.filter((e) => /scope audit|Access review/.test(e.appDisplayName)).every((e) => day(e) < day(today))).toBe(true);
   });
 });

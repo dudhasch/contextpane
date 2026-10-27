@@ -1,4 +1,4 @@
-import type { AuditEntry, Convergence, RouterTelemetry } from "@contextpane/catalog";
+import type { AuditEntry, Convergence, RouterTelemetry, ScenarioListItem } from "@contextpane/catalog";
 import type { TelemetryStats } from "./api";
 
 export interface TelemetryHandlers {
@@ -8,6 +8,9 @@ export interface TelemetryHandlers {
   onAudit?: (entry: AuditEntry) => void;
   /** notifications/resources/updated: a scenario's canvas converged (remediated) or was reset (convergence null). */
   onResourcesUpdated?: (scenarioId: string, convergence: Convergence | null) => void;
+  /** A ticket folder landed in input/tickets/ (or left it). */
+  onInboxIngested?: (item: ScenarioListItem, folder: string, attachments: string[]) => void;
+  onInboxRemoved?: (scenarioId: string, folder: string) => void;
 }
 
 /**
@@ -35,8 +38,12 @@ export function connectTelemetry(handlers: TelemetryHandlers): () => void {
           | { type: "telemetry"; event: RouterTelemetry; stats: TelemetryStats }
           | { type: "pong" | "stats"; stats?: TelemetryStats }
           | { type: "audit"; entry: AuditEntry }
-          | { type: "resources/updated"; params: { scenarioId: string; tenantId: string; convergence: Convergence | null } };
+          | { type: "resources/updated"; params: { scenarioId: string; tenantId: string; convergence: Convergence | null } }
+          | { type: "inbox/ingested"; item: ScenarioListItem; folder: string; attachments: string[] }
+          | { type: "inbox/removed"; scenarioId: string; folder: string };
         if (data.type === "hello") handlers.onHello(data.stats, data.recent);
+        else if (data.type === "inbox/ingested") handlers.onInboxIngested?.(data.item, data.folder, data.attachments);
+        else if (data.type === "inbox/removed") handlers.onInboxRemoved?.(data.scenarioId, data.folder);
         else if (data.type === "telemetry") handlers.onEvent(data.event, data.stats);
         else if (data.type === "audit") handlers.onAudit?.(data.entry);
         else if (data.type === "resources/updated") handlers.onResourcesUpdated?.(data.params.scenarioId, data.params.convergence);

@@ -89,7 +89,7 @@ function TenantBreadcrumb({ cards }: { cards: number }) {
       <ChevronRight className="size-3 shrink-0 text-faint" />
       <span className="truncate font-mono text-[11px] text-muted">{brief?.verifiedDomain ?? ""}</span>
       <ChevronRight className="size-3 shrink-0 text-faint" />
-      <span className={`shrink-0 font-mono text-[11.5px] ${resolved ? "text-healthy" : "text-text"}`}>#{scenarioId}</span>
+      <span className={`shrink-0 font-mono text-[11.5px] ${resolved ? "text-healthy" : "text-text"}`}>{brief?.displayId ?? `#${scenarioId}`}</span>
       <span className="shrink-0 text-faint">· {cards} {cards === 1 ? "card" : "cards"}{status === "loading" ? " · correlating…" : ""}</span>
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
         {recipe && (

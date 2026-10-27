@@ -29,8 +29,10 @@ export function onDemo(handler: (beat: DemoBeat, claim: () => boolean) => void):
 }
 
 export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> = [
-  { key: "1-6", label: "Open scenario by position in the scenario list", beat: "Tickets & tenant anomalies" },
-  { key: "m", label: "Switch Tickets / Tenant Anomalies", beat: "Mode switcher" },
+  { key: "1-9", label: "Open the work item at that position in the queue", beat: "One stream: tickets, anomalies, ERP drops, ad-hoc" },
+  { key: "Ctrl K", label: "Open the work queue (search, origin filters)", beat: "Unified selector · q also toggles it" },
+  { key: "j / k", label: "Next / previous work item", beat: "Step through the queue" },
+  { key: "g", label: "🎲 Drop a random ERP ticket into input/tickets/", beat: "fs watcher → #2026xxx ingested in ~1 s" },
   { key: "h", label: "Hover the hero entity", beat: "Tier 1A · inline hover diagnostics" },
   { key: "e", label: "Run step 1 of the resolution plan", beat: "Left pane → card expands" },
   { key: "d", label: "Open the Terraform diff", beat: "IaC drift" },
@@ -44,7 +46,7 @@ export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> =
   { key: "0", label: "Reset demo drift", beat: "Every scenario back to its drifted state" },
   { key: "r", label: "Re-correlate (fresh)", beat: "Tier 1B/2 forced tool call" },
   { key: "n", label: "Triage an unscripted ticket", beat: "Paste any ticket → CUSTOM-<hash> triaged live" },
-  { key: "g", label: "Generate Context UI for the hero phrase", beat: "Highlight any text → cyan mini-dashboard" },
+  { key: "u", label: "Generate Context UI for the hero phrase", beat: "Highlight any text → cyan mini-dashboard" },
   { key: "Esc", label: "Close drawers & popovers", beat: "" },
   { key: "?", label: "This overlay", beat: "" },
 ];

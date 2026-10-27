@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { SCENARIO_IDS } from "@contextpane/catalog";
 import { dispatchDemo } from "@/lib/demo";
 import { useWorkbench } from "@/store";
 
@@ -11,9 +10,15 @@ export function useDemoHotkeys() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
+      const s = useWorkbench.getState();
+      // Ctrl+K / ⌘K: the work queue, from anywhere (inputs included).
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        s.setQueueOpen(!s.queueOpen);
+        return;
+      }
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const s = useWorkbench.getState();
       const brief = s.brief;
 
       switch (e.key) {
@@ -27,6 +32,7 @@ export function useDemoHotkeys() {
           s.setVoiceOpen(false);
           s.setSystemOpen(false);
           s.setComposerOpen(false);
+          s.setQueueOpen(false);
           dispatchDemo({ kind: "close-popovers" });
           break;
         case "1":
@@ -34,19 +40,28 @@ export function useDemoHotkeys() {
         case "3":
         case "4":
         case "5":
-        case "6": {
-          const scenarioId = SCENARIO_IDS[Number(e.key) - 1];
-          if (scenarioId) void s.selectScenario(scenarioId);
+        case "6":
+        case "8":
+        case "9": {
+          // Position in the unified queue (newest first, resolved last), as the popover numbers them.
+          const item = s.orderedQueue()[Number(e.key) - 1];
+          if (item) void s.selectScenario(item.scenarioId);
           break;
         }
+        case "j":
+          void s.stepQueue(1);
+          break;
+        case "k":
+          void s.stepQueue(-1);
+          break;
+        case "q":
+          s.setQueueOpen(!s.queueOpen);
+          break;
         case "h": {
           const hero = brief?.entities.find((x) => x.type === "upn" && x.hoverable) ?? brief?.entities.find((x) => x.hoverable);
           if (hero) dispatchDemo({ kind: "hover", entityId: hero.id });
           break;
         }
-        case "m":
-          void s.setMode(s.mode === "ticket" ? "anomaly" : "ticket");
-          break;
         case "e": {
           const first = brief?.steps[0];
           if (first) s.runStep(first);
@@ -85,7 +100,10 @@ export function useDemoHotkeys() {
         case "n":
           s.setComposerOpen(!s.composerOpen);
           break;
-        case "g": {
+        case "g":
+          void s.simulateDrop();
+          break;
+        case "u": {
           const hero = brief?.entities.find((x) => x.type === "errorCode") ?? brief?.entities.find((x) => x.type === "resource") ?? brief?.entities[0];
           if (hero) void s.exploreSelection(hero.label || hero.id);
           break;

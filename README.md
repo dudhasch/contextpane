@@ -24,13 +24,59 @@ verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
 | **5 · Zero-token recipe switch.** The canvas pinned on ANOM-CA-204 re-hydrates ANOM-INT-309 (ASR rule in Audit, firewall conflict on 11 devices) through Tier 0 with 0 LLM tokens; the System & Audit drawer tallies the router savings per tier. | **6 · Highlight any text → Generate Context UI.** The engineer highlighted *temporary RDP* in the ticket; the orchestrator sliced the live NSG read (`ptr://inc-4092/selection/<hash>`) and `muse-spark-1.3` composed the cyan `ContextualMiniDashboard`: KPIs, breakdown, the rogue rule row and a targeted `Remove-AzNetworkSecurityRuleConfig`. The cyan *Selection #1* badge in the text pulses the card. |
 | ![An unscripted ticket pasted into the composer, triaged live into CUSTOM-<hash>](docs/screenshots/07-unscripted-ticket-triage.png) | ![INC-4092 after a Break-Glass approval: RESOLVED & VERIFIED badge, every step checked, the auto-drafted Customer & PSA Resolution Note](docs/screenshots/08-ticket-closure-psa-note.png) |
 | **7 · Unscripted ticket.** *ERP sync app failing with expired secret AADSTS7000222 and contractor still listed as owner* pasted into `[+ Triage Unscripted Ticket]`: the Tier 0 entity & intent extractor resolves the SPN, the owner UPN and the error code against the live tenant, registers `CUSTOM-<hash>` with `ptr://custom-<hash>/…` pointers and inherits the ANOM-APP-401 pattern (bundle, invariants, timeline). | **8 · End-to-end closure.** After *Approve · Execute Live & Reconcile* the status badge turns `RESOLVED & VERIFIED ✓`, the plan is checked off and the *Customer & PSA Resolution Note* is drafted from the ledger: formal invariants, canary probes, Git branch @ commit, archived `f⁻¹`. *Mark Ticket Closed in PSA* logs `ticket.closed`. |
+| ![The unified work queue popover over a freshly dropped ERP ticket: origin filter pills, every work item with its origin badge, status and age, the dropped ticket with its attachment1.png card](docs/screenshots/09-unified-work-queue-erp-drop.png) | |
+| **9 · One queue, four origins.** A folder `#2026xxx/ticketbody.json + attachment1.png` dropped into `input/tickets/` (here by `🎲 Drop Random ERP Ticket`) is ingested by the inbox watcher in about a second: it joins the queue as `ERP File Drop · NEW`, the toast offers *Open*, and its screenshot renders in the left pane with `[Extract Telemetry via Muse Vision]` reading the file from disk. The queue popover (`Ctrl+K`) is the whole stream: `PSA Ticket`, `Live Graph Anomaly`, `ERP File Drop`, `Ad-Hoc Triage`, search and filter pills, `1`–`9` by position. | |
 
 Screenshots are 1600×900 captures of the live workbench (`bun run scripts/capture-readme-screenshots.ts`).
 
+## One work queue: tickets, anomalies, ERP drops, ad-hoc triage
+
+An MSP engineer does not think in modes. Reactive PSA tickets, anomalies the orchestrator detects in
+the live tenant, ticket folders an ERP exports to disk and text pasted from a chat are one operational
+stream; they only differ by where they came from. The top bar therefore holds one control: the **work
+queue** button (`#INC-4092 · Contoso Finance · … · OPEN ▾`, `Ctrl+K`). Its popover lists every item
+newest first with an origin badge (`PSA Ticket`, `Live Graph Anomaly`, `ERP File Drop`, `Ad-Hoc Triage`),
+the status pill the left pane uses (`NEW`, `OPEN`, `ACTIVE DRIFT`, `RESOLVED ✓`, `CLOSED ✓`), the tenant,
+requester and base pattern, the attachment count and the age; resolved items sink to the bottom. A search
+box matches ids, customers, requesters, error codes and intents, filter pills count each origin, and the
+footer holds the two ways new work enters: `[+ Triage Unscripted Ticket]` and `[🎲 Drop Random ERP Ticket]`.
+Hotkeys `1`–`9` open by queue position, `j` / `k` step, `g` drops, `n` pastes. New drops never steal the
+workbench: a `📥 New ERP Drop: #2026323 (attachment1.png)` toast with *Open* and a count on the queue button
+announce them (`GET /api/scenarios` carries `origin`, `displayId` and `createdAt` for every row).
+
+### Live ERP inbox: `input/tickets/#<id>/ticketbody.json` + `attachment1.png`
+
+`apps/orchestrator/src/local/erp-inbox.ts` watches `<root>/input/tickets/` (`fs.watch` for immediacy plus a
+1 s directory scan for certainty, so nested creates on Windows and half-written JSON never slip through).
+A folder such as `#2026323/` with a `ticketbody.json` is ingested as soon as the JSON parses:
+
+- **Flexible ERP JSON**: `id` / `ticketId` (derived from the folder name when omitted), `title` / `subject`,
+  `body` / `description` / `summary`, `customer` / `tenantName`, `requester` / `user` (string or object),
+  `priority`, `createdAt`. Every `.png`, `.jpg`, `.jpeg` or `.webp` next to it is discovered, listed or not.
+- **Safe `#` handling**: the scenario id is `ERP-2026323`, the display id `#2026323`, and every URL encodes
+  the folder (`/api/tickets/inbox-attachment/%232026323/attachment1.png`), since a bare `#` is a URL fragment.
+- **Same pipeline as a pasted ticket**: the Tier 0 entity & intent extractor matches the text and the
+  requester against the live-seeded `c4a8shili.onmicrosoft.com` / `rg-contoso-avd-prod` objects, picks the
+  base pattern, and the item gets `ptr://erp-2026323/…` pointers, a brief with the requester, priority and
+  attachments, the inherited bundle, formal invariants and timeline. `GET /api/tickets/inbox` lists the inbox;
+  a folder that disappears leaves the queue on the next scan.
+- **Vision from disk**: `[Extract Telemetry via Muse Vision]` on a dropped ticket calls `POST /api/vision/triage`;
+  the orchestrator reads the file from `input/tickets/<folder>/` and sends it to `muse-spark-1.3` as an image
+  part. Offline, a deterministic fallback answers from the PNG's `tEXt` chunks and the ticket text (Tier 0,
+  0 tokens) and matches the sign-in log the same way.
+- **Random drops**: `pwsh ./scripts/New-RandomErpTicketDrop.ps1 [-TicketId "#2026323"] [-Archetype AVD|Intune|CA|WorkloadIdentity|Licensing|Mixed]`
+  writes a realistic ticket (Lynne, Diego, Patti, Alex Wilber, `spn-contoso-erp-sync`; `AADSTS53003`,
+  `0x87D1FDE8`, `AADSTS7000222`, `CountViolation`; `vdpool-contoso-fin-01`, `nsg-contoso-avd-hostpool-01`,
+  `Intune-Win11-ASR-Baseline`, `CA-001`) and a 640×400 screenshot of the matching error dialog.
+  `POST /api/tickets/simulate-drop` (the `🎲` button, hotkey `g`) does the same from the orchestrator's own
+  generator (`local/erp-drop-generator.ts`, a dependency-free PNG writer with a 5×7 pixel font), so the UI
+  button, PowerShell and Explorer all go through the identical watcher path. The seeded example
+  `input/tickets/#2026323/` is in git; generated drops are ignored and the smoke test removes its own.
+
 ## Tickets and tenant anomalies
 
-The top bar switches between two modes. **Tickets** are customer escalations from the ERP;
-**Tenant Anomalies** are drifts found proactively in the managed tenant. Every scenario renders only
+**Tickets** are customer escalations from the ERP; **Tenant Anomalies** are drifts found proactively in
+the managed tenant. Both sit in the one work queue above. Every scenario renders only
 the cards it needs, compact by default, each with a `border-l-4` accent and a *Triggered by* badge
 in the colour of the left-pane entities that spawned it. Hovering a pill rings its card and dims the
 others; clicking it expands the card on the matching tab.
@@ -114,13 +160,15 @@ Open http://localhost:5173 and press the hotkeys in order (no keys needed for ev
 
 | Key | What you see |
 |---|---|
+| `Ctrl+K` | The work queue: tickets, anomalies, ERP drops and pasted tickets in one list, newest first; pick INC-4092 (or press its position number) |
 | `1` | INC-4092: summary and resolution plan, provenance pills, three compact cards |
 | `h` | Hover Lynne's UPN: SPE_E3 ≠ SPE_E5, assignment state, groups, AADSTS53003 and the blocking CA policy (Tier 1A) |
 | `7` | Read the customer's screenshot with Muse Vision; the matching sign-in lights up (Tier 2 · Vision) |
 | `d` | The NSG drift as a unified diff |
 | `f` | Stage the fix: plan + PowerShell + Terraform, `-WhatIf` proof, sandbox-verified, staged on a git branch (Tier 3) |
 | `x` | Approve as Emergency Break-Glass (the default for a ticket): the drifted users and the NSG are fixed live, the state is committed to the fix branch, every card turns emerald (Tier 0 push, 0 tokens) |
-| `3` `4` `5` | Tenant anomalies: orphaned E5 seats, the CA break-glass gap, Intune ASR / firewall drift; `e` runs step 1 of each plan |
+| `j` / `k` | Step to the tenant anomalies: orphaned E5 seats, the CA break-glass gap, Intune ASR / firewall drift; `e` runs step 1 of each plan |
+| `g` | 🎲 Drop a random ERP ticket into `input/tickets/`: the watcher ingests `#2026xxx` in ~1 s, the toast offers *Open*, the screenshot card reads from disk |
 | `a` | System & Audit: delegated identity, Modal verification, AST / `-WhatIf` / `terraform validate`, branch, PR |
 | `p` then `2` | Pin the canvas and switch to INC-4099: Tier 0, 0 tokens |
 | `0` | Reset the demo drift for the next take |
@@ -427,8 +475,10 @@ contextpane/
 │   ├── Publish-ContextPaneRepo.ps1      Hackathon-compliant history audit/normalise + gh repo create
 │   ├── Start-GlimmerOpenWeights.ps1     Open-weight Muse Glimmer 30B GGUF on Modal (L40S) or local llama-server
 │   ├── Start-RunPodGlimmer.ps1          Optional RunPod vLLM pod for open-weight muse-glimmer-30b
+│   ├── New-RandomErpTicketDrop.ps1      Random #2026xxx/ticketbody.json + attachment1.png drop for the ERP inbox
 │   ├── Test-ContextPaneSmoke.ps1
-│   └── capture-readme-screenshots.ts    The five 1600x900 README shots via headless Edge/Chrome (CDP)
+│   └── capture-readme-screenshots.ts    The nine 1600x900 README shots via headless Edge/Chrome (CDP)
+├── input/tickets/                The live ERP inbox (#2026323 seeded; generated drops are git-ignored)
 ├── docs/screenshots/             README screenshots
 ├── modal-sandbox/                Modal Tier 3B pre-flight sandbox + optional open-weight Glimmer (Python)
 ├── packages/
@@ -560,10 +610,12 @@ Press `?` in the workbench for the overlay.
 
 | Key | Beat |
 |---|---|
-| `1`–`6` | Open INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309, ANOM-APP-401 |
+| `Ctrl+K` / `q` | The unified work queue (search, origin filter pills, newest first) |
+| `1`–`9` | Open the work item at that position in the queue |
+| `j` / `k` | Next / previous work item |
+| `g` | 🎲 Drop a random ERP ticket into `input/tickets/` (ingested by the watcher in ~1 s) |
 | `n` | Triage Unscripted Ticket composer (paste any ticket, or pick a sample) |
-| `g` | Generate Context UI for the hero phrase (same as highlighting it) |
-| `m` | Switch Tickets / Tenant Anomalies |
+| `u` | Generate Context UI for the hero phrase (same as highlighting it) |
 | `h` | Hover the hero entity → Tier 1A diagnostic popover |
 | `e` | Run step 1 of the resolution plan (its card expands on the right tab) |
 | `d` | The scenario's diff: live NSG vs `demo-iac/main.tf`, or live CA / Intune vs `golden-tenant/` |
@@ -681,6 +733,7 @@ bun run dev             # orchestrator + web
 bun run typecheck       # tsc --noEmit across every workspace
 bun run smoke           # PowerShell smoke test against :4000
 bun run mcp:erp         # run an MCP server over stdio
+pwsh ./scripts/New-RandomErpTicketDrop.ps1 -Archetype Mixed   # drop a random ERP ticket folder into input/tickets/
 ```
 
 ---

@@ -214,6 +214,10 @@ export const config = {
   },
   stagingDir: resolve(REPO_ROOT, env("CTX_STAGING_DIR", ".contextpane/staging")),
   dataDir: join(REPO_ROOT, "data"),
+  /** The ERP file-drop inbox: <root>/input/tickets/#<id>/ticketbody.json + image attachments. */
+  inboxDir: resolve(REPO_ROOT, env("CTX_INBOX_DIR", "input/tickets")),
+  /** Directory scan cadence of the inbox watcher (fs.watch events only shorten the wait). */
+  inboxScanMs: envInt("CTX_INBOX_SCAN_MS", 1000),
   github: {
     /** Push the staged fix/* branch and run `gh pr create` when a remediation is approved (needs remote origin + gh auth). */
     prOnApprove: envBool("CTX_GH_PR_ON_APPROVE", false),

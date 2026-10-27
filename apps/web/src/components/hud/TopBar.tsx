@@ -1,15 +1,10 @@
-import { Activity, Building2, ChevronDown, FilePlus2, Mic, Pin, PinOff, Radar, RotateCcw, Ticket } from "lucide-react";
-import { getScenarioEntry, scenariosOfKind, type ScenarioKind } from "@contextpane/catalog";
-import { useWorkbench, type ScenarioId } from "@/store";
+import { Activity, Building2, Mic, Pin, PinOff, RotateCcw } from "lucide-react";
+import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
+import { WorkQueue } from "./WorkQueue";
 
-/** Operational top bar: mode, scenario, recipe, voice, drift reset; everything meta lives behind System & Audit. */
+/** Operational top bar: the unified work queue, recipe, voice, drift reset; everything meta lives behind System & Audit. */
 export function TopBar() {
-  const mode = useWorkbench((s) => s.mode);
-  const setMode = useWorkbench((s) => s.setMode);
-  const scenarioId = useWorkbench((s) => s.scenarioId);
-  const selectScenario = useWorkbench((s) => s.selectScenario);
-  const scenarios = useWorkbench((s) => s.scenarios);
   const activeRecipeId = useWorkbench((s) => s.activeRecipeId);
   const pinRecipe = useWorkbench((s) => s.pinRecipe);
   const unpinRecipe = useWorkbench((s) => s.unpinRecipe);
@@ -22,13 +17,7 @@ export function TopBar() {
   const resetting = useWorkbench((s) => s.resetting);
   const wsConnected = useWorkbench((s) => s.wsConnected);
   const live = useWorkbench((s) => s.health?.liveCloudMode);
-  const composerOpen = useWorkbench((s) => s.composerOpen);
-  const setComposerOpen = useWorkbench((s) => s.setComposerOpen);
-
-  // Built-in scenarios first, then the unscripted tickets the orchestrator registered.
-  const ids: ScenarioId[] = [...scenariosOfKind(mode), ...scenarios.filter((s) => s.kind === mode && s.custom).map((s) => s.scenarioId)];
-  const resolved = (id: ScenarioId) => scenarios.find((s) => s.scenarioId === id)?.resolved;
-  const open = (kind: ScenarioKind) => (scenarios.length ? scenarios.filter((s) => s.kind === kind && !s.resolved).length : scenariosOfKind(kind).filter((id) => !resolved(id)).length);
+  const openCount = useWorkbench((s) => s.scenarios.filter((x) => !x.resolved && !s.convergence[x.scenarioId]).length);
 
   return (
     <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
@@ -39,32 +28,14 @@ export function TopBar() {
         <span className="text-[13px] font-semibold tracking-tight">ContextPane</span>
       </div>
 
-      <div className="flex shrink-0 items-center rounded-md border border-border bg-canvas p-0.5" role="tablist" aria-label="Work mode">
-        <ModeTab active={mode === "ticket"} onClick={() => void setMode("ticket")} icon={<Ticket />} label="Tickets" count={open("ticket")} />
-        <ModeTab active={mode === "anomaly"} onClick={() => void setMode("anomaly")} icon={<Radar />} label="Tenant Anomalies" count={open("anomaly")} />
+      <div className="flex min-w-0 shrink items-center gap-2">
+        <WorkQueue />
+        <span className="shrink-0 font-mono text-[10.5px] text-faint" title="Open work items in the queue" data-testid="queue-open-count">
+          {openCount} open
+        </span>
       </div>
 
-      <label className="relative flex min-w-0 shrink items-center">
-        <select
-          value={scenarioId}
-          onChange={(e) => void selectScenario(e.target.value as ScenarioId)}
-          className="h-7 max-w-[420px] min-w-0 appearance-none truncate rounded-md border border-border bg-elevated pr-7 pl-2.5 text-[12px] text-text focus:outline-2 focus:outline-primary"
-          aria-label="Scenario"
-        >
-          {ids.map((id) => (
-            <option key={id} value={id}>
-              #{id} · {getScenarioEntry(id)?.title ?? scenarios.find((s) => s.scenarioId === id)?.title ?? id}
-              {resolved(id) ? " · resolved" : ""}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="pointer-events-none absolute right-2 size-3.5 text-muted" />
-      </label>
-
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button variant={composerOpen ? "primary" : "outline"} icon={<FilePlus2 />} onClick={() => setComposerOpen(!composerOpen)} title="Paste any support ticket and triage it live (n)" data-testid="new-ticket-button">
-          + Triage Unscripted Ticket
-        </Button>
         {activeRecipeId ? (
           <Button variant="primary" icon={<PinOff />} onClick={unpinRecipe} title="Release the pinned recipe (p)">
             Recipe Pinned
@@ -92,21 +63,5 @@ export function TopBar() {
         </Button>
       </div>
     </header>
-  );
-}
-
-function ModeTab({ active, onClick, icon, label, count }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count: number }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`inline-flex h-6 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors [&>svg]:size-3.5 ${active ? "bg-elevated text-text shadow-sm" : "text-muted hover:text-text"}`}
-    >
-      {icon}
-      {label}
-      <span className={`rounded-full px-1.5 font-mono text-[10.5px] ${active ? "bg-primary/20 text-primary" : "bg-surface text-faint"}`}>{count}</span>
-    </button>
   );
 }

@@ -92,10 +92,51 @@ export function isScenarioId(value: unknown): value is ScenarioId {
  * convergence and its audit rows, while `baseScenarioId` names the built-in scenario whose
  * data gathering, remediation template and formal invariants it inherits.
  */
-export type CustomScenarioId = `CUSTOM-${string}`;
+export type CustomScenarioId = `CUSTOM-${string}` | `ERP-${string}`;
 export type WorkbenchScenarioId = ScenarioId | CustomScenarioId;
 
-export const CUSTOM_SCENARIO_ID_RE = /^CUSTOM-[A-Z0-9]{4,12}$/;
+/** CUSTOM-<hash> for a pasted ticket, ERP-<id> for a folder dropped into input/tickets/#<id>/. */
+export const CUSTOM_SCENARIO_ID_RE = /^(CUSTOM-[A-Z0-9]{4,12}|ERP-[A-Z0-9]{3,16})$/;
+
+/* -------------------------------------------------------------------------- */
+/* Work items: one operational stream, differentiated by origin                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where a work item came from. A reactive PSA ticket, a proactive anomaly detected from the
+ * live tenant, a ticket folder dropped into the ERP inbox on disk, or text pasted into the
+ * composer. They are one queue in the workbench; the origin only decides the badge.
+ */
+export const WorkItemOriginSchema = z.enum(["psa", "anomaly", "erp-drop", "unscripted"]);
+export type WorkItemOrigin = z.infer<typeof WorkItemOriginSchema>;
+
+export const WORK_ITEM_ORIGIN_META: Record<WorkItemOrigin, { label: string; short: string }> = {
+  psa: { label: "PSA Ticket", short: "Ticket" },
+  anomaly: { label: "Live Graph Anomaly", short: "Anomaly" },
+  "erp-drop": { label: "ERP File Drop", short: "ERP Drop" },
+  unscripted: { label: "Ad-Hoc Triage", short: "Unscripted" },
+};
+
+export const TicketAttachmentSchema = z.object({
+  fileName: z.string(),
+  mimeType: z.string(),
+  url: z.string(),
+  uploadedBy: z.string(),
+  uploadedAt: z.string(),
+  sizeBytes: z.number(),
+});
+export type TicketAttachment = z.infer<typeof TicketAttachmentSchema>;
+
+/** `#2026323` → `ERP-2026323`; already-normalised ids pass through. */
+export function erpScenarioId(folderOrId: string): CustomScenarioId {
+  const core = folderOrId.trim().replace(/^#/, "").replace(/^ERP-/i, "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16);
+  return `ERP-${core}`;
+}
+
+/** What the engineer sees: `#2026323` for an ERP drop, `#INC-4092` / `#CUSTOM-7F3A2B` otherwise. */
+export function displayScenarioId(scenarioId: string): string {
+  return scenarioId.startsWith("ERP-") ? `#${scenarioId.slice(4)}` : `#${scenarioId}`;
+}
 
 export const ExtractedEntityTypeSchema = z.enum(["upn", "name", "errorCode", "sku", "keyword", "group", "resource", "device", "policy"]);
 export type ExtractedEntityType = z.infer<typeof ExtractedEntityTypeSchema>;
@@ -145,16 +186,28 @@ export interface CustomTicketInput {
   title: string;
   body: string;
   customerName?: string;
+  requester?: { displayName: string; upn: string; role: string };
+  priority?: string;
+}
+
+/** The folder of an ERP drop (`#2026323`) and the image files discovered next to its ticketbody.json. */
+export interface ErpDropSource {
+  folder: string;
+  ingestedAt: string;
+  attachments: TicketAttachment[];
 }
 
 export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenarioId"> {
   scenarioId: CustomScenarioId;
   kind: "ticket";
+  /** Pasted into the composer, or dropped into input/tickets/ as a folder. */
+  origin: "unscripted" | "erp-drop";
   baseScenarioId: ScenarioId;
   shortHash: string;
   createdAt: string;
   ticket: CustomTicketInput;
   extraction: TicketExtraction;
+  erpDrop?: ErpDropSource;
 }
 
 export type AnyScenarioEntry = ScenarioRegistryEntry | CustomScenarioEntry;
@@ -202,6 +255,12 @@ export function listCustomScenarios(): CustomScenarioEntry[] {
 
 export function getScenarioEntry(scenarioId: string): AnyScenarioEntry | undefined {
   return isScenarioId(scenarioId) ? SCENARIO_REGISTRY[scenarioId] : customRegistry.get(scenarioId);
+}
+
+/** The origin badge of any work item: built-in ticket / anomaly, ERP drop or pasted ticket. */
+export function workItemOrigin(entry: AnyScenarioEntry): WorkItemOrigin {
+  if (isCustomScenarioEntry(entry)) return entry.origin;
+  return entry.kind === "ticket" ? "psa" : "anomaly";
 }
 
 /** The built-in scenario whose data, remediation template and invariants a workbench id resolves to. */
@@ -312,23 +371,42 @@ export const ScenarioBriefSchema = z.object({
     .nullable(),
   infrastructureSpec: z.string().nullable(),
   timeline: z.array(z.object({ at: z.string(), actor: z.string(), note: z.string() })).default([]),
-  attachments: z
-    .array(z.object({ fileName: z.string(), mimeType: z.string(), url: z.string(), uploadedBy: z.string(), uploadedAt: z.string(), sizeBytes: z.number() }))
-    .default([]),
+  attachments: z.array(TicketAttachmentSchema).default([]),
   /** Where each MCP source answered from: live tenant reads or fixtures. */
   sources: z.record(z.string(), z.string()),
   /** Unscripted tickets: what the entity & intent extractor found and the base pattern it inherited. */
   extraction: TicketExtractionSchema.nullable().default(null),
+  /** The origin badge: psa | anomaly | erp-drop | unscripted. */
+  originKind: WorkItemOriginSchema.default("psa"),
+  /** `#2026323` for an ERP drop; `#<scenarioId>` otherwise. */
+  displayId: z.string().optional(),
+  /** The PSA / ERP priority (P1...), when the ticket carries one. */
+  priority: z.string().nullable().default(null),
 });
 export type ScenarioBrief = z.infer<typeof ScenarioBriefSchema>;
 
+/** One row of the unified work queue. */
 export interface ScenarioListItem {
   scenarioId: WorkbenchScenarioId;
   kind: ScenarioKind;
+  origin: WorkItemOrigin;
+  /** `#2026323` for an ERP drop; `#<scenarioId>` otherwise. */
+  displayId: string;
   tenantId: string;
   tenantName: string;
   title: string;
   resolved: boolean;
-  /** Set for unscripted CUSTOM-<hash> tickets, with the built-in scenario they inherit. */
-  custom?: { baseScenarioId: ScenarioId; shortHash: string; createdAt: string; ticket: CustomTicketInput; extraction: TicketExtraction; components: CanvasComponentType[] };
+  /** When the item entered the queue: ticket openedAt, anomaly detectedAt, drop ingestedAt or paste time. */
+  createdAt: string;
+  /** Set for CUSTOM-<hash> / ERP-<id> tickets, with the built-in scenario they inherit. */
+  custom?: {
+    origin: "unscripted" | "erp-drop";
+    baseScenarioId: ScenarioId;
+    shortHash: string;
+    createdAt: string;
+    ticket: CustomTicketInput;
+    extraction: TicketExtraction;
+    components: CanvasComponentType[];
+    erpDrop?: ErpDropSource;
+  };
 }

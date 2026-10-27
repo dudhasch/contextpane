@@ -51,7 +51,7 @@ Transcribe identifiers exactly as shown: error code, application (client) id, co
 Never guess a value that is not visible; use an empty string instead. Respond only through extract_ticket_telemetry.`;
 
 /** The sign-in event the screenshot shows: same AADSTS code and app id, nearest in time. */
-async function matchSignIn(tenantId: string, extraction: VisionExtraction): Promise<VisionMatch | null> {
+export async function matchSignIn(tenantId: string, extraction: VisionExtraction): Promise<VisionMatch | null> {
   const events = (await sources.msgraph.getSignInEvents(tenantId)).data;
   const code = Number.parseInt(extraction.errorCode.replace(/\D/g, ""), 10);
   const at = Date.parse(extraction.timestamp);

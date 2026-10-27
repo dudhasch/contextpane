@@ -10,7 +10,6 @@ import {
   registerCustomScenario,
   resolveTenantId,
   scenarioForTenant,
-  scenariosOfKind,
   type ActionApprovalDrawer,
   type AuditEntry,
   type CanvasComponentType,
@@ -25,7 +24,6 @@ import {
   type ResolutionStep,
   type RouterTelemetry,
   type ScenarioBrief,
-  type ScenarioKind,
   type ScenarioListItem,
   type SteerLayoutArgs,
   type ViewRecipe,
@@ -36,6 +34,7 @@ import {
   streamPost,
   type ApproveResponse,
   type CorrelateResponse,
+  type DropArchetype,
   type ErpAttachment,
   type HealthResponse,
   type ProgressEvent,
@@ -69,6 +68,7 @@ export interface RowFilter {
   value: string;
 }
 import { connectTelemetry } from "./lib/ws";
+import { orderWorkItems, type QueueFilter } from "./lib/workitem";
 
 export type CanvasStatus = "idle" | "loading" | "ready" | "error";
 
@@ -80,6 +80,8 @@ export interface Toast {
   /** Rendered as a link under the detail (e.g. the GitHub PR). */
   href?: string;
   hrefLabel?: string;
+  /** One button under the detail, e.g. [Open] on a new ERP drop. */
+  action?: { label: string; onClick: () => void };
 }
 
 export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback" | "commercial" | "fleet" | "deviceHealthScript";
@@ -112,10 +114,8 @@ export interface CardLink {
 
 interface WorkbenchState {
   /* data */
-  mode: ScenarioKind;
   scenarioId: ScenarioId;
-  /** Last scenario opened per mode, so the mode switch returns to it. */
-  lastByMode: Record<ScenarioKind, ScenarioId>;
+  /** The unified work queue: tickets, anomalies, ERP drops and pasted tickets, as the orchestrator lists them. */
   scenarios: ScenarioListItem[];
   brief: ScenarioBrief | null;
   briefStatus: CanvasStatus;
@@ -170,6 +170,14 @@ interface WorkbenchState {
   resolutionNote: PsaResolutionNote | null;
   resolutionNoteStatus: CanvasStatus;
 
+  /* unified work queue & ERP inbox */
+  queueOpen: boolean;
+  queueFilter: QueueFilter;
+  queueQuery: string;
+  /** Work items that arrived (ERP drops) and have not been opened yet: the dot on the queue button. */
+  unseen: string[];
+  dropStatus: CanvasStatus;
+
   /* telemetry */
   telemetry: RouterTelemetry | null;
   telemetryHistory: RouterTelemetry[];
@@ -201,8 +209,19 @@ interface WorkbenchState {
   /* actions */
   boot(): Promise<void>;
   loadScenarios(): Promise<void>;
-  setMode(mode: ScenarioKind): Promise<void>;
   selectScenario(scenarioId: ScenarioId): Promise<void>;
+  /** The queue in display order (newest first, resolved last): hotkeys 1-9 and j/k follow it. */
+  orderedQueue(): ScenarioListItem[];
+  stepQueue(delta: 1 | -1): Promise<void>;
+  setQueueOpen(open: boolean): void;
+  setQueueFilter(filter: QueueFilter): void;
+  setQueueQuery(query: string): void;
+  /** `[🎲 Drop Random ERP Ticket]`: the orchestrator writes a folder into input/tickets/ and the watcher ingests it. */
+  simulateDrop(archetype?: DropArchetype): Promise<void>;
+  /** A folder landed in the inbox (WebSocket push or poll): queue + toast, never an unasked switch. */
+  inboxIngested(item: ScenarioListItem, attachments: string[]): Promise<void>;
+  inboxRemoved(scenarioId: string): Promise<void>;
+  pollInbox(): Promise<void>;
   loadBrief(scenarioId?: ScenarioId, fresh?: boolean): Promise<void>;
   correlate(options?: { fresh?: boolean }): Promise<void>;
   hydrateRecipe(recipeId: string, scenarioId?: ScenarioId): Promise<void>;
@@ -266,10 +285,10 @@ let telemetryDisposer: (() => void) | null = null;
 
 const hoverKey = (scenarioId: string, entityId: string) => `${scenarioId}|${entityId.toLowerCase()}`;
 
+let inboxPoll: number | null = null;
+
 export const useWorkbench = create<WorkbenchState>()((set, get) => ({
-  mode: "ticket",
   scenarioId: "INC-4092",
-  lastByMode: { ticket: "INC-4092", anomaly: "ANOM-LIC-101" },
   scenarios: [],
   brief: null,
   briefStatus: "idle",
@@ -317,6 +336,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   resolutionNote: null,
   resolutionNoteStatus: "idle",
 
+  queueOpen: false,
+  queueFilter: "all",
+  queueQuery: "",
+  unseen: [],
+  dropStatus: "idle",
+
   telemetry: null,
   telemetryHistory: [],
   stats: null,
@@ -346,7 +371,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       onEvent: (event, stats) => set((s) => ({ telemetry: event, stats, telemetryHistory: [...s.telemetryHistory.slice(-49), event] })),
       onAudit: (entry) => set((s) => (s.audit.some((e) => e.id === entry.id) ? {} : { audit: [entry, ...s.audit].slice(0, 100) })),
       onResourcesUpdated: (scenarioId, convergence) => get().applyConvergence(scenarioId, convergence),
+      onInboxIngested: (item, _folder, attachments) => void get().inboxIngested(item, attachments),
+      onInboxRemoved: (scenarioId) => void get().inboxRemoved(scenarioId),
     });
+    // The poll backs the push: a drop never goes unnoticed while the socket reconnects.
+    if (inboxPoll) window.clearInterval(inboxPoll);
+    inboxPoll = window.setInterval(() => void get().pollInbox(), 5000);
     api
       .labState()
       .then(({ convergence }) => convergence.forEach((c) => get().applyConvergence(c.scenarioId, c)))
@@ -370,6 +400,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         registerCustomScenario({
           scenarioId: s.scenarioId as `CUSTOM-${string}`,
           kind: "ticket",
+          origin: s.custom.origin,
           tenantId: s.tenantId as "tenant-contoso-01" | "tenant-fabrikam-02",
           title: s.title,
           remediationScope: SCENARIO_REGISTRY[s.custom.baseScenarioId].remediationScope,
@@ -379,6 +410,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           createdAt: s.custom.createdAt,
           ticket: s.custom.ticket,
           extraction: s.custom.extraction,
+          ...(s.custom.erpDrop ? { erpDrop: s.custom.erpDrop } : {}),
         });
       }
       set({ scenarios });
@@ -387,18 +419,82 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
   },
 
-  async setMode(mode) {
-    if (mode === get().mode) return;
-    await get().selectScenario(get().lastByMode[mode] ?? scenariosOfKind(mode)[0]!);
+  orderedQueue() {
+    return orderWorkItems(get().scenarios, get().convergence);
+  },
+
+  async stepQueue(delta) {
+    const queue = get().orderedQueue();
+    if (!queue.length) return;
+    const i = queue.findIndex((s) => s.scenarioId === get().scenarioId);
+    const next = queue[(i + delta + queue.length) % queue.length]!;
+    await get().selectScenario(next.scenarioId);
+  },
+
+  setQueueOpen: (queueOpen) => set(queueOpen ? { queueOpen, queueQuery: "" } : { queueOpen }),
+  setQueueFilter: (queueFilter) => set({ queueFilter }),
+  setQueueQuery: (queueQuery) => set({ queueQuery }),
+
+  async simulateDrop(archetype = "Random") {
+    if (get().dropStatus === "loading") return;
+    set({ dropStatus: "loading" });
+    try {
+      const drop = await api.simulateDrop({ archetype });
+      set({ dropStatus: "ready" });
+      // The watcher's WebSocket push normally announces the drop first (📥 toast); this covers a missed push.
+      await get().inboxIngested(drop.scenario, drop.attachments.map((a) => a.fileName));
+    } catch (error) {
+      set({ dropStatus: "error" });
+      get().toast({ tone: "critical", title: "ERP drop failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async inboxIngested(item, attachments) {
+    const known = get().scenarios.some((s) => s.scenarioId === item.scenarioId);
+    await get().loadScenarios();
+    if (known || get().scenarioId === item.scenarioId) return;
+    set((s) => ({ unseen: s.unseen.includes(item.scenarioId) ? s.unseen : [...s.unseen, item.scenarioId] }));
+    get().toast({
+      tone: "meta",
+      title: `📥 New ERP Drop: ${item.displayId}${attachments.length ? ` (${attachments.join(", ")})` : ""}`,
+      detail: `${item.title} · ${item.custom?.extraction.entities.filter((e) => e.resolvedTo).length ?? 0} entities matched live · base ${item.custom?.baseScenarioId ?? "?"}`,
+      action: { label: `Open ${item.displayId}`, onClick: () => void get().selectScenario(item.scenarioId) },
+    });
+  },
+
+  async inboxRemoved(scenarioId) {
+    await get().loadScenarios();
+    set((s) => ({ unseen: s.unseen.filter((id) => id !== scenarioId) }));
+    if (get().scenarioId !== scenarioId) return;
+    get().toast({ tone: "warning", title: `${scenarioId} left the inbox`, detail: "Its folder was removed from input/tickets/; showing the next work item." });
+    const next = get().orderedQueue().find((s) => s.scenarioId !== scenarioId);
+    if (next) await get().selectScenario(next.scenarioId);
+  },
+
+  async pollInbox() {
+    try {
+      const { items } = await api.inbox();
+      const known = new Set(get().scenarios.map((s) => s.scenarioId));
+      const fresh = items.filter((i) => !known.has(i.scenarioId));
+      const gone = get().scenarios.filter((s) => s.origin === "erp-drop" && !items.some((i) => i.scenarioId === s.scenarioId));
+      if (!fresh.length && !gone.length) return;
+      await get().loadScenarios();
+      for (const i of fresh) {
+        const item = get().scenarios.find((s) => s.scenarioId === i.scenarioId);
+        if (item) await get().inboxIngested(item, i.attachments.map((a) => a.fileName));
+      }
+      for (const g of gone) await get().inboxRemoved(g.scenarioId);
+    } catch {
+      /* orchestrator down; the socket status dot says so */
+    }
   },
 
   async selectScenario(scenarioId) {
     if (scenarioId === get().scenarioId && get().layout) return;
-    const kind = getScenarioEntry(scenarioId)?.kind ?? "ticket";
     set((s) => ({
       scenarioId,
-      mode: kind,
-      lastByMode: { ...s.lastByMode, [kind]: scenarioId },
+      queueOpen: false,
+      unseen: s.unseen.filter((id) => id !== scenarioId),
       brief: null,
       layout: null,
       expanded: {},
@@ -801,14 +897,20 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ vision: { status: "loading" } });
     const started = performance.now();
     try {
-      const blob = await (await fetch(attachment.url)).blob();
-      const imageDataUri = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(reader.error ?? new Error("could not read the attachment"));
-        reader.readAsDataURL(blob);
-      });
-      const result = await api.visionExtract({ tenantId, ticketId: scenarioId, fileName: attachment.fileName, imageDataUri });
+      let result: VisionResponse;
+      if (attachment.url.startsWith("/api/tickets/inbox-attachment/")) {
+        // An ERP drop: the orchestrator reads input/tickets/<folder>/<file> itself (deterministic fallback offline).
+        result = await api.visionTriage({ scenarioId, fileName: attachment.fileName });
+      } else {
+        const blob = await (await fetch(attachment.url)).blob();
+        const imageDataUri = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error ?? new Error("could not read the attachment"));
+          reader.readAsDataURL(blob);
+        });
+        result = await api.visionExtract({ tenantId, ticketId: scenarioId, fileName: attachment.fileName, imageDataUri });
+      }
       if (get().scenarioId !== scenarioId) return;
       set({ vision: { status: "ready", result, latencyMs: Math.round(performance.now() - started) } });
       if (result.match) get().focusCard("EntraSignInTimeline", "signins");

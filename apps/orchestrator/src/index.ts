@@ -4,6 +4,7 @@ import { SCENARIO_IDS, type RouterTelemetry } from "@contextpane/catalog";
 import { app } from "./app.ts";
 import { config, describeConfig, providers } from "./config.ts";
 import { workbenchEvents } from "./events.ts";
+import { startInboxWatcher } from "./local/erp-inbox.ts";
 import { gatherContext } from "./mcp/context.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
@@ -56,6 +57,8 @@ console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
 console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
 console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
 if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json${hoverCacheSeeded ? " (seeded from data/hover-cache.seed.json)" : ""}`);
+// The ERP inbox: input/tickets/#<id>/ticketbody.json (+ images) becomes a work item within ~1 s.
+startInboxWatcher();
 
 // Warm-up, all in the background: wake the Modal sandbox, mint the Graph/ARM tokens and
 // gather the context for every scenario, resolve the Meta model ids, then pre-fetch every hover

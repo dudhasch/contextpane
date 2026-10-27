@@ -125,13 +125,13 @@ export const WORKLOAD_IDENTITY: WorkloadIdentityFixture = {
 };
 
 /**
- * Realistic sign-in and audit history for ANOM-APP-401 / spn-contoso-erp-sync:
- * - 02:15:00Z: AADSTS7000222 expired secret from GitHub Actions
- * - 02:10:14Z: AADSTS7000222 retry failure
- * - Yesterday 16:42Z: unverified OAuth grant Mail.ReadWrite + offline_access
- * - Oct 19 23:59Z: secret 'github-actions-erp-sync' expiry
- * - Oct 12: RoleManagement.ReadWrite.Directory scope audit
- * - Sep 28: contractor Alex Wilber App Owner check
+ * Realistic sign-in and audit history for ANOM-APP-401 / spn-contoso-erp-sync (newest first):
+ * - today 02:15:00Z: AADSTS7000222 expired secret from GitHub Actions
+ * - today 02:10:14Z: AADSTS7000222 retry failure
+ * - today 01:42:19Z: unverified OAuth grant Mail.ReadWrite + offline_access by the non-admin owner
+ * - yesterday 18:05Z: unused Directory.ReadWrite.All scope flagged by the 90-day scope audit
+ * - yesterday 11:20Z: access review lists the non-admin contractor Alex Wilber as App Owner
+ * - Oct 19 23:59Z: secret 'github-actions-erp-sync' expired
  * - Sep 15: baseline successful sync call
  */
 export function workloadIdentitySignIns(now = Date.now()): WorkloadSignInEvent[] {
@@ -145,17 +145,17 @@ export function workloadIdentitySignIns(now = Date.now()): WorkloadSignInEvent[]
   const tFail2 = new Date(now);
   tFail2.setUTCHours(2, 10, 14, 0);
 
-  const tYesterday = new Date(now - 86_400_000);
-  tYesterday.setUTCHours(16, 42, 0, 0);
+  const tGrant = new Date(now);
+  tGrant.setUTCHours(1, 42, 19, 0);
+
+  const tScopeAudit = new Date(now - 86_400_000);
+  tScopeAudit.setUTCHours(18, 5, 0, 0);
+
+  const tOwnerReview = new Date(now - 86_400_000);
+  tOwnerReview.setUTCHours(11, 20, 0, 0);
 
   const tExpiry = new Date(Date.UTC(year, 9, 19, 23, 59, 59));
   if (tExpiry.getTime() > now) tExpiry.setUTCFullYear(year - 1);
-
-  const tOct12 = new Date(Date.UTC(year, 9, 12, 11, 24, 0));
-  if (tOct12.getTime() > now) tOct12.setUTCFullYear(year - 1);
-
-  const tSep28 = new Date(Date.UTC(year, 8, 28, 9, 30, 0));
-  if (tSep28.getTime() > now) tSep28.setUTCFullYear(year - 1);
 
   const tSep15 = new Date(Date.UTC(year, 8, 15, 14, 0, 0));
   if (tSep15.getTime() > now) tSep15.setUTCFullYear(year - 1);
@@ -180,14 +180,14 @@ export function workloadIdentitySignIns(now = Date.now()): WorkloadSignInEvent[]
     },
     {
       id: "sgn-spn-erp-0002",
-      timestamp: tSep28.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      timestamp: tOwnerReview.toISOString().replace(/\.\d{3}Z$/, "Z"),
       upn: WORKLOAD_IDENTITY.owner.upn,
       displayName: WORKLOAD_IDENTITY.owner.displayName,
       appId: WORKLOAD_IDENTITY.spn.appId,
-      appDisplayName: "App Owner check (0 roles)",
+      appDisplayName: "Access review · App Owner (0 roles)",
       status: "success",
       errorCode: 0,
-      failureReason: "Contractor Alex Wilber App Owner check: 0 directory roles",
+      failureReason: "Access review: non-admin contractor Alex Wilber listed as App Owner (0 directory roles)",
       conditionalAccessStatus: "notApplied",
       clientApp: "Access Review",
       location: "Chicago, US",
@@ -198,15 +198,15 @@ export function workloadIdentitySignIns(now = Date.now()): WorkloadSignInEvent[]
     },
     {
       id: "sgn-spn-erp-0003",
-      timestamp: tOct12.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      timestamp: tScopeAudit.toISOString().replace(/\.\d{3}Z$/, "Z"),
       upn: WORKLOAD_IDENTITY.spn.displayName,
       displayName: WORKLOAD_IDENTITY.spn.displayName,
       appId: WORKLOAD_IDENTITY.spn.appId,
-      appDisplayName: "RoleManagement.ReadWrite.Directory audit",
+      appDisplayName: "Directory.ReadWrite.All scope audit",
       status: "interrupted",
       errorCode: 0,
       errorCodeLabel: "Scope Audit",
-      failureReason: "RoleManagement.ReadWrite.Directory scope audit: overprivileged and unused in 90 days",
+      failureReason: "Directory.ReadWrite.All granted but unused in 90 days: overprivileged (90-day scope audit)",
       conditionalAccessStatus: "notApplied",
       clientApp: "Entra Permissions Management",
       location: "Redmond, US",
@@ -236,7 +236,7 @@ export function workloadIdentitySignIns(now = Date.now()): WorkloadSignInEvent[]
     },
     {
       id: "sgn-spn-erp-0005",
-      timestamp: tYesterday.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      timestamp: tGrant.toISOString().replace(/\.\d{3}Z$/, "Z"),
       upn: WORKLOAD_IDENTITY.owner.upn,
       displayName: WORKLOAD_IDENTITY.owner.displayName,
       appId: WORKLOAD_IDENTITY.spn.appId,

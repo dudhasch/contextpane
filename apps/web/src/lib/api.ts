@@ -16,6 +16,7 @@ import type {
   SteerLayoutArgs,
   ViewRecipe,
   VisionExtraction,
+  WorkbenchScenarioId,
 } from "@contextpane/catalog";
 
 /* -------------------------------------------------------------------------- */
@@ -136,6 +137,25 @@ export interface TriageCustomResponse {
 
 export interface SampleTicket { id: string; title: string; body: string; customerName: string }
 
+/* ERP inbox: input/tickets/#<id>/ticketbody.json + images */
+export interface InboxItem { folder: string; displayId: string; scenarioId: WorkbenchScenarioId; title: string; ingestedAt: string; createdAt: string; attachments: ErpAttachment[]; resolved: boolean }
+export interface InboxResponse { dir: string; items: InboxItem[]; scannedAt: string }
+export type DropArchetype = "AVD" | "Intune" | "CA" | "WorkloadIdentity" | "Licensing" | "Mixed" | "Random";
+export interface SimulateDropResponse {
+  folder: string;
+  displayId: string;
+  scenarioId: WorkbenchScenarioId;
+  archetype: Exclude<DropArchetype, "Random">;
+  files: string[];
+  dir: string;
+  scenario: ScenarioListItem;
+  attachments: ErpAttachment[];
+  extraction: TicketExtraction;
+  brief: ScenarioBrief;
+  latencyMs: number;
+}
+export interface VisionTriageResponse extends VisionResponse { scenarioId: string; attachment: ErpAttachment; source: "muse-vision" | "deterministic" }
+
 export interface PsaResolutionNote {
   scenarioId: string;
   ticketTitle: string;
@@ -243,6 +263,9 @@ export const api = {
     request<ExploreSelectionResponse>("/api/explore-selection", { method: "POST", body: JSON.stringify(body) }),
   triageCustom: (body: { title: string; body: string; customerName?: string }) => request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),
   ticketSamples: () => request<{ samples: SampleTicket[] }>("/api/tickets/samples"),
+  inbox: () => request<InboxResponse>("/api/tickets/inbox"),
+  simulateDrop: (body: { archetype?: DropArchetype; ticketId?: string } = {}) => request<SimulateDropResponse>("/api/tickets/simulate-drop", { method: "POST", body: JSON.stringify(body) }),
+  visionTriage: (body: { scenarioId: string; fileName?: string }) => request<VisionTriageResponse>("/api/vision/triage", { method: "POST", body: JSON.stringify(body) }),
   resolutionNote: (scenarioId: string) => request<{ note: PsaResolutionNote }>(`/api/tickets/${encodeURIComponent(scenarioId)}/resolution-note`),
   closeTicket: (scenarioId: string, closedBy?: string) => request<{ ok: boolean; note: PsaResolutionNote; audit: AuditEntry }>("/api/tickets/close", { method: "POST", body: JSON.stringify({ scenarioId, ...(closedBy ? { closedBy } : {}) }) }),
 };

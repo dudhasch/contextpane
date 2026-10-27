@@ -182,6 +182,37 @@ All deep proof lives off-canvas. Cards never gain verification, vault or compile
   count, `zeroRawPiiInLlmPrompt: true`, and token ↔ raw sample mappings in mono.
   No raw UPN/IP ever appears on a card for this.
 
+### Unified work queue & ERP inbox
+
+One control in the top bar replaces the Tickets / Tenant Anomalies toggle, the native select and
+the composer button; nothing else is added to the default view.
+
+- **Queue button:** 28px, `--cp-elevated`, origin icon in the origin tone, mono display id
+  (`#INC-4092`, `#2026323`), the title in `--cp-muted` (truncated, max 560px), the status pill
+  (mono 10px) and a chevron. A violet count badge (16px, top-right) shows unopened ERP drops.
+  Hover: 50% primary border. `Ctrl+K` / `q` toggle the popover.
+- **Queue popover:** 640px, `--cp-surface`, 1px `--cp-border`, `shadow-popover`, 120ms fade,
+  anchored bottom-start. Rows top to bottom: search line (Search icon, 12px input, `Ctrl K` kbd);
+  filter pills (`All · Ticket · Anomaly · ERP Drop · Unscripted · Resolved`, 20px, mono 10.5px, count in
+  `--cp-faint`, primary when selected); the list (max 360px, newest first, resolved last); a footer
+  with `[+ Triage Unscripted Ticket]` (outline) and `[🎲 Drop Random ERP Ticket]` (meta) plus the
+  `1–9 · j k · Esc` hint. Enter opens the first match, arrows step, Esc closes.
+- **Queue row:** `position · origin icon · #id · title / meta line · attachments + age · status`.
+  Position in mono 10px `--cp-faint`; the meta line (10.5px, faint) reads
+  `ERP File Drop · Contoso Finance · Patti Fernandez · base INC-4092`; an unopened drop carries a
+  1.5px violet dot after its id; the active row has an 8% primary fill.
+- **Origin badges** (icon + short text, same recipe as the status pill, `mono=false`):
+  `PSA Ticket` (Ticket, primary), `Live Graph Anomaly` (Radar, warning), `ERP File Drop` (Inbox, meta),
+  `Ad-Hoc Triage` (Sparkles, healthy). The left-pane header opens with the badge, then the display id,
+  then the status pill: `NEW` (meta, Inbox icon) for a fresh drop, `OPEN` (critical) for tickets,
+  `ACTIVE DRIFT` (warning) for anomalies, then the convergence states.
+- **New-drop toast:** meta tone, `📥 New ERP Drop: #2026323 (attachment1.png)`, one line of detail
+  (title · entities matched live · base pattern) and one `[Open #2026323]` button (primary 12% fill).
+  It never switches the workbench by itself.
+- **Attachment card of a drop:** the existing screenshot recipe; the caption adds
+  `· read from input/tickets/#2026323/` so it is clear the file came from disk, and the vision
+  result line names the model (`muse-spark-1.3`) or the deterministic fallback.
+
 ### Live agency (highlight, unscripted tickets, closure)
 
 Nothing in this layer renders until the engineer acts; the default view is unchanged.
@@ -248,7 +279,8 @@ Semantic icon mapping:
 | PowerShell | `Terminal` |
 | Meta model | `Sparkles` |
 | Generate Context UI / selection | `Wand2` (hint), `Sparkles` (badge, card) |
-| Unscripted ticket | `FilePlus2` |
+| Unscripted ticket | `FilePlus2` (composer), `Sparkles` (origin badge) |
+| Work queue / ERP inbox | `Inbox` (ERP drop), `Ticket` (PSA), `Radar` (anomaly), `Dices` (random drop), `FolderInput` (triaged from drop) |
 | Row filter | `Filter` |
 | Resolution note / close | `FileCheck2` / `CheckCheck` |
 | Voice | `Mic` |

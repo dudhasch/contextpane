@@ -19,6 +19,11 @@ export function Toasts() {
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-semibold">{t.title}</div>
             {t.detail && <div className="mt-0.5 text-xs text-muted break-words">{t.detail}</div>}
+            {t.action && (
+              <button type="button" onClick={() => { t.action!.onClick(); dismiss(t.id); }} className="mt-1.5 inline-flex h-6 items-center rounded-md border border-primary/40 bg-primary/12 px-2 text-[11px] font-medium text-primary hover:bg-primary/20" data-testid="toast-action">
+                {t.action.label}
+              </button>
+            )}
             {t.href && (
               <a href={t.href} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 font-mono text-xs text-healthy hover:underline">
                 {t.hrefLabel ?? t.href} <ExternalLink className="size-3" />

@@ -16,6 +16,14 @@
     and after a break-glass approval GET /api/tickets/:id/resolution-note + POST /api/tickets/close
     (ticket.closed in the audit ledger).
 
+    Unified work queue & ERP inbox: GET /api/scenarios carries origin / displayId / createdAt for every
+    item (psa, anomaly, erp-drop, unscripted); GET /api/tickets/inbox lists the seeded input/tickets/#2026323
+    drop with attachment1.png; GET /api/tickets/inbox-attachment/%232026323/attachment1.png serves the PNG;
+    POST /api/tickets/simulate-drop writes a fresh #2026xxx folder that the watcher ingests (brief, correlate,
+    POST /api/vision/triage reading the file from disk, muse-vision or the deterministic fallback); the folder
+    is removed afterwards and must leave the inbox on the next scan. #ANOM-APP-401: summary and steps end on
+    full words, the sign-in / audit history carries distinct timestamps.
+
     With LIVE_CLOUD_MODE=true a -Mode break-glass approval writes the scenario's lab objects (license
     extension, Conditional Access, Intune, and INC-4092's NSG over ARM) and commits a reconcile
     commit on the fix branch; the reset-drift check right after it puts them back, so a run leaves
@@ -149,7 +157,19 @@ $null = Invoke-Check -Name scenarios -Method GET -Path '/api/scenarios' -Schema 
     if ($builtIn.Count -ne 6) { $i += "expected 6 built-in scenarios, got $($builtIn.Count)" }
     if (@($builtIn | Where-Object kind -eq 'ticket').Count -ne 2) { $i += 'expected 2 built-in tickets' }
     if (@($builtIn | Where-Object kind -eq 'anomaly').Count -ne 4) { $i += 'expected 4 anomalies' }
-    foreach ($c in @($r.scenarios | Where-Object custom)) { if ($c.scenarioId -notmatch '^CUSTOM-[A-Z0-9]{4,12}$' -or $c.kind -ne 'ticket') { $i += "custom scenario $($c.scenarioId) malformed" } }
+    if (@($builtIn | Where-Object origin -eq 'psa').Count -ne 2 -or @($builtIn | Where-Object origin -eq 'anomaly').Count -ne 4) { $i += 'built-in origins must be 2 psa + 4 anomaly' }
+    foreach ($s in $r.scenarios) {
+        if ($s.origin -notin @('psa', 'anomaly', 'erp-drop', 'unscripted')) { $i += "$($s.scenarioId) origin '$($s.origin)'" }
+        if (-not $s.displayId -or -not $s.displayId.StartsWith('#')) { $i += "$($s.scenarioId) displayId '$($s.displayId)'" }
+        if (-not $s.createdAt) { $i += "$($s.scenarioId) createdAt missing" }
+    }
+    foreach ($c in @($r.scenarios | Where-Object custom)) {
+        if ($c.scenarioId -notmatch '^(CUSTOM-[A-Z0-9]{4,12}|ERP-[A-Z0-9]{3,16})$' -or $c.kind -ne 'ticket') { $i += "custom scenario $($c.scenarioId) malformed" }
+        if ($c.custom.origin -ne $c.origin) { $i += "$($c.scenarioId) custom.origin != origin" }
+    }
+    $seed = $r.scenarios | Where-Object scenarioId -eq 'ERP-2026323'
+    if (-not $seed) { $i += 'seeded ERP-2026323 (input/tickets/#2026323) not in the queue' }
+    elseif ($seed.origin -ne 'erp-drop' -or $seed.displayId -ne '#2026323') { $i += "ERP-2026323 origin/displayId $($seed.origin)/$($seed.displayId)" }
     $i
 }
 
@@ -584,6 +604,13 @@ $null = Invoke-Check -Name app401-brief -Method GET -Path '/api/scenarios/ANOM-A
     $i = @()
     if (-not $r.brief) { return @('APP-401 brief missing') }
     if (@($r.brief.entities).Count -lt 3) { $i += 'APP-401 entities missing' }
+    # Micro-polish: every sentence and step ends on a full word and a period (no "…'github-actions" / "Sites.Selected per").
+    if (-not $r.brief.summary.EndsWith('.')) { $i += "summary ends mid-phrase: '...$($r.brief.summary.Substring([Math]::Max(0, $r.brief.summary.Length - 30)))'" }
+    if ($r.brief.summary -match "github-actions$") { $i += 'summary cut at github-actions' }
+    if ($r.brief.summary -notmatch "github-actions-erp-sync' expired") { $i += 'summary lost the expired-secret sentence' }
+    foreach ($s in $r.brief.steps) { if (-not $s.detail.EndsWith('.')) { $i += "step '$($s.title)' ends mid-word: '...$($s.detail.Substring([Math]::Max(0, $s.detail.Length - 25)))'" } }
+    if ($r.brief.steps.Count -lt 2 -or $r.brief.steps[1].detail -notmatch 'Sites\.Selected per 90-day activity\.') { $i += 'step 2 does not end on "Sites.Selected per 90-day activity."' }
+    if ($r.brief.originKind -ne 'anomaly' -or $r.brief.displayId -ne '#ANOM-APP-401') { $i += "originKind/displayId $($r.brief.originKind)/$($r.brief.displayId)" }
     $i
 }
 
@@ -593,7 +620,100 @@ $null = Invoke-Check -Name app401-correlate -Method POST -Path '/api/correlate' 
     $types = @($r.layout.components | ForEach-Object type)
     if ($types -notcontains 'EntraSignInTimeline') { $i += 'APP-401 missing EntraSignInTimeline' }
     if ($types.Count -ne 1) { $i += "APP-401 must render 1 existing card, got $($types.Count)" }
+    # Micro-polish: distinct, realistic sign-in / audit timestamps instead of 7 x 02:15:00Z.
+    $events = @(($r.layout.components | Where-Object type -eq 'EntraSignInTimeline').props.events)
+    if ($events.Count -lt 5) { $i += "APP-401 history has only $($events.Count) rows" }
+    $stamps = @($events | ForEach-Object timestamp | Sort-Object -Unique)
+    if ($stamps.Count -ne $events.Count) { $i += "APP-401 timestamps not distinct ($($stamps.Count)/$($events.Count))" }
+    # Invoke-RestMethod turns ISO-8601 strings into local DateTimes; compare on the UTC clock.
+    $clock = @($events | ForEach-Object { ([datetime]$_.timestamp).ToUniversalTime().ToString('HH:mm:ss') })
+    foreach ($t in @('02:15:00', '02:10:14', '01:42:19', '18:05:00', '11:20:00')) { if ($clock -notcontains $t) { $i += "APP-401 history missing the ${t}Z row" } }
+    if (-not ($events | Where-Object { $_.appDisplayName -match 'Directory\.ReadWrite\.All' })) { $i += 'Directory.ReadWrite.All scope audit row missing' }
+    if (-not ($events | Where-Object { $_.displayName -eq 'Alex Wilber' -and $_.appDisplayName -match 'App Owner' })) { $i += 'Alex Wilber App Owner row missing' }
+    if (-not ($events | Where-Object { $_.appDisplayName -match 'Mail\.ReadWrite' })) { $i += 'OAuth grant row missing' }
     $i
+}
+
+# --- Unified work queue & live ERP inbox ----------------------------------------------------------
+$inbox = Invoke-Check -Name inbox -Method GET -Path '/api/tickets/inbox' -Schema {
+    param($r)
+    $i = @()
+    if (-not $r.dir) { $i += 'inbox dir missing' }
+    $seed = $r.items | Where-Object folder -eq '#2026323'
+    if (-not $seed) { return @('seeded #2026323 not ingested (input/tickets/#2026323/ticketbody.json)') }
+    if ($seed.scenarioId -ne 'ERP-2026323' -or $seed.displayId -ne '#2026323') { $i += "seed ids $($seed.scenarioId)/$($seed.displayId)" }
+    $png = $seed.attachments | Where-Object fileName -eq 'attachment1.png'
+    if (-not $png) { $i += 'attachment1.png not discovered' }
+    elseif ($png.url -ne '/api/tickets/inbox-attachment/%232026323/attachment1.png' -or $png.mimeType -ne 'image/png') { $i += "attachment url/mime $($png.url) $($png.mimeType)" }
+    $i
+}
+if ($inbox) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $row = [ordered]@{ Endpoint = 'GET /api/tickets/inbox-attachment/%232026323/attachment1.png'; Status = '-'; 'Latency(ms)' = 0; Tier = '-'; Provider = '-'; Model = '-'; Tokens = 0; Schema = '-'; Note = '' }
+    try {
+        $img = Invoke-WebRequest -Method GET -Uri "$BaseUrl/api/tickets/inbox-attachment/%232026323/attachment1.png" -TimeoutSec $TimeoutSec
+        $sw.Stop(); $row.Status = 'OK'; $row.'Latency(ms)' = $sw.ElapsedMilliseconds
+        $bytes = [byte[]]$img.Content
+        $issues = @()
+        if ($img.Headers['Content-Type'] -notlike 'image/png*') { $issues += "content-type $($img.Headers['Content-Type'])" }
+        if ($bytes.Length -lt 100 -or $bytes[0] -ne 0x89 -or $bytes[1] -ne 0x50 -or $bytes[2] -ne 0x4E -or $bytes[3] -ne 0x47) { $issues += 'not a PNG' }
+        if ($issues.Count -eq 0) { $row.Schema = 'PASS' } else { $row.Schema = 'FAIL'; $row.Note = ($issues -join '; ') }
+    } catch { $sw.Stop(); $row.Status = 'ERROR'; $row.Schema = 'FAIL'; $row.Note = $_.Exception.Message }
+    $results.Add([pscustomobject]$row)
+}
+
+$dropDir = $null
+$drop = Invoke-Check -Name simulate-drop -Method POST -Path '/api/tickets/simulate-drop' -Body @{ archetype = 'AVD' } -Schema {
+    param($r)
+    $i = @()
+    if ($r.folder -notmatch '^#2026\d{3}$') { $i += "folder $($r.folder)" }
+    if ($r.scenarioId -ne "ERP-$($r.folder.TrimStart('#'))") { $i += "scenarioId $($r.scenarioId)" }
+    if ($r.displayId -ne $r.folder) { $i += "displayId $($r.displayId)" }
+    if (@($r.files) -notcontains 'ticketbody.json' -or @($r.files) -notcontains 'attachment1.png') { $i += "files $($r.files -join ',')" }
+    if (-not (Test-Path (Join-Path $r.dir 'ticketbody.json')) -or -not (Test-Path (Join-Path $r.dir 'attachment1.png'))) { $i += "drop not on disk at $($r.dir)" }
+    if ($r.scenario.origin -ne 'erp-drop' -or $r.scenario.kind -ne 'ticket') { $i += "scenario origin/kind $($r.scenario.origin)/$($r.scenario.kind)" }
+    if ($r.extraction.baseScenarioId -ne 'INC-4092') { $i += "AVD drop base $($r.extraction.baseScenarioId) != INC-4092" }
+    if (-not ($r.extraction.entities | Where-Object id -eq 'AADSTS53003')) { $i += 'AADSTS53003 not extracted from the drop' }
+    if (-not ($r.extraction.entities | Where-Object { $_.type -eq 'upn' -and $_.resolvedTo })) { $i += 'requester not resolved to a live UPN' }
+    if ($r.brief.originKind -ne 'erp-drop' -or $r.brief.status -ne 'New' -or $r.brief.displayId -ne $r.folder) { $i += "brief originKind/status/displayId $($r.brief.originKind)/$($r.brief.status)/$($r.brief.displayId)" }
+    if (@($r.brief.attachments).Count -ne 1 -or $r.brief.attachments[0].fileName -ne 'attachment1.png') { $i += 'brief attachment missing' }
+    if (-not $r.brief.requester.upn) { $i += 'brief requester missing' }
+    if (-not ($r.brief.timeline | Where-Object actor -eq 'ERP inbox watcher')) { $i += 'ingest timeline entry missing' }
+    $i
+}
+if ($drop) {
+    $dropDir = $drop.dir
+    $dropId = $drop.scenarioId
+    Write-Host "  drop: $($drop.folder) -> $dropId ($($drop.archetype)) · $(@($drop.extraction.entities).Count) entities · $($drop.latencyMs) ms · $dropDir" -ForegroundColor DarkGray
+    $null = Invoke-Check -Name erp-correlate -Method POST -Path '/api/correlate' -Body @{ scenarioId = $dropId } -Schema {
+        param($r)
+        $i = Test-Layout $r.layout
+        if ($r.layout.ticketId -ne $dropId) { $i += "layout.ticketId $($r.layout.ticketId)" }
+        foreach ($c in $r.layout.components) { foreach ($ptr in $c.dataPtrs.PSObject.Properties.Value) { if ($ptr -notlike "ptr://$($dropId.ToLower())/*") { $i += "$($c.type) pointer $ptr" } } }
+        $i
+    }
+    $null = Invoke-Check -Name vision-triage -Method POST -Path '/api/vision/triage' -Body @{ scenarioId = $dropId } -BudgetMs 30000 -Schema {
+        param($r)
+        $i = @()
+        if ($r.source -notin @('muse-vision', 'deterministic')) { $i += "source $($r.source)" }
+        if ($r.attachment.fileName -ne 'attachment1.png') { $i += "attachment $($r.attachment.fileName)" }
+        if ($r.extraction.errorCode -ne 'AADSTS53003') { $i += "errorCode $($r.extraction.errorCode) (source $($r.source))" }
+        # The 36-char correlation id in the pixel font is the one value the live vision read gets wrong now and then; the fallback always has it.
+        if ($r.source -eq 'deterministic' -and -not $r.extraction.correlationId) { $i += 'correlationId empty' }
+        if (-not $r.match.eventId) { $i += 'no sign-in matched' }
+        if ($r.source -eq 'muse-vision' -and $r.telemetry.tier -ne 'Vision') { $i += 'tier != Vision' }
+        if ($r.source -eq 'deterministic' -and $r.telemetry.tokensUsed.total -ne 0) { $i += 'fallback used tokens' }
+        $i
+    }
+    # Clean up the generated drop; the watcher must drop it from the queue on its next scan.
+    Remove-Item -Recurse -Force $dropDir
+    $null = Invoke-Check -Name inbox-after-cleanup -Method GET -Path '/api/tickets/inbox?scan=1' -Schema {
+        param($r)
+        $i = @()
+        if ($r.items | Where-Object scenarioId -eq $dropId) { $i += "$dropId still in the inbox after its folder was removed" }
+        if (-not ($r.items | Where-Object scenarioId -eq 'ERP-2026323')) { $i += 'seeded ERP-2026323 vanished' }
+        $i
+    }
 }
 
 $null = Invoke-Check -Name app401-formal -Method GET -Path '/api/formal/ANOM-APP-401' -Schema {
@@ -632,12 +752,15 @@ $null = Invoke-Check -Name stats -Method GET -Path '/api/telemetry/stats' -Schem
 }
 
 Write-Host ''
-$results | Format-Table -AutoSize -Wrap | Out-String -Width 220 | Write-Host
+# Long pointer URLs would push Schema / Note off the right edge; keep every column on screen.
+$results | Select-Object @{ n = 'Endpoint'; e = { if ($_.Endpoint.Length -gt 72) { $_.Endpoint.Substring(0, 69) + '...' } else { $_.Endpoint } } }, Status, 'Latency(ms)', Tier, Provider, Model, Tokens, Schema, Note |
+    Format-Table -AutoSize -Wrap | Out-String -Width 240 | Write-Host
 
 $failed = @($results | Where-Object { $_.Status -ne 'OK' -or $_.Schema -ne 'PASS' })
 if ($failed.Count -eq 0) {
     Write-Host "All $($results.Count) checks passed." -ForegroundColor Green
     exit 0
 }
+foreach ($f in $failed) { Write-Host "  FAIL  $($f.Endpoint)  ->  $($f.Note)" -ForegroundColor Red }
 Write-Host "$($failed.Count) of $($results.Count) checks failed." -ForegroundColor Red
 exit 1

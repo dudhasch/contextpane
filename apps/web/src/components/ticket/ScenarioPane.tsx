@@ -1,10 +1,11 @@
-import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, ImageIcon, ListChecks, Radar, ScanEye, Sparkles, Ticket, UserRound, Wand2 } from "lucide-react";
+import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, ListChecks, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { CATEGORY_META, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
 import { fmtDateTimeUtc, fmtMs, fmtTokens } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
 import { selectConvergence, useWorkbench } from "@/store";
+import { OriginBadge } from "../hud/WorkQueue";
 import { Button } from "../ui/Button";
 import { Pill } from "../ui/Pill";
 import { EntityPill } from "./EntityPill";
@@ -80,18 +81,21 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
   const resolved = Boolean(useWorkbench(selectConvergence));
   const closed = useWorkbench((s) => Boolean(s.resolutionNote?.closed && s.resolutionNote.scenarioId === brief.scenarioId));
   const ticket = brief.kind === "ticket";
+  const origin = brief.originKind;
+  const drop = origin === "erp-drop";
   const unscripted = Boolean(brief.extraction);
+  const open = drop ? "NEW" : ticket ? "OPEN" : "ACTIVE DRIFT";
   return (
     <header>
       <div className="flex flex-wrap items-center gap-2">
-        {ticket ? <Ticket className="size-4 text-primary" /> : <Radar className="size-4 text-primary" />}
-        <span className="font-mono text-[13px] font-semibold">#{brief.scenarioId}</span>
-        <Pill tone={resolved ? "healthy" : ticket ? "critical" : "warning"} icon={resolved ? <Check /> : <AlertOctagon />} mono={false} className="font-semibold tracking-wide" flashKey={resolved ? "resolved" : "open"}>
-          {closed ? "CLOSED IN PSA ✓" : resolved ? "RESOLVED & VERIFIED ✓" : ticket ? "OPEN" : "ACTIVE DRIFT"}
+        <OriginBadge origin={origin} />
+        <span className="font-mono text-[13px] font-semibold" data-testid="scenario-display-id">{brief.displayId ?? `#${brief.scenarioId}`}</span>
+        <Pill tone={resolved ? "healthy" : drop ? "meta" : ticket ? "critical" : "warning"} icon={resolved ? <Check /> : drop ? <Inbox /> : <AlertOctagon />} mono={false} className="font-semibold tracking-wide" flashKey={resolved ? "resolved" : "open"}>
+          {closed ? "CLOSED IN PSA ✓" : resolved ? "RESOLVED & VERIFIED ✓" : open}
         </Pill>
         {unscripted && (
-          <Pill tone="primary" icon={<Sparkles />} title={brief.extraction?.rationale}>
-            unscripted · base {brief.extraction?.baseScenarioId}
+          <Pill tone="primary" icon={drop ? <FolderInput /> : <Sparkles />} title={brief.extraction?.rationale}>
+            {drop ? "triaged from drop" : "unscripted"} · base {brief.extraction?.baseScenarioId}
           </Pill>
         )}
         <span className="truncate text-[11px] text-faint">{brief.origin}</span>
@@ -107,6 +111,7 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
           </span>
         )}
         <span>{ticket ? "opened" : "detected"} {fmtDateTimeUtc(brief.openedAt)}</span>
+        {brief.priority && <span className="font-mono">priority {brief.priority}</span>}
       </div>
     </header>
   );
@@ -197,7 +202,7 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
   return (
     <section className="card">
       <div className="mb-1.5 flex items-center gap-2">
-        <span className="section-label">{brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
+        <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
         <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-faint" title="Highlight 3-120 characters of the text, then click the pill to spawn a live mini-dashboard">
           <Wand2 className="size-3 text-selection" /> highlight any phrase → Generate Context UI
         </span>
@@ -288,6 +293,7 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
           </div>
           <div className="mt-0.5 text-[10.5px] text-faint">
             {attachment.uploadedBy} · {Math.round(attachment.sizeBytes / 1024)} KB
+            {attachment.url.startsWith("/api/tickets/inbox-attachment/") ? ` · read from input/tickets/${decodeURIComponent(attachment.url.split("/")[4] ?? "")}/` : ""}
           </div>
           <Button size="xs" variant="meta" icon={<ScanEye />} className="mt-1" loading={vision.status === "loading"} onClick={() => void extract(attachment)}>
             Extract Telemetry via Muse Vision

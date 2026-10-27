@@ -1,0 +1,23 @@
+{
+  "id": "#2026323",
+  "source": "ERP",
+  "subject": "Patti Fernandez cannot connect to AVD (AADSTS53003) and RDP 3389 looks open on the host pool",
+  "description": "Patti Fernandez (Accounts Payable) gets a Conditional Access block when opening the Windows App against vdpool-contoso-fin-01 since 06:04 UTC today; the dialog shows AADSTS53003 with correlation id 44c6f95f-dc66-4c51-984b-020fda4523b2. The user was moved to the Microsoft 365 E5 bundle last week but still appears on E3. While checking nsg-contoso-avd-hostpool-01 a vendor rule allowing RDP 3389 from the internet is visible in the portal and is not in our Terraform.",
+  "customer": "Contoso Finance",
+  "requester": {
+    "displayName": "Patti Fernandez",
+    "upn": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+    "role": "Accounts Payable"
+  },
+  "priority": "P1",
+  "createdAt": "2026-10-27T06:04:00.000Z",
+  "attachments": [
+    "attachment1.png"
+  ],
+  "telemetry": {
+    "errorCode": "AADSTS53003",
+    "correlationId": "44c6f95f-dc66-4c51-984b-020fda4523b2",
+    "timestamp": "2026-10-27T06:04:00Z",
+    "device": "CONTOSO-FIN-014"
+  }
+}

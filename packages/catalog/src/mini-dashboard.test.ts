@@ -90,6 +90,7 @@ describe("custom scenario registry", () => {
     registerCustomScenario({
       scenarioId: id,
       kind: "ticket",
+      origin: "unscripted",
       tenantId: "tenant-contoso-01",
       title: "Finance user cannot connect to AVD",
       remediationScope: "AVD NSG drift & E5 license state",

@@ -2,14 +2,15 @@
  * Captures the README screenshots (1600x900) from the running workbench with a
  * headless Edge/Chrome driven over the DevTools protocol (no extra dependencies).
  *
- *   bun run scripts/capture-readme-screenshots.ts [--url http://localhost:5173] [--out docs/screenshots] [--closure]
+ *   bun run scripts/capture-readme-screenshots.ts [--url http://localhost:5173] [--out docs/screenshots] [--closure] [--api http://127.0.0.1:4000]
  *
  * Needs the orchestrator (:4000) and the web app (:5173) running. Shot 3 runs a real
  * Tier 3 remediation for INC-4092 (stages the local fix/INC-4092-contoso-remediation
  * branch, never approves); shot 5 pins the ANOM-CA-204 canvas as a View Recipe, switches
  * to ANOM-INT-309 through Tier 0 and releases the pin again. Shot 6 highlights a phrase in
  * the INC-4092 ticket and spawns its ContextualMiniDashboard; shot 7 triages an unscripted
- * ticket from the composer. With --closure, shot 8 approves INC-4092 as Emergency Break-Glass
+ * ticket from the composer; shot 9 drops a random ERP ticket into input/tickets/ (the folder is removed
+ * again afterwards) and opens the unified work queue. With --closure, shot 8 approves INC-4092 as Emergency Break-Glass
  * (a live lab write in LIVE_CLOUD_MODE), captures the RESOLVED & VERIFIED badge with the
  * auto-drafted PSA resolution note, then resets the drift.
  */
@@ -24,6 +25,7 @@ const arg = (name: string, fallback: string) => {
 };
 const URL_BASE = arg("--url", "http://localhost:5173");
 const CLOSURE = process.argv.includes("--closure");
+const API = arg("--api", process.env.CTX_ORCHESTRATOR_URL ?? "http://127.0.0.1:4000");
 const ONLY = arg("--only", "");
 const OUT = resolve(arg("--out", "docs/screenshots"));
 const PORT = 9333;
@@ -130,6 +132,14 @@ try {
 
   const canvasReady = (scenarioId: string, cards: number) =>
     `document.querySelector('[data-testid="tenant-breadcrumb"]')?.innerText.includes("#${scenarioId}") && document.querySelectorAll("section[data-component]").length >= ${cards} && !document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("correlating")`;
+  /** Opens a work item through the unified queue (hotkeys 1-9 follow queue order, which shifts with drops). */
+  const openItem = async (scenarioId: string) => {
+    await cdp.key("Escape");
+    await sleep(200);
+    await cdp.eval(`document.querySelector('[data-testid="work-queue-button"]').click(), true`);
+    await cdp.waitFor(`document.querySelector('[data-work-item="${scenarioId}"]')`, 5_000, `the ${scenarioId} queue row`);
+    await cdp.eval(`document.querySelector('[data-work-item="${scenarioId}"]').click(), true`);
+  };
   await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
   await sleep(1500);
 
@@ -174,9 +184,7 @@ try {
 
   /* 4 · tenant anomaly ANOM-CA-204: plan step 1 expands the Conditional Access card */
   if (shouldRun("04")) {
-    await cdp.key("Escape");
-    await sleep(300);
-    await cdp.key("4");
+    await openItem("ANOM-CA-204");
     await cdp.waitFor(canvasReady("ANOM-CA-204", 1), 60_000, "the ANOM-CA-204 canvas");
     await sleep(800);
     await cdp.key("e");
@@ -189,7 +197,7 @@ try {
   if (shouldRun("05")) {
     await cdp.key("p");
     await cdp.waitFor(`document.body.innerText.includes("Recipe Pinned")`, 10_000, "the pinned recipe");
-    await cdp.key("5");
+    await openItem("ANOM-INT-309");
     await cdp.waitFor(`${canvasReady("ANOM-INT-309", 1)} && document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("0 tokens")`, 30_000, "the ANOM-INT-309 recipe canvas");
     await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
     await cdp.key("t");
@@ -202,7 +210,7 @@ try {
 
   /* 6 · highlight any text → Generate Context UI: a cyan mini-dashboard spawned from "temporary RDP" */
   if (shouldRun("06")) {
-    await cdp.key("1");
+    await openItem("INC-4092");
     await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
     await sleep(800);
     const trigger = await cdp.eval<{ x: number; y: number } | null>(`(() => {
@@ -257,7 +265,7 @@ try {
 
   /* 8 (--closure) · approve INC-4092 as Break-Glass → RESOLVED & VERIFIED, PSA resolution note; then reset the drift */
   if (CLOSURE && shouldRun("08")) {
-    await cdp.key("1");
+    await openItem("INC-4092");
     await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
     await sleep(500);
     await cdp.key("f");
@@ -271,6 +279,30 @@ try {
     await cdp.key("0");
     await cdp.waitFor(`document.body.innerText.includes("Demo drift restored")`, 60_000, "the drift reset");
     await sleep(500);
+  }
+
+  /* 9 · the unified work queue: a random ERP drop lands in input/tickets/, the watcher ingests it, the queue lists every origin */
+  if (shouldRun("09")) {
+    await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
+    await cdp.key("Escape");
+    await sleep(300);
+    const drop = (await fetch(`${API}/api/tickets/simulate-drop`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ archetype: "Mixed" }) }).then((r) => r.json())) as { scenarioId: string; dir: string; folder: string };
+    try {
+      await cdp.waitFor(`document.querySelector('[data-testid="queue-unseen"]')`, 15_000, "the ERP drop to reach the queue");
+      await openItem(drop.scenarioId);
+      await cdp.waitFor(`document.querySelector('[data-testid="scenario-display-id"]')?.innerText === "${drop.folder}" && document.querySelectorAll("section[data-component]").length >= 1 && !document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("correlating")`, 90_000, "the ERP drop canvas");
+      await cdp.waitFor(`document.querySelector('[data-testid="ticket-attachment"] img')?.complete`, 10_000, "the attachment thumbnail");
+      await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 14_000, "the toasts to clear");
+      await cdp.eval(`document.querySelector('[data-testid="scenario-pane"]').scrollTo({ top: 0 }), true`);
+      await cdp.eval(`document.querySelector('[data-testid="work-queue-button"]').click(), true`);
+      await cdp.waitFor(`document.querySelector('[data-testid="work-queue"]')`, 5_000, "the work queue popover");
+      await cdp.eval(`document.querySelector('[data-testid="work-queue-search"]').blur(), true`);
+      await sleep(500);
+      await cdp.shot(join(OUT, "09-unified-work-queue-erp-drop.png"));
+      await cdp.key("Escape");
+    } finally {
+      rmSync(drop.dir, { recursive: true, force: true });
+    }
   }
   cdp.close();
 } finally {

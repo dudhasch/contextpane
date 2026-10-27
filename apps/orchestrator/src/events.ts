@@ -1,4 +1,4 @@
-import type { AuditEntry, Convergence } from "@contextpane/catalog";
+import type { AuditEntry, Convergence, ScenarioListItem } from "@contextpane/catalog";
 
 /**
  * Workbench state pushes that are not router telemetry. The WebSocket forwards
@@ -7,6 +7,9 @@ import type { AuditEntry, Convergence } from "@contextpane/catalog";
  */
 export type WorkbenchEvent =
   | { type: "audit"; entry: AuditEntry }
+  /** A ticket folder landed in (or left) input/tickets/: the unified queue updates at once. */
+  | { type: "inbox/ingested"; item: ScenarioListItem; folder: string; attachments: string[] }
+  | { type: "inbox/removed"; scenarioId: string; folder: string }
   | {
       type: "resources/updated";
       method: "notifications/resources/updated";

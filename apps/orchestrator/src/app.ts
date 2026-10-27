@@ -13,6 +13,7 @@ import {
   TENANT_REGISTRY,
   ViewRecipeSchema,
   baseScenarioOf,
+  displayScenarioId,
   getScenarioEntry,
   isAnyScenarioId,
   isScenarioId,
@@ -49,6 +50,9 @@ import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
 import { SAMPLE_UNSCRIPTED_TICKETS, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket } from "./local/custom-ticket.ts";
+import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
+import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
+import { ERP_TICKETS } from "@contextpane/mcp-erp";
 import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
 import { hover, warmHoverCache } from "./tiers/tier1-hover.ts";
@@ -133,17 +137,26 @@ app.get("/api/mcp/status", async (c) => c.json(await sources.status()));
 
 app.get("/api/tenants", (c) => c.json({ tenants: Object.values(TENANT_REGISTRY) }));
 
-/** Tickets and tenant anomalies for the mode switcher; resolved = approved since the last drift reset. Unscripted tickets follow. */
+/** When each built-in anomaly was detected (mirrors anomalyBody in local/brief.ts); tickets carry openedAt in the ERP. */
+const ANOMALY_DETECTED_AT: Record<string, string> = { "ANOM-LIC-101": "2026-10-26T06:05:00Z", "ANOM-CA-204": "2026-10-26T06:00:00Z", "ANOM-APP-401": "2026-10-26T06:10:00Z", "ANOM-INT-309": "2026-10-26T05:40:00Z" };
+
+/**
+ * The unified work queue: PSA tickets, live Graph anomalies, ERP file drops and pasted tickets are
+ * one stream, differentiated by `origin`; resolved = approved since the last drift reset.
+ */
 app.get("/api/scenarios", (c) => {
   const scenarios: ScenarioListItem[] = SCENARIO_IDS.map((scenarioId) => {
     const entry = SCENARIO_REGISTRY[scenarioId];
     return {
       scenarioId,
       kind: entry.kind,
+      origin: entry.kind === "ticket" ? "psa" : "anomaly",
+      displayId: displayScenarioId(scenarioId),
       tenantId: entry.tenantId,
       tenantName: TENANT_REGISTRY[entry.tenantId].displayName,
       title: entry.title,
       resolved: Boolean(convergenceStore.get(scenarioId)),
+      createdAt: ERP_TICKETS[scenarioId]?.openedAt ?? ANOMALY_DETECTED_AT[scenarioId] ?? "2026-10-26T06:00:00Z",
     };
   });
   for (const custom of listCustomScenarios()) scenarios.push(customScenarioListItem(custom, Boolean(convergenceStore.get(custom.scenarioId))));
@@ -240,6 +253,72 @@ app.post("/api/tickets/triage-custom", async (c) => {
 });
 
 app.get("/api/tickets/samples", (c) => c.json({ samples: SAMPLE_UNSCRIPTED_TICKETS }));
+
+/* ---------------- Live ERP inbox: input/tickets/#<id>/ticketbody.json + images ---------------- */
+
+/** What the watcher ingested from input/tickets/, newest first; ?scan=1 forces a scan before answering. */
+app.get("/api/tickets/inbox", (c) => {
+  const scan = /^(1|true)$/i.test(c.req.query("scan") ?? "") ? scanInbox() : null;
+  return c.json({ dir: getInboxDir(), items: listInbox(), ...(scan ? { scan: { folders: scan.folders, ingested: scan.ingested.map((r) => r.item.scenarioId), removed: scan.removed } } : {}), scannedAt: new Date().toISOString() });
+});
+
+/** The image next to a dropped ticket, by its URL-encoded folder (`%232026323`) and file name. */
+app.get("/api/tickets/inbox-attachment/:folder/:file", (c) => {
+  const folder = decodeURIComponent(c.req.param("folder"));
+  const file = decodeURIComponent(c.req.param("file"));
+  const path = resolveAttachmentPath(folder, file);
+  if (!path) return c.json({ error: `no such attachment ${folder}/${file}` }, 404);
+  const ext = file.split(".").pop()!.toLowerCase();
+  const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  return new Response(Bun.file(path), { headers: { "content-type": type, "cache-control": "no-store", "content-disposition": `inline; filename="${file}"` } });
+});
+
+const SimulateDropSchema = z.object({
+  archetype: z.enum([...DROP_ARCHETYPES, "Random"]).optional(),
+  ticketId: z.string().max(24).regex(/^#?[A-Za-z0-9]{3,16}$/).optional(),
+  seed: z.number().int().nonnegative().optional(),
+});
+
+/**
+ * `[🎲 Drop Random ERP Ticket]`: writes a fresh `#2026xxx/ticketbody.json` + `attachment1.png` into
+ * input/tickets/ and lets the very same watcher scan ingest it, exactly like a folder dropped in Explorer.
+ */
+app.post("/api/tickets/simulate-drop", async (c) => {
+  const started = performance.now();
+  const body = SimulateDropSchema.parse(await c.req.json().catch(() => ({})));
+  const drop = simulateDrop(body);
+  if (!drop.ingest) return c.json({ error: `${drop.folder} was written but not ingested`, drop }, 500);
+  const ctx = await gatherContext(drop.scenarioId, { fresh: true });
+  const brief = buildScenarioBrief(ctx);
+  return c.json(
+    {
+      folder: drop.folder,
+      displayId: drop.displayId,
+      scenarioId: drop.scenarioId,
+      archetype: drop.archetype,
+      files: drop.files,
+      dir: drop.dir,
+      scenario: drop.ingest.item,
+      attachments: drop.ingest.entry.erpDrop?.attachments ?? [],
+      extraction: drop.ingest.entry.extraction,
+      brief,
+      latencyMs: Math.round(performance.now() - started),
+      telemetry: telemetry.recent(1).at(-1) ?? null,
+    },
+    201,
+  );
+});
+
+const VisionTriageSchema = z.object({ scenarioId: z.string(), fileName: z.string().max(200).optional() });
+
+/** `[Extract Telemetry via Muse Vision]` on a dropped ticket: the orchestrator reads the file from input/tickets/ itself. */
+app.post("/api/vision/triage", async (c) => {
+  const body = VisionTriageSchema.parse(await c.req.json());
+  const entry = getCustomScenario(ScenarioIdSchema.parse(body.scenarioId));
+  if (!entry?.erpDrop) return c.json({ error: `${body.scenarioId} is not an ERP file drop` }, 404);
+  const result = await visionTriageDrop(entry, body.fileName);
+  return c.json(result);
+});
 
 app.get("/api/tickets/:scenarioId", (c) => {
   const custom = getCustomScenario(c.req.param("scenarioId"));
@@ -671,6 +750,7 @@ app.get("/", (c) =>
       "POST /api/hover",
       "POST /api/correlate  (Accept: text/event-stream for progress)",
       "POST /api/explore-selection · POST /api/tickets/triage-custom · GET /api/tickets/samples",
+      "GET  /api/tickets/inbox · GET /api/tickets/inbox-attachment/:folder/:file · POST /api/tickets/simulate-drop · POST /api/vision/triage",
       "GET  /api/tickets/:scenarioId/resolution-note · POST /api/tickets/close",
       "POST /api/remediate  (Accept: text/event-stream for progress)",
       "POST /api/remediate/approve  (alias POST /api/approve)",
