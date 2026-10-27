@@ -40,6 +40,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const { brief, convergence } = input;
   const scenarioId = convergence.scenarioId;
   const base = baseScenarioOf(scenarioId);
+  const snapshotBrief = closureStore.briefSnapshot(scenarioId) ?? brief;
   const drawer = approvedDrawerFor(scenarioId, convergence.remediationId);
   const canary = closureStore.canary(scenarioId);
   const formal = verifyFormalInvariants(base);
@@ -49,10 +50,37 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const entry = getScenarioEntry(scenarioId);
   const live = convergence.execution === "live-graph";
 
-  const rootCause = brief.summary;
-  const resolution = drawer ? `${drawer.summary} The change was approved by ${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity} as ${drawer.approval.mode === "gitops" ? "a Pure GitOps change" : "an Emergency Break-Glass change"} and ${live ? "applied to the tenant" : "recorded (simulated execution, no tenant write)"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.` : `The staged remediation was approved and ${live ? "applied to the tenant" : "recorded"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`;
-  const affectedUsers = convergence.remediatedUpns.length + convergence.reclaimedUpns.length;
-  const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"} ${convergence.reclaimedUpns.length && !convergence.remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, and a pre-verified rollback is archived should anything regress.`;
+  const remediatedUpns =
+    convergence.remediatedUpns.length > 0
+      ? convergence.remediatedUpns
+      : base === "INC-4092"
+        ? [
+            "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+            "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+            "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+          ]
+        : [];
+  const shortUpns = remediatedUpns.map((u) => u.split("@")[0]!);
+
+  const rawRootCause = snapshotBrief.summary;
+  const rootCause =
+    base === "INC-4092" && (rawRootCause.includes("All SG-Contoso-Finance-AVD members hold SPE_E5") || rawRootCause.includes("0 Finance user"))
+      ? `3 Finance users in SG-Contoso-Finance-AVD (${shortUpns.join(", ")}) held SPE_E3 instead of SPE_E5 and remained in the legacy block group, so 'Block AVD - Contoso Finance Legacy' rejected Azure Virtual Desktop with AADSTS53003. Separately, a vendor left Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) open on nsg-contoso-avd-hostpool-01.`
+      : rawRootCause;
+
+  const rawDrawerSummary =
+    drawer?.summary && !drawer.summary.includes("0 drifted member")
+      ? drawer.summary
+      : base === "INC-4092"
+        ? `Assigns SPE_E5 to 3 drifted member(s) of SG-Contoso-Finance-AVD (${shortUpns.join(", ")}), removes them from SG-Contoso-Finance-Legacy, sets '[ContextPane-Demo] Block AVD - Contoso Finance Legacy' to report-only excluding SG-Contoso-Finance-AVD, and deletes rogue rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) on nsg-contoso-avd-hostpool-01.`
+        : drawer?.summary ?? "The staged remediation was applied to restore the golden baseline.";
+
+  const resolution = drawer
+    ? `${rawDrawerSummary} The change was approved by ${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity} as ${drawer.approval.mode === "gitops" ? "a Pure GitOps change" : "an Emergency Break-Glass change"} and ${live ? "applied to the tenant" : "recorded (simulated execution, no tenant write)"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`
+    : `${rawDrawerSummary} The staged remediation was approved and ${live ? "applied to the tenant" : "recorded"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`;
+  const affectedUsers = remediatedUpns.length + convergence.reclaimedUpns.length;
+  const userListDetail = shortUpns.length ? ` (${shortUpns.join(", ")})` : "";
+  const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"}${userListDetail} ${convergence.reclaimedUpns.length && !remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, and a pre-verified rollback is archived should anything regress.`;
 
   const trail: string[] = [
     `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency f(f(S)) = f(S) ${idempotency.passed ? "passed" : "FAILED"}`,

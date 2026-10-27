@@ -44,7 +44,15 @@ export const AuditEntrySchema = z.object({
   /** One line on what happened, e.g. "3 users → SPE_E5 (live Graph)". Never holds a secret. */
   detail: z.string().max(300).default(""),
   /** live-graph when the change reached the tenant, simulated otherwise. */
-  execution: z.enum(["live-graph", "simulated", "none"]).default("none"),
+  execution: z
+    .enum([
+      "live-graph",
+      "simulated",
+      "none",
+      "live-graph-and-arm-reverted",
+      "in-memory-state-reverted",
+    ])
+    .default("none"),
   /** Break-glass (live write + reconcile commit) or Pure GitOps (PR only), for approvals. */
   executionMode: ExecutionModeSchema.nullable().default(null),
 });

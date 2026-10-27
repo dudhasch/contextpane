@@ -117,4 +117,20 @@ describe("bi-temporal timeline", () => {
     a.slices[0]!.state.summary = "mutated";
     expect(getTimeline("INC-4092")!.slices[0]!.state.summary).not.toBe("mutated");
   });
+
+  test("every slice (T-18m, T-14m, T-06m, NOW, T+Fix) populates non-empty state.cards and state.statuses with distinct healthy vs warning/critical states", () => {
+    const slices = getTimelineSlices("INC-4092");
+    expect(slices.map((s) => s.relativeLabel)).toEqual(["T-18m", "T-14m", "T-06m", "NOW", "T+Fix"]);
+    for (const s of slices) {
+      expect(s.state.cards.length).toBeGreaterThanOrEqual(3);
+      expect(Object.keys(s.state.statuses).length).toBeGreaterThanOrEqual(8);
+    }
+    expect(slices[0]!.state.cards.every((c) => c.status === "healthy")).toBe(true);
+    expect(slices[4]!.state.cards.every((c) => c.status === "healthy")).toBe(true);
+    expect(slices[1]!.state.cards.some((c) => c.status === "warning" || c.status === "critical")).toBe(true);
+    expect(slices[2]!.state.cards.some((c) => c.status === "critical")).toBe(true);
+    expect(slices[3]!.state.cards.some((c) => c.status === "critical")).toBe(true);
+    expect(slices[0]!.state.cards.find((c) => c.cardId === "LicenseDriftCard")?.summary).toContain("5 of 5 users in SG-Contoso-Finance-AVD compliant on SPE_E5");
+    expect(slices[4]!.state.cards.find((c) => c.cardId === "IaCDriftBanner")?.summary).toContain("0 rogue rules");
+  });
 });

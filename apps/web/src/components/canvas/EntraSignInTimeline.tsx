@@ -80,7 +80,10 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
             </Button>
             {props.microActions.some((a) => a.kind === "generate-fix") && (
               <Button size="xs" variant="outline" icon={<Wrench />} onClick={() => openRemediation({ tab: "powershell" })}>
-                Stage CA Fix
+                {props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" || e.upn.startsWith("spn-")) ||
+                triggeredBy.includes("spn-contoso-erp-sync")
+                  ? "Stage Workload Identity Fix"
+                  : "Stage CA Fix"}
               </Button>
             )}
           </>

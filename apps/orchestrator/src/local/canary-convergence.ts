@@ -34,6 +34,8 @@ export interface CanaryConvergenceOptions {
   simulateCanaryFailure?: boolean;
   /** True only when the approval actually wrote to the live tenant (approval state "executed"). */
   liveWriteApplied?: boolean;
+  /** True when the orchestrator executed the inverse rollback f^-1 to restore pre-change state. */
+  rollbackExecuted?: boolean;
 }
 
 export interface IdentityProbes {
@@ -143,6 +145,13 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
 
   if (simulateCanaryFailure) {
     const rollback = buildInverseRollback(scenarioId);
+    const rollbackExecuted = options.rollbackExecuted ?? false;
+    const tenantRestored = rollbackExecuted || !liveWriteApplied;
+    const rollbackDetail = rollbackExecuted
+      ? `Dead-man's switch fired for ${scenarioId}: f⁻¹ inverse rollback executed — tenant ${tenantId} restored to pre-change state`
+      : liveWriteApplied
+        ? `Dead-man's switch fired for ${scenarioId}: inverse rollback bundle (f^-1) prepared but NOT applied; the live break-glass change is still in tenant ${tenantId}`
+        : `Dead-man's switch fired for ${scenarioId}: nothing was written live, so tenant ${tenantId} is unchanged; inverse rollback bundle (f^-1) kept for reference`;
     stages.push({
       stage: "SYNTHETIC_PROBED",
       at,
@@ -152,11 +161,9 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
     stages.push({
       stage: "AUTO_ROLLED_BACK",
       at,
-      detail: liveWriteApplied
-        ? `Dead-man's switch fired for ${scenarioId}: inverse rollback bundle (f^-1) prepared but NOT applied; the live break-glass change is still in tenant ${tenantId}`
-        : `Dead-man's switch fired for ${scenarioId}: nothing was written live, so tenant ${tenantId} is unchanged; inverse rollback bundle (f^-1) kept for reference`,
+      detail: rollbackDetail,
       probes,
-      tenantRestored: !liveWriteApplied,
+      tenantRestored,
     });
     return {
       scenarioId,
@@ -166,8 +173,8 @@ export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConv
       canaryCohort: CANARY_COHORT,
       probes,
       rollback,
-      rollbackExecuted: false,
-      tenantRestored: !liveWriteApplied,
+      rollbackExecuted,
+      tenantRestored,
       auditAction: "canary-auto-rolled-back",
     };
   }

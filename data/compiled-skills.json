@@ -36,12 +36,12 @@
     },
     "tier": 0,
     "tokenCost": 0,
-    "latencyMs": 0.01,
+    "latencyMs": 0.04,
     "fuzz": {
       "cases": 100,
       "passed": 100
     },
-    "createdAt": "2026-10-27T12:05:25.030Z",
+    "createdAt": "2026-10-27T14:33:47.719Z",
     "version": 1
   },
   {
@@ -90,12 +90,12 @@
     },
     "tier": 0,
     "tokenCost": 0,
-    "latencyMs": 0.02,
+    "latencyMs": 0.035,
     "fuzz": {
       "cases": 100,
       "passed": 100
     },
-    "createdAt": "2026-10-27T12:10:07.607Z",
+    "createdAt": "2026-10-27T14:41:53.434Z",
     "version": 1
   },
   {

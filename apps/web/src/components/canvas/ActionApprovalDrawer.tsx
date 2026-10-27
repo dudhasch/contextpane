@@ -281,6 +281,10 @@ export function ActionApprovalDrawerSheet() {
                     {mode === "break-glass" ? "Approve · Execute Live & Reconcile" : "Approve · Stage for Pipeline"}
                   </Button>
                 </div>
+              ) : drawer.approval.state === "rolled-back" ? (
+                <Button variant="danger" size="md" icon={<RotateCcw />} className="w-full" disabled>
+                  Rolled back · f⁻¹ restored{drawer.approval.mode ? ` · ${MODE_LABEL[drawer.approval.mode]}` : ""}
+                </Button>
               ) : (
                 <Button variant="outline" size="md" icon={<Check />} className="w-full" disabled>
                   {drawer.approval.state === "rejected" ? "Rejected" : `Approved · ${drawer.approval.state}${drawer.approval.mode ? ` · ${MODE_LABEL[drawer.approval.mode]}` : ""}`}
@@ -307,8 +311,20 @@ function CanaryControls() {
       </label>
       {canary && (
         <div className="flex flex-wrap items-center gap-1 font-mono text-[10.5px]" data-testid="canary-trace">
-          {canary.stages.map((s) => <span key={s.stage} className={`rounded border px-1.5 py-0.5 ${s.stage === "AUTO_ROLLED_BACK" ? "border-critical/40 text-critical" : "border-border text-muted"}`}>{s.stage}</span>)}
-          <span className={canary.finalState === "CONVERGED" ? "text-healthy" : "text-critical"}>{canary.finalState}</span>
+          {canary.stages.map((s) => (
+            <span
+              key={s.stage}
+              className={`rounded border px-1.5 py-0.5 ${
+                s.stage === "AUTO_ROLLED_BACK"
+                  ? "border-critical/40 bg-critical/10 font-semibold text-critical"
+                  : s.stage === "CONVERGED"
+                    ? "border-healthy/40 bg-healthy/10 font-semibold text-healthy"
+                    : "border-border text-muted"
+              }`}
+            >
+              {s.stage}
+            </span>
+          ))}
         </div>
       )}
       <a href={`/api/runbooks/${scenarioId}.md`} download className="inline-flex text-[11px] text-primary hover:underline">Export Runbook (.md)</a>
@@ -518,10 +534,16 @@ function DryRunBadge({ drawer }: { drawer: Drawer }) {
 
 function ApprovalState({ drawer }: { drawer: Drawer }) {
   const s = drawer.approval.state;
-  const tone: Tone = s === "pending" ? "warning" : s === "rejected" ? "critical" : "healthy";
+  const tone: Tone =
+    s === "pending"
+      ? "warning"
+      : s === "rejected" || s === "rolled-back"
+        ? "critical"
+        : "healthy";
+  const label = s === "rolled-back" ? "rolled-back · f⁻¹ restored" : s;
   return (
     <Pill tone={tone}>
-      {s}
+      {label}
       {drawer.approval.approvedAt ? ` · ${drawer.approval.approvedAt.slice(11, 19)}Z` : ""}
     </Pill>
   );

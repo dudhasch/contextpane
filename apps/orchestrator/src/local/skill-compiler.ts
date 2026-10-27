@@ -339,10 +339,11 @@ function fileURLToPath(): string {
 }
 
 const memory = new Map<string, CompiledSkill>();
+const persistSkills = process.env.NODE_ENV !== "test" && !process.env.BUN_TEST;
 
 export function loadRegistry(): CompiledSkillDef[] {
   memory.clear();
-  if (!existsSync(REGISTRY_PATH)) return [];
+  if (!persistSkills || !existsSync(REGISTRY_PATH)) return [];
   try {
     const raw = JSON.parse(readFileSync(REGISTRY_PATH, "utf8")) as CompiledSkillDef[];
     if (!Array.isArray(raw)) return [];
@@ -353,6 +354,7 @@ export function loadRegistry(): CompiledSkillDef[] {
 }
 
 export function saveRegistry(defs?: CompiledSkillDef[]): void {
+  if (!persistSkills) return;
   const list = defs ?? [...memory.values()].map(({ match: _m, hydrate: _h, remediate: _r, ...d }) => d as CompiledSkillDef);
   mkdirSync(dirname(REGISTRY_PATH), { recursive: true });
   writeFileSync(REGISTRY_PATH, `${JSON.stringify(list, null, 2)}\n`, "utf8");

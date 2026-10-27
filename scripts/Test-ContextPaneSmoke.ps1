@@ -49,11 +49,15 @@ param(
     [ValidateSet('INC-4092', 'INC-4099', 'ANOM-LIC-101', 'ANOM-CA-204', 'ANOM-INT-309', 'ANOM-APP-401')]
     [string]$ScenarioId = 'INC-4092',
     # break-glass: live write + reconcile commit + convergence. gitops: no live write, pre-flight re-run, approval.state 'staged'.
-    [ValidateSet('break-glass', 'gitops')]
+    [Alias('ExecutionMode')]
+    [ValidateSet('break-glass', 'gitops', 'BreakGlass', 'GitOps')]
     [string]$Mode = 'break-glass',
     [switch]$SkipRemediate,
     [int]$TimeoutSec = 180
 )
+
+if ($Mode -ieq 'BreakGlass') { $Mode = 'break-glass' }
+if ($Mode -ieq 'GitOps') { $Mode = 'gitops' }
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')

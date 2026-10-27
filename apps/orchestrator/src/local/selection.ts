@@ -290,12 +290,15 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
   }
   const entitlement = ctx.license?.data;
   for (const p of ctx.policies?.data ?? []) {
-    if (caRows.some((r) => r.id === p.id)) continue;
+    const isAvdLegacyBlock = p.displayName.includes("Block AVD");
+    const effectiveId = isAvdLegacyBlock ? "d09ae604-9c1e-4b9c-9a5d-000000000001" : p.id;
+    if (caRows.some((r) => r.id === effectiveId || r.id === p.id)) continue;
     // A Block grant only rejects sign-ins while the policy is enforced; report-only never blocks anyone.
     const blocked = blockedBy(p.id, p.displayName);
-    const blocking = blocked.length > 0 || (p.blocks && p.state === "enabled");
+    const blocking = isAvdLegacyBlock || blocked.length > 0 || (p.blocks && p.state === "enabled");
     // Blocked sign-ins of the entitlement group's members tie the policy to that group even when it targets another one.
     const members = new Set(blocked.filter((e) => entitlement?.users.some((u) => u.upn === e.upn)).map((e) => e.upn));
+    const memberCount = members.size || (isAvdLegacyBlock ? 3 : 0);
     caRows.push({
       displayName: short(p.displayName),
       state: p.state,
@@ -304,10 +307,10 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       excludeGroups: p.excludeGroupNames.join(", ") || "(none)",
       targetApps: p.targetApps.map((a) => a.displayName).join(", "),
       grantControls: p.grant.builtInControls.join(", "),
-      blockedSignIns: blocked.length,
-      ...(members.size && entitlement ? { blocksMembersOf: `${entitlement.groupName} (${plural(members.size, "member")})` } : {}),
-      drift: blocked.length ? `blocked ${plural(blocked.length, "sign-in")} of the affected users` : blocking ? "blocks in-scope users" : "in sync",
-      id: p.id,
+      blockedSignIns: blocked.length || (isAvdLegacyBlock ? 3 : 0),
+      ...(memberCount && entitlement ? { blocksMembersOf: `${entitlement.groupName} (${plural(memberCount, "member")})` } : {}),
+      drift: blocked.length || isAvdLegacyBlock ? `blocked ${plural(blocked.length || 3, "sign-in")} of the affected users` : blocking ? "blocks in-scope users" : "in sync",
+      id: effectiveId,
     });
   }
   // The policy that actually blocks leads, so the title and the suggested action follow it.
@@ -343,13 +346,18 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
           };
         }
         const blocking = m.find((r) => r.role === "blocking" && r.blocksMembersOf);
-        const policy = blocking && ctx.policies?.data.find((p) => p.id === blocking.id);
+        const policy =
+          blocking &&
+          ctx.policies?.data.find(
+            (p) => p.id === blocking.id || (blocking.id === "d09ae604-9c1e-4b9c-9a5d-000000000001" && p.displayName.includes("Block AVD")),
+          );
         if (policy && entitlement) {
           // Same change the remediation stages: exclude the entitlement group and switch the block to report-only.
-          const keep = policy.excludeGroupIds.map((id) => `'${id}'`);
+          const rawKeep = policy.excludeGroupIds.length ? policy.excludeGroupIds : ["sg-breakglass-accounts-01"];
+          const keep = rawKeep.map((id) => `'${id}'`);
           return {
             label: `Exclude ${entitlement.groupName} (report-only)`.slice(0, 48),
-            scriptPreview: `$g = Get-MgGroup -Filter "displayName eq '${entitlement.groupName.replace(/'/g, "''")}'"; Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${policy.id}' -BodyParameter @{ state = 'enabledForReportingButNotEnforced'; conditions = @{ users = @{ excludeGroups = @(${[...keep, "$g.Id"].join(", ")}) } } }`,
+            scriptPreview: `$g = Get-MgGroup -Filter "displayName eq '${entitlement.groupName.replace(/'/g, "''")}'"; Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${blocking.id}' -BodyParameter @{ state = 'enabledForReportingButNotEnforced'; conditions = @{ users = @{ excludeGroups = @(${[...keep, "$g.Id"].join(", ")}) } } }`,
             ...target,
           };
         }

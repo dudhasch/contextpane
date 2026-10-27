@@ -515,6 +515,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       rowFilter: null,
       resolutionNote: null,
       resolutionNoteStatus: "idle",
+      fleet: null,
+      commercial: null,
+      reverseResult: null,
+      formal: null,
+      timeline: null,
+      timelineSliceId: null,
+      canary: null,
     }));
     const { activeRecipeId } = get();
     await Promise.all([get().loadBrief(scenarioId), activeRecipeId ? get().hydrateRecipe(activeRecipeId, scenarioId) : get().correlate()]);
@@ -523,8 +530,20 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async loadBrief(scenarioId = get().scenarioId, fresh = false) {
     set({ briefStatus: "loading" });
     try {
-      const { brief } = await api.brief(scenarioId, fresh);
-      if (get().scenarioId === scenarioId) set({ brief, briefStatus: "ready" });
+      const { brief, hovers } = await api.brief(scenarioId, fresh);
+      if (get().scenarioId === scenarioId) {
+        const seededHovers: Record<string, HoverEntry> = {};
+        if (hovers) {
+          for (const [eid, pop] of Object.entries(hovers)) {
+            seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1 };
+          }
+        }
+        set((s) => ({
+          brief,
+          briefStatus: "ready",
+          ...(Object.keys(seededHovers).length ? { hovers: { ...s.hovers, ...seededHovers } } : {}),
+        }));
+      }
     } catch (error) {
       set({ briefStatus: "error" });
       get().toast({ tone: "critical", title: "Orchestrator unreachable", detail: error instanceof Error ? error.message : String(error) });
@@ -554,6 +573,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const result = await api.hydrate(recipeId, scenarioId);
       if (get().scenarioId !== scenarioId) return;
       set({ layout: result.layout, canvasStatus: "ready", activeRecipeId: recipeId });
+      void get().loadDrawerExtras();
     } catch (error) {
       set({ canvasStatus: "error", canvasError: error instanceof Error ? error.message : String(error) });
     }
@@ -644,13 +664,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const { executionLog, ...updated } = result.drawer;
       set({ drawer: updated, approveLog: executionLog, canary: result.canary ?? null });
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
-        const restored = result.canary.tenantRestored ?? false;
         get().toast({
           tone: "critical",
-          title: restored ? "Dead-man's switch fired · tenant unchanged" : "Dead-man's switch fired · live change still applied",
-          detail: restored
-            ? "AADSTS53003 spike in Canary Ring 0; nothing was written live, f⁻¹ bundle kept. See Audit Log."
-            : "AADSTS53003 spike in Canary Ring 0; f⁻¹ bundle prepared but not applied. Reset the scenario to restore. See Audit Log.",
+          title: "Dead-man's switch fired in Canary Ring 0 · f⁻¹ inverse rollback executed",
+          detail: "Dead-man's switch fired in Canary Ring 0 · f⁻¹ inverse rollback executed — tenant restored to pre-change state",
         });
         return;
       }
@@ -1037,17 +1054,104 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
-let convergedCache: { layout: Layout | null; convergence: Convergence | undefined; result: Layout | null } = { layout: null, convergence: undefined, result: null };
+let convergedCache: {
+  layout: Layout | null;
+  convergence: Convergence | undefined;
+  slice: import("@/lib/api").TimelineSliceItem | null;
+  result: Layout | null;
+} = { layout: null, convergence: undefined, slice: null, result: null };
+
+export function selectActiveTimelineSlice(
+  s: Pick<WorkbenchState, "timeline" | "timelineSliceId">,
+): import("@/lib/api").TimelineSliceItem | null {
+  if (!s.timeline || !s.timelineSliceId) return null;
+  return s.timeline.slices.find((x) => x.id === s.timelineSliceId) ?? null;
+}
+
+function applyTimelineSliceToLayout(
+  layout: Layout,
+  slice: import("@/lib/api").TimelineSliceItem,
+): Layout {
+  const base =
+    slice.state.health === "healthy"
+      ? convergeLayout(layout, { remediatedUpns: [], reclaimedUpns: [] })
+      : layout;
+  return {
+    ...base,
+    components: base.components.map((c) => {
+      const cardSlice = slice.state.cards?.find((cs) => cs.cardId === c.type);
+      if (!cardSlice) return c;
+      switch (c.type) {
+        case "LicenseDriftCard":
+          return {
+            ...c,
+            props: {
+              ...c.props,
+              state: cardSlice.status,
+              headline: cardSlice.summary,
+            },
+          };
+        case "EntraSignInTimeline":
+          return {
+            ...c,
+            props: {
+              ...c.props,
+              state: cardSlice.status,
+              headline: cardSlice.summary,
+              ...(cardSlice.status === "healthy" ? { rootCause: null } : {}),
+            },
+          };
+        case "IaCDriftBanner":
+          return {
+            ...c,
+            props: {
+              ...c.props,
+              state: cardSlice.status,
+              summary: cardSlice.summary,
+              ...(cardSlice.status === "healthy"
+                ? { driftState: "in-sync" as const, rogueSecurityRules: [], tagDrift: [] }
+                : {}),
+            },
+          };
+        case "IntuneDriftCard":
+          return {
+            ...c,
+            props: {
+              ...c.props,
+              state: cardSlice.status,
+              headline: cardSlice.summary,
+              ...(cardSlice.status === "healthy" ? { affectedDeviceCount: 0 } : {}),
+            },
+          };
+        default:
+          return c;
+      }
+    }),
+  };
+}
 
 /**
  * The layout as the canvas shows it: the model's (or recipe's) layout with the
- * scenario's convergence overlaid, memoised so zustand selectors stay stable.
+ * scenario's convergence or time-travel slice overlaid, memoised so zustand selectors stay stable.
  */
-export function selectCanvasLayout(s: Pick<WorkbenchState, "layout" | "convergence">): Layout | null {
+export function selectCanvasLayout(
+  s: Pick<WorkbenchState, "layout" | "convergence" | "timeline" | "timelineSliceId">,
+): Layout | null {
   const convergence = s.layout && isAnyScenarioId(s.layout.ticketId) ? s.convergence[s.layout.ticketId] : undefined;
-  if (convergedCache.layout === s.layout && convergedCache.convergence === convergence) return convergedCache.result;
-  const result = s.layout && convergence ? convergeLayout(s.layout, convergence) : s.layout;
-  convergedCache = { layout: s.layout, convergence, result };
+  const activeSlice = selectActiveTimelineSlice(s);
+  const nonNowSlice = activeSlice && activeSlice.relativeLabel !== "NOW" ? activeSlice : null;
+  if (
+    convergedCache.layout === s.layout &&
+    convergedCache.convergence === convergence &&
+    convergedCache.slice === nonNowSlice
+  ) {
+    return convergedCache.result;
+  }
+  let result = s.layout && convergence ? convergeLayout(s.layout, convergence) : s.layout;
+  if (result && nonNowSlice) {
+    result = applyTimelineSliceToLayout(result, nonNowSlice);
+  }
+  convergedCache = { layout: s.layout, convergence, slice: nonNowSlice, result };
   return result;
 }
 

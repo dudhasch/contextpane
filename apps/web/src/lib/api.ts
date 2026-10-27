@@ -27,6 +27,7 @@ export type ErpAttachment = ScenarioBrief["attachments"][number];
 
 export interface BriefResponse {
   brief: ScenarioBrief;
+  hovers?: Record<string, HoverDiagnosticPopover>;
   gatherLatencyMs: number;
   transport: string;
   fallbackReasons: string[];
@@ -107,7 +108,31 @@ export interface FormalResponse { scenarioId: string; formal: { passed: boolean;
 export interface IntuneHealthCsp { settingName: string; cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean }
 export interface IntuneHealthScript { scenarioId: string; detect: string; remediate: string; verification: { passed: boolean; detectReadOnly: boolean; proof: string }; csp: IntuneHealthCsp[]; asrBlast: AsrBlast | null }
 export type IntuneHealthScriptResponse = IntuneHealthScript;
-export interface TimelineResponse { timeline: { scenarioId: string; slices: Array<{ id: string; label: string; relativeLabel: string; timestamp: string; validFrom: string; validTo: string | null; changedCardId: string | null; state: { summary: string; health: string } }> } }
+export interface TimelineSliceState {
+  summary: string;
+  health: "healthy" | "warning" | "critical";
+  affectedEntities?: string[];
+  entities?: Array<{ id: string; status: string; health: "healthy" | "warning" | "critical"; note?: string }>;
+  cards?: Array<{ cardId: string; status: "healthy" | "warning" | "critical"; summary: string }>;
+  statuses?: Record<string, string>;
+}
+export interface TimelineSliceItem {
+  id: string;
+  kind?: string;
+  label: string;
+  relativeLabel: string;
+  timestamp: string;
+  validFrom: string;
+  validTo: string | null;
+  changedCardId: string | null;
+  state: TimelineSliceState;
+}
+export interface TimelineResponse {
+  timeline: {
+    scenarioId: string;
+    slices: TimelineSliceItem[];
+  };
+}
 export interface SkillDef { id: string; scenarioId: string; tier: number; tokenCost: number; latencyMs: number; fuzz: { cases: number; passed: number }; badge: string }
 export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
 

@@ -10,7 +10,7 @@ export function Toasts() {
   if (!toasts.length) return null;
   return (
     // bottom-left on purpose: the approval drawer's [Approve & Execute] button lives bottom-right and must never be covered.
-    <div className="pointer-events-none fixed bottom-6 left-6 z-[60] flex w-80 flex-col gap-2">
+    <div className="pointer-events-none fixed bottom-6 left-6 z-40 flex w-80 flex-col gap-2">
       {toasts.map((t) => (
         <div key={t.id} className="pointer-events-auto card animate-fade-in flex items-start gap-2 shadow-popover">
           <span className="mt-1">

@@ -14,10 +14,14 @@ class AuditLedger {
   private entries: AuditEntry[] | null = null;
   private seq = 0;
 
+  private isTestEnv(): boolean {
+    return process.env.NODE_ENV === "test" || Boolean(process.env.BUN_TEST);
+  }
+
   private load(): AuditEntry[] {
     if (this.entries) return this.entries;
     this.entries = [];
-    if (!existsSync(this.file)) return this.entries;
+    if (this.isTestEnv() || !existsSync(this.file)) return this.entries;
     try {
       const raw = JSON.parse(readFileSync(this.file, "utf8")) as { entries?: unknown[] };
       for (const e of raw.entries ?? []) {
@@ -40,13 +44,15 @@ class AuditLedger {
     });
     entries.push(entry);
     if (entries.length > 500) entries.splice(0, entries.length - 500);
-    try {
-      mkdirSync(config.dataDir, { recursive: true });
-      const tmp = `${this.file}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ version: 1, entries }, null, 2) + "\n", "utf8");
-      renameSync(tmp, this.file);
-    } catch (error) {
-      console.warn(`[audit] persist failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (!this.isTestEnv()) {
+      try {
+        mkdirSync(config.dataDir, { recursive: true });
+        const tmp = `${this.file}.tmp`;
+        writeFileSync(tmp, JSON.stringify({ version: 1, entries }, null, 2) + "\n", "utf8");
+        renameSync(tmp, this.file);
+      } catch (error) {
+        console.warn(`[audit] persist failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     workbenchEvents.publish({ type: "audit", entry });
     return entry;

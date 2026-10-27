@@ -348,6 +348,37 @@ function hoverTargets(ctx: CorrelationContext): Array<{ entityId: string; entity
 }
 
 /**
+ * Pre-computes instant hover popovers (<1 ms, 0 GPU calls) for every hoverable entity in a
+ * ScenarioBrief so the web client never flashes skeleton bars on hover.
+ */
+export function buildBriefHovers(
+  ctx: CorrelationContext,
+  entities: Array<{ id: string; type: EntityType; hoverable?: boolean }>,
+): Record<string, HoverDiagnosticPopover> {
+  const scope = hoverScope(ctx.ticketId);
+  const out: Record<string, HoverDiagnosticPopover> = {};
+  for (const e of entities) {
+    if (e.hoverable === false) continue;
+    const entityType = e.type ?? inferEntityType(e.id);
+    const deterministic = buildHoverDiagnostic(ctx, { entityId: e.id, entityType });
+    const cached = cachedHover(scope, e.id);
+    const args = cached ? withGroundTruth(cached.args, deterministic) : deterministic;
+    out[e.id] = HoverDiagnosticPopoverSchema.parse({
+      ...args,
+      latencyBudgetMs: 350,
+      providerTelemetry: {
+        tier: "Tier 1A",
+        provider: cached ? cached.provider : "local",
+        modelId: cached ? `${cached.modelId} (cached)` : "deterministic",
+        latencyMs: 1,
+        tokensUsed: 0,
+      },
+    });
+  }
+  return out;
+}
+
+/**
  * Pre-fetch a headline for every hoverable pill of the scenario, hero entities first, a
  * few at a time in the background, so a hover anywhere in the workbench is served from
  * the cache. Misses go to the hosted chain: a warm-up never wakes the open-weight GPU.

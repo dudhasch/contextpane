@@ -62,6 +62,21 @@ describe("Place 5 canary convergence + dead-man's switch", () => {
     expect(r.rollback!.powershellScript.length).toBeGreaterThan(0);
   });
 
+  test("dead-man with rollbackExecuted: true marks rollbackExecuted and tenantRestored true", () => {
+    const r = runCanaryConvergence("INC-4092", {
+      simulateCanaryFailure: true,
+      liveWriteApplied: true,
+      rollbackExecuted: true,
+    });
+    expect(r.finalState).toBe("AUTO_ROLLED_BACK");
+    expect(r.rollbackExecuted).toBe(true);
+    expect(r.tenantRestored).toBe(true);
+    const rolledBack = r.stages.find((s) => s.stage === "AUTO_ROLLED_BACK");
+    expect(rolledBack?.tenantRestored).toBe(true);
+    expect(rolledBack?.detail).toContain("f⁻¹ inverse rollback executed");
+    expect(rolledBack?.detail).toContain("restored to pre-change state");
+  });
+
   test("gitops ignores liveWriteApplied: nothing is written live", () => {
     const r = runCanaryConvergence("INC-4092", { mode: "gitops", simulateCanaryFailure: true, liveWriteApplied: true });
     expect(r.tenantRestored).toBe(true);

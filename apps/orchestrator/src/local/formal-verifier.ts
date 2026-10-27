@@ -1,4 +1,4 @@
-import { isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { baseScenarioOf, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import {
   SHADOW_ADMIN_SCENARIO_ID,
   SHADOW_ADMIN_USER_UPN,
@@ -189,12 +189,17 @@ export function preState(scenarioId: ScenarioId): SymbolicState {
 
 /** Proposed post-remediation symbolic state P_post(S). */
 export function postState(scenarioId: ScenarioId): SymbolicState {
+  const effectiveId = String(scenarioId).startsWith("CUSTOM-")
+    ? baseScenarioOf(String(scenarioId))
+    : scenarioId;
   // ANOM-APP-401 is modelled locally (shadow-admin.ts) until the catalog lands it.
-  if (!isScenarioId(scenarioId) && (scenarioId as string) !== SHADOW_ADMIN_SCENARIO_ID) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
-  const affected = affectedFor(scenarioId);
+  if (!isScenarioId(effectiveId) && (effectiveId as string) !== SHADOW_ADMIN_SCENARIO_ID) {
+    throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+  }
+  const affected = affectedFor(effectiveId);
   return {
-    scenarioId,
-    policies: postPolicies(scenarioId),
+    scenarioId: effectiveId,
+    policies: postPolicies(effectiveId),
     affected,
     nsgName: AVD_NSG_NAME,
     nsgRules: baselineNsgRules(),
@@ -526,19 +531,52 @@ export interface InverseRollbackBundle {
   restores: string[];
 }
 
+export const SPE_E3_SKU_ID = "6fd2c87f-b296-42f0-b197-1e91e994b900";
+export const SPE_E5_SKU_ID = "06ebc4ee-1bb5-47dd-8120-11324bc54e06";
+
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
 export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBundle {
-  const pre = preState(scenarioId);
+  const effectiveId = String(scenarioId).startsWith("CUSTOM-")
+    ? baseScenarioOf(String(scenarioId))
+    : scenarioId;
+  const pre = preState(effectiveId);
   const rogue = pre.nsgRules.find((r) => r.name === "Allow-Temp-RDP-Diagnostic-Drift");
   const hcl = rogue
     ? `  security_rule {\n    name                       = "${rogue.name}"\n    priority                   = ${rogue.priority}\n    direction                  = "${rogue.direction}"\n    access                     = "${rogue.access}"\n    protocol                   = "${rogue.protocol}"\n    source_port_range          = "*"\n    destination_port_range     = "${rogue.destinationPortRange}"\n    source_address_prefix      = "${rogue.sourceAddressPrefix}"\n    destination_address_prefix = "${rogue.destinationAddressPrefix}"\n  }\n`
     : "";
   const terraformDiff = rogue ? `--- a/demo-iac/main.tf (post-remediation)\n+++ b/demo-iac/main.tf (rollback to pre-state)\n@@\n+  security_rule { name = "${rogue.name}" priority = ${rogue.priority} Tcp/3389 from * } # restored by f^-1\n` : "";
+
+  const userLines =
+    effectiveId === "INC-4092"
+      ? [
+          `$SpeE3SkuId = '${SPE_E3_SKU_ID}'`,
+          `$SpeE5SkuId = '${SPE_E5_SKU_ID}'`,
+          ...pre.affected
+            .filter((a) => a.kind === "user")
+            .map(
+              (a) =>
+                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation SPE_E3 license & SG-Contoso-Finance-Legacy membership (${a.pre})')) { Set-MgUserLicense -UserId '${a.id}' -AddLicenses @(@{ SkuId = '${SPE_E3_SKU_ID}' }) -RemoveLicenses @('${SPE_E5_SKU_ID}') | Out-Null; New-MgGroupMemberByRef -GroupId 'SG-Contoso-Finance-Legacy' -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/users/${a.id}" } | Out-Null; Remove-MgGroupMemberByRef -GroupId 'SG-Contoso-Finance-AVD' -DirectoryObjectId '${a.id}' -ErrorAction SilentlyContinue | Out-Null }`,
+            ),
+          `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'd09ae604-9c1e-4b9c-9a5d-000000000001' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('SG-Contoso-Finance-Legacy'); excludeGroups = @('sg-breakglass-accounts-01') } } } | Out-Null }`,
+          `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore Allow-Temp-RDP-Diagnostic-Drift rule and drifted tags on ${AVD_NSG_NAME}')) { $nsg = Get-AzNetworkSecurityGroup -Name '${AVD_NSG_NAME}' -ResourceGroupName 'rg-contoso-avd-prod'; Add-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name 'Allow-Temp-RDP-Diagnostic-Drift' -Priority 150 -Direction 'Inbound' -Access 'Allow' -Protocol 'Tcp' -SourcePortRange '*' -DestinationPortRange '3389' -SourceAddressPrefix '*' -DestinationAddressPrefix '*' | Set-AzNetworkSecurityGroup | Out-Null }`,
+        ]
+      : [
+          ...pre.affected
+            .filter((a) => a.kind === "user")
+            .map(
+              (a) =>
+                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation license/CA state (${a.pre})')) { Set-MgUserLicense -UserId '${a.id}' -AddLicenses @(@{ SkuId = '${SPE_E3_SKU_ID}' }) -RemoveLicenses @('${SPE_E5_SKU_ID}') | Out-Null }`,
+            ),
+          `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore NSG rules/tags to pre-remediation state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca-policy-001' -BodyParameter @{ state = 'enabled' } | Out-Null }`,
+        ];
+
   const powershellScript = [
-    "#Requires -Version 7.0", "[CmdletBinding(SupportsShouldProcess)]", "param([string]$TenantId)", "$ErrorActionPreference = 'Stop'",
+    "#Requires -Version 7.0",
+    "[CmdletBinding(SupportsShouldProcess)]",
+    "param([string]$TenantId)",
+    "$ErrorActionPreference = 'Stop'",
     `# ContextPane inverse rollback f^-1 for ${scenarioId}: restores pre-remediation state`,
-    ...pre.affected.filter((a) => a.kind === "user").map((a) => `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation license/CA state (${a.pre})')) { Set-MgUserLicense -UserId '${a.id}' -AddLicenses @() -RemoveLicenses @() | Out-Null }`),
-    `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore NSG rules/tags to pre-remediation state')) { Update-MgIdentityConditionalAccessPolicy -BodyParameter @{ state = 'enabled' } | Out-Null }`,
+    ...userLines,
     "",
   ].join("\n");
   const graphPatch = JSON.stringify({ scenarioId, inverseOf: "f", restorePolicies: pre.policies, restoreNsgRules: pre.nsgRules, restoreTags: pre.tags, restoreLicenses: pre.licenses }, null, 2);

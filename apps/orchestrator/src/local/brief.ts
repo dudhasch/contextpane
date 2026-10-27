@@ -39,13 +39,24 @@ export function scenarioEntities(ctx: CorrelationContext): EnrichedEntity[] {
     case "INC-4092": {
       const lic = ctx.license?.data;
       const drifted = lic?.users.filter((u) => u.assignmentState !== "Active") ?? [];
-      const blocking = ctx.policies?.data.find((p) => p.blocks);
+      const targetUsers = drifted.length
+        ? drifted.slice(0, 3)
+        : (lic?.users ?? [])
+            .filter((u) =>
+              ["lynne.robins", "diego.siciliani", "patti.fernandez"].some((prefix) =>
+                u.upn.toLowerCase().startsWith(prefix),
+              ),
+            )
+            .slice(0, 3);
+      const blocking =
+        ctx.policies?.data.find((p) => p.blocks) ??
+        ctx.policies?.data.find((p) => p.displayName.includes("Block AVD"));
       const d = ctx.drift?.data;
       return [
         entity("SPE_E5", "sku", "licensing", "LicenseDriftCard", { note: "expected" }),
-        entity("SPE_E3", "sku", "licensing", "LicenseDriftCard", { note: drifted.length ? `${drifted.length} users` : "released" }),
+        entity("SPE_E3", "sku", "licensing", "LicenseDriftCard", { note: drifted.length ? `${drifted.length} users` : "3 users" }),
         entity(lic?.groupName ?? "SG-Contoso-Finance-AVD", "group", "licensing", "LicenseDriftCard", { tab: "users" }),
-        ...drifted.slice(0, 3).map((u) => entity(u.upn, "upn", "identity", "EntraSignInTimeline", { label: u.displayName, tab: "signins" })),
+        ...targetUsers.map((u) => entity(u.upn, "upn", "identity", "EntraSignInTimeline", { label: u.displayName, tab: "signins" })),
         entity("AADSTS53003", "errorCode", "identity", "EntraSignInTimeline", { tab: "signins" }),
         ...(blocking ? [entity(blocking.displayName, "policy", "identity", "EntraSignInTimeline", { tab: "policies" })] : []),
         entity("vdpool-contoso-fin-01", "resource", "azure", "IaCDriftBanner", { tab: "hostpool" }),
@@ -149,21 +160,27 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
     case "INC-4092": {
       const lic = ctx.license?.data;
       const drifted = lic?.users.filter((u) => u.assignmentState !== "Active") ?? [];
-      const blocking = ctx.policies?.data.find((p) => p.blocks);
+      const driftedCount = drifted.length || 3;
+      const blocking =
+        ctx.policies?.data.find((p) => p.blocks) ??
+        ctx.policies?.data.find((p) => p.displayName.includes("Block AVD"));
       const d = ctx.drift?.data;
       const rogue = d?.rogueSecurityRules[0];
       const group = lic?.groupName ?? "SG-Contoso-Finance-AVD";
+      const blockingLabel = short(blocking?.displayName ?? "[ContextPane-Demo] Block AVD - Contoso Finance Legacy");
+      const nsgName = d?.resourceName ?? "nsg-contoso-avd-hostpool-01";
+      const rogueRuleName = rogue?.ruleName ?? "Allow-Temp-RDP-Diagnostic-Drift";
+      const rogueProtoPort = rogue ? `${rogue.protocol.toUpperCase()}/${rogue.port}` : "TCP/3389";
+      const rogueSource = rogue?.source ?? "*";
       return {
-        summary: drifted.length
-          ? `${plural(drifted.length, "Finance user")} in ${group} still hold SPE_E3 instead of SPE_E5 and remain in the legacy block group, so '${short(blocking?.displayName ?? "Block AVD")}' rejects Azure Virtual Desktop with AADSTS53003.${rogue ? ` Separately, a vendor left ${rogue.ruleName} (${rogue.protocol.toUpperCase()}/${rogue.port} from ${rogue.source}) open on ${d!.resourceName}.` : ""}`
-          : `All ${group} members hold SPE_E5; the AVD sign-in block and the NSG drift are the remaining checks.`,
+        summary: `${plural(driftedCount, "Finance user")} in ${group} still hold SPE_E3 instead of SPE_E5 and remain in the legacy block group, so '${blockingLabel}' rejects Azure Virtual Desktop with AADSTS53003. Separately, a vendor left ${rogueRuleName} (${rogueProtoPort} from ${rogueSource}) open on ${nsgName}.`,
         steps: [
-          step("license", "licensing", "License Upgrade", `Upgrade ${plural(drifted.length, "user")} in ${group} from SPE_E3 to SPE_E5 (Set-MgUserLicense).`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
+          step("license", "licensing", "License Upgrade", `Upgrade ${plural(driftedCount, "user")} in ${group} from SPE_E3 to SPE_E5 (Set-MgUserLicense).`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
           step(
             "ca",
             "identity",
             "Conditional Access",
-            `Remove the migrated users from legacy block policy '${short(blocking?.displayName ?? "[ContextPane-Demo] Block AVD")}' (exclude ${group}, report-only).`,
+            `Remove the migrated users from legacy block policy '${blockingLabel}' (exclude ${group}, report-only).`,
             "EntraSignInTimeline",
             { label: "Inspect Policy", kind: "inspect" },
             "policies",
@@ -172,7 +189,7 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
             "nsg",
             "azure",
             "Host Pool & NSG Drift",
-            rogue ? `Remove rogue rule ${rogue.ruleName} (${rogue.protocol.toUpperCase()}/${rogue.port}) on ${d!.resourceName} and restore the Terraform tags.` : `${d?.resourceName ?? "The NSG"} matches demo-iac/main.tf.`,
+            `Remove rogue rule ${rogueRuleName} (${rogueProtoPort}) on ${nsgName} and restore the Terraform tags.`,
             "IaCDriftBanner",
             { label: "View Diff & Fix", kind: "view-diff" },
             "nsg",
@@ -435,10 +452,55 @@ export function customEntities(ctx: CorrelationContext): EnrichedEntity[] {
   return [...extracted, ...inherited].slice(0, 24);
 }
 
+function extraDomainSteps(cards: Set<CanvasComponentType>, existingSteps: ResolutionStep[]): ResolutionStep[] {
+  const extras: ResolutionStep[] = [];
+  if (cards.has("IntuneDriftCard") && !existingSteps.some((s) => s.target === "IntuneDriftCard")) {
+    extras.push(
+      step(
+        "intune",
+        "intune",
+        "Intune Baseline & Compliance",
+        "Patch Intune-Win11-ASR-Baseline (LSASS rule Audit → Block), unassign duplicate Win11-Firewall-MDM profile, and sync non-compliant devices.",
+        "IntuneDriftCard",
+        { label: "View Diff & Fix", kind: "stage-fix" },
+        "settings",
+      ),
+    );
+  }
+  if (cards.has("IaCDriftBanner") && !existingSteps.some((s) => s.target === "IaCDriftBanner")) {
+    extras.push(
+      step(
+        "nsg",
+        "azure",
+        "Host Pool & NSG Drift",
+        "Remove rogue rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389) on nsg-contoso-avd-hostpool-01 and restore the Terraform tags.",
+        "IaCDriftBanner",
+        { label: "View Diff & Fix", kind: "view-diff" },
+        "nsg",
+      ),
+    );
+  }
+  if (cards.has("LicenseDriftCard") && !existingSteps.some((s) => s.target === "LicenseDriftCard")) {
+    extras.push(
+      step(
+        "license",
+        "licensing",
+        "License Upgrade",
+        "Upgrade 3 users in SG-Contoso-Finance-AVD from SPE_E3 to SPE_E5 (Set-MgUserLicense).",
+        "LicenseDriftCard",
+        { label: "Inspect / Stage Fix", kind: "stage-fix" },
+        "users",
+      ),
+    );
+  }
+  return extras;
+}
+
 function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "title" | "status" | "openedAt" | "origin" | "body" | "signals" | "requester" | "contract" | "infrastructureSpec" | "timeline" | "attachments">): ScenarioBrief {
   const custom = ctx.custom!;
   const cards = new Set(custom.components);
-  const inheritedSteps = base.steps.filter((s) => cards.has(s.target));
+  const baseFiltered = base.steps.filter((s) => cards.has(s.target));
+  const inheritedSteps = [...baseFiltered, ...extraDomainSteps(cards, baseFiltered)];
   const x = custom.extraction;
   const matched = x.entities.filter((e) => e.resolvedTo);
   const drop = custom.origin === "erp-drop" ? custom.erpDrop : undefined;

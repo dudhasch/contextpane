@@ -18,7 +18,7 @@ import type { EnrichedEntity, EntityType, QuickAction } from "@contextpane/catal
 import { onDemo } from "@/lib/demo";
 import { PROVIDER_LABEL, healthTone } from "@/lib/format";
 import { CAT_CHIP, catStyle } from "@/lib/provenance";
-import { selectHover, useWorkbench } from "@/store";
+import { selectActiveTimelineSlice, selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
 
@@ -50,7 +50,33 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
   const setLinked = useWorkbench((s) => s.setLinked);
   const focusCard = useWorkbench((s) => s.focusCard);
   const entry = useWorkbench((s) => selectHover(s, entity.id));
+  const activeSlice = useWorkbench(selectActiveTimelineSlice);
   const hoverable = entity.hoverable !== false;
+  const isTimeTravel = Boolean(activeSlice && activeSlice.relativeLabel !== "NOW");
+  const sliceEntity = isTimeTravel
+    ? activeSlice?.state.entities?.find(
+        (e) =>
+          e.id.toLowerCase() === entity.id.toLowerCase() ||
+          e.id.toLowerCase() === (entity.label ?? "").toLowerCase(),
+      )
+    : undefined;
+  const sliceStatus = isTimeTravel
+    ? (sliceEntity?.status ??
+      activeSlice?.state.statuses?.[entity.id] ??
+      (activeSlice?.state.health === "healthy" ? "compliant" : undefined))
+    : undefined;
+  const sliceHealth = isTimeTravel
+    ? (sliceEntity?.health ?? (activeSlice?.state.health === "healthy" ? "healthy" : undefined))
+    : undefined;
+  const effectiveNote = isTimeTravel && sliceStatus ? sliceStatus : entity.note;
+  const sliceRing =
+    sliceHealth === "healthy"
+      ? "ring-1 ring-healthy/60 border-healthy/50"
+      : sliceHealth === "critical"
+        ? "ring-1 ring-critical/60 border-critical/50"
+        : sliceHealth === "warning"
+          ? "ring-1 ring-warning/60 border-warning/50"
+          : "";
 
   const { refs, floatingStyles, context } = useFloating({
     open: open && hoverable,
@@ -94,20 +120,21 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
           onClick: () => focusCard(entity.target, entity.tab),
         })}
         data-entity={entity.id}
+        data-slice-status={sliceStatus}
         title={`${entity.id} · click to open its card`}
-        className={`inline-flex max-w-full items-center gap-1 rounded border align-middle font-mono transition-colors hover:brightness-125 focus-visible:outline-2 focus-visible:outline-[var(--cat)] ${CAT_CHIP} ${inline ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-[11.5px]"} ${open ? "brightness-125" : ""}`}
+        className={`inline-flex max-w-full items-center gap-1 rounded border align-middle font-mono transition-colors hover:brightness-125 focus-visible:outline-2 focus-visible:outline-[var(--cat)] ${CAT_CHIP} ${sliceRing} ${inline ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-[11.5px]"} ${open ? "brightness-125" : ""}`}
       >
         <span className="shrink-0 [&>svg]:size-3">{ICON[entity.type] ?? <Hash />}</span>
         <span className="truncate">{label}</span>
-        {entity.note && !inline && <span className="shrink-0 font-sans text-[10px] opacity-75">· {entity.note}</span>}
+        {effectiveNote && !inline && <span className="shrink-0 font-sans text-[10px] opacity-85">· {effectiveNote}</span>}
       </button>
       {open && hoverable && (
-        <FloatingPortal>
+        <FloatingPortal root={typeof document !== "undefined" ? document.body : null}>
           <div
             ref={refs.setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className="z-50 w-80 animate-fade-in rounded-lg border border-sky-500/40 bg-[#0B1120]/95 p-3 shadow-[0_24px_60px_rgba(0,0,0,0.9)] ring-1 ring-white/10 backdrop-blur-xl"
+            className="z-[9999] w-80 animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
           >
             <HoverPopoverBody entityId={entity.id} tone={tone} onClose={() => setOpen(false)} />
           </div>

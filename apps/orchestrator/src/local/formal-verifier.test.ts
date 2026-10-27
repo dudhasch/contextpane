@@ -144,4 +144,16 @@ describe("Tier 3C formal blast-radius prover", () => {
     const commented = verifyProactiveRemediationInvariant("# Set-MgUser -AccountEnabled $false\nInvoke-RestMethod -Uri 'https://graph.microsoft.com/v1.0/users' -Method Get | Out-Null\nexit 0\nexit 1");
     expect(commented.passed).toBe(true);
   });
+
+  test("buildInverseRollback('INC-4092') populates real SKU GUIDs, 3 target UPNs, and Allow-Temp-RDP-Diagnostic-Drift with zero empty license arrays", () => {
+    const rb = buildInverseRollback("INC-4092");
+    expect(rb.powershellScript).toContain("6fd2c87f-b296-42f0-b197-1e91e994b900");
+    expect(rb.powershellScript).toContain("06ebc4ee-1bb5-47dd-8120-11324bc54e06");
+    expect(rb.powershellScript).toContain("Allow-Temp-RDP-Diagnostic-Drift");
+    expect(rb.powershellScript).toContain("SG-Contoso-Finance-Legacy");
+    expect(rb.powershellScript).toContain("lynne.robins.contoso@c4a8shili.onmicrosoft.com");
+    expect(rb.powershellScript).toContain("diego.siciliani.contoso@c4a8shili.onmicrosoft.com");
+    expect(rb.powershellScript).toContain("patti.fernandez.contoso@c4a8shili.onmicrosoft.com");
+    expect(rb.powershellScript).not.toContain("-AddLicenses @() -RemoveLicenses @()");
+  });
 });

@@ -55,7 +55,7 @@ import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop,
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
 import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
-import { hover, warmHoverCache } from "./tiers/tier1-hover.ts";
+import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
 import { approve, remediate } from "./tiers/tier3-remediate.ts";
 import { visionExtract } from "./tiers/vision.ts";
@@ -167,7 +167,9 @@ app.get("/api/scenarios", (c) => {
 app.get("/api/scenarios/:scenarioId/brief", async (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
   const ctx = await gatherContext(scenarioId, { fresh: wantsRefresh(c) });
-  return c.json({ brief: buildScenarioBrief(ctx), gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, fallbackReasons: ctx.fallbackReasons });
+  const brief = buildScenarioBrief(ctx);
+  const hovers = buildBriefHovers(ctx, brief.entities);
+  return c.json({ brief, hovers, gatherLatencyMs: ctx.gatherLatencyMs, transport: ctx.transport, fallbackReasons: ctx.fallbackReasons });
 });
 
 /** The ptr:// data plane: a scenario's dataset descriptors (what the model sees), and one pointer's rows. */
@@ -633,17 +635,66 @@ const approveHandler = async (c: Context) => {
   const pending = remediationStore.get(body.remediationId);
   const conflict = body.decision !== "reject" && pending ? resolvedConflict(pending.ticketId) : null;
   if (conflict) return c.json({ error: conflict, scenarioId: pending!.ticketId }, 409);
+  if (pending && body.decision !== "reject") {
+    try {
+      const preCtx = await gatherContext(pending.ticketId);
+      closureStore.setBriefSnapshot(pending.ticketId, buildScenarioBrief(preCtx));
+    } catch {
+      /* non-fatal if context gather fails */
+    }
+  }
   const { convergence, ...drawer } = await approve(body);
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
   const scenarioId = drawer.ticketId;
-  // Only an "executed" approval wrote to the live tenant; the canary report must not claim more than that.
-  const canary = { ...runCanaryConvergence(baseScenarioOf(scenarioId), { mode: body.mode ?? "break-glass", simulateCanaryFailure: body.simulateCanaryFailure ?? false, liveWriteApplied: drawer.approval.state === "executed" }), scenarioId: scenarioId as ScenarioId };
+  const liveWriteApplied = drawer.approval.state === "executed";
+  // Only an "executed" approval wrote to the live tenant; when simulateCanaryFailure triggers AUTO_ROLLED_BACK, execute f^-1 immediately.
+  const canary = {
+    ...runCanaryConvergence(baseScenarioOf(scenarioId), {
+      mode: body.mode ?? "break-glass",
+      simulateCanaryFailure: body.simulateCanaryFailure ?? false,
+      liveWriteApplied,
+      rollbackExecuted: Boolean(body.simulateCanaryFailure),
+    }),
+    scenarioId: scenarioId as ScenarioId,
+  };
   closureStore.setCanary(scenarioId, canary);
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
+    const revertWrite = liveWriteApplied ? await applyScenarioState(baseScenarioOf(scenarioId), "drifted") : null;
+    invalidateContext(scenarioId);
+    const rollbackLog = revertWrite
+      ? `Inverse rollback f⁻¹ executed (${revertWrite.source}, ${revertWrite.latencyMs} ms): ${revertWrite.summary}`
+      : "Inverse rollback f⁻¹ executed: in-memory state reverted to pre-change baseline";
+    const rolledBackDrawer = {
+      ...drawer,
+      approval: { ...drawer.approval, state: "rolled-back" as const },
+      executionLog: [
+        ...drawer.executionLog,
+        "Synthetic probe failed in Canary Ring 0: AADSTS53003 spike detected — dead-man's switch triggered",
+        rollbackLog,
+      ],
+    };
+    const { executionLog: _log, ...toSave } = rolledBackDrawer;
+    remediationStore.save(toSave);
     const rolledBack = canary.stages.find((s) => s.stage === "AUTO_ROLLED_BACK");
-    auditLedger.append({ tenantId: drawer.tenantId, ticketId: drawer.ticketId, actionType: "autonomous-rollback", delegatedIdentity: body.approvedBy ?? drawer.approval.requiredIdentity, modalSandboxVerified: false, astPass: null, tfValidatePass: null, gitBranch: drawer.staging?.branchName ?? null, prUrl: null, latencyMs: 0, execution: "none", detail: `Simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}` });
-    return c.json({ drawer, convergence: null, canary });
+    const rollbackExecution =
+      revertWrite?.source === "live-graph" ? "live-graph-and-arm-reverted" : "in-memory-state-reverted";
+    const rollbackLatencyMs = revertWrite ? Math.max(1, Math.round(revertWrite.latencyMs)) : 12;
+    auditLedger.append({
+      tenantId: drawer.tenantId,
+      ticketId: drawer.ticketId,
+      actionType: "autonomous-rollback",
+      delegatedIdentity: body.approvedBy ?? drawer.approval.requiredIdentity,
+      modalSandboxVerified: false,
+      astPass: null,
+      tfValidatePass: null,
+      gitBranch: drawer.staging?.branchName ?? null,
+      prUrl: null,
+      latencyMs: rollbackLatencyMs,
+      execution: rollbackExecution,
+      detail: `Simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}`,
+    });
+    return c.json({ drawer: rolledBackDrawer, convergence: null, canary });
   }
   return c.json({ drawer, convergence, canary });
 };
@@ -651,7 +702,7 @@ const approveHandler = async (c: Context) => {
 /* --------------------- Day-2 Places 5-8: reconcile / iac / fleet / runbook --------------------- */
 
 app.get("/api/reconcile/commercial/:scenarioId", (c) => {
-  const scenarioId = BaseScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const scenarioId = baseScenarioOf(ScenarioIdSchema.parse(c.req.param("scenarioId")));
   return c.json({ reconciliation: reconcileCommercial(scenarioId) });
 });
 
@@ -661,7 +712,7 @@ app.post("/api/iac/reverse-compile", async (c) => {
 });
 
 app.get("/api/fleet/immunize/:scenarioId", (c) => {
-  const scenarioId = BaseScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const scenarioId = baseScenarioOf(ScenarioIdSchema.parse(c.req.param("scenarioId")));
   return c.json({ fleet: immunizeFleet(scenarioId) });
 });
 
@@ -676,7 +727,7 @@ app.post("/api/fleet/campaign/:scenarioId", (c) => {
 
 app.get("/api/runbooks/:file", (c) => {
   const file = c.req.param("file");
-  const scenarioId = BaseScenarioIdSchema.parse(file.replace(/\.md$/, ""));
+  const scenarioId = baseScenarioOf(ScenarioIdSchema.parse(file.replace(/\.md$/, "")));
   return c.text(generateRunbook(scenarioId), 200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="${scenarioId}-runbook.md"` });
 });
 app.post("/api/remediate/approve", approveHandler);

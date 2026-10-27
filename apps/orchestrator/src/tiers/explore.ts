@@ -113,16 +113,24 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
       const known = new Set(publication.descriptor.columns);
       const columns = args.columns.filter((c) => known.has(c.key));
       // The data plane binds the rows; a wrong pointer or unknown columns fall back to the reference.
+      const keepReferenceAction =
+        PLACEHOLDER_RE.test(args.suggestedAction.scriptPreview) ||
+        slice.kind === "entra-ca-policies" ||
+        slice.kind === "workload-identity";
+      const keepReferenceHeading =
+        slice.kind === "entra-ca-policies" &&
+        slice.rows[0]?.role === "blocking" &&
+        (/report-only|ca-004/i.test(args.title) || /report-only|ca-004/i.test(args.subtitle));
       const composed = ContextualMiniDashboardSchema.parse({
         ...reference,
-        title: args.title,
-        subtitle: args.subtitle,
+        title: keepReferenceHeading ? reference.title : args.title,
+        subtitle: keepReferenceHeading ? reference.subtitle : args.subtitle,
         sourceQuery: args.sourceQuery,
         kpis: args.kpis,
         breakdown: args.breakdown,
         columns: columns.length ? columns : reference.columns,
         // A model script with a <placeholder> is not runnable as-is: keep the reference action, which carries the real ids.
-        suggestedAction: PLACEHOLDER_RE.test(args.suggestedAction.scriptPreview)
+        suggestedAction: keepReferenceAction
           ? reference.suggestedAction
           : { ...args.suggestedAction, ...(args.suggestedAction.targetStepIndex !== undefined && args.suggestedAction.targetStepIndex < brief.steps.length ? {} : { targetStepIndex: reference.suggestedAction.targetStepIndex }) },
         rows: slice.rows,

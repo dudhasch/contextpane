@@ -69,7 +69,7 @@ const VOTES: Vote[] = [
   { intent: "firewall", re: /\bfirewall\b(?!\s+port)(?![^.]*\b3389\b)|enablefirewall|firewall profile/i, components: ["IntuneDriftCard"], base: { "ANOM-INT-309": 3 } },
   { intent: "workload-identity", re: /service principal|\bspn\b|app registration|workload identity|enterprise app|erp[- ]sync|sync app|\bowner\b|github actions|federat/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
   { intent: "secret", re: /client secret|\bsecret\b|aadsts7000222|credential(s)? (has |have )?expired|expired (client )?(secret|credential|certificate)/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
-  { intent: "oauth", re: /\boauth|consent|graph (api )?scope|api permission|overprivileged|least privilege/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 2 } },
+  { intent: "oauth", re: /\boauth|consent|graph (api )?scope|api permission|overprivileged|least privilege|right[- ]size/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 2 } },
 ];
 
 const COMPONENT_ORDER: CanvasComponentType[] = ["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner"];
@@ -299,10 +299,18 @@ export function loadCustomScenarios(): number {
     let n = 0;
     for (const s of raw.scenarios ?? []) {
       if (!(s?.scenarioId?.startsWith("CUSTOM-") || s?.scenarioId?.startsWith("ERP-")) || !isTenantId(s.tenantId) || !(s.baseScenarioId in SCENARIO_REGISTRY)) continue;
-      const extraction = TicketExtractionSchema.safeParse(s.extraction);
+      const probe = s.ticket?.requester ? `${s.ticket.body}\n${s.ticket.requester.displayName} ${s.ticket.requester.upn}` : s.ticket?.body ?? "";
+      const freshExtraction = s.ticket?.title && probe ? extractTicket({ title: s.ticket.title, body: probe, ...(s.ticket.customerName ? { customerName: s.ticket.customerName } : {}) }) : null;
+      const extraction = freshExtraction ? { success: true as const, data: freshExtraction } : TicketExtractionSchema.safeParse(s.extraction);
       if (!extraction.success) continue;
       // Entries written before origins existed were all pasted tickets.
-      registerCustomScenario({ ...s, origin: s.origin ?? (s.scenarioId.startsWith("ERP-") ? "erp-drop" : "unscripted"), extraction: extraction.data });
+      registerCustomScenario({
+        ...s,
+        origin: s.origin ?? (s.scenarioId.startsWith("ERP-") ? "erp-drop" : "unscripted"),
+        extraction: extraction.data,
+        components: extraction.data.components,
+        baseScenarioId: extraction.data.baseScenarioId,
+      });
       n++;
     }
     return n;

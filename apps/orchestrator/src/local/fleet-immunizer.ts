@@ -1,4 +1,4 @@
-import { isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { baseScenarioOf, isCustomScenarioId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import { verifyFormalInvariants } from "./formal-verifier.ts";
 
 /**
@@ -79,8 +79,9 @@ export function tenantSlug(tenant: string): string {
 }
 
 export function signatureForScenario(scenarioId: string): string {
-  if (!isScenarioId(scenarioId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
-  return SIGNATURE_BY_SCENARIO[scenarioId];
+  const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
+  if (!isScenarioId(effectiveId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+  return SIGNATURE_BY_SCENARIO[effectiveId];
 }
 
 export interface FleetTenantMatch {
@@ -97,15 +98,16 @@ export interface FleetImmunizationResult {
 }
 
 export function immunizeFleet(scenarioId: string): FleetImmunizationResult {
-  if (!isScenarioId(scenarioId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
-  const signature = SIGNATURE_BY_SCENARIO[scenarioId];
+  const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
+  if (!isScenarioId(effectiveId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+  const signature = SIGNATURE_BY_SCENARIO[effectiveId];
   const tenants: FleetTenantMatch[] = FLEET_DIRECTORY.map((entry) => ({
     tenant: entry.tenant,
     affected: entry.signatures.includes(signature),
     signatures: [...entry.signatures],
   }));
   return {
-    scenarioId,
+    scenarioId: effectiveId,
     signature,
     tenants,
     affectedCount: tenants.filter((t) => t.affected).length,

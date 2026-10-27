@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { CATEGORY_META, formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
 import { healthTone } from "@/lib/format";
 import { CAT_CHIP, CAT_TEXT, cardCategory, catStyle } from "@/lib/provenance";
-import { selectConvergence, useWorkbench } from "@/store";
+import { selectActiveTimelineSlice, selectConvergence, useWorkbench } from "@/store";
 import { Pill, type Tone } from "../ui/Pill";
 
 export interface CardTab {
@@ -57,32 +57,54 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
   const highlight = useWorkbench((s) => s.highlightComponent);
   const convergence = useWorkbench(selectConvergence);
   const convergeFlash = useWorkbench((s) => s.convergeFlash);
+  const activeSlice = useWorkbench(selectActiveTimelineSlice);
   const category = cardCategory(type);
   const converged = Boolean(convergence);
+  const isTimeTravel = Boolean(activeSlice && activeSlice.relativeLabel !== "NOW");
+  const sliceCard = isTimeTravel ? activeSlice?.state.cards?.find((c) => c.cardId === type) : undefined;
+  const effectiveState = sliceCard?.status ?? state;
+  const sliceHealthy = isTimeTravel && effectiveState === "healthy";
   const tab = tabs.some((t) => t.id === activeTab) ? activeTab! : tabs[0]!.id;
   const isLinked = linked?.target === type;
   const dimmed = Boolean(linked) && !isLinked;
   const flashing = highlight === type || (converged && convergeFlash);
-  const tone: Tone = state ? healthTone(state) : "muted";
+  const tone: Tone = effectiveState ? healthTone(effectiveState) : "muted";
+  const borderClass =
+    converged || sliceHealthy
+      ? "border-l-healthy"
+      : isTimeTravel && effectiveState === "critical"
+        ? "border-l-critical"
+        : isTimeTravel && effectiveState === "warning"
+          ? "border-l-warning"
+          : "border-l-[var(--cat)]";
 
   return (
     <section
       id={`canvas-${type}`}
       data-component={type}
       data-expanded={expanded || undefined}
-      data-converged={converged || undefined}
+      data-converged={converged || sliceHealthy || undefined}
+      data-slice={activeSlice?.relativeLabel}
       style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--color-healthy)" : CATEGORY_META[category].color })}
-      className={`card scroll-mt-2 animate-fade-in border-l-4 transition-[opacity,box-shadow] duration-150 ${converged ? "border-l-healthy" : "border-l-[var(--cat)]"} ${isLinked ? "ring-2 ring-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing ? "animate-pulse-ring" : ""}`}
+      className={`card scroll-mt-2 animate-fade-in border-l-4 transition-[opacity,box-shadow] duration-150 ${borderClass} ${isLinked ? "ring-2 ring-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing ? "animate-pulse-ring" : ""}`}
     >
       <header className="flex items-center gap-2">
-        <span className={`[&>svg]:size-4 ${converged ? "text-healthy" : CAT_TEXT}`}>{icon}</span>
+        <span className={`[&>svg]:size-4 ${converged || sliceHealthy ? "text-healthy" : CAT_TEXT}`}>{icon}</span>
         <h3 className="max-w-[50%] shrink-0 truncate text-[13px] font-semibold">{title}</h3>
         {converged ? (
           <Pill tone="healthy" icon={<CircleCheckBig />} title={`${convergence!.remediationId} · ${convergence!.execution} · converged ${convergence!.convergedAt.slice(11, 19)}Z, 0 LLM tokens`}>
             Compliant / Resolved
           </Pill>
+        ) : sliceHealthy ? (
+          <Pill tone="healthy" icon={<CircleCheckBig />} title={`${activeSlice!.label} · ${activeSlice!.relativeLabel} · ${sliceCard?.summary ?? activeSlice!.state.summary}`}>
+            compliant · {activeSlice!.relativeLabel}
+          </Pill>
+        ) : isTimeTravel && effectiveState ? (
+          <Pill tone={tone} title={`${activeSlice!.label} · ${activeSlice!.relativeLabel} · ${sliceCard?.summary ?? activeSlice!.state.summary}`}>
+            {effectiveState} · {activeSlice!.relativeLabel}
+          </Pill>
         ) : (
-          state && <Pill tone={tone}>{state}</Pill>
+          effectiveState && <Pill tone={tone}>{effectiveState}</Pill>
         )}
         <div className="ml-auto flex min-w-0 items-center gap-1.5">
           {triggeredBy.length > 0 && (

@@ -370,7 +370,9 @@ export const ActionApprovalDrawerSchema = z.object({
   verificationStatus: VerificationStatusSchema,
   staging: StagingInfoSchema.nullable(),
   approval: z.object({
-    state: z.enum(["pending", "approved", "rejected", "executed", "simulated", "staged"]).describe("staged: approved as Pure GitOps, nothing written live"),
+    state: z
+      .enum(["pending", "approved", "rejected", "executed", "simulated", "staged", "rolled-back"])
+      .describe("staged: approved as Pure GitOps, nothing written live; rolled-back: f⁻¹ inverse rollback executed"),
     mode: ExecutionModeSchema.nullable().default(null).describe("How the approval landed; null until approved"),
     requiredIdentity: z.string().describe("Delegated identity that will execute, e.g. cloudadmin@..."),
     approvedBy: z.string().nullable().default(null),

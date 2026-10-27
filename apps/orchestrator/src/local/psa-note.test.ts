@@ -68,4 +68,33 @@ describe("auto-drafted Customer & PSA Resolution Note", () => {
     expect(closedNote.markdown).toContain("CLOSED · closed");
     closureStore.clear("INC-4092");
   });
+
+  test("preserves 3 remediated users and root cause even when post-convergence brief or remediatedUpns has 0 drifted users", async () => {
+    const ctx = await gatherContext("INC-4092");
+    const brief = {
+      ...buildScenarioBrief(ctx),
+      summary: "All SG-Contoso-Finance-AVD members hold SPE_E5; the AVD sign-in block and the NSG drift are the remaining checks.",
+    };
+    const convergence = {
+      scenarioId: "INC-4092",
+      tenantId: "tenant-contoso-01",
+      remediationId: "rem-post-converged-test",
+      ticketId: "INC-4092",
+      convergedAt: "2026-10-27T12:00:00Z",
+      latencyMs: 920,
+      prUrl: null,
+      gitBranch: "fix/inc-4092-nsg-drift-test",
+      execution: "live-graph" as const,
+      remediatedUpns: [],
+      reclaimedUpns: [],
+    };
+    const note = buildResolutionNote({ brief, convergence });
+    expect(note.customerSummary).toContain("3 accounts");
+    expect(note.customerSummary).toContain("lynne.robins");
+    expect(note.customerSummary).toContain("diego.siciliani");
+    expect(note.customerSummary).toContain("patti.fernandez");
+    expect(note.customerSummary).not.toContain("0 drifted member(s)");
+    expect(note.customerSummary).not.toContain("Upgrade 0 users");
+    expect(note.rootCause).toContain("3 Finance users in SG-Contoso-Finance-AVD");
+  });
 });
