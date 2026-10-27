@@ -42,10 +42,17 @@ function useExpanded(type: CanvasComponentType): boolean {
 
 const shortId = (id: string) => (id.includes("@") ? id.split("@")[0]! : id.replace("[ContextPane-Demo] ", ""));
 
+function statusLabel(state?: HealthState): string {
+  if (state === "critical") return "Action Needed";
+  if (state === "warning") return "Warning";
+  if (state === "healthy") return "Healthy";
+  return "Unknown";
+}
+
 /**
  * Shared chrome for every canvas card: semantic provenance accent (border-l-4 in the
- * colour of the left-pane entities that spawned it), compact by default, tabs on
- * expand, a coloured ring while a linked entity is hovered, emerald once remediated.
+ * colour of the left-pane entities that spawned it), ultra-clean compact header & 1-line
+ * subtitle by default, technical provenance tags and tabs inside the expanded body.
  */
 export function CardShell({ type, icon, title, state, triggeredBy, summary, primaryAction, source, codeLens, tabs, children }: CardShellProps) {
   const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
@@ -89,52 +96,28 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
       className={`card scroll-mt-2 animate-fade-in border-l-4 transition-[opacity,box-shadow] duration-150 ${borderClass} ${isLinked ? "ring-2 ring-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing ? "animate-pulse-ring" : ""}`}
     >
       <header className="flex items-center gap-2">
-        <span className={`[&>svg]:size-4 ${converged || sliceHealthy ? "text-healthy" : CAT_TEXT}`}>{icon}</span>
-        <h3 className="max-w-[50%] shrink-0 truncate text-[13px] font-semibold">{title}</h3>
+        <span className={`shrink-0 [&>svg]:size-4 ${converged || sliceHealthy ? "text-healthy" : CAT_TEXT}`}>{icon}</span>
+        <h3 className="min-w-0 truncate text-[13px] font-semibold">{title}</h3>
         {converged ? (
-          <Pill tone="healthy" icon={<CircleCheckBig />} title={`${convergence!.remediationId} · ${convergence!.execution} · converged ${convergence!.convergedAt.slice(11, 19)}Z, 0 LLM tokens`}>
-            Compliant / Resolved
+          <Pill tone="healthy" icon={<CircleCheckBig />} mono={false} title={`${convergence!.remediationId} · converged ${convergence!.convergedAt.slice(11, 19)}Z`}>
+            Healthy
           </Pill>
         ) : sliceHealthy ? (
-          <Pill tone="healthy" icon={<CircleCheckBig />} title={`${activeSlice!.label} · ${activeSlice!.relativeLabel} · ${sliceCard?.summary ?? activeSlice!.state.summary}`}>
-            compliant · {activeSlice!.relativeLabel}
-          </Pill>
-        ) : isTimeTravel && effectiveState ? (
-          <Pill tone={tone} title={`${activeSlice!.label} · ${activeSlice!.relativeLabel} · ${sliceCard?.summary ?? activeSlice!.state.summary}`}>
-            {effectiveState} · {activeSlice!.relativeLabel}
+          <Pill tone="healthy" icon={<CircleCheckBig />} mono={false} title={sliceCard?.summary ?? activeSlice!.state.summary}>
+            Healthy
           </Pill>
         ) : (
-          effectiveState && <Pill tone={tone}>{effectiveState}</Pill>
+          effectiveState && (
+            <Pill tone={tone} mono={false}>
+              {statusLabel(effectiveState)}
+            </Pill>
+          )
         )}
-        <div className="ml-auto flex min-w-0 items-center gap-1.5">
-          {triggeredBy.length > 0 && (
-            <span
-              className={`hidden h-5 min-w-0 items-center gap-1 truncate rounded border px-1.5 text-[10.5px] lg:inline-flex ${CAT_CHIP}`}
-              title={`Triggered by: ${triggeredBy.join(", ")}`}
-            >
-              <Link2 className="size-3 shrink-0" />
-              <span className="truncate">Triggered by: {triggeredBy.slice(0, 2).map(shortId).join(", ")}{triggeredBy.length > 2 ? ` +${triggeredBy.length - 2}` : ""}</span>
-            </span>
-          )}
-          {codeLens && (
-            <button
-              type="button"
-              data-testid="codelens"
-              onClick={() => setDiffOpen(true, type)}
-              title={`${formatSourceRef(codeLens)} @ ${codeLens.ref}: open the diff`}
-              className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-border-subtle px-1.5 font-mono text-[10px] text-faint hover:border-border hover:text-text"
-            >
-              <FileCode2 className="size-3 shrink-0" />
-              <span className="truncate">{formatSourceRef({ ...codeLens, file: codeLens.file.split("/").slice(-2).join("/") })}</span>
-            </button>
-          )}
-          {source && <span className="shrink-0 font-mono text-[10px] text-faint">{source}</span>}
-        </div>
       </header>
 
-      <div className="mt-1.5">{summary}</div>
+      <div className="mt-1.5 text-[12.5px] leading-relaxed text-muted">{summary}</div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         {primaryAction}
         <button
           type="button"
@@ -148,24 +131,55 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
       </div>
 
       {expanded && (
-        <div className="mt-2 animate-fade-in border-t border-border-subtle pt-2">
-          {tabs.length > 1 && (
-            <div className="mb-2 flex gap-1 border-b border-border-subtle" role="tablist">
-              {tabs.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={t.id === tab}
-                  onClick={() => setTab(type, t.id)}
-                  className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-2 py-1 text-[11.5px] ${t.id === tab ? "border-[var(--cat)] text-text" : "border-transparent text-muted hover:text-text"}`}
+        <div className="mt-2.5 animate-fade-in border-t border-border-subtle pt-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle">
+            {tabs.length > 1 ? (
+              <div className="flex gap-1" role="tablist">
+                {tabs.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={t.id === tab}
+                    onClick={() => setTab(type, t.id)}
+                    className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-2 py-1 text-[11.5px] ${t.id === tab ? "border-[var(--cat)] font-medium text-text" : "border-transparent text-muted hover:text-text"}`}
+                  >
+                    {t.label}
+                    {t.badge !== undefined && <span className="rounded bg-surface px-1 font-mono text-[10px] text-faint">{t.badge}</span>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div />
+            )}
+            <div className="flex min-w-0 items-center gap-1.5 pb-1">
+              {triggeredBy.length > 0 && (
+                <span
+                  className={`hidden h-5 min-w-0 items-center gap-1 truncate rounded border px-1.5 text-[10.5px] lg:inline-flex ${CAT_CHIP}`}
+                  title={`Triggered by: ${triggeredBy.join(", ")}`}
                 >
-                  {t.label}
-                  {t.badge !== undefined && <span className="rounded bg-surface px-1 font-mono text-[10px] text-faint">{t.badge}</span>}
+                  <Link2 className="size-3 shrink-0" />
+                  <span className="truncate">
+                    Triggered by: {triggeredBy.slice(0, 2).map(shortId).join(", ")}
+                    {triggeredBy.length > 2 ? ` +${triggeredBy.length - 2}` : ""}
+                  </span>
+                </span>
+              )}
+              {codeLens && (
+                <button
+                  type="button"
+                  data-testid="codelens"
+                  onClick={() => setDiffOpen(true, type)}
+                  title={`${formatSourceRef(codeLens)} @ ${codeLens.ref}: open the diff`}
+                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-border-subtle px-1.5 font-mono text-[10px] text-faint hover:border-border hover:text-text"
+                >
+                  <FileCode2 className="size-3 shrink-0" />
+                  <span className="truncate">{formatSourceRef({ ...codeLens, file: codeLens.file.split("/").slice(-2).join("/") })}</span>
                 </button>
-              ))}
+              )}
+              {source && <span className="shrink-0 font-mono text-[10px] text-faint">{source}</span>}
             </div>
-          )}
+          </div>
           {children(tab)}
         </div>
       )}

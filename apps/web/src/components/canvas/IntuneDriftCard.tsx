@@ -64,10 +64,18 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
         { id: "settings", label: "Setting-Level Drift Diff", badge: open.length },
         { id: "devices", label: "Affected Devices & Compliance", badge: props.affectedDeviceCount },
       ]}
-      summary={
-        <div className="space-y-1">
-          <div className="text-[12.5px] leading-snug">{props.headline}</div>
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+      summary={<div className="text-[12.5px] leading-snug">{props.headline}</div>}
+      primaryAction={
+        open.length > 0 && (
+          <Button size="xs" variant="meta" icon={<Wrench />} loading={remediateStatus === "loading"} onClick={() => openRemediation({ tab: "powershell" })}>
+            Stage Intune Policy Fix
+          </Button>
+        )
+      }
+    >
+      {(tab) => (
+        <div className="space-y-2.5">
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">
             {props.errorCode && (
               <Stat label="Error:" tone={props.affectedDeviceCount ? "critical" : "healthy"}>
                 {props.errorCode}
@@ -80,58 +88,48 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
               {open.length}
             </Stat>
           </div>
-        </div>
-      }
-      primaryAction={
-        open.length > 0 && (
-          <Button size="xs" variant="meta" icon={<Wrench />} loading={remediateStatus === "loading"} onClick={() => openRemediation({ tab: "powershell" })}>
-            Stage Intune Policy Fix
-          </Button>
-        )
-      }
-    >
-      {(tab) =>
-        tab === "devices" ? (
-          <DevicesTable devices={props.devices} />
-        ) : (
-          <div className="space-y-2">
-            {props.errorMeaning && <div className="rounded-md border border-meta/40 bg-meta/8 px-2.5 py-1.5 text-[11.5px] text-text">{props.errorMeaning}</div>}
-            <DataTable
-              head={["Setting", "Golden (Git)", "Live (Graph)", "Status", "CSP / Registry"]}
-              rows={props.settings.map((s) => {
-                const csp = s as { cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean };
-                return [
-                  <div title={s.settingId}>
-                    <div className="leading-tight">{s.settingName}</div>
-                    <div className="font-mono text-[10px] text-faint">{s.policyName}</div>
-                  </div>,
-                  <span className="font-mono text-healthy">{s.golden}</span>,
-                  <span className={`font-mono ${s.status === "in-sync" ? "text-healthy" : "text-critical"}`}>{s.live}</span>,
-                  <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{s.status}</Pill>,
-                  <div className="max-w-[340px] space-y-1 break-all whitespace-normal">
-                    {csp.cspUri && <div className="font-mono text-[10px] leading-snug break-all whitespace-normal text-faint" title={csp.cspUri}>{csp.cspUri}</div>}
-                    {csp.registryPath && <div className="font-mono text-[10px] leading-snug break-all whitespace-normal text-faint" title={csp.registryPath}>{csp.registryPath}</div>}
-                    {csp.tattooedOnUnassign && <Pill tone="warning">tattooed on unassign</Pill>}
-                    {!csp.cspUri && !csp.registryPath && !csp.tattooedOnUnassign && <span className="text-faint">—</span>}
-                  </div>,
-                ];
-              })}
-            />
-            <div className="flex flex-wrap gap-1.5">
-              {props.policies.map((p) => (
-                <Pill
-                  key={p.id}
-                  tone={p.role === "duplicate" || p.role === "conflicting" ? (p.assignedTo.length ? "critical" : "healthy") : p.role === "drifted" ? "warning" : "muted"}
-                  title={`${p.kind} · ${p.source === "live-graph" ? "live" : "fixture"}`}
-                >
-                  {p.name} · {p.role} · {p.assignedTo.join(", ") || "unassigned"}
-                </Pill>
-              ))}
+          {tab === "devices" ? (
+            <DevicesTable devices={props.devices} />
+          ) : (
+            <div className="space-y-2">
+              {props.errorMeaning && <div className="rounded-md border border-meta/40 bg-meta/8 px-2.5 py-1.5 text-[11.5px] text-text">{props.errorMeaning}</div>}
+              <DataTable
+                head={["Setting", "Golden (Git)", "Live (Graph)", "Status", "CSP / Registry"]}
+                rows={props.settings.map((s) => {
+                  const csp = s as { cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean };
+                  return [
+                    <div title={s.settingId}>
+                      <div className="leading-tight">{s.settingName}</div>
+                      <div className="font-mono text-[10px] text-faint">{s.policyName}</div>
+                    </div>,
+                    <span className="font-mono text-healthy">{s.golden}</span>,
+                    <span className={`font-mono ${s.status === "in-sync" ? "text-healthy" : "text-critical"}`}>{s.live}</span>,
+                    <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{s.status}</Pill>,
+                    <div className="max-w-[340px] space-y-1 break-all whitespace-normal">
+                      {csp.cspUri && <div className="font-mono text-[10px] leading-snug break-all whitespace-normal text-faint" title={csp.cspUri}>{csp.cspUri}</div>}
+                      {csp.registryPath && <div className="font-mono text-[10px] leading-snug break-all whitespace-normal text-faint" title={csp.registryPath}>{csp.registryPath}</div>}
+                      {csp.tattooedOnUnassign && <Pill tone="warning">tattooed on unassign</Pill>}
+                      {!csp.cspUri && !csp.registryPath && !csp.tattooedOnUnassign && <span className="text-faint">—</span>}
+                    </div>,
+                  ];
+                })}
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {props.policies.map((p) => (
+                  <Pill
+                    key={p.id}
+                    tone={p.role === "duplicate" || p.role === "conflicting" ? (p.assignedTo.length ? "critical" : "healthy") : p.role === "drifted" ? "warning" : "muted"}
+                    title={`${p.kind} · ${p.source === "live-graph" ? "live" : "fixture"}`}
+                  >
+                    {p.name} · {p.role} · {p.assignedTo.join(", ") || "unassigned"}
+                  </Pill>
+                ))}
+              </div>
+              <div className="font-mono text-[10px] text-faint">golden source: {props.goldenSource}</div>
             </div>
-            <div className="font-mono text-[10px] text-faint">golden source: {props.goldenSource}</div>
-          </div>
-        )
-      }
+          )}
+        </div>
+      )}
     </CardShell>
   );
 }

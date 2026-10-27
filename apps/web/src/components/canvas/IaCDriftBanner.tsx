@@ -29,25 +29,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
         { id: "nsg", label: "NSG Rules & Terraform Drift", badge: props.rogueSecurityRules.length + props.tagDrift.length },
         { id: "policies", label: "Azure Policies & Compliance", badge: nonCompliant.length },
       ]}
-      summary={
-        <div className="space-y-1">
-          {pool && (
-            <div className="font-mono text-[12px]">
-              {pool.name} · {pool.poolType} · {pool.loadBalancer} · {pool.sessionHosts.length}x {pool.vmSize} · {pool.location}
-            </div>
-          )}
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-            <Stat label="NSG:" tone={drift ? (critical.length ? "critical" : "warning") : "healthy"}>
-              {drift
-                ? `${critical.length ? `${critical.length} Critical NSG Drift (${critical.map((r) => `${r.protocol.toUpperCase()}/${r.port}`).join(", ")} Open)` : "drift"}${props.tagDrift.length ? ` + ${props.tagDrift.length} tag drift` : ""}`
-                : "in sync with Terraform"}
-            </Stat>
-            <Stat label="Azure Policy:" tone={nonCompliant.length ? "warning" : "healthy"}>
-              {nonCompliant.length ? `${nonCompliant.length} Non-Compliant` : "Compliant"}
-            </Stat>
-          </div>
-        </div>
-      }
+      summary={<div className="text-[12.5px] leading-snug">{props.summary.replace(/^State:\s*/i, "")}</div>}
       primaryAction={
         drift && (
           <Button size="xs" variant="meta" icon={<GitCompareArrows />} onClick={() => setDiffOpen(true, "IaCDriftBanner")}>
@@ -57,10 +39,30 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
       }
     >
       {(tab) => {
+        const headerStats = (
+          <div className="mb-2.5 space-y-1 text-[11.5px]">
+            {pool && (
+              <div className="font-mono text-[11.5px] text-muted">
+                {pool.name} · {pool.poolType} · {pool.loadBalancer} · {pool.sessionHosts.length}x {pool.vmSize} · {pool.location}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+              <Stat label="NSG:" tone={drift ? (critical.length ? "critical" : "warning") : "healthy"}>
+                {drift
+                  ? `${critical.length ? `${critical.length} Critical NSG Drift (${critical.map((r) => `${r.protocol.toUpperCase()}/${r.port}`).join(", ")} Open)` : "drift"}${props.tagDrift.length ? ` + ${props.tagDrift.length} tag drift` : ""}`
+                  : "in sync with Terraform"}
+              </Stat>
+              <Stat label="Azure Policy:" tone={nonCompliant.length ? "warning" : "healthy"}>
+                {nonCompliant.length ? `${nonCompliant.length} Non-Compliant` : "Compliant"}
+              </Stat>
+            </div>
+          </div>
+        );
         if (tab === "hostpool") {
-          if (!pool) return <div className="text-[11.5px] text-muted">No host pool in scope.</div>;
+          if (!pool) return <div className="text-[11.5px] text-muted">{headerStats}No host pool in scope.</div>;
           return (
             <div className="space-y-2">
+              {headerStats}
               <dl className="grid grid-cols-[auto_1fr_auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
                 <dt className="text-faint">Pool type</dt>
                 <dd className="font-mono">{pool.poolType}</dd>
@@ -92,19 +94,23 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
         }
         if (tab === "policies") {
           return (
-            <DataTable
-              head={["Policy definition", "Effect", "Compliance", "Detail"]}
-              rows={props.azurePolicies.map((p) => [
-                <span>{p.name}</span>,
-                <span className="font-mono text-faint">{p.effect}</span>,
-                <Pill tone={p.compliance === "Compliant" ? "healthy" : "critical"}>{p.compliance === "Compliant" ? "Compliant" : `Non-Compliant (${p.nonCompliantResources})`}</Pill>,
-                <span className="text-[11px] text-muted">{p.detail}</span>,
-              ])}
-            />
+            <div className="space-y-2">
+              {headerStats}
+              <DataTable
+                head={["Policy definition", "Effect", "Compliance", "Detail"]}
+                rows={props.azurePolicies.map((p) => [
+                  <span>{p.name}</span>,
+                  <span className="font-mono text-faint">{p.effect}</span>,
+                  <Pill tone={p.compliance === "Compliant" ? "healthy" : "critical"}>{p.compliance === "Compliant" ? "Compliant" : `Non-Compliant (${p.nonCompliantResources})`}</Pill>,
+                  <span className="text-[11px] text-muted">{p.detail}</span>,
+                ])}
+              />
+            </div>
           );
         }
         return (
           <div className="space-y-2">
+            {headerStats}
             <div className="flex flex-wrap items-center gap-x-3 text-[11px] text-muted">
               <span>
                 NSG <span className="font-mono text-text">{props.resourceName}</span>

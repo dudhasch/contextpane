@@ -65,9 +65,17 @@ function SkillsPiiBody() {
   return (
     <div className="space-y-4 text-[12px]" data-testid="skills-pii">
       <section>
-        <div className="section-label mb-1.5">Tier 0 compiled skills</div>
-        <button type="button" onClick={() => { void loadSkills(); void compileSkill(); }} className="mb-2 rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] text-primary">Compile to Tier 0 Fleet Skill</button>
-        {skills.length === 0 && <div className="text-muted">No compiled skill yet.</div>}
+        <div className="section-label mb-1.5">Instant Auto-Fix Rules</div>
+        <button
+          type="button"
+          onClick={() => { void loadSkills(); void compileSkill(); }}
+          title="Runs in <1ms with 0 AI tokens next time this issue happens"
+          className="mb-1 rounded border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11.5px] font-medium text-primary hover:bg-primary/20"
+        >
+          Save as Instant Auto-Fix Rule
+        </button>
+        <div className="mb-2 text-[10.5px] text-muted">Runs in &lt;1ms with 0 AI tokens next time this issue happens</div>
+        {skills.length === 0 && <div className="text-muted">No compiled auto-fix rule yet.</div>}
         {skills.map((s) => <div key={s.id} className="mb-1 flex flex-wrap gap-1.5"><Pill tone="healthy">{s.badge}</Pill><Pill tone="muted">{s.id} · {s.latencyMs} ms · 0 tok</Pill></div>)}
       </section>
       <section>

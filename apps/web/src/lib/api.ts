@@ -69,7 +69,24 @@ export interface ApproveResponse {
   convergence: Convergence | null;
   canary?: CanaryTrace | null;
 }
-export interface Commercial { contractId: string; pathA: { label: string; reclaim: Record<string, number>; netDeltaMonthly: number; wasteEliminatedMonthly: number }; pathB: { label: string; increment: Record<string, number>; netDeltaMonthly: number }; recommendation: string }
+export interface CommercialSkuRow {
+  sku: string;
+  skuName: string;
+  unitPriceMonthly: number;
+  prepaid: number;
+  enabled: number;
+  consumed: number;
+  available: number;
+  orphaned: number;
+}
+export interface Commercial {
+  contractId: string;
+  neededSeats?: number;
+  skus?: CommercialSkuRow[];
+  pathA: { label: string; reclaim: Record<string, number>; netDeltaMonthly: number; wasteEliminatedMonthly: number };
+  pathB: { label: string; increment: Record<string, number>; netDeltaMonthly: number };
+  recommendation: string;
+}
 export interface ReverseResult { hcl: string; imports: string[]; tofuPlanSummary?: string; expectedPlanSummary?: string; shadowFindings: Array<{ kind: string; resources: string[]; detail: string }> }
 export interface Fleet { signature: string; affectedCount: number; tenants: Array<{ tenant: string; affected: boolean }> }
 

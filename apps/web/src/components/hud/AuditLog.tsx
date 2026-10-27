@@ -9,8 +9,8 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "hitl-approval": { label: "HITL approval", tone: "healthy", icon: <ShieldCheck /> },
   "hitl-rejection": { label: "HITL rejection", tone: "critical", icon: <ShieldX /> },
   "drift-reset": { label: "Demo drift reset", tone: "muted", icon: <RotateCcw /> },
-  "autonomous-rollback": { label: "Autonomous rollback (f⁻¹)", tone: "critical", icon: <History /> },
-  "fleet-campaign": { label: "Fleet GitOps campaign", tone: "warning", icon: <Zap /> },
+  "autonomous-rollback": { label: "Auto-rollback (previous state restored)", tone: "critical", icon: <History /> },
+  "fleet-campaign": { label: "Multi-client fix PRs created", tone: "warning", icon: <Zap /> },
   "ticket-closed": { label: "ticket.closed (PSA)", tone: "healthy", icon: <CircleCheckBig /> },
   "ticket-reopened": { label: "ticket.reopened", tone: "warning", icon: <RotateCcw /> },
 };

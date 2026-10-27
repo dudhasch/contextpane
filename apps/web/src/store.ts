@@ -493,7 +493,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   async selectScenario(scenarioId) {
-    if (scenarioId === get().scenarioId && get().layout) return;
+    if (scenarioId === get().scenarioId && get().layout) {
+      set({ queueOpen: false });
+      return;
+    }
     set((s) => ({
       scenarioId,
       queueOpen: false,
@@ -678,8 +681,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
         get().toast({
           tone: "critical",
-          title: "Dead-man's switch fired in Canary Ring 0 · f⁻¹ inverse rollback executed",
-          detail: "Dead-man's switch fired in Canary Ring 0 · f⁻¹ inverse rollback executed — tenant restored to pre-change state",
+          title: "Health check failed · Auto-rollback restored previous state",
+          detail: "Canary health check failed — 1-Click Undo script executed automatically to restore the previous tenant state",
         });
         return;
       }
@@ -921,7 +924,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async stageCampaign() {
     try {
       const { campaign } = await api.campaign(get().scenarioId);
-      get().toast({ tone: campaign.verified ? "healthy" : "warning", title: `Fleet GitOps campaign staged (${campaign.branches.length} tenants)`, detail: `${campaign.branches.map((b) => b.branch).join(", ")} · verified in ${campaign.latencyMs} ms` });
+      get().toast({ tone: campaign.verified ? "healthy" : "warning", title: `Fix PRs created for ${campaign.branches.length} client tenants`, detail: `${campaign.branches.map((b) => b.branch).join(", ")} · verified in ${campaign.latencyMs} ms` });
     } catch (e) { get().toast({ tone: "critical", title: "Campaign failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
   async loadSkills() {
@@ -932,7 +935,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     try {
       const { skill, promoted } = await api.compileSkill(get().scenarioId);
       set((s) => ({ compiledSkills: [...s.compiledSkills.filter((x) => x.id !== skill.id), skill] }));
-      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? skill.badge : "Skill not promoted", detail: `${skill.fuzz.passed}/${skill.fuzz.cases} fuzz · Tier 0 · 0 tokens · ${skill.latencyMs} ms` });
+      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? "Saved as Instant Auto-Fix Rule" : "Rule not promoted", detail: "Runs in <1ms with 0 AI tokens next time this issue happens" });
     } catch (e) { get().toast({ tone: "critical", title: "Compile failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
   selectTimelineSlice(sliceId) {
@@ -944,7 +947,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     try {
       const r = await api.rollback(get().scenarioId);
       get().applyConvergence(get().scenarioId, null);
-      get().toast({ tone: "healthy", title: `Rollback (f⁻¹) executed in ${r.latencyMs} ms`, detail: "Pre-verified inverse bundle applied (simulated); canvas reverted." });
+      get().toast({ tone: "healthy", title: `Undo completed in ${r.latencyMs} ms`, detail: "Previous tenant state restored; canvas reverted." });
       void get().correlate({ fresh: true });
     } catch (e) { get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) }); }
   },

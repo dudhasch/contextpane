@@ -177,7 +177,7 @@ try {
     await cdp.key("Escape");
     await sleep(300);
     await cdp.key("f");
-    await cdp.waitFor(`/Verified Safe|Verified With Warnings|Verification Failed/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
+    await cdp.waitFor(`Boolean(document.querySelector('[data-testid="path-b"]')) && /Pre-Flight Checks Passed|Verified Safe|Verified With Warnings|Verification Failed/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
     await sleep(600);
     await cdp.shot(join(OUT, "03-tier3-approval-drawer.png"));
   }
@@ -212,9 +212,10 @@ try {
   if (shouldRun("06")) {
     await openItem("INC-4092");
     await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
+    await cdp.waitFor(`document.querySelector('[data-testid="scenario-body"]')?.innerText.includes("temporary RDP")`, 15_000, "the INC-4092 ticket body");
     await sleep(800);
     const trigger = await cdp.eval<{ x: number; y: number } | null>(`(() => {
-      const surface = document.querySelector('[data-testid="selection-surface"]');
+      const surface = document.querySelector('[data-testid="scenario-body"]')?.closest('[data-testid="selection-surface"]') ?? document.querySelector('[data-testid="selection-surface"]');
       if (!surface) return null;
       surface.scrollIntoView({ block: "center" });
       const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
@@ -269,7 +270,7 @@ try {
     await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
     await sleep(500);
     await cdp.key("f");
-    await cdp.waitFor(`/Verified Safe|Verified With Warnings/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
+    await cdp.waitFor(`Boolean(document.querySelector('[data-testid="path-b"]')) && /Pre-Flight Checks Passed|Verified Safe|Verified With Warnings/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
     await cdp.key("x");
     await cdp.waitFor(`document.querySelector('[data-testid="resolution-note"]')`, 60_000, "the PSA resolution note");
     await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 14_000, "the toasts to clear");

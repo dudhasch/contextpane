@@ -47,9 +47,24 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
         { id: "signins", label: isWorkloadIdentity ? "Service Principal Sign-In History" : "User Sign-In & Audit History", badge: props.events.length },
         { id: "policies", label: isWorkloadIdentity ? "Workload Identity & OAuth Grants" : "Conditional Access Policy Inspector", badge: props.policies.length },
       ]}
-      summary={
-        <div className="space-y-1">
-          <div className="text-[12.5px] leading-snug">{props.headline}</div>
+      summary={<div className="text-[12.5px] leading-snug">{props.headline}</div>}
+      primaryAction={
+        drifted.length > 0 && (
+          <>
+            <Button size="xs" variant="meta" icon={<ShieldBan />} onClick={() => focusCard("EntraSignInTimeline", "policies")}>
+              {isWorkloadIdentity ? "Inspect App Grants & Fix" : "Inspect Policy & Fix"}
+            </Button>
+            {props.microActions.some((a) => a.kind === "generate-fix") && (
+              <Button size="xs" variant="outline" icon={<Wrench />} onClick={() => openRemediation({ tab: "powershell" })}>
+                {isWorkloadIdentity ? "Stage Workload Identity Fix" : "Stage CA Fix"}
+              </Button>
+            )}
+          </>
+        )
+      }
+    >
+      {(tab) => (
+        <div className="space-y-2.5">
           {props.rootCause ? (
             <div className="flex min-w-0 items-center gap-1.5 text-[11.5px]" title={props.rootCause.explanation}>
               <ShieldBan className="size-3.5 shrink-0 text-critical" />
@@ -74,24 +89,9 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
               </div>
             )
           )}
+          {tab === "policies" ? <PolicyInspector policies={props.policies} /> : <SignInList events={props.events} />}
         </div>
-      }
-      primaryAction={
-        drifted.length > 0 && (
-          <>
-            <Button size="xs" variant="meta" icon={<ShieldBan />} onClick={() => focusCard("EntraSignInTimeline", "policies")}>
-              {isWorkloadIdentity ? "Inspect App Grants & Fix" : "Inspect Policy & Fix"}
-            </Button>
-            {props.microActions.some((a) => a.kind === "generate-fix") && (
-              <Button size="xs" variant="outline" icon={<Wrench />} onClick={() => openRemediation({ tab: "powershell" })}>
-                {isWorkloadIdentity ? "Stage Workload Identity Fix" : "Stage CA Fix"}
-              </Button>
-            )}
-          </>
-        )
-      }
-    >
-      {(tab) => (tab === "policies" ? <PolicyInspector policies={props.policies} /> : <SignInList events={props.events} />)}
+      )}
     </CardShell>
   );
 }

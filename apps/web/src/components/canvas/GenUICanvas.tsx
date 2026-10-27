@@ -1,4 +1,4 @@
-import { ChevronRight, Database, History, LayoutGrid, Pin, Undo2, X } from "lucide-react";
+import { ChevronRight, Database, LayoutGrid, Pin, Undo2, X } from "lucide-react";
 import type { LayoutComponent } from "@contextpane/catalog";
 import { selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
@@ -47,24 +47,87 @@ export function GenUICanvas() {
   );
 }
 
-/** Sleek 1-line flight-recorder scrubber: Tier 0, 0 tokens, re-hydrates in <2 ms and rings the changed card. */
+function formatTimelineStepLabel(s: { kind?: string; relativeLabel: string; timestamp: string; label: string }): string {
+  const hhmm = s.timestamp.slice(11, 16);
+  if (s.kind === "baseline" || s.relativeLabel === "T-18m") return `Before Issue (${hhmm})`;
+  if (s.kind === "drift" || s.relativeLabel === "T-14m") return `Config Changed (${hhmm})`;
+  if (s.kind === "first-failure" || s.relativeLabel === "T-06m") return `First Error (${hhmm})`;
+  if (s.kind === "now" || s.relativeLabel === "NOW") return "Now (Active)";
+  if (s.kind === "counterfactual" || s.relativeLabel === "T+Fix") return "After Fix (Preview)";
+  return s.label;
+}
+
+function formatTimelineStepDescription(s: { kind?: string; relativeLabel: string; state: { summary: string } }, scenarioId: string): string {
+  const isAvd = scenarioId === "INC-4092";
+  if (s.kind === "baseline" || s.relativeLabel === "T-18m") return isAvd ? "All 5 users working normally" : "All systems healthy before change";
+  if (s.kind === "drift" || s.relativeLabel === "T-14m") return isAvd ? "Port 3389 opened & 3 users on E3 license" : "Configuration changed from baseline";
+  if (s.kind === "first-failure" || s.relativeLabel === "T-06m") return isAvd ? "First user blocked (AADSTS53003)" : "First user or device error reported";
+  if (s.kind === "now" || s.relativeLabel === "NOW") return isAvd ? "3 users blocked · Port 3389 exposed" : "Active issue needs attention";
+  if (s.kind === "counterfactual" || s.relativeLabel === "T+Fix") return isAvd ? "Preview: All 3 issues resolved" : "Preview: All issues resolved";
+  return s.state.summary;
+}
+
+/** Clean, self-explanatory Incident Timeline bar. */
 function TimeTravelScrubber() {
   const timeline = useWorkbench((s) => s.timeline);
   const sliceId = useWorkbench((s) => s.timelineSliceId);
+  const scenarioId = useWorkbench((s) => s.scenarioId);
   const select = useWorkbench((s) => s.selectTimelineSlice);
   const load = useWorkbench((s) => s.loadDrawerExtras);
   const convergence = useWorkbench(selectConvergence);
   const rollbackNow = useWorkbench((s) => s.rollbackNow);
-  if (!timeline) return <button type="button" onClick={() => void load()} className="flex h-7 shrink-0 items-center gap-1.5 border-b border-border px-3 font-mono text-[10.5px] text-faint hover:text-text" data-testid="timeline-scrubber"><History className="size-3" /> Time travel…</button>;
+  if (!timeline) {
+    return (
+      <button
+        type="button"
+        onClick={() => void load()}
+        className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[11px] text-faint hover:text-text"
+        data-testid="timeline-scrubber"
+      >
+        <span>🕒 Incident Timeline…</span>
+      </button>
+    );
+  }
   const active = timeline.slices.find((s) => s.id === sliceId);
   return (
-    <div className="flex h-7 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3" data-testid="timeline-scrubber">
-      <History className="size-3 shrink-0 text-primary" />
-      {timeline.slices.map((s) => (
-        <button key={s.id} type="button" onClick={() => select(s.id)} title={`${s.label} · ${s.timestamp.slice(11, 16)} UTC · ${s.state.summary}`} className={`h-5 shrink-0 rounded border px-1.5 font-mono text-[10.5px] ${s.id === sliceId ? "border-primary/50 bg-primary/12 text-primary" : "border-border text-faint hover:text-text"}`}>{s.relativeLabel}</button>
-      ))}
-      {active && <span className="truncate text-[10.5px] text-muted">{active.label} · {active.timestamp.slice(11, 16)} UTC{active.changedCardId ? ` · Δ ${active.changedCardId}` : ""} · Tier 0 · 0 tok</span>}
-      {convergence && <button type="button" onClick={() => void rollbackNow()} className="ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 font-mono text-[10.5px] text-healthy" data-testid="rollback-button"><Undo2 className="size-3" /> 1-Click Undo / Rollback (f⁻¹)</button>}
+    <div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface/30 px-3" data-testid="timeline-scrubber">
+      <span className="shrink-0 text-[10.5px] font-medium whitespace-nowrap text-muted">🕒 Incident Timeline:</span>
+      <div className="flex shrink-0 items-center gap-0.5">
+        {timeline.slices.map((s, idx) => {
+          const isSelected = s.id === sliceId;
+          const label = formatTimelineStepLabel(s);
+          return (
+            <div key={s.id} className="flex items-center gap-0.5">
+              {idx > 0 && <span className="text-[9.5px] text-faint">→</span>}
+              <button
+                type="button"
+                onClick={() => select(s.id)}
+                title={s.state.summary}
+                className={`h-5 shrink-0 rounded border px-1.5 text-[10.5px] whitespace-nowrap transition-colors ${
+                  isSelected
+                    ? "border-primary/60 bg-primary/15 font-semibold text-primary"
+                    : "border-border-subtle bg-surface text-muted hover:border-border hover:text-text"
+                }`}
+              >
+                {label}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {active && !convergence && (
+        <span className="ml-auto truncate pl-1.5 text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId)}</span>
+      )}
+      {convergence && (
+        <button
+          type="button"
+          onClick={() => void rollbackNow()}
+          className="ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[10.5px] font-medium whitespace-nowrap text-healthy hover:bg-healthy/20"
+          data-testid="rollback-button"
+        >
+          <Undo2 className="size-3" /> Undo Change (Restore Previous State)
+        </button>
+      )}
     </div>
   );
 }

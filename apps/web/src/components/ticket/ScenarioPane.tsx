@@ -1,8 +1,8 @@
-import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
+import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { CATEGORY_META, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
-import { fmtDateTimeUtc, fmtMs, fmtTokens } from "@/lib/format";
+import { fmtDateTimeUtc } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
 import { selectConvergence, useWorkbench } from "@/store";
 import { OriginBadge } from "../hud/WorkQueue";
@@ -15,7 +15,7 @@ import { SelectionTrigger } from "./SelectionTrigger";
 /**
  * Left pane. In three seconds: what the issue is (summary), what MCP enriched
  * (colour-coded entities linked to their cards) and the exact steps that resolve
- * it. Contract, infrastructure spec and timeline stay folded at the bottom.
+ * it. Enriched objects, contract, infrastructure spec and timeline stay folded at the bottom.
  */
 export function ScenarioPane() {
   const brief = useWorkbench((s) => s.brief);
@@ -32,8 +32,8 @@ export function ScenarioPane() {
       <ScenarioHeader brief={brief} />
       <SummaryPlan brief={brief} />
       <ScenarioText brief={brief} />
-      <EnrichedContext entities={brief.entities} />
       <div className="space-y-1.5">
+        <EnrichedContext entities={brief.entities} />
         {brief.contract && (
           <Accordion icon={<FileText />} title={`Contract #${brief.contract.contractId}`} hint={brief.contract.title}>
             <ul className="space-y-0.5 text-[12px]">
@@ -168,7 +168,7 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
   );
 }
 
-/** Subtle fleet-immunity pill inside the Resolution Plan only; opens the Fleet & Reverse-IaC preview tab in Action Approval Drawer. */
+/** Multi-tenant callout inside the Resolution Plan; opens the Other Clients tab in the Action Approval Drawer. */
 function FleetPill() {
   const fleet = useWorkbench((s) => s.fleet);
   const openRemediation = useWorkbench((s) => s.openRemediation);
@@ -177,12 +177,12 @@ function FleetPill() {
     <button
       type="button"
       onClick={() => openRemediation({ tab: "fleet" })}
-      className="mt-2 inline-flex min-h-6 items-center gap-1.5 rounded border border-warning/45 bg-warning/12 px-2 py-1 text-left font-mono text-[10.5px] leading-tight whitespace-normal text-warning hover:bg-warning/20"
-      title={`Preview affected peer tenants (${fleet.affectedCount}) and blast radius before staging fleet GitOps PRs`}
+      className="mt-2.5 inline-flex min-h-6 items-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-2.5 py-1 text-left text-[11.5px] leading-tight whitespace-normal text-warning transition-colors hover:bg-warning/20"
+      title={`Review ${fleet.affectedCount} other client tenants with this same misconfiguration`}
       data-testid="fleet-pill"
     >
-      <span>Stage Fleet GitOps Campaign ({fleet.affectedCount} Tenants) · {fleet.signature}</span>
-      <ChevronRight className="size-3 shrink-0" />
+      <span>🌐 {fleet.affectedCount} other client tenants have this same misconfiguration ·</span>
+      <span className="font-semibold underline decoration-warning/60 underline-offset-2">[Review &amp; Fix All {fleet.affectedCount} →]</span>
     </button>
   );
 }
@@ -293,27 +293,45 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
   );
 }
 
-/** "Detected & Enriched Context": every MCP-enriched entity, grouped by semantic provenance colour. */
+/** Closed-by-default accordion of all MCP-enriched tenant objects, grouped by domain colour. */
 function EnrichedContext({ entities }: { entities: EnrichedEntity[] }) {
+  const [open, setOpen] = useState(false);
   const groups = CATEGORY_ORDER.map((c) => ({ category: c, items: entities.filter((e) => e.category === c) })).filter((g) => g.items.length);
   return (
-    <section className="card" data-testid="enriched-context">
-      <div className="section-label mb-2">Detected &amp; Enriched Context</div>
-      <div className="space-y-2">
-        {groups.map((g) => (
-          <div key={g.category} style={catStyle(g.category)}>
-            <div className={`mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase ${CAT_TEXT}`}>
-              <span className={`size-2 rounded-full ${CAT_DOT}`} />
-              {CATEGORY_META[g.category].label}
+    <section className="rounded-md border border-border-subtle bg-surface" data-testid="enriched-context">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-[12px] hover:bg-elevated/60"
+      >
+        <span className="font-mono text-[11px] font-bold text-primary" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        <span className="shrink-0 text-muted [&>svg]:size-3.5">
+          <Layers />
+        </span>
+        <span className="shrink-0 font-medium">Enriched Tenant Objects ({entities.length})</span>
+        {!open && <span className="truncate text-[11px] text-muted">· {groups.map((g) => CATEGORY_META[g.category].label).join(", ")}</span>}
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted">{open ? "Collapse ▾" : "Expand ▸"}</span>
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-border-subtle px-2.5 py-2">
+          {groups.map((g) => (
+            <div key={g.category} style={catStyle(g.category)}>
+              <div className={`mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase ${CAT_TEXT}`}>
+                <span className={`size-2 rounded-full ${CAT_DOT}`} />
+                {CATEGORY_META[g.category].label}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {g.items.map((e) => (
+                  <EntityPill key={`${e.category}-${e.id}`} entity={e} />
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1">
-              {g.items.map((e) => (
-                <EntityPill key={`${e.category}-${e.id}`} entity={e} />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -334,7 +352,7 @@ function Accordion({ icon, title, hint, children }: { icon: ReactNode; title: st
   );
 }
 
-/** Customer screenshot on the ticket; one click reads it with Muse Spark 1.3 (image input) and pins the matching sign-in. */
+/** Customer screenshot on the ticket; one click scans it for error code & timestamp and highlights the matching sign-in. */
 function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
   const vision = useWorkbench((s) => s.vision);
   const extract = useWorkbench((s) => s.extractVision);
@@ -356,12 +374,12 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
             {attachment.url.startsWith("/api/tickets/inbox-attachment/") ? ` · read from input/tickets/${decodeURIComponent(attachment.url.split("/")[4] ?? "")}/` : ""}
           </div>
           <Button size="xs" variant="meta" icon={<ScanEye />} className="mt-1" loading={vision.status === "loading"} onClick={() => void extract(attachment)}>
-            Extract Telemetry via Muse Vision
+            Scan Screenshot for Error Code &amp; Timestamp
           </Button>
         </div>
       </div>
-      {vision.status === "error" && <div className="mt-1 text-[11px] text-critical">Vision failed: {vision.error}</div>}
-      {result && !x && <div className="mt-1 text-[11px] text-critical">Vision failed: {result.error}</div>}
+      {vision.status === "error" && <div className="mt-1 text-[11px] text-critical">Screenshot scan failed: {vision.error}</div>}
+      {result && !x && <div className="mt-1 text-[11px] text-critical">Screenshot scan failed: {result.error}</div>}
       {result && x && (
         <div className="mt-1.5 animate-fade-in rounded-md border border-meta/40 bg-meta/8 p-2 text-[11px]" data-testid="vision-result">
           <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
@@ -374,15 +392,12 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
           </dl>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             {result.match ? (
-              <Pill tone="meta" icon={<Eye />} title={`${result.match.upn} · ${result.match.timestamp}`}>
-                matched {result.match.eventId} · Δ {result.match.deltaSeconds ?? "?"} s
+              <Pill tone="meta" icon={<Eye />} mono={false} title={`${result.match.upn} · ${result.match.timestamp}`}>
+                ✓ Matched sign-in event ({result.match.eventId})
               </Pill>
             ) : (
-              <Pill tone="warning">no matching sign-in</Pill>
+              <Pill tone="warning" mono={false}>No matching sign-in found</Pill>
             )}
-            <span className="ml-auto font-mono text-[10px] text-faint">
-              {result.telemetry.modelId} · {fmtMs(result.telemetry.latencyMs)} · {fmtTokens(result.telemetry.tokensUsed.total)} tok
-            </span>
           </div>
         </div>
       )}

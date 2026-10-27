@@ -68,11 +68,34 @@ export function shortSku(sku: string, max = 16): string {
 function CommercialSubTab() {
   const rec = useWorkbench((s) => s.commercial);
   const loadOps = useWorkbench((s) => s.loadOps);
-  if (!rec) return <button type="button" onClick={() => void loadOps()} className="text-[11.5px] text-primary hover:underline">Load 3-Way Commercial &amp; Seat Reconciler…</button>;
+  if (!rec) return <button type="button" onClick={() => void loadOps()} className="text-[11.5px] text-primary hover:underline">Load License &amp; Cost Impact…</button>;
   return (
-    <div className="space-y-1.5 text-[11.5px]" data-testid="commercial-subtab">
-      <div><span className="text-healthy">Path A · {rec.pathA.label}:</span> <span className="text-muted">$0/mo net · ${rec.pathA.wasteEliminatedMonthly}/mo waste eliminated</span></div>
-      <div><span>Path B · {rec.pathB.label}:</span> <span className="text-muted">+${rec.pathB.netDeltaMonthly}/mo prorated ({rec.contractId})</span></div>
+    <div className="space-y-2.5 text-[11.5px]" data-testid="commercial-subtab">
+      <div>
+        <div className="text-[12px] font-semibold text-text">License &amp; Cost Impact</div>
+        <div className="text-[11px] text-muted">Contract vs. Billed vs. Active Entra Seats — $0 extra cost</div>
+      </div>
+      {rec.skus && rec.skus.length > 0 && (
+        <DataTable
+          head={["License", "Customer Contract", "Billed by Vendor (Pax8)", "Assigned in Entra ID"]}
+          rows={rec.skus.map((s) => [
+            <div>
+              <div className="font-medium text-text">{s.skuName}</div>
+              <div className="font-mono text-[10px] text-faint">{s.sku}</div>
+            </div>,
+            <span className="font-mono">{s.prepaid} seats</span>,
+            <span className="font-mono">{s.enabled} seats (${s.unitPriceMonthly}/mo)</span>,
+            <span className="font-mono">
+              {s.consumed} active · <span className={s.available > 0 ? "text-healthy" : "text-warning"}>{s.available} free</span>
+              {s.orphaned > 0 ? <span className="text-warning"> · {s.orphaned} reclaimable</span> : null}
+            </span>,
+          ])}
+        />
+      )}
+      <div className="space-y-1 rounded-md border border-emerald-500/25 bg-emerald-500/8 px-2.5 py-1.5">
+        <div><span className="font-medium text-healthy">Recommended ({rec.pathA.label}):</span> <span className="text-muted">$0/mo net · ${rec.pathA.wasteEliminatedMonthly}/mo waste eliminated</span></div>
+        <div><span className="text-muted">Alternative ({rec.pathB.label}): +${rec.pathB.netDeltaMonthly}/mo prorated ({rec.contractId})</span></div>
+      </div>
     </div>
   );
 }
@@ -108,12 +131,20 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       tabs={[
         { id: "users", label: "Assignments", badge: props.users.length },
         { id: "pool", label: "SKU Pools", badge: props.skuPools.length },
-        { id: "commercial", label: "3-Way Reconciler" },
+        { id: "commercial", label: "Billing & Seat Check ($0 Extra Cost)" },
       ]}
-      summary={
-        <div className="space-y-1">
-          <div className="text-[12.5px] leading-snug">{props.headline}</div>
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+      summary={<div className="text-[12.5px] leading-snug">{props.headline}</div>}
+      primaryAction={
+        open.length > 0 && (
+          <Button size="xs" variant="meta" icon={<Wrench />} loading={remediateStatus === "loading"} onClick={() => openRemediation({ tab: "powershell" })}>
+            Stage License Remediation
+          </Button>
+        )
+      }
+    >
+      {(tab) => (
+        <div className="space-y-2.5">
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">
             {props.skuPools.map((p) => (
               <Stat key={p.skuPartNumber} label={`${p.skuPartNumber} Pool:`} tone={p.available <= 0 ? "critical" : undefined}>
                 {p.skuPartNumber === props.skuPartNumber || !p.note ? `${p.consumed}/${p.enabled} assigned · ${p.available} available` : p.note}
@@ -123,44 +154,34 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
               {props.groupErrors.length ? props.groupErrors.map((e) => `${e.state} (${e.affectedUsers})`).join(", ") : "0"}
             </Stat>
           </div>
+          {tab === "commercial" ? (
+            <CommercialSubTab />
+          ) : tab === "pool" ? (
+            <div className="space-y-2">
+              <DataTable
+                head={["SKU", "Enabled", "Consumed", "Available", "Source"]}
+                rows={props.skuPools.map((p) => [
+                  <span title={p.skuName} className="font-mono">
+                    {p.skuPartNumber}
+                  </span>,
+                  <span className="font-mono">{p.enabled}</span>,
+                  <span className="font-mono">{p.consumed}</span>,
+                  <span className={`font-mono ${p.available <= 0 ? "text-critical" : "text-healthy"}`}>{p.available}</span>,
+                  <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "fixture"}</span>,
+                ])}
+              />
+              {props.groupErrors.map((e) => (
+                <div key={e.groupName + e.skuPartNumber} className="rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[11.5px]">
+                  <span className="font-mono text-critical">{e.groupName} · State: Error · {e.state}</span>
+                  <div className="text-muted">{e.detail}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <UsersTable users={props.users} />
+          )}
         </div>
-      }
-      primaryAction={
-        open.length > 0 && (
-          <Button size="xs" variant="meta" icon={<Wrench />} loading={remediateStatus === "loading"} onClick={() => openRemediation({ tab: "powershell" })}>
-            Stage License Remediation
-          </Button>
-        )
-      }
-    >
-      {(tab) =>
-        tab === "commercial" ? (
-          <CommercialSubTab />
-        ) : tab === "pool" ? (
-          <div className="space-y-2">
-            <DataTable
-              head={["SKU", "Enabled", "Consumed", "Available", "Source"]}
-              rows={props.skuPools.map((p) => [
-                <span title={p.skuName} className="font-mono">
-                  {p.skuPartNumber}
-                </span>,
-                <span className="font-mono">{p.enabled}</span>,
-                <span className="font-mono">{p.consumed}</span>,
-                <span className={`font-mono ${p.available <= 0 ? "text-critical" : "text-healthy"}`}>{p.available}</span>,
-                <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "fixture"}</span>,
-              ])}
-            />
-            {props.groupErrors.map((e) => (
-              <div key={e.groupName + e.skuPartNumber} className="rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[11.5px]">
-                <span className="font-mono text-critical">{e.groupName} · State: Error · {e.state}</span>
-                <div className="text-muted">{e.detail}</div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <UsersTable users={props.users} />
-        )
-      }
+      )}
     </CardShell>
   );
 }
