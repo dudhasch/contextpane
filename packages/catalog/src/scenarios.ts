@@ -266,7 +266,7 @@ export const ResolutionStepSchema = z.object({
   id: z.string(),
   category: ProvenanceCategorySchema,
   title: z.string().max(40).describe("Short label, e.g. License Upgrade"),
-  detail: z.string().max(220),
+  detail: z.string().max(320),
   target: CanvasComponentTypeSchema,
   tab: z.string().optional(),
   action: z.object({
@@ -298,7 +298,7 @@ export const ScenarioBriefSchema = z.object({
   /** Ticket description, or the anomaly narrative. Entity ids inside it render as hover pills. */
   body: z.string(),
   signals: z.array(ScenarioSignalSchema).max(10).default([]),
-  summary: z.string().max(400).describe("1-2 sentence technical root cause"),
+  summary: z.string().max(700).describe("1-2 sentence technical root cause"),
   steps: z.array(ResolutionStepSchema).max(6),
   entities: z.array(EnrichedEntitySchema).max(24),
   requester: z.object({ displayName: z.string(), upn: z.string(), role: z.string() }).nullable(),

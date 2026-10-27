@@ -117,4 +117,44 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(fabPlan.bundle.powershellScript).toMatch(/Fabrikam-Legacy-BitLocker-DeviceConfig/);
     expect(verifyFormalInvariants(fab.baseScenarioId).passed).toBe(true);
   });
+
+  test("ANOM-APP-401 and custom ERP ticket brief copy ends cleanly with full words & periods", async () => {
+    const app401Ctx = await gatherContext("ANOM-APP-401", { fresh: true });
+    const app401Brief = buildScenarioBrief(app401Ctx);
+    expect(app401Brief.summary.endsWith(".")).toBe(true);
+    expect(app401Brief.summary.endsWith("github-actions")).toBe(false);
+    expect(app401Brief.summary).toContain("github-actions-erp-sync' expired");
+    expect(app401Brief.steps[1]!.detail).toContain("Sites.Selected per 90-day activity.");
+    expect(app401Brief.steps.every((s) => s.detail.endsWith("."))).toBe(true);
+
+    const customEntry = registerCustomTicket(erp);
+    const customCtx = await gatherContext(customEntry.scenarioId, { fresh: true });
+    const customBrief = buildScenarioBrief(customCtx);
+    expect(customBrief.summary.endsWith(".")).toBe(true);
+    expect(customBrief.summary.endsWith("github-actions")).toBe(false);
+    expect(customBrief.summary).toContain("github-actions-erp-sync' expired");
+    expect(customBrief.steps[1]!.detail).toContain("Sites.Selected per 90-day activity.");
+    expect(customBrief.steps.every((s) => s.detail.endsWith("."))).toBe(true);
+  });
+
+  test("ANOM-APP-401 workload identity sign-in and audit history rows are diversified", async () => {
+    const ctx = await gatherContext("ANOM-APP-401", { fresh: true });
+    const layout = buildLayout(ctx, { tier: "Tier 0", provider: "local", modelId: "deterministic", latencyMs: 0, tokensUsed: 0, fallbackChain: [], validated: true, repaired: [] });
+    const timeline = layout.components.find((c) => c.type === "EntraSignInTimeline");
+    expect(timeline).toBeDefined();
+
+    const props = timeline!.props as { events: Array<{ timestamp: string; displayName: string; appDisplayName: string; errorCodeLabel?: string; failureReason?: string; clientApp: string }> };
+    expect(props.events.length).toBeGreaterThanOrEqual(5);
+
+    // Timestamps must be distinct
+    const timestamps = new Set(props.events.map((e) => e.timestamp));
+    expect(timestamps.size).toBe(props.events.length);
+
+    // Realistic event details
+    expect(props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" && e.clientApp === "GitHub Actions")).toBe(true);
+    expect(props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" && e.clientApp.includes("retry"))).toBe(true);
+    expect(props.events.some((e) => e.errorCodeLabel === "OAuth Grant" || e.appDisplayName.includes("Mail.ReadWrite"))).toBe(true);
+    expect(props.events.some((e) => e.errorCodeLabel === "Scope Audit" || e.appDisplayName.includes("RoleManagement"))).toBe(true);
+    expect(props.events.some((e) => e.displayName === "Alex Wilber")).toBe(true);
+  });
 });

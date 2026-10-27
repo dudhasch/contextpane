@@ -121,6 +121,16 @@ function poolNote(ctx: CorrelationContext, sku: string): string | undefined {
 /* Summary & resolution plan                                                   */
 /* -------------------------------------------------------------------------- */
 
+function cleanTruncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastPeriod = cut.lastIndexOf(".");
+  if (lastPeriod > max * 0.75) return cut.slice(0, lastPeriod + 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > max * 0.75) return `${cut.slice(0, lastSpace)}.`;
+  return cut;
+}
+
 function step(
   id: string,
   category: ResolutionStep["category"],
@@ -130,7 +140,7 @@ function step(
   action: ResolutionStep["action"],
   tab?: string,
 ): ResolutionStep {
-  return { id, category, title, detail: detail.slice(0, 220), target, action, ...(tab ? { tab } : {}) };
+  return { id, category, title, detail: cleanTruncate(detail, 320), target, action, ...(tab ? { tab } : {}) };
 }
 
 function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: ResolutionStep[] } {
@@ -219,7 +229,7 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
     case "ANOM-APP-401": {
       const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
       return {
-        summary: `${w.spn.displayName} (appId ${w.spn.appId}) is owned by ${w.owner.upn}, who holds 0 directory roles yet can rotate credentials and consent scopes (shadow admin). Its secret '${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}, so nightly GitHub Actions runs fail with ${w.errorCodeLabel}; granted scopes ${w.appPermissions.join(", ")} far exceed the ${w.requiredPermissions.join(", ")} its 90-day activity needs.`,
+        summary: `${w.spn.displayName} (appId ${w.spn.appId.slice(0, 8)}…) is owned by ${w.owner.upn} (0 directory roles, shadow admin). Its secret '${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}, so nightly GitHub Actions runs fail with ${w.errorCodeLabel}; granted scopes (${w.appPermissions.join(", ")}) far exceed the ${w.requiredPermissions.join(", ")} its 90-day activity needs.`,
         steps: [
           step("owner", "identity", "Remove Shadow-Admin Owner", `Remove ${w.owner.upn} (0 directory roles) as owner of ${w.spn.displayName} so a non-admin no longer controls the workload identity.`, "EntraSignInTimeline", { label: "Stage Workload Fix", kind: "stage-fix" }, "policies"),
           step("scopes", "identity", "Revoke Grant, Right-Size", `Revoke the unverified delegated grant (${w.oauth2PermissionGrant.scope}) and replace ${w.appPermissions.join(", ")} with ${w.requiredPermissions.join(", ")} per 90-day activity.`, "EntraSignInTimeline", { label: "Inspect App Grants", kind: "inspect" }, "policies"),
@@ -338,7 +348,7 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     tenantId: ctx.tenantId,
     tenantName: tenant.displayName,
     verifiedDomain: tenant.verifiedDomain,
-    summary: summary.slice(0, 400),
+    summary: cleanTruncate(summary, 700),
     steps,
     entities: scenarioEntities(ctx).slice(0, 24),
     sources: ctx.sourcesUsed,
@@ -427,7 +437,8 @@ function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "ti
   const inheritedSteps = base.steps.filter((s) => cards.has(s.target));
   const x = custom.extraction;
   const matched = x.entities.filter((e) => e.resolvedTo);
-  const summary = `Unscripted ticket triaged live against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "no intent keywords"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`.slice(0, 400);
+  const rawSummary = `Unscripted ticket triaged live against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "no intent keywords"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`;
+  const summary = cleanTruncate(rawSummary, 700);
   return {
     ...base,
     summary,

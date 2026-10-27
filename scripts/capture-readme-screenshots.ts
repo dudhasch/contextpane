@@ -24,10 +24,13 @@ const arg = (name: string, fallback: string) => {
 };
 const URL_BASE = arg("--url", "http://localhost:5173");
 const CLOSURE = process.argv.includes("--closure");
+const ONLY = arg("--only", "");
 const OUT = resolve(arg("--out", "docs/screenshots"));
 const PORT = 9333;
 const WIDTH = 1600;
 const HEIGHT = 900;
+
+const shouldRun = (shot: string) => !ONLY || ONLY === shot || ONLY === shot.replace(/^0+/, "");
 
 const BROWSERS = [
   "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
@@ -131,115 +134,129 @@ try {
   await sleep(1500);
 
   /* 1 · ticket mode: summary & plan, provenance pills, hover popover on the requester's UPN */
-  const pill = await cdp.eval<{ x: number; y: number } | null>(`(() => {
-    const el = document.querySelector('[data-testid="enriched-context"] [data-entity^="lynne.robins"]') ?? document.querySelector('[data-entity^="lynne.robins"]');
-    if (!el) return null;
-    el.scrollIntoView({ block: "center" });
-    const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  if (!pill) throw new Error("UPN pill not found");
-  await cdp.mouseTo(pill.x - 4, pill.y);
-  await sleep(100);
-  await cdp.mouseTo(pill.x, pill.y);
-  await cdp.waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((d) => /Assigned SKU/.test(d.innerText) && / ms/.test(d.innerText) && !d.querySelector(".animate-pulse"))`, 20_000, "the hover popover");
-  await sleep(400);
-  await cdp.shot(join(OUT, "01-workbench-hover-popover.png"));
+  if (shouldRun("01")) {
+    const pill = await cdp.eval<{ x: number; y: number } | null>(`(() => {
+      const el = document.querySelector('[data-testid="enriched-context"] [data-entity^="lynne.robins"]') ?? document.querySelector('[data-entity^="lynne.robins"]');
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    if (!pill) throw new Error("UPN pill not found");
+    await cdp.mouseTo(pill.x - 4, pill.y);
+    await sleep(100);
+    await cdp.mouseTo(pill.x, pill.y);
+    await cdp.waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((d) => /Assigned SKU/.test(d.innerText) && / ms/.test(d.innerText) && !d.querySelector(".animate-pulse"))`, 20_000, "the hover popover");
+    await sleep(400);
+    await cdp.shot(join(OUT, "01-workbench-hover-popover.png"));
+  }
 
   /* 2 · IaC diff modal */
-  await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
-  await cdp.key("Escape");
-  await sleep(300);
-  await cdp.key("d");
-  await cdp.waitFor(`document.body.innerText.includes("@@")`, 10_000, "the diff modal");
-  await sleep(500);
-  await cdp.shot(join(OUT, "02-iac-diff-modal.png"));
+  if (shouldRun("02")) {
+    await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
+    await cdp.key("Escape");
+    await sleep(300);
+    await cdp.key("d");
+    await cdp.waitFor(`document.body.innerText.includes("@@")`, 10_000, "the diff modal");
+    await sleep(500);
+    await cdp.shot(join(OUT, "02-iac-diff-modal.png"));
+  }
 
   /* 3 · Tier 3 approval drawer: Path A (copy + dry-run proof), Path B (delegated approval) */
-  await cdp.key("Escape");
-  await sleep(300);
-  await cdp.key("f");
-  await cdp.waitFor(`/Verified Safe|Verified With Warnings|Verification Failed/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
-  await sleep(600);
-  await cdp.shot(join(OUT, "03-tier3-approval-drawer.png"));
+  if (shouldRun("03")) {
+    await cdp.key("Escape");
+    await sleep(300);
+    await cdp.key("f");
+    await cdp.waitFor(`/Verified Safe|Verified With Warnings|Verification Failed/.test(document.querySelector("aside")?.innerText ?? "")`, 180_000, "the remediation bundle");
+    await sleep(600);
+    await cdp.shot(join(OUT, "03-tier3-approval-drawer.png"));
+  }
 
   /* 4 · tenant anomaly ANOM-CA-204: plan step 1 expands the Conditional Access card */
-  await cdp.key("Escape");
-  await sleep(300);
-  await cdp.key("4");
-  await cdp.waitFor(canvasReady("ANOM-CA-204", 1), 60_000, "the ANOM-CA-204 canvas");
-  await sleep(800);
-  await cdp.key("e");
-  await cdp.waitFor(`document.querySelector('section[data-component="EntraSignInTimeline"][data-expanded]')`, 10_000, "the expanded CA card");
-  await sleep(700);
-  await cdp.shot(join(OUT, "04-tenant-anomaly-ca-policy.png"));
+  if (shouldRun("04")) {
+    await cdp.key("Escape");
+    await sleep(300);
+    await cdp.key("4");
+    await cdp.waitFor(canvasReady("ANOM-CA-204", 1), 60_000, "the ANOM-CA-204 canvas");
+    await sleep(800);
+    await cdp.key("e");
+    await cdp.waitFor(`document.querySelector('section[data-component="EntraSignInTimeline"][data-expanded]')`, 10_000, "the expanded CA card");
+    await sleep(700);
+    await cdp.shot(join(OUT, "04-tenant-anomaly-ca-policy.png"));
+  }
 
   /* 5 · pin the canvas as a recipe, switch to ANOM-INT-309 (Tier 0, 0 tokens), System & Audit open */
-  await cdp.key("p");
-  await cdp.waitFor(`document.body.innerText.includes("Recipe Pinned")`, 10_000, "the pinned recipe");
-  await cdp.key("5");
-  await cdp.waitFor(`${canvasReady("ANOM-INT-309", 1)} && document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("0 tokens")`, 30_000, "the ANOM-INT-309 recipe canvas");
-  await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
-  await cdp.key("t");
-  await sleep(900);
-  await cdp.shot(join(OUT, "05-recipe-switch-system-audit.png"));
-  await cdp.key("Escape");
-  await cdp.key("p");
-  await sleep(300);
+  if (shouldRun("05")) {
+    await cdp.key("p");
+    await cdp.waitFor(`document.body.innerText.includes("Recipe Pinned")`, 10_000, "the pinned recipe");
+    await cdp.key("5");
+    await cdp.waitFor(`${canvasReady("ANOM-INT-309", 1)} && document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("0 tokens")`, 30_000, "the ANOM-INT-309 recipe canvas");
+    await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
+    await cdp.key("t");
+    await sleep(900);
+    await cdp.shot(join(OUT, "05-recipe-switch-system-audit.png"));
+    await cdp.key("Escape");
+    await cdp.key("p");
+    await sleep(300);
+  }
 
   /* 6 · highlight any text → Generate Context UI: a cyan mini-dashboard spawned from "temporary RDP" */
-  await cdp.key("1");
-  await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
-  await sleep(800);
-  const trigger = await cdp.eval<{ x: number; y: number } | null>(`(() => {
-    const surface = document.querySelector('[data-testid="selection-surface"]');
-    if (!surface) return null;
-    surface.scrollIntoView({ block: "center" });
-    const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
-    let node, hit = null;
-    while ((node = walker.nextNode())) { const i = node.textContent.indexOf("temporary RDP"); if (i >= 0) { hit = { node, i }; break; } }
-    if (!hit) return null;
-    const range = document.createRange(); range.setStart(hit.node, hit.i); range.setEnd(hit.node, hit.i + "temporary RDP".length);
-    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-    surface.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    return true;
-  })()`);
-  if (!trigger) throw new Error("ticket text not found for the selection shot");
-  await cdp.waitFor(`document.querySelector('[data-testid="selection-trigger"]')`, 5_000, "the selection trigger pill");
-  await sleep(400);
-  await cdp.eval(`document.querySelector('[data-testid="selection-trigger"]').click(), true`);
-  await cdp.waitFor(`document.querySelector('[data-mini-dashboard]') && !document.querySelector('[data-testid="mini-dashboard-loading"]')`, 30_000, "the mini-dashboard");
-  await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
-  const badge = await cdp.eval<{ x: number; y: number } | null>(`(() => {
-    const el = document.querySelector('[data-selection]');
-    if (!el) return null;
-    el.scrollIntoView({ block: "center" });
-    const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  if (badge) {
-    await cdp.mouseTo(badge.x - 3, badge.y);
-    await sleep(80);
-    await cdp.mouseTo(badge.x, badge.y);
-    await sleep(350);
+  if (shouldRun("06")) {
+    await cdp.key("1");
+    await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
+    await sleep(800);
+    const trigger = await cdp.eval<{ x: number; y: number } | null>(`(() => {
+      const surface = document.querySelector('[data-testid="selection-surface"]');
+      if (!surface) return null;
+      surface.scrollIntoView({ block: "center" });
+      const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+      let node, hit = null;
+      while ((node = walker.nextNode())) { const i = node.textContent.indexOf("temporary RDP"); if (i >= 0) { hit = { node, i }; break; } }
+      if (!hit) return null;
+      const range = document.createRange(); range.setStart(hit.node, hit.i); range.setEnd(hit.node, hit.i + "temporary RDP".length);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      surface.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      return true;
+    })()`);
+    if (!trigger) throw new Error("ticket text not found for the selection shot");
+    await cdp.waitFor(`document.querySelector('[data-testid="selection-trigger"]')`, 5_000, "the selection trigger pill");
+    await sleep(400);
+    await cdp.eval(`document.querySelector('[data-testid="selection-trigger"]').click(), true`);
+    await cdp.waitFor(`document.querySelector('[data-mini-dashboard]') && !document.querySelector('[data-testid="mini-dashboard-loading"]')`, 30_000, "the mini-dashboard");
+    await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
+    const badge = await cdp.eval<{ x: number; y: number } | null>(`(() => {
+      const el = document.querySelector('[data-selection]');
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    if (badge) {
+      await cdp.mouseTo(badge.x - 3, badge.y);
+      await sleep(80);
+      await cdp.mouseTo(badge.x, badge.y);
+      await sleep(350);
+    }
+    await cdp.shot(join(OUT, "06-highlight-generate-context-ui.png"));
   }
-  await cdp.shot(join(OUT, "06-highlight-generate-context-ui.png"));
 
   /* 7 · unscripted ticket: the composer triages the ERP-sync sample live into CUSTOM-<hash> */
-  await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
-  await cdp.key("n");
-  await cdp.waitFor(`document.querySelector('[data-sample="erp-secret"]')`, 10_000, "the ticket composer");
-  await cdp.eval(`document.querySelector('[data-sample="erp-secret"]').click(), true`);
-  await sleep(300);
-  await cdp.eval(`document.querySelector('[data-testid="composer-submit"]').click(), true`);
-  await cdp.waitFor(`document.querySelector('[data-testid="tenant-breadcrumb"]')?.innerText.includes("#CUSTOM-") && document.querySelectorAll("section[data-component]").length >= 1 && !document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("correlating")`, 90_000, "the custom ticket canvas");
-  await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
-  await cdp.eval(`document.querySelector('[data-testid="scenario-pane"]').scrollTo({ top: 0 }), true`);
-  await sleep(600);
-  await cdp.shot(join(OUT, "07-unscripted-ticket-triage.png"));
+  if (shouldRun("07")) {
+    await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
+    await cdp.key("n");
+    await cdp.waitFor(`document.querySelector('[data-sample="erp-secret"]')`, 10_000, "the ticket composer");
+    await cdp.eval(`document.querySelector('[data-sample="erp-secret"]').click(), true`);
+    await sleep(300);
+    await cdp.eval(`document.querySelector('[data-testid="composer-submit"]').click(), true`);
+    await cdp.waitFor(`document.querySelector('[data-testid="tenant-breadcrumb"]')?.innerText.includes("#CUSTOM-") && document.querySelectorAll("section[data-component]").length >= 1 && !document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("correlating")`, 90_000, "the custom ticket canvas");
+    await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");
+    await cdp.eval(`document.querySelector('[data-testid="scenario-pane"]').scrollTo({ top: 0 }), true`);
+    await sleep(600);
+    await cdp.shot(join(OUT, "07-unscripted-ticket-triage.png"));
+  }
 
   /* 8 (--closure) · approve INC-4092 as Break-Glass → RESOLVED & VERIFIED, PSA resolution note; then reset the drift */
-  if (CLOSURE) {
+  if (CLOSURE && shouldRun("08")) {
     await cdp.key("1");
     await cdp.waitFor(canvasReady("INC-4092", 3), 90_000, "the INC-4092 canvas");
     await sleep(500);

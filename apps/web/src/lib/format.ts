@@ -6,6 +6,37 @@ export function fmtTimeUtc(iso: string): string {
   return `${d.getUTCHours().toString().padStart(2, "0")}:${d.getUTCMinutes().toString().padStart(2, "0")}:${d.getUTCSeconds().toString().padStart(2, "0")}Z`;
 }
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function fmtSignInTime(iso: string, latestIso?: string): string {
+  if (!iso) return "";
+  if (/^(Yesterday|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{2}:\d{2})/i.test(iso)) return iso;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+
+  const ref = latestIso ? new Date(latestIso) : new Date();
+  const validRef = Number.isNaN(ref.getTime()) ? new Date() : ref;
+
+  const isSameDay =
+    d.getUTCFullYear() === validRef.getUTCFullYear() &&
+    d.getUTCMonth() === validRef.getUTCMonth() &&
+    d.getUTCDate() === validRef.getUTCDate();
+  if (isSameDay) {
+    return `${d.getUTCHours().toString().padStart(2, "0")}:${d.getUTCMinutes().toString().padStart(2, "0")}:${d.getUTCSeconds().toString().padStart(2, "0")}Z`;
+  }
+
+  const yesterday = new Date(validRef.getTime() - 86_400_000);
+  const isYesterday =
+    d.getUTCFullYear() === yesterday.getUTCFullYear() &&
+    d.getUTCMonth() === yesterday.getUTCMonth() &&
+    d.getUTCDate() === yesterday.getUTCDate();
+  if (isYesterday) {
+    return `Yesterday ${d.getUTCHours().toString().padStart(2, "0")}:${d.getUTCMinutes().toString().padStart(2, "0")}Z`;
+  }
+
+  return `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
 export function fmtDateTimeUtc(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;

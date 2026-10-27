@@ -24,6 +24,7 @@ export interface WorkloadSignInEvent {
   ipAddress: string;
   deviceName: string;
   deviceCompliant: boolean | null;
+  isHighlighted?: boolean;
 }
 
 export interface WorkloadIdentityFixture {
@@ -123,28 +124,174 @@ export const WORKLOAD_IDENTITY: WorkloadIdentityFixture = {
   },
 };
 
-/** Nightly AADSTS7000222 token failures of the SPN from the GitHub Actions IP range (relative to now). */
+/**
+ * Realistic sign-in and audit history for ANOM-APP-401 / spn-contoso-erp-sync:
+ * - 02:15:00Z: AADSTS7000222 expired secret from GitHub Actions
+ * - 02:10:14Z: AADSTS7000222 retry failure
+ * - Yesterday 16:42Z: unverified OAuth grant Mail.ReadWrite + offline_access
+ * - Oct 19 23:59Z: secret 'github-actions-erp-sync' expiry
+ * - Oct 12: RoleManagement.ReadWrite.Directory scope audit
+ * - Sep 28: contractor Alex Wilber App Owner check
+ * - Sep 15: baseline successful sync call
+ */
 export function workloadIdentitySignIns(now = Date.now()): WorkloadSignInEvent[] {
-  return Array.from({ length: 7 }, (_, i) => {
-    const at = new Date(now - (i + 1) * 86_400_000 + 2.25 * 3_600_000);
-    at.setUTCHours(2, 15, 0, 0);
-    return {
-      id: `sgn-spn-erp-${(i + 1).toString().padStart(4, "0")}`,
-      timestamp: at.toISOString().replace(/\.\d{3}Z$/, "Z"),
+  const ref = new Date(now);
+  const year = ref.getUTCFullYear();
+
+  // Anchor nightly failure times relative to today
+  const tFail1 = new Date(now);
+  tFail1.setUTCHours(2, 15, 0, 0);
+
+  const tFail2 = new Date(now);
+  tFail2.setUTCHours(2, 10, 14, 0);
+
+  const tYesterday = new Date(now - 86_400_000);
+  tYesterday.setUTCHours(16, 42, 0, 0);
+
+  const tExpiry = new Date(Date.UTC(year, 9, 19, 23, 59, 59));
+  if (tExpiry.getTime() > now) tExpiry.setUTCFullYear(year - 1);
+
+  const tOct12 = new Date(Date.UTC(year, 9, 12, 11, 24, 0));
+  if (tOct12.getTime() > now) tOct12.setUTCFullYear(year - 1);
+
+  const tSep28 = new Date(Date.UTC(year, 8, 28, 9, 30, 0));
+  if (tSep28.getTime() > now) tSep28.setUTCFullYear(year - 1);
+
+  const tSep15 = new Date(Date.UTC(year, 8, 15, 14, 0, 0));
+  if (tSep15.getTime() > now) tSep15.setUTCFullYear(year - 1);
+
+  const events: WorkloadSignInEvent[] = [
+    {
+      id: "sgn-spn-erp-0001",
+      timestamp: tSep15.toISOString().replace(/\.\d{3}Z$/, "Z"),
       upn: WORKLOAD_IDENTITY.spn.displayName,
       displayName: WORKLOAD_IDENTITY.spn.displayName,
       appId: WORKLOAD_IDENTITY.spn.appId,
-      appDisplayName: WORKLOAD_IDENTITY.spn.displayName,
-      status: "failure" as const,
+      appDisplayName: "Microsoft Graph (/v1.0/users)",
+      status: "success",
+      errorCode: 0,
+      conditionalAccessStatus: "notApplied",
+      clientApp: "GitHub Actions",
+      location: "Chicago, US",
+      ipAddress: "185.199.108.40",
+      deviceName: "",
+      deviceCompliant: null,
+      isHighlighted: false,
+    },
+    {
+      id: "sgn-spn-erp-0002",
+      timestamp: tSep28.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: WORKLOAD_IDENTITY.owner.upn,
+      displayName: WORKLOAD_IDENTITY.owner.displayName,
+      appId: WORKLOAD_IDENTITY.spn.appId,
+      appDisplayName: "App Owner check (0 roles)",
+      status: "success",
+      errorCode: 0,
+      failureReason: "Contractor Alex Wilber App Owner check: 0 directory roles",
+      conditionalAccessStatus: "notApplied",
+      clientApp: "Access Review",
+      location: "Chicago, US",
+      ipAddress: "198.51.100.44",
+      deviceName: "CONTOSO-FIN-014",
+      deviceCompliant: true,
+      isHighlighted: false,
+    },
+    {
+      id: "sgn-spn-erp-0003",
+      timestamp: tOct12.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: WORKLOAD_IDENTITY.spn.displayName,
+      displayName: WORKLOAD_IDENTITY.spn.displayName,
+      appId: WORKLOAD_IDENTITY.spn.appId,
+      appDisplayName: "RoleManagement.ReadWrite.Directory audit",
+      status: "interrupted",
+      errorCode: 0,
+      errorCodeLabel: "Scope Audit",
+      failureReason: "RoleManagement.ReadWrite.Directory scope audit: overprivileged and unused in 90 days",
+      conditionalAccessStatus: "notApplied",
+      clientApp: "Entra Permissions Management",
+      location: "Redmond, US",
+      ipAddress: "198.51.100.12",
+      deviceName: "",
+      deviceCompliant: null,
+      isHighlighted: false,
+    },
+    {
+      id: "sgn-spn-erp-0004",
+      timestamp: tExpiry.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: WORKLOAD_IDENTITY.spn.displayName,
+      displayName: WORKLOAD_IDENTITY.spn.displayName,
+      appId: WORKLOAD_IDENTITY.spn.appId,
+      appDisplayName: `Secret '${WORKLOAD_IDENTITY.passwordCredential.displayName}' expired`,
+      status: "interrupted",
+      errorCode: 0,
+      errorCodeLabel: "Secret Expired",
+      failureReason: `PasswordCredential '${WORKLOAD_IDENTITY.passwordCredential.displayName}' expired ${WORKLOAD_IDENTITY.passwordCredential.endDateTime}`,
+      conditionalAccessStatus: "notApplied",
+      clientApp: "Key Vault Lifecycle",
+      location: "Redmond, US",
+      ipAddress: "198.51.100.10",
+      deviceName: "",
+      deviceCompliant: null,
+      isHighlighted: false,
+    },
+    {
+      id: "sgn-spn-erp-0005",
+      timestamp: tYesterday.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: WORKLOAD_IDENTITY.owner.upn,
+      displayName: WORKLOAD_IDENTITY.owner.displayName,
+      appId: WORKLOAD_IDENTITY.spn.appId,
+      appDisplayName: `Grant: ${WORKLOAD_IDENTITY.oauth2PermissionGrant.scope.replace(" ", " + ")}`,
+      status: "interrupted",
+      errorCode: 0,
+      errorCodeLabel: "OAuth Grant",
+      failureReason: `Unverified OAuth grant: ${WORKLOAD_IDENTITY.oauth2PermissionGrant.scope.replace(" ", " + ")} consented by non-admin owner`,
+      conditionalAccessStatus: "notApplied",
+      clientApp: "Azure Portal · Consent",
+      location: "Redmond, US",
+      ipAddress: "198.51.100.82",
+      deviceName: "CONTOSO-FIN-014",
+      deviceCompliant: true,
+      isHighlighted: false,
+    },
+    {
+      id: "sgn-spn-erp-0006",
+      timestamp: tFail2.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: WORKLOAD_IDENTITY.spn.displayName,
+      displayName: WORKLOAD_IDENTITY.spn.displayName,
+      appId: WORKLOAD_IDENTITY.spn.appId,
+      appDisplayName: "Microsoft Graph",
+      status: "failure",
+      errorCode: WORKLOAD_IDENTITY.errorCode,
+      errorCodeLabel: WORKLOAD_IDENTITY.errorCodeLabel,
+      failureReason: "AADSTS7000222: Client secret expired · GitHub Actions retry failure",
+      conditionalAccessStatus: "notApplied",
+      clientApp: "GitHub Actions (retry)",
+      location: "Chicago, US",
+      ipAddress: "185.199.108.41",
+      deviceName: "",
+      deviceCompliant: null,
+      isHighlighted: true,
+    },
+    {
+      id: "sgn-spn-erp-0007",
+      timestamp: tFail1.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      upn: WORKLOAD_IDENTITY.spn.displayName,
+      displayName: WORKLOAD_IDENTITY.spn.displayName,
+      appId: WORKLOAD_IDENTITY.spn.appId,
+      appDisplayName: "Microsoft Graph",
+      status: "failure",
       errorCode: WORKLOAD_IDENTITY.errorCode,
       errorCodeLabel: WORKLOAD_IDENTITY.errorCodeLabel,
       failureReason: "AADSTS7000222: The provided value for the 'client_secret' is expired.",
-      conditionalAccessStatus: "notApplied" as const,
+      conditionalAccessStatus: "notApplied",
       clientApp: "GitHub Actions",
       location: "Chicago, US",
-      ipAddress: `185.199.108.${40 + i}`,
+      ipAddress: "185.199.108.40",
       deviceName: "",
       deviceCompliant: null,
-    };
-  }).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      isHighlighted: true,
+    },
+  ];
+
+  return events.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }

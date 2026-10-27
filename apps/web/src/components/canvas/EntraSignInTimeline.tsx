@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, Eye, LogIn, ShieldBan, ShieldCheck, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { CaPolicyInspector, EntraSignInTimeline as Props, SignInEvent } from "@contextpane/catalog";
-import { fmtTimeUtc } from "@/lib/format";
+import { fmtSignInTime, fmtTimeUtc } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Dot, Pill, type Tone } from "../ui/Pill";
@@ -11,7 +11,7 @@ import { FilterChips, IdentityCell, rowHighlightClass, useStatusFilter, type Row
 const classifyEvent = (e: SignInEvent): RowStatus => (e.status === "failure" || e.status === "interrupted" ? "bad" : "good");
 
 /** Events shown before "show more": every highlighted one plus the nearest context. */
-const COLLAPSED_EVENTS = 6;
+const COLLAPSED_EVENTS = 8;
 
 function collapseEvents(events: SignInEvent[], pinned: string | null): SignInEvent[] {
   if (events.length <= COLLAPSED_EVENTS) return events;
@@ -100,6 +100,7 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
   const visionEventId = vision.status === "ready" ? (vision.result?.match?.eventId ?? null) : null;
   const events = useMemo(() => (showAll || chip !== "all" ? filtered : collapseEvents(filtered, visionEventId)), [filtered, showAll, chip, visionEventId]);
   const hidden = filtered.length - events.length;
+  const latestTimestamp = all[all.length - 1]?.timestamp;
   return (
     <div>
       <FilterChips chip={chip} counts={counts} onChange={setChip} testId="signin-filter-chips" />
@@ -114,10 +115,10 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
               </span>
               <div
                 className={`rounded-md border px-2.5 py-0.5 text-[11.5px] ${e.isHighlighted ? "border-critical/40 bg-critical/8" : "border-border-subtle bg-surface"}`}
-                title={`${e.appId} · ${e.clientApp} · ${e.location} · ${e.ipAddress} · ${e.deviceName}${e.blockingPolicyName ? ` · CA: ${e.blockingPolicyName}` : ""}`}
+                title={`${e.appId} · ${e.clientApp} · ${e.location} · ${e.ipAddress} · ${e.deviceName}${e.blockingPolicyName ? ` · CA: ${e.blockingPolicyName}` : ""}${e.failureReason ? ` · ${e.failureReason}` : ""}`}
               >
                 <div className="flex items-center gap-x-2">
-                  <span className="shrink-0 font-mono text-faint">{fmtTimeUtc(e.timestamp)}</span>
+                  <span className="shrink-0 font-mono text-faint" title={e.timestamp}>{fmtSignInTime(e.timestamp, latestTimestamp)}</span>
                   <IdentityCell kind="upn" value={e.upn} className="shrink-0 font-medium">
                     {e.displayName}
                   </IdentityCell>
@@ -134,7 +135,7 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                       </Pill>
                     )}
                     {e.errorCodeLabel ? (
-                      <Pill tone="critical">{e.errorCodeLabel}</Pill>
+                      <Pill tone={e.status === "interrupted" ? "warning" : "critical"}>{e.errorCodeLabel}</Pill>
                     ) : (
                       <Pill tone={e.isHighlighted ? "warning" : "healthy"} icon={<ShieldCheck />}>
                         success

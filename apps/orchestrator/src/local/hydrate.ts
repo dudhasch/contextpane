@@ -175,7 +175,7 @@ function buildWorkloadIdentityTimeline(ctx: CorrelationContext): EntraSignInTime
     focusUpn: w.owner.upn,
     windowStart: events[0]?.timestamp ?? ctx.gatheredAt,
     windowEnd: events.at(-1)?.timestamp ?? ctx.gatheredAt,
-    events: events.map((e) => signInEvent(e, true)),
+    events: events.map((e) => signInEvent(e, e.isHighlighted ?? (e.status === "failure"))),
     rootCause: {
       errorCodeLabel: w.errorCodeLabel,
       targetApp: `Microsoft Graph (${w.spn.displayName})`,
