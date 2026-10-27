@@ -112,6 +112,47 @@ describe("highlight → selection slice", () => {
     expect(s.rows.length).toBeLessThanOrEqual(5);
     expect(ContextualMiniDashboardSchema.safeParse(sliceToCard(ctx, "zzz-quantum-flux-capacitor", s)).success).toBe(true);
   });
+
+  test('"appId 44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f" + refinement "other apps with the same owner" returns peer SPNs owned by alex.wilber', async () => {
+    const ctx = await gatherContext("ANOM-APP-401");
+    const brief = buildScenarioBrief(ctx);
+    const s = buildSelectionSlice(ctx, "appId 44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f", brief.steps, {
+      refinementText: "other apps with the same owner",
+      viewMode: "blast-radius",
+    });
+    expect(s.kind).toBe("workload-identity");
+    expect(s.rows.length).toBe(3);
+    expect(s.rows.map((r) => r.displayName)).toEqual([
+      "spn-contoso-erp-sync",
+      "spn-contoso-payroll-export",
+      "spn-contoso-hr-onboarding-bot",
+    ]);
+    expect(s.rows.every((r) => String(r.ownerUpn).startsWith("alex.wilber@"))).toBe(true);
+    expect(s.suggestedAction.scriptPreview).toContain("Remove-MgApplicationOwnerByRef");
+    expect(PLACEHOLDER_RE.test(s.suggestedAction.scriptPreview)).toBe(false);
+
+    const card = sliceToCard(ctx, "appId 44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f", s, {
+      refinementText: "other apps with the same owner",
+      viewMode: "blast-radius",
+    });
+    expect(ContextualMiniDashboardSchema.safeParse(card).success).toBe(true);
+    expect(card.refinementText).toBe("other apps with the same owner");
+    expect(card.viewMode).toBe("blast-radius");
+  });
+
+  test("exploreSelection supports refinementText and all 4 viewModes (dashboard, full-card, comparison, blast-radius)", async () => {
+    const cmp = await exploreSelection({
+      scenarioId: "ANOM-APP-401",
+      selectedText: "appId 44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f",
+      refinementText: "other apps with the same owner",
+      viewMode: "comparison",
+    });
+    expect(cmp.card.viewMode).toBe("comparison");
+    expect(cmp.card.refinementText).toBe("other apps with the same owner");
+    // Comparison mode includes the 3 shadow-admin SPNs + 1 golden baseline reference SPN
+    expect(cmp.card.rows.length).toBe(4);
+    expect(cmp.card.rows.some((r) => r.displayName === "spn-contoso-avd-autoscaler")).toBe(true);
+  });
 });
 
 describe("POST /api/explore-selection pointer hydration and PII vaulting", () => {

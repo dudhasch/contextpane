@@ -2,6 +2,7 @@ import {
   ContextualMiniDashboardSchema,
   selectionDataPtr,
   selectionHash,
+  type ContextViewMode,
   type ContextualMiniDashboard,
   type MetricTone,
   type MiniDashboardBreakdown,
@@ -67,7 +68,7 @@ const DATASET_WORDS: Record<SliceKind, RegExp[]> = {
   "entra-ca-policies": [/conditional access/, /\bca-?\d/, /\bpolicy\b/, /\bpolicies\b/, /break[- ]?glass/, /report[- ]only/, /legacy auth/, /\bmfa\b/, /exclusion/, /block avd/, /grant control/],
   "intune-devices": [/\bdevice/, /laptop/, /workstation/, /compliance/, /compliant/, /uncompliant/, /non-?compliant/, /check[- ]?in/, /grace period/, /managed ?device/, /enrol/],
   "intune-settings": [/bitlocker/, /0x87d/, /\basr\b/, /attack surface/, /lsass/, /\bsetting/, /baseline/, /conflict/, /\bprofile/, /settings catalog/, /endpoint security/, /encryption/, /\bcsp\b/, /tattoo/],
-  "workload-identity": [/\bsecret/, /expired/, /service principal/, /\bspn\b/, /app registration/, /\boauth/, /\bowner/, /\bscope/, /aadsts7000222/, /federat/, /github actions/, /workload identity/, /enterprise app/, /erp[- ]sync/, /api permission/, /consent/],
+  "workload-identity": [/\bsecret/, /expired/, /service principal/, /\bspn\b/, /\bappid\b/, /44b8e1a7/, /7c1d2e3f/, /8d2e3f4a/, /app registration/, /\boauth/, /\bowner/, /same owner/, /other apps?/, /peer apps?/, /\bscope/, /aadsts7000222/, /federat/, /github actions/, /workload identity/, /enterprise app/, /erp[- ]sync/, /api permission/, /consent/],
   "azure-nsg-rules": [/\bnsg\b/, /\b3389\b/, /\brdp\b/, /\bport\b/, /security rule/, /inbound/, /network security/, /firewall port/, /0\.0\.0\.0/, /terraform/, /\btag\b/, /rogue/, /\bhcl\b/],
   "avd-session-hosts": [/\bavd\b/, /host ?pool/, /session host/, /virtual desktop/, /vdpool/, /fslogix/, /\bvm\b/],
   "azure-policies": [/azure policy/, /policy assignment/, /non-?compliant resource/, /audit effect/],
@@ -567,26 +568,105 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
 
 const MAX_ROWS = 60;
 
-export function buildSelectionSlice(ctx: CorrelationContext, selectedText: string, steps: ResolutionStep[]): SelectionSlice {
+export interface SelectionOptions {
+  refinementText?: string;
+  viewMode?: ContextViewMode;
+}
+
+export function buildSelectionSlice(ctx: CorrelationContext, selectedText: string, steps: ResolutionStep[], options: SelectionOptions = {}): SelectionSlice {
   const selection = selectedText.trim();
+  const refinement = (options.refinementText ?? "").trim();
+  const viewMode = options.viewMode ?? "dashboard";
+  const combined = refinement ? `${selection} ${refinement}` : selection;
   const sets = datasets(ctx, steps);
   const searched: SelectionSlice["searched"] = [];
+
+  // Relational peer-apps query: e.g. selecting "appId 44b8e1a7-..." or "spn-contoso-erp-sync" or "alex.wilber"
+  // and adding "other apps with the same owner" (or switching to comparison mode on an app/owner).
+  const wantsPeerApps =
+    /other\s+apps?|same\s+owner|owned\s+by|peer\s+apps?|apps?\s+with|shadow[- ]admin\s+apps?/i.test(combined) ||
+    (Boolean(ctx.workloadIdentity) && viewMode === "comparison" && /\bappid\b|44b8e1a7|spn|owner|alex\.wilber/i.test(combined));
+
+  if (wantsPeerApps && (ctx.workloadIdentity || WORKLOAD_IDENTITY.peerApps?.length)) {
+    const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+    const allPeers = w.peerApps ?? [];
+    const sameOwnerOnly = /same\s+owner|other\s+apps?|owned\s+by/i.test(combined) && viewMode !== "comparison";
+    const peerList = sameOwnerOnly ? allPeers.filter((a) => a.ownerUpn === w.owner.upn) : allPeers;
+    const rows: Row[] = peerList.map((a) => ({
+      displayName: a.displayName,
+      appId: a.appId,
+      ownerUpn: a.ownerUpn,
+      ownerRoles: a.ownerRoles,
+      credentialSummary: a.credentialSummary,
+      highPrivScopes: a.highPrivScopes,
+      stateLabel: a.stateLabel,
+      posture: a.posture,
+    }));
+    const ownerApps = allPeers.filter((a) => a.ownerUpn === w.owner.upn);
+    for (const ds of sets) {
+      searched.push({ kind: ds.kind, rows: ds.rows.length, matched: ds.kind === "workload-identity" ? rows.length : 0 });
+    }
+    return {
+      kind: "workload-identity",
+      score: 260,
+      matchedBy: "rows",
+      title: `Apps sharing owner ${w.owner.upn} (${ownerApps.length} shadow-admin SPNs)`.slice(0, 90),
+      subtitle: `Live query across users/${w.owner.upn}/ownedObjects · ${plural(rows.length, "service principal")} matched${refinement ? ` · "${refinement}"` : ""}`.slice(0, 160),
+      sourceQuery: `GET /v1.0/users/${w.owner.upn}/ownedObjects/microsoft.graph.servicePrincipal?$select=id,appId,displayName,passwordCredentials,appRoleAssignments`.slice(0, 300),
+      columns: [
+        col("displayName", "App / SPN", { mono: true }),
+        col("appId", "App ID", { mono: true }),
+        col("ownerUpn", "Owner", { mono: true }),
+        col("credentialSummary", "Credential"),
+        col("highPrivScopes", "Granted Scopes", { mono: true }),
+        col("stateLabel", "Posture", { isBadge: true }),
+      ],
+      rows,
+      kpis: [
+        { label: "Shared owner", value: w.owner.displayName, tone: "warning" },
+        { label: "Shadow-admin SPNs", value: `${ownerApps.length} apps`, tone: "critical" },
+        { label: "Directory roles", value: `${w.owner.directoryRoles.length} roles`, tone: "warning" },
+        { label: "Golden OIDC", value: `${allPeers.filter((a) => a.posture === "healthy").length}/${allPeers.length} apps`, tone: "critical" },
+      ],
+      breakdown: breakdownBy(rows, "stateLabel", (v) => (/Golden|Healthy/i.test(v) ? "success" : /Expiring/i.test(v) ? "warning" : "critical")),
+      suggestedAction: {
+        label: `Remove shadow-admin owner (${ownerApps.length} SPNs)`.slice(0, 48),
+        scriptPreview: ownerApps
+          .map((a) => `Remove-MgApplicationOwnerByRef -ApplicationId '${a.objectId}' -DirectoryObjectId '${w.owner.objectId}'   # ${a.displayName} (${a.appId})`)
+          .join("\n"),
+        ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
+      },
+      searched,
+    };
+  }
+
   let best: { ds: Dataset; score: number; matchedBy: "rows" | "dataset"; rows: Row[] } | null = null;
+  const wantsCohortExpansion =
+    Boolean(refinement) && /other|same|all|cohort|peer|compare|group|more|similar/i.test(refinement);
+
   for (const ds of sets) {
     const hits = datasetHits(selection, ds.kind);
+    const refHits = refinement ? datasetHits(refinement, ds.kind) : 0;
     const matched = ds.rows.filter((r) => rowMatches(selection, r));
-    searched.push({ kind: ds.kind, rows: ds.rows.length, matched: matched.length });
+    const refMatched = refinement ? ds.rows.filter((r) => rowMatches(refinement, r)) : [];
+    searched.push({ kind: ds.kind, rows: ds.rows.length, matched: matched.length || refMatched.length });
     let score = 0;
     let matchedBy: "rows" | "dataset" = "rows";
     let rows = matched;
     if (matched.length) {
       // A row match counts only when the phrase is specific: a lone dataset word like "device" matches via the dataset path below.
-      score = 100 + hits * 20 + Math.min(matched.length, 40) - (matched.length === ds.rows.length && hits === 0 ? 60 : 0);
-    } else if (hits) {
+      score = 100 + (hits + refHits) * 20 + Math.min(matched.length, 40) - (matched.length === ds.rows.length && hits === 0 ? 60 : 0);
+      if (refMatched.length && refMatched.length < matched.length) {
+        const intersect = matched.filter((r) => refMatched.includes(r));
+        if (intersect.length) rows = intersect;
+      } else if ((wantsCohortExpansion || viewMode === "comparison") && matched.length === 1 && ds.focus.length > 1) {
+        rows = ds.focus;
+      }
+    } else if (hits || refHits || refMatched.length) {
       // A phrase made of a dataset's own vocabulary ("AVD host pool", "disabled accounts") beats an incidental substring hit elsewhere.
-      score = 50 + hits * 45;
-      matchedBy = "dataset";
-      rows = ds.focus;
+      score = 50 + (hits + refHits) * 45 + (refMatched.length ? 35 : 0);
+      matchedBy = refMatched.length ? "rows" : "dataset";
+      rows = refMatched.length ? refMatched : ds.focus;
     }
     if (!score) continue;
     const order = KIND_ORDER.indexOf(ds.kind);
@@ -613,12 +693,16 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     };
   }
   const rows = best.rows.slice(0, MAX_ROWS);
+  const rawTitle = best.ds.title(rows);
+  const rawSubtitle = best.ds.subtitle(rows);
+  const title = (refinement && !rawTitle.toLowerCase().includes(refinement.toLowerCase()) ? `${rawTitle} · ${refinement}` : rawTitle).slice(0, 90);
+  const subtitle = (refinement ? `${rawSubtitle} · context: "${refinement}"` : rawSubtitle).slice(0, 160);
   return {
     kind: best.ds.kind,
     score: best.score,
     matchedBy: best.matchedBy,
-    title: best.ds.title(rows).slice(0, 90),
-    subtitle: best.ds.subtitle(rows).slice(0, 160),
+    title,
+    subtitle,
     sourceQuery: best.ds.sourceQuery.slice(0, 300),
     columns: best.ds.columns,
     rows,
@@ -630,11 +714,15 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
 }
 
 /** The validated deterministic card for a slice (the fallback and the reference). */
-export function sliceToCard(ctx: CorrelationContext, selectedText: string, slice: SelectionSlice): ContextualMiniDashboard {
-  const hash = selectionHash(ctx.ticketId, selectedText);
+export function sliceToCard(ctx: CorrelationContext, selectedText: string, slice: SelectionSlice, options: SelectionOptions = {}): ContextualMiniDashboard {
+  const refinement = options.refinementText?.trim() ? options.refinementText.trim().slice(0, 120) : undefined;
+  const viewMode = options.viewMode;
+  const hash = selectionHash(ctx.ticketId, selectedText, refinement, viewMode);
   return ContextualMiniDashboardSchema.parse({
     id: `selection-${hash}`,
     selectionText: selectedText.trim().slice(0, 120),
+    ...(refinement ? { refinementText: refinement } : {}),
+    ...(viewMode ? { viewMode } : {}),
     title: slice.title,
     subtitle: slice.subtitle,
     sourceQuery: slice.sourceQuery,

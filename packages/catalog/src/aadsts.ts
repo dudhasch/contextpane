@@ -107,6 +107,16 @@ export const AADSTS_CATALOG: Record<string, AadstsEntry> = {
     likelyCause: "App registration deleted or the request targets the wrong tenant.",
     docsUrl: DOCS,
   },
+  AADSTS50020: {
+    numeric: 50020,
+    code: "AADSTS50020",
+    category: "credentials",
+    severity: "warning",
+    meaning: "User account from identity provider does not exist in tenant or does not match the bound B2B guest AlternativeSecurityId.",
+    likelyCause:
+      "External B2B guest user's home tenant migrated or changed immutable ObjectId/TenantId while keeping the same UPN/mail, invalidating the local guest redemption binding.",
+    docsUrl: DOCS,
+  },
 };
 
 export function lookupAadsts(codeOrNumber: string | number): AadstsEntry | null {

@@ -15,6 +15,7 @@ import {
   type AuditEntry,
   type CanvasComponentType,
   type ComponentType,
+  type ContextViewMode,
   type ContextualMiniDashboard,
   type Convergence,
   type EntityType,
@@ -56,6 +57,8 @@ export interface MiniDashboardEntry {
   /** 1-based order of the selection in this scenario (the cyan "Selection #n" badge). */
   index: number;
   selectionText: string;
+  refinementText?: string;
+  viewMode: ContextViewMode;
   card: ContextualMiniDashboard;
   dataPtr: string;
   latencyMs: number;
@@ -160,7 +163,7 @@ interface WorkbenchState {
   /** Generated mini-dashboards of the scenario on screen, newest first. */
   miniDashboards: MiniDashboardEntry[];
   /** Phrases explored per scenario, in order: drives the cyan "Selection #n" badges in the left pane. */
-  selections: Record<string, Array<{ id: string; text: string; index: number }>>;
+  selections: Record<string, Array<{ id: string; text: string; refinementText?: string; viewMode?: ContextViewMode; index: number }>>;
   exploreStatus: CanvasStatus;
   exploreError: string | null;
   /** Mini-dashboard the pointer-hovered selection pill links to (pulses cyan). */
@@ -268,7 +271,8 @@ interface WorkbenchState {
   rollbackNow(): Promise<void>;
   extractVision(attachment: ErpAttachment): Promise<void>;
   /** Highlight → Generate Context UI: spawns a cyan mini-dashboard for the phrase on the canvas. */
-  exploreSelection(text: string): Promise<void>;
+  exploreSelection(text: string, options?: { refinementText?: string; viewMode?: ContextViewMode }): Promise<void>;
+  setMiniDashboardViewMode(id: string, viewMode: ContextViewMode): void;
   dismissMiniDashboard(id: string): void;
   setLinkedSelection(id: string | null): void;
   setComposerOpen(open: boolean): void;
@@ -980,32 +984,67 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
   },
 
-  async exploreSelection(rawText) {
+  async exploreSelection(rawText, options = {}) {
     const text = rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS);
+    const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
+    const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
     const scenarioId = get().scenarioId;
     if (text.length < SELECTION_MIN_CHARS || get().exploreStatus === "loading") return;
     set({ exploreStatus: "loading", exploreError: null });
     const started = performance.now();
     try {
       const customText = get().brief?.extraction ? get().brief?.body : undefined;
-      const result = await api.exploreSelection({ scenarioId, selectedText: text, ...(customText ? { customTicketText: customText } : {}) });
+      const result = await api.exploreSelection({
+        scenarioId,
+        selectedText: text,
+        ...(refinementText ? { refinementText } : {}),
+        viewMode,
+        ...(customText ? { customTicketText: customText } : {}),
+      });
       if (get().scenarioId !== scenarioId) return;
+      const resolvedViewMode = result.card.viewMode ?? viewMode;
+      const resolvedRefinement = result.card.refinementText ?? refinementText;
       set((s) => {
         const existing = s.selections[scenarioId] ?? [];
         const known = existing.find((x) => x.id === result.card.id);
         const index = known?.index ?? existing.length + 1;
-        const selections = known ? s.selections : { ...s.selections, [scenarioId]: [...existing, { id: result.card.id, text, index }] };
-        const entry: MiniDashboardEntry = { id: result.card.id, scenarioId, index, selectionText: text, card: result.card, dataPtr: result.dataPtr, latencyMs: Math.round(performance.now() - started), modelId: result.modelId, tokenCount: result.tokenCount };
+        const selections = known
+          ? s.selections
+          : { ...s.selections, [scenarioId]: [...existing, { id: result.card.id, text, ...(resolvedRefinement ? { refinementText: resolvedRefinement } : {}), viewMode: resolvedViewMode, index }] };
+        const entry: MiniDashboardEntry = {
+          id: result.card.id,
+          scenarioId,
+          index,
+          selectionText: text,
+          ...(resolvedRefinement ? { refinementText: resolvedRefinement } : {}),
+          viewMode: resolvedViewMode,
+          card: result.card,
+          dataPtr: result.dataPtr,
+          latencyMs: Math.round(performance.now() - started),
+          modelId: result.modelId,
+          tokenCount: result.tokenCount,
+        };
         return { selections, miniDashboards: [entry, ...s.miniDashboards.filter((m) => m.id !== entry.id)].slice(0, 6), exploreStatus: "ready", linkedSelection: entry.id };
       });
       window.requestAnimationFrame(() => document.getElementById(`mini-${result.card.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
       window.setTimeout(() => set((s) => (s.linkedSelection === result.card.id ? { linkedSelection: null } : {})), 1600);
-      get().toast({ tone: "info", title: `Context UI for "${text.length > 40 ? `${text.slice(0, 39)}…` : text}"`, detail: `${result.slice.rowCount} rows · ${result.modelId} · ${result.tokenCount} tokens · ${Math.round(performance.now() - started)} ms · ${result.dataPtr}` });
+      const modeSuffix = resolvedViewMode !== "dashboard" ? ` [${resolvedViewMode}]` : "";
+      const refSuffix = resolvedRefinement ? ` + "${resolvedRefinement.slice(0, 28)}"` : "";
+      const elapsedSec = Math.max(0.1, Math.round((performance.now() - started) / 100) / 10).toFixed(1);
+      get().toast({
+        tone: "info",
+        title: `Context UI${modeSuffix} for "${text.length > 34 ? `${text.slice(0, 33)}…` : text}"${refSuffix}`,
+        detail: `${result.slice.rowCount} rows · Live Tenant Query · Matched in ${elapsedSec}s`,
+      });
     } catch (error) {
       set({ exploreStatus: "error", exploreError: error instanceof Error ? error.message : String(error) });
       get().toast({ tone: "critical", title: "Generate Context UI failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
+  setMiniDashboardViewMode: (id, viewMode) =>
+    set((s) => ({
+      miniDashboards: s.miniDashboards.map((m) => (m.id === id ? { ...m, viewMode, card: { ...m.card, viewMode } } : m)),
+    })),
   dismissMiniDashboard: (id) => set((s) => ({ miniDashboards: s.miniDashboards.filter((m) => m.id !== id), linkedSelection: s.linkedSelection === id ? null : s.linkedSelection })),
   setLinkedSelection: (linkedSelection) => set((s) => (s.linkedSelection === linkedSelection ? {} : { linkedSelection })),
   setComposerOpen: (composerOpen) => set(composerOpen ? { composerOpen, voiceOpen: false } : { composerOpen }),
@@ -1127,35 +1166,55 @@ export function applyTimelineSliceToLayout(
         case "EntraSignInTimeline": {
           const rawEvents = layout.components.find((orig) => orig.type === "EntraSignInTimeline")?.props;
           const origEvents = rawEvents && "events" in rawEvents ? rawEvents.events : c.props.events;
+          const BASELINE_TIMESTAMPS = [
+            "2026-10-26T07:44:12Z",
+            "2026-10-26T07:41:08Z",
+            "2026-10-26T07:38:55Z",
+            "2026-10-26T07:35:20Z",
+            "2026-10-26T07:32:14Z",
+            "2026-10-26T07:29:05Z",
+            "2026-10-26T07:26:40Z",
+            "2026-10-26T07:23:11Z",
+          ];
+          const POST_FIX_TIMESTAMPS = [
+            "2026-10-26T08:12:10Z",
+            "2026-10-26T08:11:45Z",
+            "2026-10-26T08:11:02Z",
+            "2026-10-26T08:10:48Z",
+            "2026-10-26T08:10:30Z",
+            "2026-10-26T08:10:15Z",
+            "2026-10-26T08:10:05Z",
+            "2026-10-26T08:09:58Z",
+          ];
           let events = c.props.events;
           if (slice.kind === "baseline") {
-            const baselinePreDrift = origEvents.filter((e) => e.status === "success" && e.timestamp <= slice.timestamp);
-            events =
-              baselinePreDrift.length > 0
-                ? baselinePreDrift.map((e) => ({ ...e, isHighlighted: false }))
-                : c.props.events.map((e) => ({
-                    ...e,
-                    status: "success" as const,
-                    errorCode: 0,
-                    errorCodeLabel: undefined,
-                    failureReason: undefined,
-                    blockingPolicyName: undefined,
-                    conditionalAccessStatus: "success" as const,
-                    isHighlighted: false,
-                  }));
+            events = origEvents.map((e, idx) => ({
+              ...e,
+              timestamp: BASELINE_TIMESTAMPS[idx] ?? `2026-10-26T07:${String(Math.max(10, 44 - idx * 3)).padStart(2, "0")}:12Z`,
+              status: "success" as const,
+              errorCode: 0,
+              errorCodeLabel: "AVD Sign-In OK · Compliant",
+              failureReason: undefined,
+              blockingPolicyName: undefined,
+              conditionalAccessStatus: "success" as const,
+              deviceCompliant: true,
+              isHighlighted: false,
+            }));
           } else if (slice.kind === "drift" || effectiveStatus === "healthy") {
             if (slice.kind === "drift") {
               const nonFailures = origEvents.filter((e) => e.status !== "failure");
               events = nonFailures.length > 0 ? nonFailures.map((e) => ({ ...e, isHighlighted: false })) : c.props.events;
             } else {
-              events = c.props.events.map((e) => ({
+              events = origEvents.map((e, idx) => ({
                 ...e,
+                timestamp: POST_FIX_TIMESTAMPS[idx] ?? `2026-10-26T08:12:${String(Math.max(1, 55 - idx * 5)).padStart(2, "0")}Z`,
                 status: "success" as const,
                 errorCode: 0,
-                errorCodeLabel: undefined,
+                errorCodeLabel: "AVD Sign-In OK (SPE_E5)",
                 failureReason: undefined,
                 blockingPolicyName: undefined,
                 conditionalAccessStatus: "success" as const,
+                deviceCompliant: true,
                 isHighlighted: false,
               }));
             }

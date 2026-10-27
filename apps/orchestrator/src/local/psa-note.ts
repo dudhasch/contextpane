@@ -90,28 +90,65 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
     ? (FALLBACK_ROOT_CAUSE_BY_BASE[base] ?? rawRootCause)
     : rawRootCause;
 
+  const PAST_TENSE_RESOLUTION_BY_BASE: Record<string, string> = {
+    "INC-4092": `Removed 3 users (${shortUpns.join(", ")}) from the legacy F3/E3 group (SG-Contoso-Finance-Legacy), reprocessed group-based SPE_E5 licensing in SG-Contoso-Finance-AVD, updated the Conditional Access policy 'Block AVD - Contoso Finance Legacy' to report-only excluding SG-Contoso-Finance-AVD, and removed the temporary RDP rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) on nsg-contoso-avd-hostpool-01.`,
+    "INC-4099": "Removed the conflicting legacy BitLocker profile (Fabrikam-Legacy-BitLocker-DeviceConfig), aligned all 6 Windows 11 laptops with the Endpoint Security XTS-AES 256 silent encryption baseline, and triggered an Intune device sync to clear the Conditional Access compliance block.",
+    "ANOM-LIC-101": "Reclaimed 3 unused SPE_E5 and 2 Microsoft 365 Copilot seats from disabled accounts (inactive >90 days) and reprocessed group-based licensing on SG-Contoso-Sales-Copilot to clear the CountViolation error at $0/mo net cost.",
+    "ANOM-CA-204": "Excluded SG-BreakGlass-Accounts from CA-001-Require-PhishingResistant-MFA-Admins to prevent emergency admin lockout and switched CA-004-Block-Legacy-Auth from Report-Only to On.",
+    "ANOM-INT-309": "Restored the Attack Surface Reduction LSASS credential protection rule from Audit to Block (with the verified path exclusion for ContosoErpSync.exe) and removed the duplicate Win11-Firewall-MDM profile across 11 workstations.",
+    "ANOM-APP-401": "Replaced the expired client secret on spn-contoso-erp-sync with GitHub Actions OIDC workload federation, removed non-admin contractor owner alex.wilber@c4a8shili.onmicrosoft.com, and right-sized Microsoft Graph permissions to least privilege.",
+  };
+
+  function toPastTenseSummary(text: string): string {
+    return text
+      .replace(/^Remediates\b/i, "Remediated")
+      .replace(/^Assigns\b/i, "Assigned")
+      .replace(/^Moves\b/i, "Moved")
+      .replace(/^Removes\b/i, "Removed")
+      .replace(/^Remove\b/i, "Removed")
+      .replace(/^Excludes\b/i, "Excluded")
+      .replace(/^Exclude\b/i, "Excluded")
+      .replace(/^Switches\b/i, "Switched")
+      .replace(/^Switch\b/i, "Switched")
+      .replace(/^Restores\b/i, "Restored")
+      .replace(/^Restore\b/i, "Restored")
+      .replace(/^Updates\b/i, "Updated")
+      .replace(/^Update\b/i, "Updated")
+      .replace(/^Reclaims\b/i, "Reclaimed")
+      .replace(/^Reclaim\b/i, "Reclaimed")
+      .replace(/^Replaces\b/i, "Replaced")
+      .replace(/^Replace\b/i, "Replaced")
+      .replace(/\bremoves\b/g, "removed")
+      .replace(/\breprocesses\b/g, "reprocessed")
+      .replace(/\bexcludes\b/g, "excluded")
+      .replace(/\bswitches\b/g, "switched")
+      .replace(/\brestores\b/g, "restored")
+      .replace(/\bdeletes\b/g, "deleted")
+      .replace(/\bsets\b/g, "set")
+      .replace(/inverse rollback f(?:⁻¹|\^-1)/gi, "verified 1-click undo script")
+      .replace(/f⁻¹|f\^-1/g, "1-click undo script");
+  }
+
   const rawDrawerSummary =
-    drawer?.summary && !drawer.summary.includes("0 drifted member")
-      ? drawer.summary
-      : base === "INC-4092"
-        ? `Moves 3 drifted member(s) of SG-Contoso-Finance-AVD (${shortUpns.join(", ")}) out of SG-Contoso-Finance-Legacy, reprocesses group-based SPE_E5 licensing, sets '[ContextPane-Demo] Block AVD - Contoso Finance Legacy' to report-only excluding SG-Contoso-Finance-AVD, and deletes rogue rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) on nsg-contoso-avd-hostpool-01.`
-        : drawer?.summary ?? "The staged remediation was applied to restore the golden baseline.";
+    drawer?.summary && !drawer.summary.includes("0 drifted member") && !drawer.summary.startsWith("Remediates ")
+      ? toPastTenseSummary(drawer.summary)
+      : PAST_TENSE_RESOLUTION_BY_BASE[base] ?? toPastTenseSummary(drawer?.summary ?? "Applied the verified remediation to restore the golden baseline.");
 
   const resolution = drawer
     ? `${rawDrawerSummary} The change was approved by ${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity} as ${drawer.approval.mode === "gitops" ? "a Pure GitOps change" : "an Emergency Break-Glass change"} and ${live ? "applied to the tenant" : "recorded (simulated execution, no tenant write)"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`
     : `${rawDrawerSummary} The staged remediation was approved and ${live ? "applied to the tenant" : "recorded"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`;
   const affectedUsers = remediatedUpns.length + convergence.reclaimedUpns.length;
   const userListDetail = shortUpns.length ? ` (${shortUpns.join(", ")})` : "";
-  const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"}${userListDetail} ${convergence.reclaimedUpns.length && !remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, and a pre-verified rollback is archived should anything regress.`;
+  const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"}${userListDetail} ${convergence.reclaimedUpns.length && !remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, and a verified 1-click undo script is archived should anything regress.`;
 
   const trail: string[] = [
-    `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency f(f(S)) = f(S) ${idempotency.passed ? "passed" : "FAILED"}`,
+    `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency check (safe to re-run) ${idempotency.passed ? "passed" : "FAILED"}`,
     canary
       ? `Canary probes: ${canary.stages.map((s) => s.stage).join(" → ")} · identity probe ${canary.probes.identity.passed ? "passed" : "failed"}, network probe ${canary.probes.network.tcp3389Closed === undefined ? "n/a" : canary.probes.network.tcp3389Closed ? "TCP/3389 closed" : "TCP/3389 OPEN"}${canary.probes.network.tcp443Open === undefined ? "" : canary.probes.network.tcp443Open ? ", TCP/443 open" : ", TCP/443 closed"} · cohort ${canary.canaryCohort}`
       : "Canary probes: not run for this approval",
     drawer ? `Pre-flight: ${drawer.verificationStatus.verdict} · PowerShell AST ${flag(drawer.verificationStatus.astCheckPassed)} · -WhatIf dry run ${flag(drawer.verificationStatus.whatIfSafe)}${drawer.terraformDiff ? ` · terraform fmt ${flag(drawer.verificationStatus.terraformFmtPassed)}, validate ${flag(drawer.verificationStatus.terraformValidatePassed)}` : ""} · ${drawer.verificationStatus.sandboxProvider}` : "Pre-flight: see the remediation record",
     `Git: ${convergence.gitBranch ?? drawer?.staging?.branchName ?? "no branch staged"}${drawer?.staging?.commitSha ? ` @ ${drawer.staging.commitSha.slice(0, 7)}` : ""}${convergence.prUrl ? ` · PR ${convergence.prUrl}` : ""}${drawer?.staging?.filesChanged.length ? ` · ${drawer.staging.filesChanged.length} files` : ""}`,
-    `Inverse rollback f⁻¹ archived: ${rollback.restores.length} restore${rollback.restores.length === 1 ? "" : "s"} (${rollback.restores.slice(0, 3).join(", ")}${rollback.restores.length > 3 ? ", …" : ""}) · ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
+    `Verified 1-click undo script (Inverse rollback) archived: ${rollback.restores.length} restore${rollback.restores.length === 1 ? "" : "s"} (${rollback.restores.slice(0, 3).join(", ")}${rollback.restores.length > 3 ? ", …" : ""}) · ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
     `Execution: ${live ? "live Graph/ARM write" : "simulated"} as ${drawer?.approval.approvedBy ?? drawer?.approval.requiredIdentity ?? "the delegated identity"} · remediation ${convergence.remediationId} · converged in ${convergence.latencyMs} ms · 0 LLM tokens for the convergence`,
   ];
 

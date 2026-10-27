@@ -413,10 +413,22 @@ export async function visionTriageDrop(entry: CustomScenarioEntry, fileName?: st
 export function deterministicExtraction(png: Uint8Array, entry: CustomScenarioEntry): VisionExtraction {
   const texts = readPngInfo(png)?.texts ?? {};
   const text = `${entry.ticket.title}\n${entry.ticket.body}`;
-  const code = texts.ErrorCode ?? text.match(/\bAADSTS\d{4,7}\b|\b0x87D[0-9A-F]{5}\b|CountViolation/i)?.[0] ?? "";
+  const code =
+    texts.ErrorCode ??
+    text.match(
+      /\bAADSTS\d{4,7}\b|\b0x87D[0-9A-F]{5}\b|\b0x801C[0-9A-F]{4}\b|CountViolation|AADDS104|AADDS501|AnomalousToken|PIMRoleOutsideGovernance|LargeObject|UserErrorGuestAgentStatusUnavailable|OperationNotAllowed|DracutEmergencyMode|VMExtensionProvisioningError|AuthorizationPermissionMismatch|NO_PROPOSAL_CHOSEN|AsymmetricRoutingDeny|RoleAssignmentUpdateNotPermitted|RequestDisallowedByPolicy|SubnetIsFull|OverQuota|EventID5156|LateArrivingData|OrphanedDisksCostSpike/i,
+    )?.[0] ??
+    "";
   const correlationId = texts.CorrelationId ?? text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] ?? "";
   const timestamp = texts.Timestamp ?? entry.createdAt;
   const device = texts.Device ?? "";
-  const recommendedComponent: VisionExtraction["recommendedComponent"] = /0x87D/i.test(code) ? "IntuneDriftCard" : /CountViolation/i.test(code) ? "LicenseDriftCard" : "EntraSignInTimeline";
-  return VisionExtractionSchema.parse({ errorCode: code.toUpperCase().replace("0X", "0x"), appId: "", correlationId, timestamp, deviceState: device, recommendedComponent });
+  const recommendedComponent: VisionExtraction["recommendedComponent"] = /0x87D|EventID5156/i.test(code)
+    ? "IntuneDriftCard"
+    : /CountViolation|LateArrivingData|OrphanedDisksCostSpike/i.test(code)
+      ? "LicenseDriftCard"
+      : /AADDS|UserErrorGuestAgent|OperationNotAllowed|Dracut|0x801C|VMExtension|NO_PROPOSAL|Asymmetric|RequestDisallowed|SubnetIsFull/i.test(code)
+        ? "IaCDriftBanner"
+        : "EntraSignInTimeline";
+  const normalizedCode = /^aadsts|^0x/i.test(code) ? code.toUpperCase().replace("0X", "0x") : code;
+  return VisionExtractionSchema.parse({ errorCode: normalizedCode, appId: "", correlationId, timestamp, deviceState: device, recommendedComponent });
 }

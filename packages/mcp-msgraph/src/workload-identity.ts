@@ -27,6 +27,19 @@ export interface WorkloadSignInEvent {
   isHighlighted?: boolean;
 }
 
+export interface WorkloadPeerApp {
+  displayName: string;
+  appId: string;
+  objectId: string;
+  servicePrincipalId: string;
+  ownerUpn: string;
+  ownerRoles: string;
+  credentialSummary: string;
+  highPrivScopes: string;
+  posture: "critical" | "warning" | "healthy";
+  stateLabel: string;
+}
+
 export interface WorkloadIdentityFixture {
   scenarioId: "ANOM-APP-401";
   goldenSource: string;
@@ -76,6 +89,8 @@ export interface WorkloadIdentityFixture {
     subject: string;
     audiences: string[];
   };
+  /** Peer service principals in the tenant (including other apps owned by the same shadow-admin user and a golden OIDC reference). */
+  peerApps?: WorkloadPeerApp[];
 }
 
 export const WORKLOAD_IDENTITY: WorkloadIdentityFixture = {
@@ -130,6 +145,56 @@ export const WORKLOAD_IDENTITY: WorkloadIdentityFixture = {
     subject: "repo:contoso/erp-sync:ref:refs/heads/main",
     audiences: ["api://AzureADTokenExchange"],
   },
+  peerApps: [
+    {
+      displayName: "spn-contoso-erp-sync",
+      appId: "44b8e1a7-3c5d-4f2a-9b6e-7d8c9a0b1e2f",
+      objectId: "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+      servicePrincipalId: "8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a",
+      ownerUpn: `alex.wilber@${LAB_DOMAIN}`,
+      ownerRoles: "0 directory roles (shadow admin)",
+      credentialSummary: "Expired client secret (AADSTS7000222)",
+      highPrivScopes: "Directory.ReadWrite.All, RoleManagement.ReadWrite.Directory",
+      posture: "critical",
+      stateLabel: "Drifted · Expired Secret + Shadow Admin",
+    },
+    {
+      displayName: "spn-contoso-payroll-export",
+      appId: "91c4b2e0-8a1f-4d3c-b7e5-2f9a1c8d4e6b",
+      objectId: "5a2e9c1d-3f4b-4e8a-9c7d-1b0e3f2a4c6d",
+      servicePrincipalId: "6b3f0d2e-4a5c-4f9b-8d0e-2c1f4a3b5d7e",
+      ownerUpn: `alex.wilber@${LAB_DOMAIN}`,
+      ownerRoles: "0 directory roles (shadow admin)",
+      credentialSummary: "Client secret (expires in 6 days)",
+      highPrivScopes: "User.ReadWrite.All, Sites.ReadWrite.All",
+      posture: "warning",
+      stateLabel: "Shadow Admin · Expiring Secret (6d)",
+    },
+    {
+      displayName: "spn-contoso-hr-onboarding-bot",
+      appId: "63f1d8c2-5e4a-4b9f-8c1d-3a7e5b9c0f12",
+      objectId: "2d8f4a6b-1c3e-4b7d-9a5f-8e0c2b4d6a1f",
+      servicePrincipalId: "3e9a5b7c-2d4f-4c8e-8b6a-9f1d3c5e7b2a",
+      ownerUpn: `alex.wilber@${LAB_DOMAIN}`,
+      ownerRoles: "0 directory roles (shadow admin)",
+      credentialSummary: "Unverified OAuth grant (AllPrincipals)",
+      highPrivScopes: "GroupMember.ReadWrite.All, Mail.Send",
+      posture: "critical",
+      stateLabel: "Shadow Admin · Unverified Consent",
+    },
+    {
+      displayName: "spn-contoso-avd-autoscaler",
+      appId: "28e7a5b9-1c3d-4e8f-9a2b-6d4c8e1f0a35",
+      objectId: "9c4e1b2a-7d8f-4a3c-9b5e-1d2f4a6c8e0b",
+      servicePrincipalId: "0d5f2c3b-8e9a-4b4d-8c6f-2e3a5b7d9f1c",
+      ownerUpn: "SG-Contoso-Cloud-Admins (PIM)",
+      ownerRoles: "Cloud Application Administrator",
+      credentialSummary: "Federated OIDC (GitHub Actions)",
+      highPrivScopes: "DesktopVirtualization.ReadWrite.All",
+      posture: "healthy",
+      stateLabel: "Golden Baseline · OIDC Federated",
+    },
+  ],
 };
 
 /**

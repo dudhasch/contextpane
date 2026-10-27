@@ -56,7 +56,10 @@ describe("auto-drafted Customer & PSA Resolution Note", () => {
     expect(trail).toMatch(/Canary probes: APPLIED → CANARY_RING_0 → SYNTHETIC_PROBED → CONVERGED/);
     expect(trail).toContain("identity probe passed");
     expect(trail).toContain("fix/INC-4092-contoso-remediation @ 0123456");
-    expect(trail).toMatch(/Inverse rollback f⁻¹ archived: \d+ restore/);
+    expect(trail).toMatch(/Verified 1-click undo script \(Inverse rollback\) archived: \d+ restore/);
+    expect(note.customerSummary).toContain("Assigned SPE_E5");
+    expect(note.customerSummary).not.toContain("f⁻¹");
+    expect(note.markdown).not.toContain("f⁻¹");
     expect(trail).toContain("Pre-flight: Verified Safe");
     expect(note.markdown).toContain("# INC-4092");
     expect(note.markdown).toContain("## Technical audit trail");

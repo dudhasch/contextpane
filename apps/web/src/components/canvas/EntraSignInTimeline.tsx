@@ -138,7 +138,13 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                         vision match
                       </Pill>
                     )}
-                    {e.errorCodeLabel ? (
+                    {e.status === "success" ? (
+                      <Pill tone="healthy" icon={<ShieldCheck />} mono={false}>
+                        {e.errorCodeLabel && !/blocked|53003|failure|error|7000222/i.test(e.errorCodeLabel)
+                          ? e.errorCodeLabel
+                          : "AVD Sign-In OK · Compliant"}
+                      </Pill>
+                    ) : e.errorCodeLabel ? (
                       <Pill tone={e.status === "interrupted" ? "warning" : "critical"}>{e.errorCodeLabel}</Pill>
                     ) : (
                       <Pill tone={e.isHighlighted ? "warning" : "healthy"} icon={<ShieldCheck />}>

@@ -13,6 +13,10 @@ import { z } from "zod";
 export const MetricToneSchema = z.enum(["default", "warning", "critical", "success"]);
 export type MetricTone = z.infer<typeof MetricToneSchema>;
 
+export const CONTEXT_VIEW_MODES = ["dashboard", "full-card", "comparison", "blast-radius"] as const;
+export const ContextViewModeSchema = z.enum(CONTEXT_VIEW_MODES);
+export type ContextViewMode = z.infer<typeof ContextViewModeSchema>;
+
 export const MiniDashboardKpiSchema = z.object({
   label: z.string().max(40),
   value: z.string().max(40).describe("Formatted value, e.g. '6 devices' or '2/15'"),
@@ -53,6 +57,8 @@ export type SelectionDataPtr = z.infer<typeof SelectionDataPtrSchema>;
 export const ContextualMiniDashboardSchema = z.object({
   id: z.string().min(1).describe("Stable id, e.g. selection-k3f9a1x2"),
   selectionText: z.string().min(1).max(120).describe("The exact phrase the engineer highlighted"),
+  refinementText: z.string().max(120).optional().describe("Optional added query/information from the operator, e.g. 'other apps with the same owner'"),
+  viewMode: ContextViewModeSchema.optional().describe("UI presentation mode: dashboard, full-card, comparison, or blast-radius"),
   title: z.string().min(1).max(90),
   subtitle: z.string().max(160).describe("e.g. 'Live query across deviceManagement/managedDevices · 6 devices matched'"),
   sourceQuery: z.string().min(1).max(300).describe("The Graph REST / KQL / ARM query that produced the rows"),
@@ -70,7 +76,7 @@ export type ContextualMiniDashboard = z.infer<typeof ContextualMiniDashboardSche
  * What the model is asked to compose: everything but the rows, which it references
  * through { dataPtr } (the data plane binds them) and never serialises.
  */
-export const ContextualMiniDashboardModelArgsSchema = ContextualMiniDashboardSchema.omit({ rows: true, provenanceCategory: true, rowsPtr: true, id: true, selectionText: true }).extend({
+export const ContextualMiniDashboardModelArgsSchema = ContextualMiniDashboardSchema.omit({ rows: true, provenanceCategory: true, rowsPtr: true, id: true, selectionText: true, refinementText: true, viewMode: true }).extend({
   rows: z.object({ dataPtr: SelectionDataPtrSchema }).describe('{ "dataPtr": "<the selection pointer from the descriptor>" }'),
 });
 export type ContextualMiniDashboardModelArgs = z.infer<typeof ContextualMiniDashboardModelArgsSchema>;
@@ -81,9 +87,11 @@ export const SELECTION_PROVENANCE_COLOR = "#06b6d4";
 export const SELECTION_MIN_CHARS = 3;
 export const SELECTION_MAX_CHARS = 120;
 
-/** FNV-1a over the scenario and the lower-cased selection: a stable, URL-safe short hash. */
-export function selectionHash(scenarioId: string, selectedText: string): string {
-  const input = `${scenarioId.toLowerCase()}|${selectedText.trim().toLowerCase()}`;
+/** FNV-1a over the scenario and the lower-cased selection (plus optional refinement and view mode): a stable, URL-safe short hash. */
+export function selectionHash(scenarioId: string, selectedText: string, refinementText?: string, viewMode?: ContextViewMode): string {
+  const refPart = refinementText?.trim() ? `|${refinementText.trim().toLowerCase()}` : "";
+  const modePart = viewMode && viewMode !== "dashboard" ? `|${viewMode}` : "";
+  const input = `${scenarioId.toLowerCase()}|${selectedText.trim().toLowerCase()}${refPart}${modePart}`;
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
     h ^= input.charCodeAt(i);

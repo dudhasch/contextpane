@@ -43,6 +43,41 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($TicketId -and ($TicketId -match '^#?(INC-2026-)?88[45]\d{2}$' -or $TicketId -match '^#?202688[45]\d{2}$')) {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    $inboxResolved = [System.IO.Path]::GetFullPath($InboxDir)
+    $js = @"
+import { existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import { generateLabTicketDrop } from './apps/orchestrator/src/local/erp-drop-generator.ts';
+const drop = generateLabTicketDrop(process.env.CTX_DROP_ID!);
+const dir = join(process.env.CTX_DROP_INBOX!, drop.folder);
+if (existsSync(dir) && process.env.CTX_DROP_FORCE !== '1') {
+  console.error(dir + ' exists; pass -Force to overwrite');
+  process.exit(1);
+}
+mkdirSync(dir, { recursive: true });
+writeFileSync(join(dir, 'attachment1.png'), drop.png);
+const tmp = join(dir, '.ticketbody.json.tmp');
+writeFileSync(tmp, JSON.stringify(drop.body, null, 2) + '\n', 'utf8');
+renameSync(tmp, join(dir, 'ticketbody.json'));
+console.log(JSON.stringify({ Folder: drop.folder, ScenarioId: 'ERP-' + drop.folder.slice(1), Archetype: drop.archetype, Dir: dir, ErrorCode: drop.body.telemetry.errorCode }));
+"@
+    $env:CTX_DROP_ID = $TicketId
+    $env:CTX_DROP_INBOX = $inboxResolved
+    $env:CTX_DROP_FORCE = if ($Force) { '1' } else { '0' }
+    Push-Location $repoRoot
+    try {
+        $jsonOut = & bun -e $js
+        if ($LASTEXITCODE -ne 0) { throw "Failed to drop lab ticket $TicketId" }
+        $parsed = $jsonOut | Select-Object -Last 1 | ConvertFrom-Json
+        Write-Host "Dropped $($parsed.Folder) ($($parsed.Archetype)) -> $($parsed.Dir)" -ForegroundColor Green
+        return [pscustomobject]$parsed
+    } finally {
+        Pop-Location
+        Remove-Item Env:CTX_DROP_ID, Env:CTX_DROP_INBOX, Env:CTX_DROP_FORCE -ErrorAction SilentlyContinue
+    }
+}
 $rng = [System.Random]::new()
 $domain = 'c4a8shili.onmicrosoft.com'
 $people = @(

@@ -521,7 +521,7 @@ $null = Invoke-Check -Name reconcile-commercial -Method GET -Path "/api/reconcil
     $x = $r.reconciliation
     if ($x.contractId -ne 'CNT-2026-884') { $i += "contract $($x.contractId)" }
     if ($x.pathA.netDeltaMonthly -ne 0) { $i += 'Path A not $0/mo' }
-    if ($ScenarioId -eq 'INC-4092' -and $x.pathA.wasteEliminatedMonthly -ne 285) { $i += "waste $($x.pathA.wasteEliminatedMonthly) != 285" }
+    if ($ScenarioId -eq 'INC-4092' -and $x.pathA.wasteEliminatedMonthly -ne 231) { $i += "waste $($x.pathA.wasteEliminatedMonthly) != 231" }
     if ($x.pathB.netDeltaMonthly -ne 171) { $i += "Path B $($x.pathB.netDeltaMonthly) != +171" }
     $i
 }

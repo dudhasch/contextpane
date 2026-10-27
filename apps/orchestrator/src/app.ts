@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import {
   CANVAS_COMPONENT_TYPES,
+  ContextViewModeSchema,
   EntityTypeSchema,
   ExecutionModeSchema,
   SCENARIO_IDS,
@@ -185,6 +186,8 @@ const ExploreBodySchema = z.object({
   scenarioId: z.string().optional(),
   tenantId: z.string().optional(),
   selectedText: z.string().min(SELECTION_MIN_CHARS).max(SELECTION_MAX_CHARS * 2),
+  refinementText: z.string().max(SELECTION_MAX_CHARS * 2).optional(),
+  viewMode: ContextViewModeSchema.optional(),
   customTicketText: z.string().max(8000).optional(),
 });
 
@@ -195,7 +198,13 @@ const ExploreBodySchema = z.object({
  */
 app.post("/api/explore-selection", async (c) => {
   const body = ExploreBodySchema.parse(await c.req.json());
-  const result = await exploreSelection({ scenarioId: scenarioOf(body), selectedText: body.selectedText, ...(body.customTicketText ? { customTicketText: body.customTicketText } : {}) });
+  const result = await exploreSelection({
+    scenarioId: scenarioOf(body),
+    selectedText: body.selectedText,
+    ...(body.refinementText ? { refinementText: body.refinementText } : {}),
+    ...(body.viewMode ? { viewMode: body.viewMode } : {}),
+    ...(body.customTicketText ? { customTicketText: body.customTicketText } : {}),
+  });
   return c.json(result);
 });
 

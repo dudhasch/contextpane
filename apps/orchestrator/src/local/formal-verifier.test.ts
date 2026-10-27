@@ -145,7 +145,7 @@ describe("Tier 3C formal blast-radius prover", () => {
     expect(commented.passed).toBe(true);
   });
 
-  test("buildInverseRollback('INC-4092') populates real SKU GUIDs, 3 target UPNs, and Allow-Temp-RDP-Diagnostic-Drift with zero empty license arrays", () => {
+  test("buildInverseRollback('INC-4092') populates real SKU GUIDs, Entra user Object GUIDs for Remove-MgGroupMemberByRef, matching CA policy ID, and Allow-Temp-RDP-Diagnostic-Drift", () => {
     const rb = buildInverseRollback("INC-4092");
     expect(rb.powershellScript).toContain("6fd2c87f-b296-42f0-b197-1e91e994b900");
     expect(rb.powershellScript).toContain("06ebc4ee-1bb5-47dd-8120-11324bc54e06");
@@ -154,6 +154,11 @@ describe("Tier 3C formal blast-radius prover", () => {
     expect(rb.powershellScript).toContain("lynne.robins.contoso@c4a8shili.onmicrosoft.com");
     expect(rb.powershellScript).toContain("diego.siciliani.contoso@c4a8shili.onmicrosoft.com");
     expect(rb.powershellScript).toContain("patti.fernandez.contoso@c4a8shili.onmicrosoft.com");
+    expect(rb.powershellScript).toContain("-DirectoryObjectId '907668fd-5d90-4f7c-8a5c-112233445501'");
+    expect(rb.powershellScript).toContain("-DirectoryObjectId '907668fd-5d90-4f7c-8a5c-112233445502'");
+    expect(rb.powershellScript).toContain("-DirectoryObjectId '907668fd-5d90-4f7c-8a5c-112233445503'");
+    expect(rb.powershellScript).not.toMatch(/-DirectoryObjectId\s+['"][^'"]*@[^'"]*['"]/);
+    expect(rb.powershellScript).toContain("d09ae604-9c1e-4b9c-9a5d-000000000001");
     expect(rb.powershellScript).not.toContain("-AddLicenses @() -RemoveLicenses @()");
   });
 });

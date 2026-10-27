@@ -113,9 +113,9 @@ function deviceUuid(deviceName: string): string {
 function userUuid(upnOrId: string, index = 1): string {
   if (isUuid(upnOrId)) return upnOrId;
   const known: Record<string, string> = {
-    "lynne.robins.contoso@c4a8shili.onmicrosoft.com": "1001a1b2-c3d4-4e5f-8a9b-0c1d2e3f4101",
-    "diego.siciliani.contoso@c4a8shili.onmicrosoft.com": "1002a1b2-c3d4-4e5f-8a9b-0c1d2e3f4102",
-    "patti.fernandez.contoso@c4a8shili.onmicrosoft.com": "1003a1b2-c3d4-4e5f-8a9b-0c1d2e3f4103",
+    "lynne.robins.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445501",
+    "diego.siciliani.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445502",
+    "patti.fernandez.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445503",
     "henrietta.mueller.contoso@c4a8shili.onmicrosoft.com": "2001a1b2-c3d4-4e5f-8a9b-0c1d2e3f4201",
     "pradeep.gupta.contoso@c4a8shili.onmicrosoft.com": "2002a1b2-c3d4-4e5f-8a9b-0c1d2e3f4202",
     "christie.cline.contoso@c4a8shili.onmicrosoft.com": "2003a1b2-c3d4-4e5f-8a9b-0c1d2e3f4203",
@@ -151,8 +151,9 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     "param(",
     `    [string]$TenantId = ${ps(tenant.entraTenantId)},`,
     `    [string]$TargetSkuPartNumber = ${ps(inv.sku.skuPartNumber)},`,
-    `    [string]$LegacyGroupId = "sg-contoso-finance-legacy-01",`,
-    `    [string]$TargetGroupId = "sg-contoso-finance-avd-01",`,
+    `    [string]$LegacyGroupId = "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c",`,
+    `    [string]$TargetGroupId = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",`,
+    `    [string]$ConditionalAccessPolicyId = "d09ae604-9c1e-4b9c-9a5d-000000000001",`,
     `    [string]$EntitlementGroupName = ${ps(inv.groupName)},`,
     ...(blocking ? [`    [string]$PolicyDisplayName = ${ps(blocking.displayName)},`] : []),
     "    [string[]]$DriftedUpns = @(",
@@ -169,10 +170,10 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     "        if ($PSCmdlet.ShouldProcess($upn, 'Set UsageLocation CH')) { Update-MgUser -UserId $userId -UsageLocation 'CH' }",
     "    }",
     '    if ($PSCmdlet.ShouldProcess($upn, "Remove from legacy E3 group SG-Contoso-Finance-Legacy")) {',
-    '        Remove-MgGroupMemberByRef -GroupId "sg-contoso-finance-legacy-01" -DirectoryObjectId $userId -ErrorAction SilentlyContinue',
+    '        Remove-MgGroupMemberByRef -GroupId $LegacyGroupId -DirectoryObjectId $userId -ErrorAction SilentlyContinue',
     "    }",
     '    if ($PSCmdlet.ShouldProcess($upn, "Ensure membership in E5 group SG-Contoso-Finance-AVD")) {',
-    '        New-MgGroupMemberByRef -GroupId "sg-contoso-finance-avd-01" -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } -ErrorAction SilentlyContinue',
+    '        New-MgGroupMemberByRef -GroupId $TargetGroupId -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } -ErrorAction SilentlyContinue',
     "    }",
     '    if ($PSCmdlet.ShouldProcess($upn, "Reprocess group-based license assignment for SPE_E5")) {',
     "        Invoke-MgLicenseUser -UserId $upn | Out-Null",
@@ -186,8 +187,8 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
       "# --- 2. Conditional Access remediation (Update-MgIdentityConditionalAccessPolicy) ---",
       `$group = Get-MgGroup -Filter "displayName eq '$EntitlementGroupName'" -Top 1`,
       'if (-not $group) { throw "Group $EntitlementGroupName not found" }',
-      "$policy = Get-MgIdentityConditionalAccessPolicy -All | Where-Object DisplayName -eq $PolicyDisplayName | Select-Object -First 1",
-      `if (-not $policy) { throw "Conditional Access policy '$PolicyDisplayName' not found" }`,
+      "$policy = Get-MgIdentityConditionalAccessPolicy -All | Where-Object { $_.Id -eq $ConditionalAccessPolicyId -or $_.DisplayName -eq $PolicyDisplayName } | Select-Object -First 1",
+      `if (-not $policy) { throw "Conditional Access policy '$PolicyDisplayName' ($ConditionalAccessPolicyId) not found" }`,
       "$includeGroups = @($policy.Conditions.Users.IncludeGroups) + '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' | Select-Object -Unique",
       "$excludeGroups = @($policy.Conditions.Users.ExcludeGroups) + $group.Id | Select-Object -Unique",
       "$body = @{",
@@ -208,7 +209,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const tagFixes = d.tagDrift.filter((t) => t.expectedInTf !== null).map((t) => `${t.key} = "${t.expectedInTf}"`);
   const avdGroupUuid = GROUP_IDS["SG-Contoso-Finance-AVD"]!;
   const legacyGroupUuid = GROUP_IDS["SG-Contoso-Finance-Legacy"]!;
-  const blockingPolicyUuid = isUuid(blocking?.id) ? blocking!.id : "ca409200-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
+  const blockingPolicyUuid = isUuid(blocking?.id) ? blocking!.id : "d09ae604-9c1e-4b9c-9a5d-000000000001";
   return {
     bundle: {
       title: `Fix ${ctx.ticketId}: E5 license upgrade, AVD block and NSG drift for ${tenant.displayName}`,

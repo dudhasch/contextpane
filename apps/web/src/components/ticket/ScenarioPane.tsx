@@ -1,6 +1,6 @@
 import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { CATEGORY_META, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
+import { CATEGORY_META, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
 import { fmtDateTimeUtc } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
@@ -189,7 +189,9 @@ function FleetPill() {
 
 const STEP_CATEGORY_FALLBACKS = ["identity", "licensing", "azure", "intune"] as const;
 
-function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep; index: number; resolved: boolean; selections: Array<{ id: string; text: string; index: number }> }) {
+type SelectionItem = { id: string; text: string; refinementText?: string; viewMode?: ContextViewMode; index: number };
+
+function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep; index: number; resolved: boolean; selections: SelectionItem[] }) {
   const scenarioId = useWorkbench((s) => s.scenarioId);
   const steps = useWorkbench((s) => s.brief?.steps ?? []);
   const checked = useWorkbench((s) => Boolean(s.stepsDone[`${scenarioId}:${step.id}`])) || resolved;
@@ -252,7 +254,7 @@ function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep;
   );
 }
 
-const NO_SELECTIONS: Array<{ id: string; text: string; index: number }> = [];
+const NO_SELECTIONS: SelectionItem[] = [];
 const NO_ENTITIES: EnrichedEntity[] = [];
 
 /** The ticket description or the anomaly narrative, with every enriched entity as an inline pill. */
@@ -412,13 +414,13 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * wraps every phrase the engineer explored in a cyan "Selection #n" provenance badge that links
  * to its mini-dashboard on the canvas.
  */
-function EnrichedText({ text, entities, selections = [] }: { text: string; entities: EnrichedEntity[]; selections?: Array<{ id: string; text: string; index: number }> }) {
+function EnrichedText({ text, entities, selections = [] }: { text: string; entities: EnrichedEntity[]; selections?: SelectionItem[] }) {
   const { parts, byNeedle, bySelection } = useMemo(() => {
     const byNeedle = new Map<string, EnrichedEntity>();
     for (const e of entities) {
       for (const needle of [e.id, e.label]) if (needle.length >= 6 && !byNeedle.has(needle)) byNeedle.set(needle, e);
     }
-    const bySelection = new Map<string, { id: string; text: string; index: number }>();
+    const bySelection = new Map<string, SelectionItem>();
     for (const s of selections) bySelection.set(s.text.toLowerCase(), s);
     // Selections first: an explored phrase is marked even when it overlaps an entity id.
     const selectionNeedles = [...bySelection.values()].map((s) => s.text).sort((a, b) => b.length - a.length);
@@ -442,18 +444,23 @@ function EnrichedText({ text, entities, selections = [] }: { text: string; entit
 }
 
 /** Cyan provenance badge on an explored phrase; hovering it pulses the mini-dashboard it spawned. */
-function SelectionBadge({ selection, text }: { selection: { id: string; text: string; index: number }; text: string }) {
+function SelectionBadge({ selection, text }: { selection: SelectionItem; text: string }) {
   const setLinked = useWorkbench((s) => s.setLinkedSelection);
   const mounted = useWorkbench((s) => s.miniDashboards.some((m) => m.id === selection.id));
   const explore = useWorkbench((s) => s.exploreSelection);
+  const extra = selection.refinementText ? ` + "${selection.refinementText}"` : "";
   return (
     <button
       type="button"
       data-selection={selection.id}
       onMouseEnter={() => setLinked(selection.id)}
       onMouseLeave={() => setLinked(null)}
-      onClick={() => (mounted ? document.getElementById(`mini-${selection.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) : void explore(selection.text))}
-      title={mounted ? `Selection #${selection.index} · click to scroll to its mini-dashboard` : `Selection #${selection.index} · dismissed; click to generate it again`}
+      onClick={() =>
+        mounted
+          ? document.getElementById(`mini-${selection.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+          : void explore(selection.text, { ...(selection.refinementText ? { refinementText: selection.refinementText } : {}), ...(selection.viewMode ? { viewMode: selection.viewMode } : {}) })
+      }
+      title={mounted ? `Selection #${selection.index}${extra} · click to scroll to its mini-dashboard` : `Selection #${selection.index}${extra} · dismissed; click to generate it again`}
       className={`inline-flex h-5 max-w-full items-center gap-1 rounded border px-1.5 align-middle font-mono text-[11px] transition-colors hover:brightness-125 ${mounted ? "border-selection/60 bg-selection/14 text-selection" : "border-selection/30 bg-selection/6 text-selection/70"}`}
     >
       <Sparkles className="size-3 shrink-0" />

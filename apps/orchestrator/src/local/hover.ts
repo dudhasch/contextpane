@@ -28,12 +28,12 @@ function fitHeadline(base: string, fragments: string[], max = 120): string {
 
 export function inferEntityType(entityId: string): EntityType {
   const id = entityId.trim();
-  if (/^AADSTS\d+$/i.test(id) || /^0x[0-9a-f]{8}$/i.test(id) || id === "CountViolation") return "errorCode";
+  if (/^AADSTS\d+$/i.test(id) || /^0x[0-9a-f]{8}$/i.test(id) || id === "CountViolation" || id.toUpperCase() in INTUNE_ERRORS) return "errorCode";
   if (id.includes("@")) return "upn";
   if (/^SG-/i.test(id)) return "group";
-  if (/^(nsg|rg|vdpool|vm|snet|vnet)-/i.test(id) || id.startsWith("/subscriptions/")) return "resource";
+  if (/^(nsg|rg|vdpool|vm|snet|vnet|stcontoso)-/i.test(id) || id === "stcontosofslogix01" || id.startsWith("/subscriptions/")) return "resource";
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id)) return "setting";
-  if (/^(CONTOSO|FABRIKAM)-(WS|LT|SP)-/i.test(id)) return "device";
+  if (/^(CONTOSO|FABRIKAM)-(WS|LT|SP|FIN)-/i.test(id)) return "device";
   if (/^\[.*\]/.test(id) || /policy|baseline|compliance|firewall|bitlocker|deviceconfig/i.test(id)) return "policy";
   if (/^(INC|TKT|ANOM)-/i.test(id)) return "ticket";
   if (/^CNT-/i.test(id)) return "contract";
@@ -132,8 +132,11 @@ function hoverUser(ctx: CorrelationContext, upn: string): HoverDiagnosticArgs {
 
   const facts: Fact[] = [];
   if (user) {
+    const cleanPath = user.assignmentPath
+      .replace(/\bgroupBasedLicensing\b/g, "Group-Based Licensing")
+      .replace(/\bdirectAssignment\b/g, "Direct Assignment");
     facts.push(fact("Assigned SKU", `${user.currentSku} · expected ${user.expectedSku}`, true, licenseOk ? "healthy" : "warning"));
-    facts.push(fact("Assignment", `${user.assignmentState} · ${user.assignmentPath}`, true, user.assignmentState === "Active" ? "healthy" : user.assignmentState === "Reclaimed" ? "healthy" : user.assignmentState === "Error: CountViolation" || user.assignmentState === "Orphaned" ? "critical" : "warning"));
+    facts.push(fact("Assignment", `${user.assignmentState} · ${cleanPath}`, true, user.assignmentState === "Active" ? "healthy" : user.assignmentState === "Reclaimed" ? "healthy" : user.assignmentState === "Error: CountViolation" || user.assignmentState === "Orphaned" ? "critical" : "warning"));
     if (!user.accountEnabled) facts.push(fact("Account", `Disabled · last sign-in ${user.lastSignIn?.slice(0, 10) ?? "> 90 days"}`, false, "warning"));
   }
   facts.push(fact("Groups", groups.join(", ") || "none", true));
@@ -234,6 +237,106 @@ const INTUNE_ERRORS: Record<string, { meaning: string; likelyCause: string; docs
     meaning: "Group-based licensing could not assign the license: the tenant has no available seats of the SKU.",
     likelyCause: "Seats are consumed, often by disabled or offboarded accounts that still hold the license directly or through a group.",
     docsUrl: "https://learn.microsoft.com/entra/identity/users/licensing-groups-resolve-problems",
+  },
+  AADDS104: {
+    meaning: "Entra Domain Services platform is unable to reach the managed domain controllers over TCP 5986.",
+    likelyCause: "NSG rules on the managed domain subnet blocked inbound PowerShell Remoting (TCP 5986) from Service Tag AzureActiveDirectoryDomainServices.",
+    docsUrl: "https://learn.microsoft.com/entra/identity/domain-services/alert-aadds104",
+  },
+  AADDS501: {
+    meaning: "Entra Domain Services replica set is offline and unable to synchronize password hashes.",
+    likelyCause: "Management control plane heartbeat was severed by NSG or DNS changes on the managed domain VNet.",
+    docsUrl: "https://learn.microsoft.com/entra/identity/domain-services/troubleshoot-alerts",
+  },
+  ANOMALOUSTOKEN: {
+    meaning: "Entra ID Protection detected a token with anomalous characteristics or replay from an unfamiliar ASN.",
+    likelyCause: "Active Refresh Token or session cookie replayed after password reset unless sessions are explicitly revoked.",
+    docsUrl: "https://learn.microsoft.com/entra/id-protection/concept-identity-protection-risks",
+  },
+  PIMROLEOUTSIDEGOVERNANCE: {
+    meaning: "Privileged directory role was assigned permanently outside of Privileged Identity Management.",
+    likelyCause: "Automation service principal created a permanent directory role assignment instead of an eligible PIM schedule.",
+    docsUrl: "https://learn.microsoft.com/entra/id-governance/privileged-identity-management/pim-how-to-configure-security-alerts",
+  },
+  LARGEOBJECT: {
+    meaning: "Entra Connect synchronization export failed because an attribute exceeded the maximum allowed multi-value count.",
+    likelyCause: "The userCertificate attribute in Active Directory has more than 15 X.509 certificates attached to the user object.",
+    docsUrl: "https://learn.microsoft.com/entra/identity/hybrid/connect/tshoot-connect-sync-errors",
+  },
+  USERERRORGUESTAGENTSTATUSUNAVAILABLE: {
+    meaning: "Azure Backup failed because the VM Guest Agent cannot communicate with the Azure Backup / WireServer endpoint.",
+    likelyCause: "Outbound traffic from the VM to Azure WireServer (168.63.129.16:80/32526) or AzureBackup service tag is blocked.",
+    docsUrl: "https://learn.microsoft.com/azure/backup/backup-azure-vms-troubleshoot",
+  },
+  OPERATIONNOTALLOWED: {
+    meaning: "Azure Resource Manager blocked the disk resize operation on the managed OS disk.",
+    likelyCause: "Active Azure Site Recovery (ASR) replication or incremental snapshots prevent changing the disk SKU size.",
+    docsUrl: "https://learn.microsoft.com/azure/virtual-machines/linux/expand-disks",
+  },
+  DRACUTEMERGENCYMODE: {
+    meaning: "Linux VM dropped into dracut initramfs emergency shell during boot because the root filesystem device is missing.",
+    likelyCause: "Kernel initramfs image was rebuilt without Hyper-V VMBus storage drivers (hv_vmbus, hv_storvsc, hv_netvsc).",
+    docsUrl: "https://learn.microsoft.com/troubleshoot/azure/virtual-machines/linux/kernel-related-boot-issues",
+  },
+  "0X801C0042": {
+    meaning: "AADLoginForWindows extension failed to Entra-join the session host (DSREG_E_DEVICE_MESSAGE_FORMAT_ERROR).",
+    likelyCause: "Outbound HTTPS to enterpriseregistration.windows.net or login.microsoftonline.com is blocked or TLS-inspected.",
+    docsUrl: "https://learn.microsoft.com/entra/identity/devices/troubleshoot-device-dsregcmd",
+  },
+  VMEXTENSIONPROVISIONINGERROR: {
+    meaning: "Azure VM extension failed to complete provisioning within the allowed timeout window.",
+    likelyCause: "Extension script or Entra device registration failed due to network filtering or TLS interception.",
+    docsUrl: "https://learn.microsoft.com/azure/virtual-machines/extensions/troubleshoot",
+  },
+  AUTHORIZATIONPERMISSIONMISMATCH: {
+    meaning: "HTTP 403 from Azure Storage: the caller's RBAC role does not grant Data Plane permissions for this operation.",
+    likelyCause: "Caller holds Control Plane Owner/Contributor but lacks Storage Blob Data Contributor after Shared Key was disabled.",
+    docsUrl: "https://learn.microsoft.com/azure/storage/blobs/assign-azure-role-data-access",
+  },
+  NO_PROPOSAL_CHOSEN: {
+    meaning: "IKEv2 Phase 2 Child SA rekeying failed with ErrorCode 13806 (NO_PROPOSAL_CHOSEN).",
+    likelyCause: "Perfect Forward Secrecy (PFS / DH Group) mismatch between the on-premises VPN device and the Azure VPN Connection policy.",
+    docsUrl: "https://learn.microsoft.com/azure/vpn-gateway/vpn-gateway-troubleshoot-vpn-point-to-site-connection-problems",
+  },
+  ASYMMETRICROUTINGDENY: {
+    meaning: "Azure Firewall dropped a TCP SYN-ACK packet because it had no matching SYN state in its session table.",
+    likelyCause: "Asymmetric routing between ExpressRoute GatewaySubnet and the spoke UDR table bypassing the stateful firewall on ingress.",
+    docsUrl: "https://learn.microsoft.com/azure/firewall/integrate-with-expressroute",
+  },
+  ROLEASSIGNMENTUPDATENOTPERMITTED: {
+    meaning: "ARM rejected updating an existing RoleAssignment GUID with a different principalId or scope.",
+    likelyCause: "Bicep roleAssignment name GUID seed omitted principalId after a Managed Identity was deleted and recreated.",
+    docsUrl: "https://learn.microsoft.com/azure/role-based-access-control/troubleshooting",
+  },
+  REQUESTDISALLOWEDBYPOLICY: {
+    meaning: "Azure Resource Manager deployment was blocked by an active Azure Policy with a Deny effect.",
+    likelyCause: "Landing Zone management group policy (Deny-Public-IP) prohibits public IP creation in internal Corp spoke subscriptions.",
+    docsUrl: "https://learn.microsoft.com/azure/governance/policy/concepts/effects#deny",
+  },
+  SUBNETISFULL: {
+    meaning: "AKS node pool scale-out failed because the target VNet subnet does not have enough free IP addresses.",
+    likelyCause: "Azure CNI pre-allocates maxPods + 1 private IP addresses per node upfront on the subnet.",
+    docsUrl: "https://learn.microsoft.com/azure/aks/configure-azure-cni",
+  },
+  OVERQUOTA: {
+    meaning: "Log Analytics workspace reached its configured Daily Cap and stopped ingesting Analytics/Basic logs.",
+    likelyCause: "High-volume container or debug log flood exhausted the daily ingestion cap, pausing Sentinel detections.",
+    docsUrl: "https://learn.microsoft.com/azure/azure-monitor/logs/daily-cap",
+  },
+  EVENTID5156: {
+    meaning: "Windows Security Event ID 5156 (Windows Filtering Platform permitted a connection) caused a massive Sentinel ingestion spike.",
+    likelyCause: "Audit Filtering Platform Connection GPO enabled with an unfiltered AMA Data Collection Rule.",
+    docsUrl: "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-5156",
+  },
+  LATEARRIVINGDATA: {
+    meaning: "Billable Log Analytics data volume on _TimeReceived differs from queries filtering on TimeGenerated.",
+    likelyCause: "Offline or firewall-blocked AMA agent cached days of events locally and flushed them in a single burst upon reconnect.",
+    docsUrl: "https://learn.microsoft.com/azure/azure-monitor/logs/data-ingestion-time",
+  },
+  ORPHANEDDISKSCOSTSPIKE: {
+    meaning: "Azure Cost Management flagged a +340% daily run-rate anomaly driven by compute lag and unattached Premium SSD v2 disks.",
+    likelyCause: "Deleted VMs left data disks with deleteOption=Detach in an Unattached billable state alongside 24-72h billing latency.",
+    docsUrl: "https://learn.microsoft.com/azure/virtual-machines/disks-find-unattached-portal",
   },
 };
 

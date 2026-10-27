@@ -90,12 +90,12 @@
     },
     "tier": 0,
     "tokenCost": 0,
-    "latencyMs": 0.035,
+    "latencyMs": 0.026,
     "fuzz": {
       "cases": 100,
       "passed": 100
     },
-    "createdAt": "2026-10-27T14:41:53.434Z",
+    "createdAt": "2026-10-27T20:26:20.302Z",
     "version": 1
   },
   {

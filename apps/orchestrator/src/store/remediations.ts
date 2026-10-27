@@ -19,8 +19,8 @@ class RemediationStore {
     for (const file of readdirSync(this.dir).filter((f) => f.endsWith(".json"))) {
       try {
         const rawText = readFileSync(join(this.dir, file), "utf8");
-        // Ignore stale cached remediations that contain legacy <... id> placeholders
-        if (/<[^>\n]+ (?:id|skuId)>/.test(rawText)) continue;
+        // Ignore stale cached remediations that contain legacy <... id> placeholders or old group/CA IDs
+        if (/<[^>\n]+ (?:id|skuId)>|sg-contoso-finance-legacy-01|ca409200-1a2b-4c3d-8e9f-0a1b2c3d4e5f/.test(rawText)) continue;
         const parsed = ActionApprovalDrawerSchema.safeParse(JSON.parse(rawText));
         if (parsed.success) this.items.set(parsed.data.remediationId, parsed.data);
       } catch {

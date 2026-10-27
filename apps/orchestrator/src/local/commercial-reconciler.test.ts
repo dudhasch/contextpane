@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { reconcileCommercial, reverseCompile } from "./commercial-reconciler.ts";
 
 describe("3-way commercial reconciler", () => {
-  test("INC-4092 / ANOM-LIC-101: Path A $0/$285, Path B +$171, contract CNT-2026-884", () => {
+  test("INC-4092 vs ANOM-LIC-101: seat counts (12/15 with 3 available on INC-4092 vs 15/15 on ANOM-LIC-101), Copilot $30/mo, contract CNT-2026-884", () => {
     for (const id of ["INC-4092", "ANOM-LIC-101"]) {
       const r = reconcileCommercial(id);
       expect(r.scenarioId).toBe(id);
@@ -10,14 +10,13 @@ describe("3-way commercial reconciler", () => {
       expect(r.sources.gitBaseline).toContain("golden-tenant");
       expect(r.sources.liveGraph.toLowerCase()).toContain("graph");
       expect(r.sources.commercial).toContain("Pax8");
-      // Orphaned seats derived from disabled leavers in LICENSE_ANOMALY fixtures.
       expect(r.pathA.id).toBe("A");
       expect(r.pathA.label).toBe("Zero-Spend Seat Reclamation");
       expect(r.pathA.reclaim).toEqual({ SPE_E5: 3, Copilot: 2 });
       expect(r.pathA.netDeltaMonthly).toBe(0);
-      // 3 SPE_E5 * $57 (CNT-2026-884 L1) + 2 Copilot * $57 = $285/mo waste.
-      expect(r.pathA.wasteEliminatedMonthly).toBe(285);
-      expect(r.wasteEliminatedMonthly).toBe(285);
+      // 3 SPE_E5 * $57 (CNT-2026-884 L1) + 2 Copilot * $30 = $231/mo waste.
+      expect(r.pathA.wasteEliminatedMonthly).toBe(231);
+      expect(r.wasteEliminatedMonthly).toBe(231);
       expect(r.pathB.id).toBe("B");
       expect(r.pathB.label).toBe("Pax8 CSP Seat Increment");
       expect(r.pathB.increment).toEqual({ SPE_E5: 3 });
@@ -28,9 +27,23 @@ describe("3-way commercial reconciler", () => {
       const e5 = r.skus.find((s) => s.skuPartNumber === "SPE_E5")!;
       expect(e5.orphaned).toBe(3);
       expect(e5.unitPriceMonthly).toBe(57);
+      if (id === "INC-4092") {
+        expect(r.totalSeats).toBe(15);
+        expect(r.assignedSeats).toBe(12);
+        expect(r.availableSeats).toBe(3);
+        expect(e5.consumed).toBe(12);
+        expect(e5.available).toBe(3);
+      } else {
+        expect(r.totalSeats).toBe(15);
+        expect(r.assignedSeats).toBe(15);
+        expect(r.availableSeats).toBe(0);
+        expect(e5.consumed).toBe(15);
+        expect(e5.available).toBe(0);
+      }
       const copilot = r.skus.find((s) => s.skuPartNumber === "Microsoft_365_Copilot")!;
       expect(copilot.orphaned).toBe(2);
-      expect(e5.wasteMonthly + copilot.wasteMonthly).toBe(285);
+      expect(copilot.unitPriceMonthly).toBe(30);
+      expect(e5.wasteMonthly + copilot.wasteMonthly).toBe(231);
       expect(r.orphanedUsers.length).toBe(3);
     }
   });

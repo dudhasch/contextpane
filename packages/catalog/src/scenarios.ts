@@ -213,7 +213,7 @@ export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenar
 export type AnyScenarioEntry = ScenarioRegistryEntry | CustomScenarioEntry;
 
 const customRegistry = new Map<string, CustomScenarioEntry>();
-export const MAX_CUSTOM_SCENARIOS = 12;
+export const MAX_CUSTOM_SCENARIOS = 64;
 
 export function isCustomScenarioId(value: unknown): value is CustomScenarioId {
   return typeof value === "string" && CUSTOM_SCENARIO_ID_RE.test(value);

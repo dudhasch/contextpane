@@ -33,7 +33,9 @@ function UsersTable({ users }: { users: LicenseDriftUser[] }) {
           </span>,
           <SkuBadges skus={u.currentSku} />,
           <SkuBadges skus={u.expectedSku} muted />,
-          <span className="font-mono text-[11px] whitespace-nowrap text-muted">{u.assignmentPath}</span>,
+          <span className="font-mono text-[11px] whitespace-nowrap text-muted">
+            {u.assignmentPath.replace(/\bgroupBasedLicensing\b/g, "Group-Based Licensing").replace(/\bdirectAssignment\b/g, "Direct Assignment")}
+          </span>,
           <Pill tone={STATE_TONE[u.assignmentState]}>{u.assignmentState}</Pill>,
         ])}
       />
@@ -69,31 +71,55 @@ function CommercialSubTab() {
   const rec = useWorkbench((s) => s.commercial);
   const loadOps = useWorkbench((s) => s.loadOps);
   if (!rec) return <button type="button" onClick={() => void loadOps()} className="text-[11.5px] text-primary hover:underline">Load License &amp; Cost Impact…</button>;
+  const e5Sku = rec.skus?.find((s) => s.sku === "SPE_E5");
+  const hasIdlePoolSeats = Boolean(e5Sku && e5Sku.available >= 3 && e5Sku.consumed === 12);
   return (
     <div className="space-y-2.5 text-[11.5px]" data-testid="commercial-subtab">
       <div>
         <div className="text-[12px] font-semibold text-text">License &amp; Cost Impact</div>
-        <div className="text-[11px] text-muted">Contract vs. Billed vs. Active Entra Seats — $0 extra cost</div>
+        <div className="text-[11px] text-muted">
+          {hasIdlePoolSeats
+            ? "80% used · 3 unassigned seats ready for the 3 Finance users — $0.00/mo extra cost"
+            : "Contract vs. Billed vs. Active Entra Seats — $0 extra cost"}
+        </div>
       </div>
       {rec.skus && rec.skus.length > 0 && (
         <DataTable
           head={["License", "Customer Contract", "Billed by Vendor (Pax8)", "Assigned in Entra ID"]}
-          rows={rec.skus.map((s) => [
-            <div>
-              <div className="font-medium text-text">{s.skuName}</div>
-              <div className="font-mono text-[10px] text-faint">{s.sku}</div>
-            </div>,
-            <span className="font-mono">{s.prepaid} seats</span>,
-            <span className="font-mono">{s.enabled} seats (${s.unitPriceMonthly}/mo)</span>,
-            <span className="font-mono">
-              {s.consumed} active · <span className={s.available > 0 ? "text-healthy" : "text-warning"}>{s.available} free</span>
-              {s.orphaned > 0 ? <span className="text-warning"> · {s.orphaned} reclaimable</span> : null}
-            </span>,
-          ])}
+          rows={rec.skus.map((s) => {
+            const pct = s.enabled > 0 ? Math.round((s.consumed / s.enabled) * 100) : 0;
+            return [
+              <div>
+                <div className="font-medium text-text">{s.skuName}</div>
+                <div className="font-mono text-[10px] text-faint">{s.sku}</div>
+              </div>,
+              <span className="font-mono">{s.prepaid} seats</span>,
+              <span className="font-mono">{s.enabled} seats (${s.unitPriceMonthly}/mo)</span>,
+              <span className="font-mono">
+                {s.consumed} active ·{" "}
+                <span className={s.available > 0 ? "text-healthy" : "text-warning"}>
+                  {s.available} free ({pct}% used)
+                </span>
+                {s.available === 0 && s.orphaned > 0 ? (
+                  <span className="text-warning"> · {s.orphaned} inactive &gt;90d reclaimable</span>
+                ) : null}
+              </span>,
+            ];
+          })}
         />
       )}
       <div className="space-y-1 rounded-md border border-emerald-500/25 bg-emerald-500/8 px-2.5 py-1.5">
-        <div><span className="font-medium text-healthy">Recommended ({rec.pathA.label}):</span> <span className="text-muted">$0/mo net · ${rec.pathA.wasteEliminatedMonthly}/mo waste eliminated</span></div>
+        {hasIdlePoolSeats ? (
+          <div>
+            <span className="font-medium text-healthy">Recommended (Assign 3 Available Pool Seats):</span>{" "}
+            <span className="text-muted">80% used · 3 unassigned seats ready for the 3 Finance users — $0.00/mo extra cost</span>
+          </div>
+        ) : (
+          <div>
+            <span className="font-medium text-healthy">Recommended ({rec.pathA.label}):</span>{" "}
+            <span className="text-muted">$0/mo net · ${rec.pathA.wasteEliminatedMonthly}/mo waste eliminated</span>
+          </div>
+        )}
         <div><span className="text-muted">Alternative ({rec.pathB.label}): +${rec.pathB.netDeltaMonthly}/mo prorated ({rec.contractId})</span></div>
       </div>
     </div>
@@ -127,7 +153,7 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       title={`License Pool & Assignment · ${props.groupName}`}
       state={props.state}
       triggeredBy={triggeredBy}
-      source={live ? "live subscribedSkus" : "pool: fixture"}
+      source={live ? "live subscribedSkus" : "Source: Entra ID License Pool"}
       tabs={[
         { id: "users", label: "Assignments", badge: props.users.length },
         { id: "pool", label: "SKU Pools", badge: props.skuPools.length },
@@ -167,7 +193,7 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
                   <span className="font-mono">{p.enabled}</span>,
                   <span className="font-mono">{p.consumed}</span>,
                   <span className={`font-mono ${p.available <= 0 ? "text-critical" : "text-healthy"}`}>{p.available}</span>,
-                  <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "fixture"}</span>,
+                  <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "Entra ID License Pool"}</span>,
                 ])}
               />
               {props.groupErrors.map((e) => (

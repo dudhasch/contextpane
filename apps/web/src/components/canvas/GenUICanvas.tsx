@@ -58,12 +58,12 @@ function formatTimelineStepLabel(s: { kind?: string; relativeLabel: string; time
 }
 
 function formatTimelineStepDescription(s: { kind?: string; relativeLabel: string; state: { summary: string } }, scenarioId: string): string {
-  const isAvd = scenarioId === "INC-4092";
-  if (s.kind === "baseline" || s.relativeLabel === "T-18m") return isAvd ? "All 5 users working normally" : "All systems healthy before change";
-  if (s.kind === "drift" || s.relativeLabel === "T-14m") return isAvd ? "Port 3389 opened & 3 users on E3 license" : "Configuration changed from baseline";
-  if (s.kind === "first-failure" || s.relativeLabel === "T-06m") return isAvd ? "First user blocked (AADSTS53003)" : "First user or device error reported";
-  if (s.kind === "now" || s.relativeLabel === "NOW") return isAvd ? "3 users blocked · Port 3389 exposed" : "Active issue needs attention";
-  if (s.kind === "counterfactual" || s.relativeLabel === "T+Fix") return isAvd ? "Preview: All 3 issues resolved" : "Preview: All issues resolved";
+  const isAvd = scenarioId === "INC-4092" || scenarioId.startsWith("CUSTOM-") || scenarioId.startsWith("ERP-");
+  if (s.kind === "baseline" || s.relativeLabel === "T-18m") return "Healthy baseline · 0 issues";
+  if (s.kind === "drift" || s.relativeLabel === "T-14m") return isAvd ? "Drift introduced · 3 users & port 3389" : "Drift introduced · Config changed";
+  if (s.kind === "first-failure" || s.relativeLabel === "T-06m") return isAvd ? "First AVD sign-in error (53003)" : "First user or device error";
+  if (s.kind === "now" || s.relativeLabel === "NOW") return isAvd ? "Active incident · 3 cards affected" : "Active incident · Needs fix";
+  if (s.kind === "counterfactual" || s.relativeLabel === "T+Fix") return "Preview after fix · All healthy";
   return s.state.summary;
 }
 
@@ -90,42 +90,44 @@ function TimeTravelScrubber() {
   }
   const active = timeline.slices.find((s) => s.id === sliceId);
   return (
-    <div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface/30 px-3" data-testid="timeline-scrubber">
-      <span className="shrink-0 text-[10.5px] font-medium whitespace-nowrap text-muted">🕒 Incident Timeline:</span>
-      <div className="flex shrink-0 items-center gap-0.5">
-        {timeline.slices.map((s, idx) => {
-          const isSelected = s.id === sliceId;
-          const label = formatTimelineStepLabel(s);
-          return (
-            <div key={s.id} className="flex items-center gap-0.5">
-              {idx > 0 && <span className="text-[9.5px] text-faint">→</span>}
-              <button
-                type="button"
-                onClick={() => select(s.id)}
-                title={s.state.summary}
-                className={`h-5 shrink-0 rounded border px-1.5 text-[10.5px] whitespace-nowrap transition-colors ${
-                  isSelected
-                    ? "border-primary/60 bg-primary/15 font-semibold text-primary"
-                    : "border-border-subtle bg-surface text-muted hover:border-border hover:text-text"
-                }`}
-              >
-                {label}
-              </button>
-            </div>
-          );
-        })}
+    <div className="flex h-8 shrink-0 items-center justify-between gap-1.5 border-b border-border bg-surface/30 px-3" data-testid="timeline-scrubber">
+      <div className="flex min-w-0 items-center gap-1">
+        <span className="shrink-0 text-[10.5px] font-medium whitespace-nowrap text-muted">🕒 Timeline:</span>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {timeline.slices.map((s, idx) => {
+            const isSelected = s.id === sliceId;
+            const label = formatTimelineStepLabel(s);
+            return (
+              <div key={s.id} className="flex items-center gap-0.5">
+                {idx > 0 && <span className="text-[9px] text-faint">→</span>}
+                <button
+                  type="button"
+                  onClick={() => select(s.id)}
+                  title={s.state.summary}
+                  className={`h-5 shrink-0 rounded border px-1.5 py-0.5 text-[10.5px] whitespace-nowrap transition-colors ${
+                    isSelected
+                      ? "border-primary/60 bg-primary/15 font-semibold text-primary"
+                      : "border-border-subtle bg-surface text-muted hover:border-border hover:text-text"
+                  }`}
+                >
+                  {label}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
       {active && !convergence && (
-        <span className="ml-auto truncate pl-1.5 text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId)}</span>
+        <span className="shrink-0 whitespace-nowrap text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId)}</span>
       )}
       {convergence && (
         <button
           type="button"
           onClick={() => void rollbackNow()}
-          className="ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[10.5px] font-medium whitespace-nowrap text-healthy hover:bg-healthy/20"
+          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-2 text-[10.5px] font-medium whitespace-nowrap text-healthy hover:bg-healthy/20"
           data-testid="rollback-button"
         >
-          <Undo2 className="size-3" /> Undo Change (Restore Previous State)
+          <Undo2 className="size-3 shrink-0" /> Undo Change (Restore Previous State)
         </button>
       )}
     </div>

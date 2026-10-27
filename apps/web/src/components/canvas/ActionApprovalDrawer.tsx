@@ -59,11 +59,16 @@ export function ActionApprovalDrawerSheet() {
   const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
   const toast = useWorkbench((s) => s.toast);
   const mode = useWorkbench((s) => s.executionMode);
+  const simulateCanaryFailure = useWorkbench((s) => s.simulateCanaryFailure);
   const formalPassed = useWorkbench((s) => s.formal?.formal.passed);
   const fleet = useWorkbench((s) => s.fleet);
+  const activeTenantName = useWorkbench((s) => {
+    const active = s.scenarios.find((sc) => sc.scenarioId === s.scenarioId);
+    return active?.tenantName ?? (s.scenarioId === "INC-4099" ? "Fabrikam Legal" : "Contoso Finance");
+  });
   const intuneHealth = useWorkbench((s) => s.intuneHealth);
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
-  const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.resolutionNote.scenarioId === s.drawer.ticketId));
+  const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.drawer && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const reopenTicket = useWorkbench((s) => s.reopenTicket);
 
   if (!open) return null;
@@ -103,7 +108,9 @@ export function ActionApprovalDrawerSheet() {
     }
   };
 
-  const peerCount = fleet?.affectedCount ?? 3;
+  const peerCount = fleet
+    ? fleet.tenants.filter((t) => t.affected && t.tenant !== activeTenantName).length
+    : 3;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/75 backdrop-blur-sm" onClick={() => setOpen(false)}>
@@ -192,7 +199,7 @@ export function ActionApprovalDrawerSheet() {
             </div>
 
             {/* Tab Viewport */}
-            <div className="min-h-[380px] flex-1 overflow-y-auto p-4" data-testid="drawer-scroll-viewport">
+            <div className="flex min-h-[380px] flex-1 flex-col overflow-y-auto p-4" data-testid="drawer-scroll-viewport">
               {mainTab === "scripts" && (
                 <ScriptsAndChangesTab
                   drawer={drawer}
@@ -223,23 +230,25 @@ export function ActionApprovalDrawerSheet() {
                 <ExecutionModeSwitch drawer={drawer} />
                 <div className="flex items-center gap-3" data-testid="canary-controls">
                   <CanaryCheckbox />
-                  <label
-                    className={`flex items-center gap-1.5 text-[11px] whitespace-nowrap ${prPossible ? "text-muted hover:text-text" : "text-faint"}`}
-                    title={
-                      prPossible
-                        ? `Push ${drawer.staging?.branchName ?? "fix/*"} and open a GitHub Pull Request`
-                        : "Requires a remote origin and authenticated GitHub CLI"
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      className="size-3.5 accent-primary"
-                      checked={openPr && prPossible}
-                      disabled={!prPossible || !drawer.staging || drawer.approval.state !== "pending"}
-                      onChange={(e) => setOpenPr(e.target.checked)}
-                    />
-                    <span>Open GitHub PR</span>
-                  </label>
+                  {mode === "break-glass" && (
+                    <label
+                      className={`flex items-center gap-1.5 text-[11px] whitespace-nowrap ${prPossible ? "text-muted hover:text-text" : "text-faint"}`}
+                      title={
+                        prPossible
+                          ? `Push ${drawer.staging?.branchName ?? "fix/*"} and open a GitHub Pull Request`
+                          : "Requires a remote origin and authenticated GitHub CLI"
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-3.5 accent-primary"
+                        checked={openPr && prPossible}
+                        disabled={!prPossible || !drawer.staging || drawer.approval.state !== "pending"}
+                        onChange={(e) => setOpenPr(e.target.checked)}
+                      />
+                      <span>Also Open GitHub PR</span>
+                    </label>
+                  )}
                 </div>
               </div>
 
@@ -261,13 +270,21 @@ export function ActionApprovalDrawerSheet() {
                     Cancel
                   </Button>
                   <Button
-                    variant="healthy"
+                    variant={simulateCanaryFailure ? "primary" : "healthy"}
                     size="md"
-                    className="flex-1 font-semibold"
+                    className={`flex-1 font-semibold ${
+                      simulateCanaryFailure
+                        ? "!border-amber-400/50 !bg-amber-500 !text-slate-950 hover:!bg-amber-400"
+                        : ""
+                    }`}
                     disabled={drawer.verificationStatus.verdict === "Verification Failed" || formalPassed === false}
                     onClick={() => void approve("approve")}
                   >
-                    {mode === "break-glass" ? "⚡ Apply Fix Now" : "🔀 Create Pull Request"}
+                    {simulateCanaryFailure
+                      ? "🧪 Run Rollback Simulation (Test Auto-Undo)"
+                      : mode === "break-glass"
+                        ? "⚡ Apply Fix Now"
+                        : "🔀 Create Pull Request"}
                   </Button>
                 </div>
               ) : drawer.approval.state === "rolled-back" ? (
@@ -333,7 +350,7 @@ function ScriptsAndChangesTab({
           : "Intune Detect & Fix scripts";
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-1 flex-col gap-3">
       {subTab === "powershell" && focusUpn && (
         <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/8 px-3 py-1.5 text-[11.5px] text-muted">
           <Pill tone="warning">Targeted user</Pill>
@@ -344,7 +361,7 @@ function ScriptsAndChangesTab({
       )}
 
       {/* Unified Code Box with Segmented Switcher + Single [Copy Script] Button */}
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-canvas">
+      <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-800 bg-canvas">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-surface/80 px-3 py-2" data-testid="path-a">
           <div className="inline-flex flex-wrap items-center gap-1 rounded-md border border-slate-800 bg-canvas/80 p-0.5" role="tablist">
             <SegmentButton active={subTab === "powershell"} onClick={() => onSelectSubTab("powershell")} icon={<Terminal />}>
@@ -369,15 +386,33 @@ function ScriptsAndChangesTab({
           </Button>
         </div>
 
-        <div className="p-2">
-          {subTab === "powershell" && <CodeBlock code={drawer.powershellScript} maxHeight="max-h-[400px]" hideToolbar />}
-          {subTab === "graph" && <CodeBlock code={drawer.graphPatch || "[]"} maxHeight="max-h-[400px]" hideToolbar />}
+        <div className="flex flex-1 flex-col p-2">
+          {subTab === "powershell" && (
+            <CodeBlock
+              code={drawer.powershellScript}
+              maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+              hideToolbar
+            />
+          )}
+          {subTab === "graph" && (
+            <CodeBlock
+              code={drawer.graphPatch || "[]"}
+              maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+              hideToolbar
+            />
+          )}
           {subTab === "terraform" && drawer.terraformDiff && (
             <CodeBlock
               code={drawer.terraformDiff}
-              maxHeight="max-h-[400px]"
+              maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
               hideToolbar
-              render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="max-h-[400px]" wrap={wrap} />}
+              render={(wrap) => (
+                <DiffView
+                  diff={drawer.terraformDiff}
+                  maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+                  wrap={wrap}
+                />
+              )}
             />
           )}
           {subTab === "deviceHealthScript" && <DeviceHealthScriptTab />}
@@ -636,19 +671,35 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
 /* Tab 3: Other Clients (3)                                                   */
 /* -------------------------------------------------------------------------- */
 
-const PEER_TENANT_META: Array<{ id: string; name: string; domain: string; branchPrefix: string }> = [
-  { id: "tenant-contoso-01", name: "Contoso Finance", domain: "c4a8shili.onmicrosoft.com", branchPrefix: "fleet/contoso-finance" },
-  { id: "tenant-fabrikam-02", name: "Fabrikam Legal", domain: "fabrikamlegal.onmicrosoft.com", branchPrefix: "fleet/fabrikam-legal" },
-  { id: "tenant-northwind-03", name: "Northwind Traders", domain: "northwindtraders.onmicrosoft.com", branchPrefix: "fleet/northwind-traders" },
-  { id: "tenant-tailspin-04", name: "Tailspin Aerospace", domain: "tailspinaerospace.onmicrosoft.com", branchPrefix: "fleet/tailspin-aerospace" },
-];
+const PEER_TENANT_META: Record<string, { id: string; name: string; domain: string; branchPrefix: string }> = {
+  "Contoso Finance": { id: "tenant-contoso-01", name: "Contoso Finance", domain: "c4a8shili.onmicrosoft.com", branchPrefix: "fleet/contoso-finance" },
+  "Fabrikam Legal": { id: "tenant-fabrikam-02", name: "Fabrikam Legal", domain: "fabrikamlegal.onmicrosoft.com", branchPrefix: "fleet/fabrikam-legal" },
+  "Northwind Traders": { id: "tenant-northwind-03", name: "Northwind Traders", domain: "northwindtraders.onmicrosoft.com", branchPrefix: "fleet/northwind-traders" },
+  "Tailspin Aerospace": { id: "tenant-tailspin-04", name: "Tailspin Aerospace", domain: "tailspinaerospace.onmicrosoft.com", branchPrefix: "fleet/tailspin-aerospace" },
+  "Woodgrove Bank": { id: "tenant-woodgrove-05", name: "Woodgrove Bank", domain: "woodgrovebank.onmicrosoft.com", branchPrefix: "fleet/woodgrove-bank" },
+};
 
 function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => Promise<void> }) {
   const [subView, setSubView] = useState<"clients" | "terraform">("clients");
   const fleet = useWorkbench((s) => s.fleet);
+  const activeTenantName = useWorkbench((s) => {
+    const active = s.scenarios.find((sc) => sc.scenarioId === s.scenarioId);
+    return active?.tenantName ?? (s.scenarioId === "INC-4099" ? "Fabrikam Legal" : "Contoso Finance");
+  });
   const rev = useWorkbench((s) => s.reverseResult);
   const stage = useWorkbench((s) => s.stageCampaign);
-  const count = fleet?.affectedCount ?? 3;
+  const affectedPeers = (fleet?.tenants ?? [])
+    .filter((t) => t.affected && t.tenant !== activeTenantName)
+    .map(
+      (t) =>
+        PEER_TENANT_META[t.tenant] ?? {
+          id: `tenant-${t.tenant.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          name: t.tenant,
+          domain: `${t.tenant.toLowerCase().replace(/[^a-z0-9]/g, "")}.onmicrosoft.com`,
+          branchPrefix: `fleet/${t.tenant.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        },
+    );
+  const count = affectedPeers.length;
 
   return (
     <div className="space-y-3 text-[12px]" data-testid="fleet-tab">
@@ -677,7 +728,8 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
       {subView === "clients" ? (
         <section className="space-y-3 rounded-lg border border-slate-800 bg-canvas/60 p-3.5">
           <p className="text-[12.5px] text-text">
-            We scanned your other managed client tenants and found <span className="font-semibold text-warning">{count} clients</span> with this exact same misconfiguration.
+            We scanned your other managed client tenants (excluding <span className="font-medium text-text">{activeTenantName}</span>) and found{" "}
+            <span className="font-semibold text-warning">{count} peer clients</span> with this exact same misconfiguration.
           </p>
           {fleet ? (
             <>
@@ -691,7 +743,7 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
                     </tr>
                   </thead>
                   <tbody>
-                    {PEER_TENANT_META.slice(0, Math.max(1, count)).map((t) => {
+                    {affectedPeers.map((t) => {
                       const branch = `${t.branchPrefix}/${fleet.signature}`;
                       return (
                         <tr key={t.id} className="border-t border-slate-800/80">
@@ -700,13 +752,13 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
                             <div className="font-mono text-[10.5px] text-faint">{t.domain}</div>
                           </td>
                           <td className="px-3 py-2">
-                            <div className="max-w-[220px] truncate font-mono text-[11px] text-primary" title={branch}>
+                            <div className="max-w-[175px] truncate font-mono text-[11px] text-primary" title={branch}>
                               {branch}
                             </div>
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 whitespace-nowrap">
                             <Pill tone="healthy" mono={false}>
-                              ✓ Ready
+                              1 issue · ✓ Safety Check Ready
                             </Pill>
                           </td>
                         </tr>

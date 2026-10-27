@@ -42,37 +42,50 @@ export const FLEET_DIRECTORY: readonly { tenant: FleetTenant; signatures: readon
   {
     tenant: "Contoso Finance",
     signatures: [
-      SIGNATURE_BY_SCENARIO["INC-4092"],
-      SIGNATURE_BY_SCENARIO["ANOM-LIC-101"],
-      SIGNATURE_BY_SCENARIO["ANOM-CA-204"],
-      SIGNATURE_BY_SCENARIO["ANOM-INT-309"],
+      SIGNATURE_BY_SCENARIO["INC-4099"],
     ],
   },
   {
     tenant: "Fabrikam Legal",
     signatures: [
-      SIGNATURE_BY_SCENARIO["INC-4099"],
       SIGNATURE_BY_SCENARIO["ANOM-LIC-101"],
       SIGNATURE_BY_SCENARIO["ANOM-INT-309"],
+      SIGNATURE_BY_SCENARIO["ANOM-APP-401"],
     ],
   },
   {
     tenant: "Northwind Traders",
-    signatures: [SIGNATURE_BY_SCENARIO["INC-4092"], SIGNATURE_BY_SCENARIO["ANOM-CA-204"]],
+    signatures: [
+      SIGNATURE_BY_SCENARIO["INC-4092"],
+      SIGNATURE_BY_SCENARIO["INC-4099"],
+      SIGNATURE_BY_SCENARIO["ANOM-LIC-101"],
+      SIGNATURE_BY_SCENARIO["ANOM-CA-204"],
+      SIGNATURE_BY_SCENARIO["ANOM-APP-401"],
+    ],
   },
   {
     tenant: "Tailspin Aerospace",
     signatures: [
       SIGNATURE_BY_SCENARIO["INC-4092"],
       SIGNATURE_BY_SCENARIO["INC-4099"],
+      SIGNATURE_BY_SCENARIO["ANOM-CA-204"],
       SIGNATURE_BY_SCENARIO["ANOM-INT-309"],
     ],
   },
   {
     tenant: "Woodgrove Bank",
-    signatures: [SIGNATURE_BY_SCENARIO["ANOM-CA-204"], SIGNATURE_BY_SCENARIO["ANOM-INT-309"]],
+    signatures: [
+      SIGNATURE_BY_SCENARIO["INC-4092"],
+      SIGNATURE_BY_SCENARIO["ANOM-CA-204"],
+      SIGNATURE_BY_SCENARIO["ANOM-INT-309"],
+    ],
   },
 ];
+
+export function activeTenantForScenario(scenarioId: string): FleetTenant {
+  const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
+  return effectiveId === "INC-4099" ? "Fabrikam Legal" : "Contoso Finance";
+}
 
 export function tenantSlug(tenant: string): string {
   return tenant.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -101,9 +114,10 @@ export function immunizeFleet(scenarioId: string): FleetImmunizationResult {
   const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
   if (!isScenarioId(effectiveId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
   const signature = SIGNATURE_BY_SCENARIO[effectiveId];
+  const activeTenant = activeTenantForScenario(effectiveId);
   const tenants: FleetTenantMatch[] = FLEET_DIRECTORY.map((entry) => ({
     tenant: entry.tenant,
-    affected: entry.signatures.includes(signature),
+    affected: entry.tenant !== activeTenant && entry.signatures.includes(signature),
     signatures: [...entry.signatures],
   }));
   return {

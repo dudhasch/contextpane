@@ -533,10 +533,17 @@ export interface InverseRollbackBundle {
 
 export const SPE_E3_SKU_ID = "6fd2c87f-b296-42f0-b197-1e91e994b900";
 export const SPE_E5_SKU_ID = "06ebc4ee-1bb5-47dd-8120-11324bc54e06";
+export const CONTOSO_AVD_CA_POLICY_ID = "d09ae604-9c1e-4b9c-9a5d-000000000001";
+
+export const CONTOSO_USER_OBJECT_IDS: Record<string, string> = {
+  "lynne.robins.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445501",
+  "diego.siciliani.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445502",
+  "patti.fernandez.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445503",
+};
 
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
 export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBundle {
-  const effectiveId = String(scenarioId).startsWith("CUSTOM-")
+  const effectiveId = String(scenarioId).startsWith("CUSTOM-") || String(scenarioId).startsWith("ERP-")
     ? baseScenarioOf(String(scenarioId))
     : scenarioId;
   const pre = preState(effectiveId);
@@ -551,13 +558,14 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
       ? [
           `$SpeE3SkuId = '${SPE_E3_SKU_ID}'`,
           `$SpeE5SkuId = '${SPE_E5_SKU_ID}'`,
+          `$ConditionalAccessPolicyId = '${CONTOSO_AVD_CA_POLICY_ID}' # ca-contoso-avd-mfa-01`,
           ...pre.affected
             .filter((a) => a.kind === "user")
-            .map(
-              (a) =>
-                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation SPE_E3 group license & SG-Contoso-Finance-Legacy membership (${a.pre})')) { New-MgGroupMemberByRef -GroupId '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/users/${a.id}" } | Out-Null; Remove-MgGroupMemberByRef -GroupId 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d' -DirectoryObjectId '${a.id}' -ErrorAction SilentlyContinue | Out-Null; Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null } # SG-Contoso-Finance-Legacy (${SPE_E3_SKU_ID} <- ${SPE_E5_SKU_ID})`,
-            ),
-          `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'd09ae604-9c1e-4b9c-9a5d-000000000001' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c'); excludeGroups = @('957845fd-42ee-4500-b407-ad04487da3c7') } } } | Out-Null }`,
+            .map((a, idx) => {
+              const objectId = CONTOSO_USER_OBJECT_IDS[a.id.toLowerCase()] ?? `907668fd-5d90-4f7c-8a5c-11223344550${idx + 1}`;
+              return `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation SPE_E3 group license & SG-Contoso-Finance-Legacy membership (${a.pre})')) { New-MgGroupMemberByRef -GroupId '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/${objectId}" } | Out-Null; Remove-MgGroupMemberByRef -GroupId 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d' -DirectoryObjectId '${objectId}' -ErrorAction SilentlyContinue | Out-Null; Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null } # SG-Contoso-Finance-Legacy (${SPE_E3_SKU_ID} <- ${SPE_E5_SKU_ID})`;
+            }),
+          `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${CONTOSO_AVD_CA_POLICY_ID}' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c'); excludeGroups = @('957845fd-42ee-4500-b407-ad04487da3c7') } } } | Out-Null }`,
           `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore Allow-Temp-RDP-Diagnostic-Drift rule and drifted tags on ${AVD_NSG_NAME}')) { $nsg = Get-AzNetworkSecurityGroup -Name '${AVD_NSG_NAME}' -ResourceGroupName 'rg-contoso-avd-prod'; Add-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name 'Allow-Temp-RDP-Diagnostic-Drift' -Priority 150 -Direction 'Inbound' -Access 'Allow' -Protocol 'Tcp' -SourcePortRange '*' -DestinationPortRange '3389' -SourceAddressPrefix '*' -DestinationAddressPrefix '*' | Set-AzNetworkSecurityGroup | Out-Null }`,
         ]
       : [

@@ -8,6 +8,7 @@ import {
   parseToolArguments,
   selectionDataPtr,
   selectionHash,
+  type ContextViewMode,
   type ContextualMiniDashboard,
   type RouterTelemetry,
 } from "@contextpane/catalog";
@@ -31,6 +32,10 @@ import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 export interface ExploreInput {
   scenarioId: string;
   selectedText: string;
+  /** Optional added query/context from the operator, e.g. "other apps with the same owner". */
+  refinementText?: string;
+  /** Selected UI view mode (dashboard, full-card, comparison, blast-radius). */
+  viewMode?: ContextViewMode;
   /** Free-form ticket text the selection came from (an unscripted ticket), for the prompt only. */
   customTicketText?: string;
 }
@@ -69,13 +74,16 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
   const started = performance.now();
   const requestId = telemetry.nextRequestId("t1s");
   const selectedText = validateSelectionText(input.selectedText);
+  const refinementText = input.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
+  const viewMode = input.viewMode;
   const ctx: CorrelationContext = await gatherContext(input.scenarioId);
   const brief = buildScenarioBrief(ctx);
-  const slice = buildSelectionSlice(ctx, selectedText, brief.steps);
-  const hash = selectionHash(ctx.ticketId, selectedText);
+  const sliceOptions = { ...(refinementText ? { refinementText } : {}), ...(viewMode ? { viewMode } : {}) };
+  const slice = buildSelectionSlice(ctx, selectedText, brief.steps, sliceOptions);
+  const hash = selectionHash(ctx.ticketId, selectedText, refinementText, viewMode);
   const ptr = selectionDataPtr(ctx.ticketId, hash);
   const publication = publishSelection({ ptr, scenarioId: ctx.ticketId, selectedText, sourceQuery: slice.sourceQuery, rows: slice.rows });
-  const reference = sliceToCard(ctx, selectedText, slice);
+  const reference = sliceToCard(ctx, selectedText, slice, sliceOptions);
 
   let card = reference;
   let usage: TokenUsage = ZERO_USAGE;
@@ -91,6 +99,8 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
     const payload = {
       scenario: { scenarioId: ctx.ticketId, title: brief.title, tenant: ctx.erp.tenant.verifiedDomain },
       selectedText,
+      ...(refinementText ? { refinementText } : {}),
+      ...(viewMode ? { viewMode } : {}),
       ...(input.customTicketText ? { ticketExcerpt: input.customTicketText.slice(0, 600) } : {}),
       descriptor: { ...publication.descriptor, sample },
       resolutionSteps: brief.steps.map((s, i) => `${i}: ${s.title}`),

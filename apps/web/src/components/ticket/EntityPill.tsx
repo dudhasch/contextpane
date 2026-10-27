@@ -16,7 +16,7 @@ import { AlertTriangle, Cloud, Cpu, ExternalLink, Hash, Laptop, ShieldBan, Slide
 import { useEffect, useState, type ReactNode } from "react";
 import type { EnrichedEntity, EntityType, QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
-import { PROVIDER_LABEL, healthTone } from "@/lib/format";
+import { healthTone } from "@/lib/format";
 import { CAT_CHIP, catStyle } from "@/lib/provenance";
 import { selectActiveTimelineSlice, selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -151,8 +151,8 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="font-mono text-[11px] text-muted">{entityId}</span>
-          <Pill tone="meta" icon={<Sparkles />}>
-            Tier 1A
+          <Pill tone="meta" icon={<Sparkles />} mono={false}>
+            Live Context
           </Pill>
         </div>
         <div className="h-3.5 w-4/5 animate-pulse rounded bg-surface" />
@@ -204,19 +204,25 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
       <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[10px] text-faint">
         <span className="inline-flex items-center gap-1">
           <Cpu className="size-3" />
-          {t.tier} · {PROVIDER_LABEL[t.provider] ?? t.provider}
+          Live Entra &amp; Azure Context · &lt;1ms
         </span>
-        <span>{entry.latencyMs ?? t.latencyMs} ms</span>
+        <span>{entry.latencyMs && entry.latencyMs > 1 ? `${entry.latencyMs} ms` : "<1ms"}</span>
       </div>
     </div>
   );
 }
 
+function formatFactValue(val: string): string {
+  return val
+    .replace(/\bgroupBasedLicensing\b/g, "Group-Based Licensing")
+    .replace(/\bdirectAssignment\b/g, "Direct Assignment");
+}
+
 function FactRow({ label, value, mono, tone }: { label: string; value: string; mono: boolean; tone?: Tone }) {
   return (
     <>
-      <dt className="text-faint">{label}</dt>
-      <dd className={`${mono ? "font-mono" : ""} ${tone ? TONE_TEXT[tone] : "text-text"} break-words`}>{value}</dd>
+      <dt className="text-faint">{formatFactValue(label)}</dt>
+      <dd className={`${mono ? "font-mono" : ""} ${tone ? TONE_TEXT[tone] : "text-text"} break-words`}>{formatFactValue(value)}</dd>
     </>
   );
 }

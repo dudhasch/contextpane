@@ -4,6 +4,7 @@ import {
   FLEET_DIRECTORY,
   FLEET_TENANTS,
   SIGNATURE_BY_SCENARIO,
+  activeTenantForScenario,
   immunizeFleet,
   signatureForScenario,
   stageFleetCampaign,
@@ -44,24 +45,29 @@ describe("fleet immunizer", () => {
     }
   });
 
-  test("affected tenants are deterministic per scenario", () => {
+  test("affected tenants are deterministic per scenario and strictly exclude the active origin tenant", () => {
     const affected = (id: string) => immunizeFleet(id).tenants.filter((t) => t.affected).map((t) => t.tenant);
-    expect(affected("INC-4092")).toEqual(["Contoso Finance", "Northwind Traders", "Tailspin Aerospace"]);
-    expect(affected("INC-4099")).toEqual(["Fabrikam Legal", "Tailspin Aerospace"]);
-    expect(affected("ANOM-LIC-101")).toEqual(["Contoso Finance", "Fabrikam Legal"]);
-    expect(affected("ANOM-CA-204")).toEqual(["Contoso Finance", "Northwind Traders", "Woodgrove Bank"]);
+    expect(affected("INC-4092")).toEqual(["Northwind Traders", "Tailspin Aerospace", "Woodgrove Bank"]);
+    expect(affected("INC-4092")).not.toContain("Contoso Finance");
+    expect(affected("INC-4099")).toEqual(["Contoso Finance", "Northwind Traders", "Tailspin Aerospace"]);
+    expect(affected("INC-4099")).not.toContain("Fabrikam Legal");
+    expect(affected("ANOM-LIC-101")).toEqual(["Fabrikam Legal", "Northwind Traders"]);
+    expect(affected("ANOM-CA-204")).toEqual(["Northwind Traders", "Tailspin Aerospace", "Woodgrove Bank"]);
     expect(affected("ANOM-INT-309")).toEqual([
-      "Contoso Finance",
       "Fabrikam Legal",
       "Tailspin Aerospace",
       "Woodgrove Bank",
     ]);
+    expect(affected("ANOM-APP-401")).toEqual(["Fabrikam Legal", "Northwind Traders"]);
     for (const id of SCENARIO_IDS) {
       const r = immunizeFleet(id);
+      const originTenant = activeTenantForScenario(id);
       expect(r.scenarioId).toBe(id);
       expect(r.signature).toBe(SIGNATURE_BY_SCENARIO[id]);
       expect(r.tenants).toHaveLength(5);
+      expect(r.tenants.filter((t) => t.affected).map((t) => t.tenant)).not.toContain(originTenant);
       expect(r.affectedCount).toBe(r.tenants.filter((t) => t.affected).length);
+      expect(r.affectedCount).toBeGreaterThan(0);
       expect(immunizeFleet(id)).toEqual(r);
     }
   });
@@ -75,9 +81,9 @@ describe("fleet immunizer", () => {
     expect(campaign.campaignId).toContain("inc-4092");
     expect(campaign.branches).toHaveLength(immunizeFleet("INC-4092").affectedCount);
     expect(campaign.branches.map((b) => b.tenant)).toEqual([
-      "Contoso Finance",
       "Northwind Traders",
       "Tailspin Aerospace",
+      "Woodgrove Bank",
     ]);
     for (const b of campaign.branches) {
       expect(b.branch).toBe(`fleet/AVD-E3-SKU-Mismatch-With-Open-RDP/${tenantSlug(b.tenant)}`);

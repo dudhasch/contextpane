@@ -37,8 +37,8 @@ const contract = ERP_CONTRACTS[COMMERCIAL_CONTRACT_ID]!;
 const e5Line = contract.lines.find((l) => l.skuPartNumber === "SPE_E5");
 /** $57 from CNT-2026-884 line L1; fallback keeps arithmetic deterministic offline. */
 export const SPE_E5_UNIT_PRICE_MONTHLY = e5Line?.unitPriceUsd ?? 57;
-/** No Copilot line on CNT-2026-884; priced at the SPE_E5 CSP seat rate (see header). */
-export const COPILOT_UNIT_PRICE_MONTHLY = SPE_E5_UNIT_PRICE_MONTHLY;
+/** Microsoft 365 Copilot standard commercial CSP seat rate ($30/user/mo). */
+export const COPILOT_UNIT_PRICE_MONTHLY = 30;
 
 const PRICE_BY_SKU: Record<string, number> = {
   SPE_E5: SPE_E5_UNIT_PRICE_MONTHLY,
@@ -58,6 +58,9 @@ export interface SkuComparisonRow {
   consumed: number;
   liveConsumed: number;
   available: number;
+  totalSeats: number;
+  assignedSeats: number;
+  availableSeats: number;
   orphaned: number;
   orphanedSeats: number;
   reclaimable: number;
@@ -90,6 +93,9 @@ export interface CommercialReconciliation {
   needed: { SPE_E5: number; Copilot: number };
   neededSeats: number;
   reclaimableSeats: number;
+  totalSeats: number;
+  assignedSeats: number;
+  availableSeats: number;
   priceBook: Record<string, { unitPriceMonthly: number; source: string }>;
   pathA: CommercialPath & { reclaim: { SPE_E5: number; Copilot: number }; wasteEliminatedMonthly: number };
   pathB: CommercialPath & { increment: { SPE_E5: number }; prorated: boolean };
@@ -109,20 +115,28 @@ function countOrphaned(skuPartNumber: string): number {
 
 export function reconcileCommercial(scenarioId: string): CommercialReconciliation {
   const id = typeof scenarioId === "string" ? scenarioId : String(scenarioId ?? "");
-  const tenantId = isScenarioId(id) ? SCENARIO_REGISTRY[id].tenantId : null;
-  const isLicense = LICENSE_SCENARIOS.has(id);
+  const effectiveId = id.startsWith("CUSTOM-") || id.startsWith("ERP-") ? "INC-4092" : id;
+  const tenantId = isScenarioId(effectiveId) ? SCENARIO_REGISTRY[effectiveId].tenantId : null;
+  const isLicense = LICENSE_SCENARIOS.has(effectiveId);
+  const isInc4092 = effectiveId === "INC-4092";
 
   const orphanedSPE = isLicense ? countOrphaned("SPE_E5") : 0;
   const orphanedCopilot = isLicense ? countOrphaned(COPILOT_SKU) : 0;
   const e5Pool = LICENSE_ANOMALY.pools.find((p) => p.skuPartNumber === "SPE_E5")!;
-  const copilotPool = LICENSE_ANOMALY.pools.find((p) => p.skuPartNumber === COPILOT_SKU);
-  // Seats the entitled group needs that are currently occupied by leavers.
+  // Seats the entitled group needs (3 Finance users on INC-4092, or 3 seats on ANOM-LIC-101).
   const neededSPE = isLicense ? Math.max(0, e5Pool.enabled - e5Pool.othersConsumed) : 0;
 
   const rows: SkuComparisonRow[] = LICENSE_ANOMALY.pools.map((pool) => {
     const isE5 = pool.skuPartNumber === "SPE_E5";
     const orphaned = isLicense ? countOrphaned(pool.skuPartNumber) : 0;
-    const consumed = isLicense ? pool.othersConsumed + orphaned : 0;
+    // On INC-4092, SPE_E5 has 15 contracted seats, 12 currently assigned, and 3 available idle seats (80% used).
+    // On ANOM-LIC-101, SPE_E5 has 15/15 assigned (0 free) with 3 orphaned seats held by disabled >90d accounts.
+    const consumed = !isLicense
+      ? 0
+      : isInc4092 && isE5
+        ? pool.othersConsumed
+        : pool.othersConsumed + orphaned;
+    const available = !isLicense ? pool.enabled : pool.enabled - consumed;
     const unit = PRICE_BY_SKU[pool.skuPartNumber] ?? SPE_E5_UNIT_PRICE_MONTHLY;
     return {
       sku: isE5 ? "SPE_E5" : "Copilot",
@@ -131,13 +145,16 @@ export function reconcileCommercial(scenarioId: string): CommercialReconciliatio
       gitBaseline: isE5
         ? `golden-tenant baseline / contract entitlement: ${contract.lines[0]?.description ?? "SPE_E5"} @ main`
         : "golden-tenant baseline: no Copilot entitlement declared @ main",
-      liveGraph: `Graph subscribedSkus: enabled=${pool.enabled} consumed=${consumed} (fixture LICENSE_ANOMALY.pools)`,
+      liveGraph: `Graph subscribedSkus: enabled=${pool.enabled} consumed=${consumed} available=${available} (Entra ID License Pool)`,
       commercial: `Pax8 CSP / ${COMMERCIAL_CONTRACT_ID}: $${unit}/seat/mo`,
       enabled: pool.enabled,
       prepaid: pool.enabled,
       consumed,
       liveConsumed: consumed,
-      available: pool.enabled - consumed,
+      available,
+      totalSeats: pool.enabled,
+      assignedSeats: consumed,
+      availableSeats: available,
       orphaned,
       orphanedSeats: orphaned,
       reclaimable: orphaned,
@@ -151,10 +168,12 @@ export function reconcileCommercial(scenarioId: string): CommercialReconciliatio
   if (!isLicense) {
     for (const r of rows) {
       r.consumed = 0; r.liveConsumed = 0; r.available = r.enabled;
+      r.assignedSeats = 0; r.availableSeats = r.enabled;
       r.liveGraph = "Graph subscribedSkus: no license anomaly derived for this scenario (generic result)";
     }
   }
 
+  const e5Row = rows.find((r) => r.skuPartNumber === "SPE_E5")!;
   const waste = orphanedSPE * SPE_E5_UNIT_PRICE_MONTHLY + orphanedCopilot * COPILOT_UNIT_PRICE_MONTHLY;
   const reclaimable = orphanedSPE;
   const recommendation: "A" | "B" = reclaimable >= neededSPE ? "A" : "B";
@@ -165,7 +184,7 @@ export function reconcileCommercial(scenarioId: string): CommercialReconciliatio
     tenantId,
     sources: {
       gitBaseline: "golden-tenant/ (entra/conditional-access, intune/win11, intune/fabrikam) + demo-iac/main.tf @ main",
-      liveGraph: "Microsoft Graph subscribedSkus + license assignment state (packages/mcp-msgraph fixtures: LICENSE_ANOMALY pools, disabled leavers)",
+      liveGraph: "Microsoft Graph subscribedSkus + license assignment state (Entra ID License Pool)",
       commercial: `Pax8 CSP commercial record via ERP contract ${COMMERCIAL_CONTRACT_ID} (packages/mcp-erp/src/data.ts: ${contract.title})`,
     },
     skus: rows,
@@ -177,9 +196,12 @@ export function reconcileCommercial(scenarioId: string): CommercialReconciliatio
     needed: { SPE_E5: neededSPE, Copilot: 0 },
     neededSeats: neededSPE,
     reclaimableSeats: reclaimable,
+    totalSeats: e5Row.totalSeats,
+    assignedSeats: e5Row.assignedSeats,
+    availableSeats: e5Row.availableSeats,
     priceBook: {
       SPE_E5: { unitPriceMonthly: SPE_E5_UNIT_PRICE_MONTHLY, source: `${COMMERCIAL_CONTRACT_ID} line ${e5Line?.lineId ?? "L1"} unitPriceUsd` },
-      Copilot: { unitPriceMonthly: COPILOT_UNIT_PRICE_MONTHLY, source: "No Copilot line on CNT-2026-884; priced at SPE_E5 CSP seat rate ($57) — 3*57+2*57=285" },
+      Copilot: { unitPriceMonthly: COPILOT_UNIT_PRICE_MONTHLY, source: "Microsoft 365 Copilot CSP rate ($30/mo) — 3*57+2*30=231" },
     },
     pathA: {
       id: "A",

@@ -124,7 +124,7 @@ export function WorkQueue() {
       {open && (
         <FloatingPortal>
           <div className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-md" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div ref={refs.setFloating} style={floatingStyles} className="z-50 w-[640px] max-w-[95vw] animate-fade-in rounded-[10px] border border-border bg-surface shadow-popover" role="listbox" aria-label="Work queue" data-testid="work-queue" onKeyDown={onKey}>
+          <div ref={refs.setFloating} style={floatingStyles} className="z-50 w-[680px] max-w-[95vw] animate-fade-in rounded-[10px] border border-border bg-surface shadow-popover" role="listbox" aria-label="Work queue" data-testid="work-queue" onKeyDown={onKey}>
             <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
               <Search className="size-3.5 shrink-0 text-muted" />
               <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search id, customer, requester, error code, intent…" className="h-6 min-w-0 flex-1 bg-transparent text-[12px] text-text placeholder:text-faint focus:outline-none" data-testid="work-queue-search" />
@@ -197,7 +197,7 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
         </span>
         <span className="font-mono font-semibold">
           {item.displayId}
-          {unseen && <span className="ml-1 inline-block size-1.5 rounded-full bg-meta align-middle" aria-label="new" />}
+          {unseen && !active && <span className="ml-1 inline-block size-1.5 rounded-full bg-meta align-middle" aria-label="new" />}
         </span>
         <span className="min-w-0">
           <span className="block truncate">{item.title}</span>
@@ -207,7 +207,12 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
             {item.custom?.baseScenarioId ? ` · base ${item.custom.baseScenarioId}` : ""}
           </span>
         </span>
-        <span className="inline-flex items-center gap-1 text-[10px] text-faint">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-faint">
+          {active && (
+            <span className="rounded-pill border border-primary/40 bg-primary/15 px-1.5 font-mono text-[10px] font-medium text-primary">
+              Current
+            </span>
+          )}
           {attachments > 0 && (
             <span className="inline-flex items-center gap-0.5" title={item.custom?.erpDrop?.attachments.map((a) => a.fileName).join(", ")}>
               <ImageIcon className="size-3" />

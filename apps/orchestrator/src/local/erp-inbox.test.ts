@@ -8,7 +8,7 @@ process.env.LIVE_CLOUD_MODE = "false";
 process.env.CTX_FORCE_LOCAL = "true";
 const inbox = mkdtempSync(join(tmpdir(), "ctx-inbox-"));
 
-const { generateDrop, DROP_ARCHETYPES } = await import("./erp-drop-generator.ts");
+const { generateDrop, generateAllLabTicketDrops, LAB_INCIDENT_TICKETS, DROP_ARCHETYPES } = await import("./erp-drop-generator.ts");
 const { decodeCanvas, readPngInfo } = await import("./png.ts");
 const { attachmentUrl, deterministicExtraction, discoverAttachments, ingestFolder, listInbox, parseTicketBody, resolveAttachmentPath, scanInbox, setInboxDir, simulateDrop, visionTriageDrop } = await import("./erp-inbox.ts");
 // Bun runs every test file in one process: config.ts may already be loaded, so the inbox is redirected explicitly.
@@ -169,5 +169,46 @@ describe("inbox watcher pipeline", () => {
     expect(isAnyScenarioId("ERP-2026777")).toBe(false);
     expect(listInbox().map((i) => i.scenarioId)).not.toContain("ERP-2026777");
     expect(ingestFolder(folder, quiet)).toBeNull();
+  });
+
+  test("all 20 c4a8shili lab escalation tickets (INC-2026-88412..88560) ingest cleanly without resolution spoilers", () => {
+    expect(LAB_INCIDENT_TICKETS).toHaveLength(20);
+    const drops = generateAllLabTicketDrops();
+    expect(drops).toHaveLength(20);
+
+    const forbiddenSpoilers = [
+      "MSP L3 Root Cause",
+      "Root Cause & Resolution",
+      "Revoke-MgUserSignInSession",
+      "resetRedemption",
+      "Start-ADSyncSyncCycle",
+      "azuread_directory_role_eligibility_schedule_request",
+      "Storage Blob Data Contributor",
+      "Resize-Partition",
+      "Azure CNI Overlay",
+      "dcr-sentinel-windows-sec",
+    ];
+
+    for (const d of drops) {
+      expect(d.body.customer).toBe("Contoso Finance");
+      expect(d.body.tenantDomain).toBe("c4a8shili.onmicrosoft.com");
+      expect(`${d.body.subject}\n${d.body.description}`).toContain("c4a8shili.onmicrosoft.com");
+      for (const spoiler of forbiddenSpoilers) {
+        expect(d.body.subject).not.toContain(spoiler);
+        expect(d.body.description).not.toContain(spoiler);
+      }
+      const res = simulateDrop({ ticketId: d.body.incidentId });
+      expect(res.folder).toBe(d.folder);
+      expect(res.ingest?.entry.tenantId).toBe("tenant-contoso-01");
+      expect(res.ingest?.entry.extraction.entities.some((e) => e.type === "errorCode")).toBe(true);
+      const info = readPngInfo(d.png);
+      expect(info?.texts.ErrorCode).toBe(d.body.telemetry.errorCode);
+    }
+
+    // All 20 remain registered concurrently in the inbox without eviction
+    const inboxIds = new Set(listInbox().map((i) => i.displayId));
+    for (const spec of LAB_INCIDENT_TICKETS) {
+      expect(inboxIds.has(spec.id)).toBe(true);
+    }
   });
 });

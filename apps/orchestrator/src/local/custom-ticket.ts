@@ -24,6 +24,7 @@ import {
 } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import { config } from "../config.ts";
+import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 
 /**
  * Unscripted ticket triage: a dynamic entity & intent extractor over the pasted text,
@@ -57,18 +58,18 @@ interface Vote {
 }
 
 const VOTES: Vote[] = [
-  { intent: "avd", re: /\bavd\b|virtual desktop|host ?pool|session host|vdpool|remote desktop/i, components: ["IaCDriftBanner", "EntraSignInTimeline"], base: { "INC-4092": 3 } },
-  { intent: "nsg", re: /\bnsg\b|\b3389\b|\brdp\b|network security group|firewall\s+port|\bport\s+\d+|inbound rule|terraform|tag drift|\bhcl\b/i, components: ["IaCDriftBanner"], base: { "INC-4092": 3 } },
-  { intent: "license", re: /licen[cs]e|\bsku\b|spe_e[35]|\be[35]\b|\bseats?\b|countviolation|orphan|unlicensed/i, components: ["LicenseDriftCard"], base: { "INC-4092": 1, "ANOM-LIC-101": 1 } },
+  { intent: "avd", re: /\bavd\b|virtual desktop|host ?pool|session host|vdpool|remote desktop|aadloginforwindows|0x801c0042|vmextensionprovisioningerror|usererrorguestagent|operationnotallowed|dracut|initramfs/i, components: ["IaCDriftBanner", "EntraSignInTimeline"], base: { "INC-4092": 3 } },
+  { intent: "nsg", re: /\bnsg\b|\b3389\b|\brdp\b|network security group|firewall\s+port|\bport\s+\d+|inbound rule|terraform|tag drift|\bhcl\b|aadds104|aadds501|no_proposal_chosen|ipsec|expressroute|asymmetric|requestdisallowedbypolicy|subnetisfull/i, components: ["IaCDriftBanner"], base: { "INC-4092": 3 } },
+  { intent: "license", re: /licen[cs]e|\bsku\b|spe_e[35]|\be[35]\b|\bseats?\b|countviolation|orphan|unlicensed|latearrivingdata|_timereceived|cost anomaly|orphaneddisks/i, components: ["LicenseDriftCard"], base: { "INC-4092": 1, "ANOM-LIC-101": 2 } },
   { intent: "copilot", re: /copilot/i, components: ["LicenseDriftCard"], base: { "ANOM-LIC-101": 3 } },
-  { intent: "conditional-access", re: /conditional access|\bca-?\d{3}\b|\bca policy|\bmfa\b|aadsts5300[03]|blocked by (a )?policy|sign-?in (fail|block|den)|require compliant/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 1 } },
+  { intent: "conditional-access", re: /conditional access|\bca-?\d{3}\b|cap-\d{3}|\bca policy|\bmfa\b|aadsts5300[03]|aadsts50020|anomaloustoken|impossible travel|largeobject|usercertificate|overquota|blocked by (a )?policy|sign-?in (fail|block|den)|require compliant/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 2 } },
   { intent: "break-glass", re: /break[- ]?glass|bg-admin|emergency access/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 4 } },
   { intent: "legacy-auth", re: /legacy auth|\bimap\b|smtp auth|basic auth|report[- ]only/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 4 } },
   { intent: "bitlocker", re: /bitlocker|0x87d1fde8|disk encryption|\bencrypt/i, components: ["IntuneDriftCard"], base: { "INC-4099": 4 } },
   { intent: "intune-compliance", re: /\bintune\b|complian[ct]|check-?ins?\b|\bmdm\b|laptops?\b|\bdevices?\b|workstation|grace period/i, components: ["IntuneDriftCard"], base: { "INC-4099": 1, "ANOM-INT-309": 1 } },
   { intent: "asr", re: /\basr\b|attack surface|lsass|credential stealing/i, components: ["IntuneDriftCard"], base: { "ANOM-INT-309": 4 } },
-  { intent: "firewall", re: /\bfirewall\b(?!\s+port)(?![^.]*\b3389\b)|enablefirewall|firewall profile/i, components: ["IntuneDriftCard"], base: { "ANOM-INT-309": 3 } },
-  { intent: "workload-identity", re: /service principal|\bspn\b|app registration|workload identity|enterprise app|erp[- ]sync|sync app|\bowner\b|github actions|federat/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
+  { intent: "firewall", re: /\bfirewall\b(?!\s+port)(?![^.]*\b3389\b)|enablefirewall|firewall profile|event\s*id\s*5156|eventid5156|filtering platform/i, components: ["IntuneDriftCard"], base: { "ANOM-INT-309": 3 } },
+  { intent: "workload-identity", re: /service principal|\bspn\b|app registration|workload identity|enterprise app|erp[- ]sync|sync app|\bowner\b|github actions|federat|pimroleoutsidegovernance|roleassignmentupdatenotpermitted|authorizationpermissionmismatch/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
   { intent: "secret", re: /client secret|\bsecret\b|aadsts7000222|credential(s)? (has |have )?expired|expired (client )?(secret|credential|certificate)/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
   { intent: "oauth", re: /\boauth|consent|graph (api )?scope|api permission|overprivileged|least privilege|right[- ]size/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 2 } },
 ];
@@ -103,7 +104,13 @@ function knownObjects(): KnownObject[] {
     if (nsg) out.push({ id: nsg, label: nsg, type: "resource", category: "azure", source: "mcp-azure-iac · ARM networkSecurityGroups", tenantId, needles: [nsg.toLowerCase()] });
     const rg = t.azure?.resourceGroup;
     if (rg) out.push({ id: rg, label: rg, type: "resource", category: "azure", source: "mcp-azure-iac · ARM resourceGroups", tenantId, needles: [rg.toLowerCase()] });
-    if (tenantId === "tenant-contoso-01") out.push({ id: "vdpool-contoso-fin-01", label: "vdpool-contoso-fin-01", type: "resource", category: "azure", source: "mcp-azure-iac · ARM hostPools", tenantId, needles: ["vdpool-contoso-fin-01", "host pool"] });
+    if (tenantId === "tenant-contoso-01") {
+      out.push({ id: "vdpool-contoso-fin-01", label: "vdpool-contoso-fin-01", type: "resource", category: "azure", source: "mcp-azure-iac · ARM hostPools", tenantId, needles: ["vdpool-contoso-fin-01", "host pool"] });
+      out.push({ id: "vm-contoso-avd-0", label: "vm-contoso-avd-0", type: "resource", category: "azure", source: "mcp-azure-iac · ARM virtualMachines", tenantId, needles: ["vm-contoso-avd-0"] });
+      out.push({ id: "vm-contoso-avd-1", label: "vm-contoso-avd-1", type: "resource", category: "azure", source: "mcp-azure-iac · ARM virtualMachines", tenantId, needles: ["vm-contoso-avd-1"] });
+      out.push({ id: "stcontosofslogix01", label: "stcontosofslogix01", type: "resource", category: "azure", source: "mcp-azure-iac · ARM storageAccounts", tenantId, needles: ["stcontosofslogix01"] });
+      out.push({ id: "CONTOSO-LT-0288", label: "CONTOSO-LT-0288", type: "device", category: "intune", source: "mcp-msgraph · GET /deviceManagement/managedDevices", tenantId, needles: ["contoso-lt-0288"] });
+    }
   }
   for (const u of LICENSE_ANOMALY.users) out.push({ id: u.upn, label: u.displayName, type: "upn", category: "licensing", source: "mcp-msgraph · GET /users?$filter=accountEnabled", tenantId: "tenant-contoso-01", needles: [u.upn.toLowerCase(), ...nameNeedles(u.displayName)], scenarioId: "ANOM-LIC-101" });
   out.push({ id: LICENSE_ANOMALY.groupName, label: LICENSE_ANOMALY.groupName, type: "group", category: "licensing", source: "mcp-msgraph · GET /groups", tenantId: "tenant-contoso-01", needles: [LICENSE_ANOMALY.groupName.toLowerCase()] });
@@ -209,6 +216,7 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
     if (code === "AADSTS7000222") { base["ANOM-APP-401"] = (base["ANOM-APP-401"] ?? 0) + 4; components.add("EntraSignInTimeline"); }
     else if (code === "AADSTS53000") { base["INC-4099"] = (base["INC-4099"] ?? 0) + 2; components.add("EntraSignInTimeline"); }
     else if (code === "AADSTS53003") { base["INC-4092"] = (base["INC-4092"] ?? 0) + 3; components.add("EntraSignInTimeline"); }
+    else if (code === "AADSTS50020") { base["ANOM-CA-204"] = (base["ANOM-CA-204"] ?? 0) + 3; components.add("EntraSignInTimeline"); }
   }
   for (const m of text.matchAll(/\b0x87D[0-9A-F]{5}\b/gi)) {
     const code = m[0].toUpperCase().replace("0X", "0x");
@@ -217,6 +225,34 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
     base["INC-4099"] = (base["INC-4099"] ?? 0) + 3;
   }
   if (/countviolation/i.test(text)) push({ id: "CountViolation", label: "CountViolation", type: "errorCode", category: "licensing", resolvedTo: "CountViolation", source: "mcp-msgraph · GET /groups/{id}?$select=licenseProcessingState", confidence: 1 });
+  const EXTRA_ERROR_CODES: Array<[RegExp, string, ExtractedEntity["category"], string, ScenarioId, CanvasComponentType]> = [
+    [/\bAADDS104\b/i, "AADDS104", "azure", "mcp-azure-iac · ARM domainServices/health", "INC-4092", "IaCDriftBanner"],
+    [/\bAADDS501\b/i, "AADDS501", "azure", "mcp-azure-iac · ARM domainServices/health", "INC-4092", "IaCDriftBanner"],
+    [/\banomalousToken\b/i, "AnomalousToken", "identity", "mcp-msgraph · GET /identityProtection/riskDetections", "ANOM-CA-204", "EntraSignInTimeline"],
+    [/\bPIMRoleOutsideGovernance\b|outside of PIM/i, "PIMRoleOutsideGovernance", "identity", "mcp-msgraph · GET /auditLogs/directoryAudits", "ANOM-APP-401", "EntraSignInTimeline"],
+    [/\bLargeObject\b/i, "LargeObject", "identity", "mcp-msgraph · Entra Connect Health syncErrors", "ANOM-CA-204", "EntraSignInTimeline"],
+    [/\bUserErrorGuestAgentStatusUnavailable\b/i, "UserErrorGuestAgentStatusUnavailable", "azure", "mcp-azure-iac · RecoveryServices backupJobs", "INC-4092", "IaCDriftBanner"],
+    [/\bOperationNotAllowed\b/i, "OperationNotAllowed", "azure", "mcp-azure-iac · ARM Microsoft.Compute/disks", "INC-4092", "IaCDriftBanner"],
+    [/\bDracutEmergencyMode\b|\bdracut-initqueue\b/i, "DracutEmergencyMode", "azure", "mcp-azure-iac · ARM bootDiagnostics", "INC-4092", "IaCDriftBanner"],
+    [/\b0x801C0042\b|-2145648574/i, "0x801C0042", "azure", "mcp-azure-iac · ARM virtualMachines/extensions (AADLoginForWindows)", "INC-4092", "IaCDriftBanner"],
+    [/\bVMExtensionProvisioningError\b/i, "VMExtensionProvisioningError", "azure", "mcp-azure-iac · ARM virtualMachines/extensions", "INC-4092", "IaCDriftBanner"],
+    [/\bAuthorizationPermissionMismatch\b/i, "AuthorizationPermissionMismatch", "identity", "mcp-azure-iac · Storage Blob RBAC dataActions", "ANOM-APP-401", "EntraSignInTimeline"],
+    [/\bNO_PROPOSAL_CHOSEN\b/i, "NO_PROPOSAL_CHOSEN", "azure", "mcp-azure-iac · ARM virtualNetworkGateways IKEDiagnosticLog", "INC-4092", "IaCDriftBanner"],
+    [/\bAsymmetricRoutingDeny\b|Asymmetric Routing/i, "AsymmetricRoutingDeny", "azure", "mcp-azure-iac · AZFWNetworkRule logs", "INC-4092", "IaCDriftBanner"],
+    [/\bRoleAssignmentUpdateNotPermitted\b/i, "RoleAssignmentUpdateNotPermitted", "identity", "mcp-azure-iac · Microsoft.Authorization/roleAssignments", "ANOM-APP-401", "EntraSignInTimeline"],
+    [/\bRequestDisallowedByPolicy\b/i, "RequestDisallowedByPolicy", "azure", "mcp-azure-iac · Microsoft.Authorization/policyAssignments", "INC-4092", "IaCDriftBanner"],
+    [/\bSubnetIsFull\b/i, "SubnetIsFull", "azure", "mcp-azure-iac · ARM Microsoft.Network/subnets", "INC-4092", "IaCDriftBanner"],
+    [/\bOverQuota\b/i, "OverQuota", "identity", "mcp-azure-iac · Log Analytics _LogOperation", "ANOM-CA-204", "EntraSignInTimeline"],
+    [/\bEventID\s*5156\b/i, "EventID5156", "intune", "mcp-msgraph · Sentinel SecurityEvent / AMA DCR", "ANOM-INT-309", "IntuneDriftCard"],
+    [/\bLateArrivingData\b|\b_TimeReceived\b/i, "LateArrivingData", "licensing", "mcp-erp · Log Analytics Usage (_TimeReceived vs TimeGenerated)", "ANOM-LIC-101", "LicenseDriftCard"],
+    [/\bOrphanedDisksCostSpike\b|\bCost Anomaly Detected\b/i, "OrphanedDisksCostSpike", "licensing", "mcp-erp · Microsoft Cost Management anomaly alert", "ANOM-LIC-101", "LicenseDriftCard"],
+  ];
+  for (const [re, code, cat, source, scId, comp] of EXTRA_ERROR_CODES) {
+    if (!re.test(text)) continue;
+    push({ id: code, label: code, type: "errorCode", category: cat, resolvedTo: code, source, confidence: 1 });
+    base[scId] = (base[scId] ?? 0) + 3;
+    components.add(comp);
+  }
   for (const [re, sku] of SKU_WORDS) if (re.test(text)) push({ id: sku, label: sku === "Microsoft_365_Copilot" ? "Copilot" : sku, type: "sku", category: "licensing", resolvedTo: sku, source: "mcp-msgraph · GET /subscribedSkus", confidence: 1 });
   for (const m of text.matchAll(GRAPH_SCOPE_RE)) {
     const scope = m[0];
@@ -415,4 +451,10 @@ export const SAMPLE_UNSCRIPTED_TICKETS: Array<{ id: string; title: string; body:
     body: "The nightly GitHub Actions run of spn-contoso-erp-sync fails with AADSTS7000222 (client secret expired). The app registration still lists the contractor Alex Wilber as owner although he holds no admin role, and the granted Graph scopes (Directory.ReadWrite.All, Sites.FullControl.All, Mail.ReadWrite) look far wider than what the sync uses. Please rotate to a federated credential and right-size the permissions.",
     customerName: "Contoso Finance",
   },
+  ...LAB_INCIDENT_TICKETS.map((t) => ({
+    id: t.incidentId.toLowerCase(),
+    title: t.subject,
+    body: t.description,
+    customerName: "Contoso Finance",
+  })),
 ];

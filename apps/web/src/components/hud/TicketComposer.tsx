@@ -42,7 +42,7 @@ export function TicketComposer() {
         </div>
         <div className="mt-3 space-y-1.5">
           <span className="block text-[11px] font-medium text-muted">Quick samples (1-click populate):</span>
-          <div className="grid gap-1.5 sm:grid-cols-3">
+          <div className="grid max-h-48 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-3">
             {samples.map((s) => (
               <button
                 key={s.id}

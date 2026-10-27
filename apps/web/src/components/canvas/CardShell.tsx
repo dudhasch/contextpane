@@ -203,7 +203,7 @@ export function DataTable({ head, rows, className = "", rowClassName }: { head: 
   return (
     <div className={`overflow-x-auto rounded-md border border-border-subtle ${className}`}>
       <table className="w-full text-[11.5px]">
-        <thead className="bg-surface text-[10px] tracking-wider text-faint uppercase">
+        <thead className="sticky top-0 z-10 bg-slate-950/95 text-[10px] tracking-wider text-faint uppercase backdrop-blur-sm">
           <tr>
             {head.map((h) => (
               <th key={h} className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">

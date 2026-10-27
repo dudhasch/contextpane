@@ -156,7 +156,7 @@ try {
     await cdp.mouseTo(pill.x - 4, pill.y);
     await sleep(100);
     await cdp.mouseTo(pill.x, pill.y);
-    await cdp.waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((d) => /Assigned SKU/.test(d.innerText) && / ms/.test(d.innerText) && !d.querySelector(".animate-pulse"))`, 20_000, "the hover popover");
+    await cdp.waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((d) => /Assigned SKU/.test(d.innerText) && /ms/.test(d.innerText) && !d.querySelector(".animate-pulse"))`, 20_000, "the hover popover");
     await sleep(400);
     await cdp.shot(join(OUT, "01-workbench-hover-popover.png"));
   }
