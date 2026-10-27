@@ -1,0 +1,91 @@
+{
+  "scenarioId": "CUSTOM-ALJ4LA",
+  "tenantId": "tenant-contoso-01",
+  "remediationId": "rem-mvqlovd6-in3y",
+  "mode": "break-glass",
+  "appliedAt": "2026-10-27T11:30:17.070Z",
+  "appliedBy": "cloudadmin@c4a8shili.onmicrosoft.com",
+  "outcome": "simulated",
+  "declaredIn": [],
+  "live": {
+    "source": "simulated",
+    "fallbackReason": "workload identity fixture (no lab SPN seeded)",
+    "summary": "spn-contoso-erp-sync: owner alex.wilber@c4a8shili.onmicrosoft.com removed, delegated grant revoked, scopes right-sized to User.Read.All, Sites.Selected, GitHub Actions OIDC federated",
+    "results": [
+      {
+        "id": "spn-contoso-erp-sync",
+        "ok": true,
+        "status": 0
+      }
+    ]
+  },
+  "graphRequests": [
+    {
+      "method": "DELETE",
+      "url": "/applications/7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/owners/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d/$ref",
+      "note": "remove shadow-admin owner alex.wilber@c4a8shili.onmicrosoft.com"
+    },
+    {
+      "method": "DELETE",
+      "url": "/oauth2PermissionGrants/grant-spn-contoso-erp-sync-001",
+      "note": "revoke Mail.ReadWrite offline_access"
+    },
+    {
+      "method": "DELETE",
+      "url": "/servicePrincipals/8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a/appRoleAssignments/<Directory.ReadWrite.All assignmentId>",
+      "note": "remove Directory.ReadWrite.All"
+    },
+    {
+      "method": "DELETE",
+      "url": "/servicePrincipals/8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a/appRoleAssignments/<Sites.FullControl.All assignmentId>",
+      "note": "remove Sites.FullControl.All"
+    },
+    {
+      "method": "DELETE",
+      "url": "/servicePrincipals/8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a/appRoleAssignments/<Mail.ReadWrite assignmentId>",
+      "note": "remove Mail.ReadWrite"
+    },
+    {
+      "method": "DELETE",
+      "url": "/servicePrincipals/8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a/appRoleAssignments/<RoleManagement.ReadWrite.Directory assignmentId>",
+      "note": "remove RoleManagement.ReadWrite.Directory"
+    },
+    {
+      "method": "POST",
+      "url": "/servicePrincipals/8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a/appRoleAssignments",
+      "body": {
+        "principalId": "8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a",
+        "resourceId": "<Microsoft Graph servicePrincipalId>",
+        "appRoleId": "<User.Read.All appRoleId>"
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/servicePrincipals/8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a/appRoleAssignments",
+      "body": {
+        "principalId": "8d2e3f4a-5b6c-4d7e-9f8a-0b1c2d3e4f5a",
+        "resourceId": "<Microsoft Graph servicePrincipalId>",
+        "appRoleId": "<Sites.Selected appRoleId>"
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/applications/7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/federatedIdentityCredentials",
+      "body": {
+        "name": "github-actions-main",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subject": "repo:contoso/erp-sync:ref:refs/heads/main",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "url": "/applications/7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/removePassword",
+      "body": {
+        "keyId": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+      }
+    }
+  ]
+}
