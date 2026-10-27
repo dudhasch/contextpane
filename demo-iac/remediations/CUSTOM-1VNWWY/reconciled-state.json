@@ -1,0 +1,55 @@
+{
+  "scenarioId": "CUSTOM-1VNWWY",
+  "tenantId": "tenant-contoso-01",
+  "remediationId": "rem-mvqlvxjt-rw5o",
+  "mode": "break-glass",
+  "appliedAt": "2026-10-27T11:33:17.490Z",
+  "appliedBy": "cloudadmin@c4a8shili.onmicrosoft.com",
+  "outcome": "executed",
+  "declaredIn": [
+    "demo-iac/main.tf:L43-L84"
+  ],
+  "live": {
+    "source": "live-graph",
+    "summary": "3/3 users → SPE_E5 / Compliant · NSG (ARM): already at target",
+    "results": [
+      {
+        "id": "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+        "ok": true,
+        "status": 204
+      },
+      {
+        "id": "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+        "ok": true,
+        "status": 204
+      },
+      {
+        "id": "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+        "ok": true,
+        "status": 204
+      }
+    ]
+  },
+  "graphRequests": [
+    {
+      "method": "PATCH",
+      "url": "/identity/conditionalAccess/policies/d09ae604-4c06-4769-ad01-20ec8efa18ad",
+      "body": {
+        "state": "enabledForReportingButNotEnforced",
+        "conditions": {
+          "users": {
+            "excludeGroups": [
+              "<SG-Contoso-Finance-AVD id>"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "arm": {
+    "resource": "/subscriptions/20505597-043c-4742-a884-42dc3f621aef/resourceGroups/rg-contoso-avd-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-contoso-avd-hostpool-01",
+    "terraformBlock": "demo-iac/main.tf:L43-L84",
+    "source": "live-azure",
+    "operations": []
+  }
+}
