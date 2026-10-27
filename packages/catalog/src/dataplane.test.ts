@@ -95,6 +95,22 @@ describe("PII Pseudonym Vault", () => {
     expect((createPiiVault().pseudonymize(input) as typeof input)[0]!.upn).toBe("upn_tok_01");
     expect(JSON.stringify(pseudonymizeForLlm(input, createPiiVault()))).not.toContain("bob@contoso.com");
   });
+
+  test("excludes machine service principals and GitHub Actions runner IPs from EU-GDPR-Personal vaulting", () => {
+    const vault = createPiiVault();
+    const rows = [
+      { upn: "spn-contoso-erp-sync", displayName: "spn-contoso-erp-sync", ipAddress: "185.199.108.40", clientApp: "GitHub Actions", deviceName: "", status: "failure" },
+      { upn: "alex.wilber@c4a8shili.onmicrosoft.com", displayName: "Alex Wilber", ipAddress: "52.114.77.21", clientApp: "Browser", deviceName: "CONTOSO-LT-0471", status: "success" },
+    ];
+    const safe = vault.pseudonymize(rows) as typeof rows;
+    expect(safe[0]!.upn).toBe("spn-contoso-erp-sync");
+    expect(safe[0]!.displayName).toBe("spn-contoso-erp-sync");
+    expect(safe[0]!.ipAddress).toBe("185.199.108.40");
+    expect(safe[1]!.upn).toBe("upn_tok_01");
+    expect(safe[1]!.displayName).toBe("displayName_tok_01");
+    expect(safe[1]!.ipAddress).toBe("ip_tok_01");
+    expect(safe[1]!.deviceName).toBe("device_tok_01");
+  });
 });
 
 describe("JSON line provenance", () => {

@@ -147,23 +147,43 @@ function convergeComponent(c: LayoutComponent, convergence: Pick<Convergence, "r
           new Set((convergence.reclaimedUpns ?? []).map((u) => u.toLowerCase())),
         ),
       };
-    case "EntraSignInTimeline":
+    case "EntraSignInTimeline": {
+      const isWorkloadIdentity =
+        c.props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" || e.upn.toLowerCase().startsWith("spn-")) ||
+        c.props.policies.some((p) => p.displayName === "spn-contoso-erp-sync" || p.id.startsWith("spn-") || p.id.startsWith("app-"));
+      const isAvdBlock = c.props.events.some((e) => e.errorCodeLabel === "AADSTS53003");
+      const headline = isWorkloadIdentity
+        ? "Resolved · OIDC federation active, shadow-admin owner removed & Graph scopes right-sized"
+        : isAvdBlock
+          ? "Resolved · SG-Contoso-Finance-AVD excluded from the legacy block"
+          : "Resolved · Conditional Access matches the golden baseline";
       return {
         ...c,
         props: {
           ...c.props,
-          headline: "Resolved · Conditional Access matches the golden baseline",
+          headline,
           rootCause: null,
           state: "healthy",
-          events: c.props.events.map((e) => ({ ...e, isHighlighted: false })),
+          events: c.props.events.map((e) => ({
+            ...e,
+            status: "success" as const,
+            errorCode: 0,
+            errorCodeLabel: undefined,
+            failureReason: undefined,
+            blockingPolicyName: undefined,
+            conditionalAccessStatus: "success" as const,
+            isHighlighted: false,
+          })),
           policies: c.props.policies.map((p) => ({
             ...p,
+            role: "in-scope" as const,
             state: p.fixedState ?? p.state,
             excludeGroups: p.fixedExcludeGroups ?? p.excludeGroups,
             drift: [],
           })),
         },
       };
+    }
     case "IntuneDriftCard":
       return {
         ...c,
@@ -186,7 +206,16 @@ function convergeComponent(c: LayoutComponent, convergence: Pick<Convergence, "r
           tagDrift: [],
           rogueSecurityRules: [],
           missingSecurityRules: [],
-          azurePolicies: c.props.azurePolicies.map((p) => ({ ...p, compliance: "Compliant" as const, nonCompliantResources: 0 })),
+          azurePolicies: c.props.azurePolicies.map((p) => ({
+            ...p,
+            compliance: "Compliant" as const,
+            nonCompliantResources: 0,
+            detail: p.name.toLowerCase().includes("management port")
+              ? "0 management ports exposed to Internet — TCP/3389 closed"
+              : p.name.toLowerCase().includes("tag")
+                ? "Required tag Environment = Production matches Terraform baseline"
+                : p.detail,
+          })),
           state: "healthy",
           summary: "Remediated: Terraform baseline restored on the approved fix branch",
         },

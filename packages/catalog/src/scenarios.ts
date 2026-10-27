@@ -244,6 +244,22 @@ export function unregisterCustomScenario(scenarioId: string): boolean {
   return customRegistry.delete(scenarioId);
 }
 
+export function clearCustomScenarios(originFilter?: "unscripted" | "erp-drop"): string[] {
+  const removed: string[] = [];
+  if (!originFilter) {
+    for (const id of customRegistry.keys()) removed.push(id);
+    customRegistry.clear();
+    return removed;
+  }
+  for (const [id, entry] of customRegistry.entries()) {
+    if (entry.origin === originFilter) {
+      customRegistry.delete(id);
+      removed.push(id);
+    }
+  }
+  return removed;
+}
+
 export function getCustomScenario(scenarioId: string): CustomScenarioEntry | undefined {
   return customRegistry.get(scenarioId);
 }

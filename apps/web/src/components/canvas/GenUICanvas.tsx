@@ -26,7 +26,7 @@ export function GenUICanvas() {
 
   return (
     <div className="flex h-full flex-col">
-      <TenantBreadcrumb cards={components.length} />
+      <TenantBreadcrumb cards={components.length} customCards={miniDashboards.length} />
       <TimeTravelScrubber />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
         {exploreStatus === "loading" && (
@@ -70,7 +70,7 @@ function TimeTravelScrubber() {
 }
 
 /** One line instead of a tenant header card: tenant › domain › scenario, plus recipe and voice-filter chips. */
-function TenantBreadcrumb({ cards }: { cards: number }) {
+function TenantBreadcrumb({ cards, customCards = 0 }: { cards: number; customCards?: number }) {
   const brief = useWorkbench((s) => s.brief);
   const scenarioId = useWorkbench((s) => s.scenarioId);
   const status = useWorkbench((s) => s.canvasStatus);
@@ -82,6 +82,7 @@ function TenantBreadcrumb({ cards }: { cards: number }) {
   const recipe = recipes.find((r) => r.recipeId === activeRecipeId);
   const live = brief ? Object.values(brief.sources).filter((v) => v.startsWith("live")).length : 0;
   const total = brief ? Object.keys(brief.sources).length : 0;
+  const totalCards = cards + customCards;
   return (
     <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[12px]" data-testid="tenant-breadcrumb">
       <LayoutGrid className="size-3.5 shrink-0 text-primary" />
@@ -90,7 +91,11 @@ function TenantBreadcrumb({ cards }: { cards: number }) {
       <span className="truncate font-mono text-[11px] text-muted">{brief?.verifiedDomain ?? ""}</span>
       <ChevronRight className="size-3 shrink-0 text-faint" />
       <span className={`shrink-0 font-mono text-[11.5px] ${resolved ? "text-healthy" : "text-text"}`}>{brief?.displayId ?? `#${scenarioId}`}</span>
-      <span className="shrink-0 text-faint">· {cards} {cards === 1 ? "card" : "cards"}{status === "loading" ? " · correlating…" : ""}</span>
+      <span className="shrink-0 text-faint">
+        · {totalCards} {totalCards === 1 ? "card" : "cards"}
+        {customCards > 0 ? <span className="text-selection"> ({cards} + {customCards} custom)</span> : ""}
+        {status === "loading" ? " · correlating…" : ""}
+      </span>
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
         {recipe && (
           <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 text-[10.5px] text-primary" title={recipe.description}>

@@ -281,7 +281,9 @@ if (-not $SkipRemediate) {
         $i = @()
         if (-not $d) { return @('drawer missing') }
         foreach ($k in 'remediationId', 'ticketId', 'powershellScript', 'terraformDiff', 'graphPatch', 'verificationStatus', 'approval', 'affectedEntities', 'synthesizedBy') { if ($null -eq $d.$k) { $i += "drawer.$k missing" } }
-        if ($ScenarioId -in @('INC-4092', 'ANOM-LIC-101') -and $d.powershellScript -notmatch 'Set-MgUserLicense') { $i += 'script lacks Set-MgUserLicense' }
+        if ($ScenarioId -eq 'INC-4092' -and ($d.powershellScript -notmatch 'Remove-MgGroupMemberByRef' -or $d.powershellScript -notmatch 'Invoke-MgLicenseUser')) { $i += 'INC-4092 script lacks Remove-MgGroupMemberByRef / Invoke-MgLicenseUser' }
+        if ($ScenarioId -eq 'ANOM-LIC-101' -and $d.powershellScript -notmatch 'Set-MgUserLicense') { $i += 'ANOM-LIC-101 script lacks Set-MgUserLicense' }
+        if ($d.graphPatch -match '<[^>\n]+>') { $i += 'graphPatch contains unresolved <...> placeholder' }
         if ($d.powershellScript -notmatch 'ShouldProcess') { $i += 'script has no ShouldProcess guard' }
         if ($d.verificationStatus.whatIfSafe -eq $false) { $i += 'a mutating cmdlet sits outside ShouldProcess' }
         if ($ScenarioId -eq 'INC-4092') {

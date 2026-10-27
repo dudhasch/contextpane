@@ -85,7 +85,7 @@ export interface Toast {
   action?: { label: string; onClick: () => void };
 }
 
-export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback" | "commercial" | "fleet" | "deviceHealthScript";
+export type DrawerTab = "powershell" | "graph" | "terraform" | "entities" | "formal" | "rollback" | "commercial" | "fleet" | "deviceHealthScript" | "runbook";
 export type SystemTab = "savings" | "audit" | "providers" | "skills";
 export type FormalData = import("./lib/api").FormalResponse;
 export type IntuneHealthData = import("./lib/api").IntuneHealthScript;
@@ -434,7 +434,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     await get().selectScenario(next.scenarioId);
   },
 
-  setQueueOpen: (queueOpen) => set(queueOpen ? { queueOpen, queueQuery: "" } : { queueOpen }),
+  setQueueOpen: (queueOpen) => set(queueOpen ? { queueOpen, queueQuery: "", voiceOpen: false } : { queueOpen }),
   setQueueFilter: (queueFilter) => set({ queueFilter }),
   setQueueQuery: (queueQuery) => set({ queueQuery }),
 
@@ -497,13 +497,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({
       scenarioId,
       queueOpen: false,
+      voiceOpen: false,
       unseen: s.unseen.filter((id) => id !== scenarioId),
       brief: null,
       layout: null,
       expanded: {},
       cardTab: {},
       linked: null,
+      drawer: null,
       drawerOpen: false,
+      remediateStatus: "idle",
+      remediateProgress: [],
+      approveLog: [],
       diffOpen: false,
       filter: null,
       vision: { status: "idle" },
@@ -632,7 +637,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       else get().toast({ tone: "warning", title: `${scenarioId} is already resolved`, detail: "Reopen the ticket or reset drift before running remediation again." });
       return;
     }
-    set({ remediateStatus: "loading", remediateProgress: [], drawerOpen: true, approveLog: [] });
+    set((s) => ({
+      remediateStatus: "loading",
+      remediateProgress: [],
+      drawer: s.drawer?.ticketId === scenarioId ? s.drawer : null,
+      drawerOpen: true,
+      voiceOpen: false,
+      approveLog: [],
+    }));
     try {
       const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) => set((s) => ({ remediateProgress: [...s.remediateProgress, event] })));
       // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
@@ -745,16 +757,16 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   setFilter: (filter) => set({ filter }),
-  setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
+  setDrawerOpen: (drawerOpen) => set(drawerOpen ? { drawerOpen, voiceOpen: false } : { drawerOpen }),
   setDiffOpen(diffOpen, card) {
     if (!diffOpen) return set({ diffOpen });
     const withDiff = (get().layout?.components ?? []).find((c) =>
       c.type === "IaCDriftBanner" ? Boolean(c.props.hclDiff) : (c.type === "EntraSignInTimeline" || c.type === "IntuneDriftCard") && Boolean(c.props.baselineDiff),
     );
-    set({ diffOpen, diffCard: card ?? (withDiff && isCanvasComponentType(withDiff.type) ? withDiff.type : null) });
+    set({ diffOpen, voiceOpen: false, diffCard: card ?? (withDiff && isCanvasComponentType(withDiff.type) ? withDiff.type : null) });
   },
   setSystemOpen: (systemOpen, tab) => {
-    set(tab ? { systemOpen, systemTab: tab } : { systemOpen });
+    set(tab ? { systemOpen, systemTab: tab, ...(systemOpen ? { voiceOpen: false } : {}) } : { systemOpen, ...(systemOpen ? { voiceOpen: false } : {}) });
     if (systemOpen && (tab ?? get().systemTab) === "audit") void get().loadAudit();
     if (systemOpen && (tab ?? get().systemTab) === "skills") void get().loadSkills();
   },
@@ -790,7 +802,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({ stepsDone: { ...s.stepsDone, [key]: !s.stepsDone[key] } }));
   },
   openRemediation(options = {}) {
-    set({ drawerTab: options.tab ?? "powershell", drawerFocusUpn: options.focusUpn ?? null });
+    set({ drawerTab: options.tab ?? "powershell", drawerFocusUpn: options.focusUpn ?? null, voiceOpen: false });
     const { drawer, scenarioId } = get();
     if (drawer && drawer.ticketId === scenarioId && drawer.approval.state === "pending") set({ drawerOpen: true });
     else void get().remediate();
@@ -822,25 +834,31 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async resetDrift() {
     if (get().resetting) return;
     const started = performance.now();
-    const scenarioId = get().scenarioId;
+    const currentId = get().scenarioId;
+    const targetScenarioId: ScenarioId = currentId.startsWith("CUSTOM-") ? "INC-4092" : currentId;
     // Revert the canvas at once; the server clears its state and rewrites the lab objects behind this.
     set((s) => ({
       resetting: true,
+      scenarioId: targetScenarioId,
       convergence: {},
       drawer: null,
       drawerOpen: false,
+      voiceOpen: false,
       remediateStatus: "idle",
       remediateProgress: [],
       approveLog: [],
       vision: { status: "idle" },
       hovers: {},
       stepsDone: {},
+      miniDashboards: [],
+      selections: {},
       resolutionNote: null,
       resolutionNoteStatus: "idle",
-      scenarios: s.scenarios.map((x) => ({ ...x, resolved: false })),
+      scenarios: s.scenarios.filter((x) => !x.scenarioId.startsWith("CUSTOM-")).map((x) => ({ ...x, resolved: false })),
     }));
     try {
       const result = await api.resetDrift();
+      void get().loadScenarios();
       const live = result.results.filter((r) => r.source === "live-graph").length;
       const failed = result.results.filter((r) => r.failed.length);
       get().toast({
@@ -850,10 +868,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           ? `${failed.map((r) => `${r.scenarioId}: ${r.failed[0]?.error ?? "failed"}`).join("; ").slice(0, 240)}`
           : `${live} written live in the lab tenant, ${result.results.length - live} simulated`,
       });
-      void get().loadBrief(scenarioId, true);
+      void get().loadBrief(targetScenarioId, true);
       // A canvas correlated after the approval already carries the live (resolved) state: hydrate it again.
       const recipe = get().activeRecipeId;
-      if (recipe) void get().hydrateRecipe(recipe);
+      if (recipe) void get().hydrateRecipe(recipe, targetScenarioId);
       else void get().correlate({ fresh: true });
     } catch (error) {
       get().toast({ tone: "critical", title: "Reset failed", detail: error instanceof Error ? error.message : String(error) });
@@ -987,7 +1005,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
   dismissMiniDashboard: (id) => set((s) => ({ miniDashboards: s.miniDashboards.filter((m) => m.id !== id), linkedSelection: s.linkedSelection === id ? null : s.linkedSelection })),
   setLinkedSelection: (linkedSelection) => set((s) => (s.linkedSelection === linkedSelection ? {} : { linkedSelection })),
-  setComposerOpen: (composerOpen) => set({ composerOpen }),
+  setComposerOpen: (composerOpen) => set(composerOpen ? { composerOpen, voiceOpen: false } : { composerOpen }),
 
   async triageCustom(input) {
     if (get().triageStatus === "loading") return;
@@ -1068,48 +1086,130 @@ export function selectActiveTimelineSlice(
   return s.timeline.slices.find((x) => x.id === s.timelineSliceId) ?? null;
 }
 
-function applyTimelineSliceToLayout(
+export function applyTimelineSliceToLayout(
   layout: Layout,
   slice: import("@/lib/api").TimelineSliceItem,
 ): Layout {
-  const base =
-    slice.state.health === "healthy"
-      ? convergeLayout(layout, { remediatedUpns: [], reclaimedUpns: [] })
-      : layout;
+  const isHealthySlice = slice.state.health === "healthy" || slice.kind === "baseline" || slice.kind === "counterfactual";
+  const base = isHealthySlice
+    ? convergeLayout(layout, { remediatedUpns: [], reclaimedUpns: [] })
+    : layout;
   return {
     ...base,
     components: base.components.map((c) => {
       const cardSlice = slice.state.cards?.find((cs) => cs.cardId === c.type);
-      if (!cardSlice) return c;
+      const effectiveStatus = cardSlice?.status ?? (isHealthySlice ? "healthy" : ("state" in c.props ? c.props.state : "healthy"));
       switch (c.type) {
         case "LicenseDriftCard":
           return {
             ...c,
             props: {
               ...c.props,
-              state: cardSlice.status,
-              headline: cardSlice.summary,
+              state: effectiveStatus,
+              headline: cardSlice?.summary ?? c.props.headline,
+              ...(effectiveStatus === "healthy"
+                ? {
+                    groupErrors: [],
+                    users: c.props.users.map((u) => ({
+                      ...u,
+                      currentSku: u.expectedSku === "NONE" ? "NONE" : u.expectedSku || c.props.skuPartNumber || "SPE_E5",
+                      assignmentPath: u.expectedSku === "NONE" ? ("None" as const) : u.assignmentPath,
+                      assignmentState: u.expectedSku === "NONE" ? ("Reclaimed" as const) : ("Active" as const),
+                      driftStatus: "compliant" as const,
+                    })),
+                  }
+                : {}),
             },
           };
-        case "EntraSignInTimeline":
+        case "EntraSignInTimeline": {
+          const rawEvents = layout.components.find((orig) => orig.type === "EntraSignInTimeline")?.props;
+          const origEvents = rawEvents && "events" in rawEvents ? rawEvents.events : c.props.events;
+          let events = c.props.events;
+          if (slice.kind === "baseline") {
+            const baselinePreDrift = origEvents.filter((e) => e.status === "success" && e.timestamp <= slice.timestamp);
+            events =
+              baselinePreDrift.length > 0
+                ? baselinePreDrift.map((e) => ({ ...e, isHighlighted: false }))
+                : c.props.events.map((e) => ({
+                    ...e,
+                    status: "success" as const,
+                    errorCode: 0,
+                    errorCodeLabel: undefined,
+                    failureReason: undefined,
+                    blockingPolicyName: undefined,
+                    conditionalAccessStatus: "success" as const,
+                    isHighlighted: false,
+                  }));
+          } else if (slice.kind === "drift" || effectiveStatus === "healthy") {
+            if (slice.kind === "drift") {
+              const nonFailures = origEvents.filter((e) => e.status !== "failure");
+              events = nonFailures.length > 0 ? nonFailures.map((e) => ({ ...e, isHighlighted: false })) : c.props.events;
+            } else {
+              events = c.props.events.map((e) => ({
+                ...e,
+                status: "success" as const,
+                errorCode: 0,
+                errorCodeLabel: undefined,
+                failureReason: undefined,
+                blockingPolicyName: undefined,
+                conditionalAccessStatus: "success" as const,
+                isHighlighted: false,
+              }));
+            }
+          } else if (slice.kind === "first-failure") {
+            const upToSlice = origEvents.filter((e) => e.timestamp <= slice.timestamp);
+            events = upToSlice.some((e) => e.status === "failure") ? upToSlice : origEvents.slice(0, Math.max(1, origEvents.findIndex((e) => e.status === "failure") + 1));
+          }
           return {
             ...c,
             props: {
               ...c.props,
-              state: cardSlice.status,
-              headline: cardSlice.summary,
-              ...(cardSlice.status === "healthy" ? { rootCause: null } : {}),
+              state: effectiveStatus,
+              headline: cardSlice?.summary ?? c.props.headline,
+              events,
+              ...(effectiveStatus === "healthy" || slice.kind === "drift"
+                ? {
+                    rootCause: null,
+                    ...(effectiveStatus === "healthy"
+                      ? {
+                          policies: c.props.policies.map((p) => ({
+                            ...p,
+                            role: "in-scope" as const,
+                            state: p.fixedState ?? p.state,
+                            excludeGroups: p.fixedExcludeGroups ?? p.excludeGroups,
+                            drift: [],
+                          })),
+                        }
+                      : {}),
+                  }
+                : {}),
             },
           };
+        }
         case "IaCDriftBanner":
           return {
             ...c,
             props: {
               ...c.props,
-              state: cardSlice.status,
-              summary: cardSlice.summary,
-              ...(cardSlice.status === "healthy"
-                ? { driftState: "in-sync" as const, rogueSecurityRules: [], tagDrift: [] }
+              state: effectiveStatus,
+              summary: cardSlice?.summary ?? c.props.summary,
+              ...(effectiveStatus === "healthy"
+                ? {
+                    driftState: "in-sync" as const,
+                    rogueSecurityRules: [],
+                    tagDrift: [],
+                    missingSecurityRules: [],
+                    azurePolicies: c.props.azurePolicies.map((p) => ({
+                      ...p,
+                      compliance: "Compliant" as const,
+                      nonCompliantResources: 0,
+                      detail: p.name.toLowerCase().includes("management port")
+                        ? "0 management ports exposed to Internet — TCP/3389 closed"
+                        : p.name.toLowerCase().includes("tag")
+                          ? "Required tag Environment = Production matches Terraform baseline"
+                          : p.detail,
+                    })),
+                  }
                 : {}),
             },
           };
@@ -1118,9 +1218,16 @@ function applyTimelineSliceToLayout(
             ...c,
             props: {
               ...c.props,
-              state: cardSlice.status,
-              headline: cardSlice.summary,
-              ...(cardSlice.status === "healthy" ? { affectedDeviceCount: 0 } : {}),
+              state: effectiveStatus,
+              headline: cardSlice?.summary ?? c.props.headline,
+              ...(effectiveStatus === "healthy"
+                ? {
+                    affectedDeviceCount: 0,
+                    settings: c.props.settings.map((s) => ({ ...s, live: s.golden, status: "in-sync" as const })),
+                    policies: c.props.policies.map((p) => (p.role === "duplicate" || p.role === "conflicting" ? { ...p, assignedTo: [] } : p)),
+                    devices: c.props.devices.map((d) => ({ ...d, complianceState: "Compliant" as const, detail: "Compliant — matches golden baseline" })),
+                  }
+                : {}),
             },
           };
         default:

@@ -62,17 +62,39 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
         : [];
   const shortUpns = remediatedUpns.map((u) => u.split("@")[0]!);
 
-  const rawRootCause = snapshotBrief.summary;
-  const rootCause =
-    base === "INC-4092" && (rawRootCause.includes("All SG-Contoso-Finance-AVD members hold SPE_E5") || rawRootCause.includes("0 Finance user"))
-      ? `3 Finance users in SG-Contoso-Finance-AVD (${shortUpns.join(", ")}) held SPE_E3 instead of SPE_E5 and remained in the legacy block group, so 'Block AVD - Contoso Finance Legacy' rejected Azure Virtual Desktop with AADSTS53003. Separately, a vendor left Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) open on nsg-contoso-avd-hostpool-01.`
-      : rawRootCause;
+  const rawRootCause = snapshotBrief.summary
+    .replace(/^(?:Unscripted ticket triaged live|ERP ticket [^\s]+ dropped into input\/tickets\/[^\s]+ and triaged live) against [^:]+:\s*\d+\s+entit(?:y|ies) matched MCP data \([^)]*\),\s*inheriting the [A-Z0-9-]+ pattern\.\s*/i, "")
+    .trim();
+
+  const FALLBACK_ROOT_CAUSE_BY_BASE: Record<string, string> = {
+    "INC-4092": `3 Finance users in SG-Contoso-Finance-AVD (${shortUpns.join(", ")}) held SPE_E3 instead of SPE_E5 and remained in the legacy block group, so 'Block AVD - Contoso Finance Legacy' rejected Azure Virtual Desktop with AADSTS53003. Separately, a vendor left Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) open on nsg-contoso-avd-hostpool-01.`,
+    "INC-4099": "The legacy Fabrikam-Legacy-BitLocker-DeviceConfig profile conflicted with the Endpoint Security disk encryption baseline (XTS-AES 128 vs 256, prompt vs silent), causing silent BitLocker to fail with 0x87D1FDE8 on 6 devices and triggering AADSTS53000 Conditional Access blocks.",
+    "ANOM-LIC-101": "SG-Contoso-Sales-Copilot experienced a group-based licensing CountViolation (15/15 SPE_E5 seats consumed) because 3 disabled accounts continued holding SPE_E5 and Microsoft 365 Copilot seats via overlapping Direct and Group paths.",
+    "ANOM-CA-204": "CA-001-Require-PhishingResistant-MFA-Admins was modified out-of-band without excluding SG-BreakGlass-Accounts (creating break-glass lockout risk), and CA-004-Block-Legacy-Auth remained in Report-Only after a maintenance window.",
+    "ANOM-INT-309": "Intune-Win11-ASR-Baseline drifted from the golden Git baseline (LSASS credential-stealing rule weakened from Block to Audit), and duplicate profile Win11-Firewall-MDM conflicted with EndpointSecurity-Firewall-Prod across 11 workstations.",
+    "ANOM-APP-401": "Workload identity spn-contoso-erp-sync failed nightly GitHub Actions runs with AADSTS7000222 due to an expired client secret, while retaining a non-admin contractor owner (alex.wilber@c4a8shili.onmicrosoft.com) and overprivileged Graph application scopes (Directory.ReadWrite.All, Sites.FullControl.All, Mail.ReadWrite).",
+  };
+
+  const hasPostConvergedOrInternalText =
+    !rawRootCause ||
+    rawRootCause.includes("All SG-Contoso-Finance-AVD members hold SPE_E5") ||
+    rawRootCause.includes("0 Finance user") ||
+    rawRootCause.includes("match the golden") ||
+    rawRootCause.includes("Seats reclaimed:") ||
+    rawRootCause.includes("unassigned; the devices encrypted") ||
+    rawRootCause.includes("Unscripted ticket triaged live") ||
+    rawRootCause.includes("matched MCP data") ||
+    rawRootCause.includes("inheriting the ");
+
+  const rootCause = hasPostConvergedOrInternalText
+    ? (FALLBACK_ROOT_CAUSE_BY_BASE[base] ?? rawRootCause)
+    : rawRootCause;
 
   const rawDrawerSummary =
     drawer?.summary && !drawer.summary.includes("0 drifted member")
       ? drawer.summary
       : base === "INC-4092"
-        ? `Assigns SPE_E5 to 3 drifted member(s) of SG-Contoso-Finance-AVD (${shortUpns.join(", ")}), removes them from SG-Contoso-Finance-Legacy, sets '[ContextPane-Demo] Block AVD - Contoso Finance Legacy' to report-only excluding SG-Contoso-Finance-AVD, and deletes rogue rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) on nsg-contoso-avd-hostpool-01.`
+        ? `Moves 3 drifted member(s) of SG-Contoso-Finance-AVD (${shortUpns.join(", ")}) out of SG-Contoso-Finance-Legacy, reprocesses group-based SPE_E5 licensing, sets '[ContextPane-Demo] Block AVD - Contoso Finance Legacy' to report-only excluding SG-Contoso-Finance-AVD, and deletes rogue rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) on nsg-contoso-avd-hostpool-01.`
         : drawer?.summary ?? "The staged remediation was applied to restore the golden baseline.";
 
   const resolution = drawer

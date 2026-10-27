@@ -544,7 +544,7 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
   const hcl = rogue
     ? `  security_rule {\n    name                       = "${rogue.name}"\n    priority                   = ${rogue.priority}\n    direction                  = "${rogue.direction}"\n    access                     = "${rogue.access}"\n    protocol                   = "${rogue.protocol}"\n    source_port_range          = "*"\n    destination_port_range     = "${rogue.destinationPortRange}"\n    source_address_prefix      = "${rogue.sourceAddressPrefix}"\n    destination_address_prefix = "${rogue.destinationAddressPrefix}"\n  }\n`
     : "";
-  const terraformDiff = rogue ? `--- a/demo-iac/main.tf (post-remediation)\n+++ b/demo-iac/main.tf (rollback to pre-state)\n@@\n+  security_rule { name = "${rogue.name}" priority = ${rogue.priority} Tcp/3389 from * } # restored by f^-1\n` : "";
+  const terraformDiff = rogue ? `--- a/demo-iac/main.tf (post-remediation)\n+++ b/demo-iac/main.tf (rollback to pre-state)\n@@ -1,0 +1,1 @@\n+  security_rule { name = "${rogue.name}" priority = ${rogue.priority} Tcp/3389 from * } # restored by f^-1\n` : "";
 
   const userLines =
     effectiveId === "INC-4092"
@@ -555,9 +555,9 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
             .filter((a) => a.kind === "user")
             .map(
               (a) =>
-                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation SPE_E3 license & SG-Contoso-Finance-Legacy membership (${a.pre})')) { Set-MgUserLicense -UserId '${a.id}' -AddLicenses @(@{ SkuId = '${SPE_E3_SKU_ID}' }) -RemoveLicenses @('${SPE_E5_SKU_ID}') | Out-Null; New-MgGroupMemberByRef -GroupId 'SG-Contoso-Finance-Legacy' -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/users/${a.id}" } | Out-Null; Remove-MgGroupMemberByRef -GroupId 'SG-Contoso-Finance-AVD' -DirectoryObjectId '${a.id}' -ErrorAction SilentlyContinue | Out-Null }`,
+                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation SPE_E3 group license & SG-Contoso-Finance-Legacy membership (${a.pre})')) { New-MgGroupMemberByRef -GroupId '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/users/${a.id}" } | Out-Null; Remove-MgGroupMemberByRef -GroupId 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d' -DirectoryObjectId '${a.id}' -ErrorAction SilentlyContinue | Out-Null; Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null } # SG-Contoso-Finance-Legacy (${SPE_E3_SKU_ID} <- ${SPE_E5_SKU_ID})`,
             ),
-          `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'd09ae604-9c1e-4b9c-9a5d-000000000001' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('SG-Contoso-Finance-Legacy'); excludeGroups = @('sg-breakglass-accounts-01') } } } | Out-Null }`,
+          `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'd09ae604-9c1e-4b9c-9a5d-000000000001' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c'); excludeGroups = @('957845fd-42ee-4500-b407-ad04487da3c7') } } } | Out-Null }`,
           `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore Allow-Temp-RDP-Diagnostic-Drift rule and drifted tags on ${AVD_NSG_NAME}')) { $nsg = Get-AzNetworkSecurityGroup -Name '${AVD_NSG_NAME}' -ResourceGroupName 'rg-contoso-avd-prod'; Add-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name 'Allow-Temp-RDP-Diagnostic-Drift' -Priority 150 -Direction 'Inbound' -Access 'Allow' -Protocol 'Tcp' -SourcePortRange '*' -DestinationPortRange '3389' -SourceAddressPrefix '*' -DestinationAddressPrefix '*' | Set-AzNetworkSecurityGroup | Out-Null }`,
         ]
       : [
@@ -565,9 +565,9 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
             .filter((a) => a.kind === "user")
             .map(
               (a) =>
-                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation license/CA state (${a.pre})')) { Set-MgUserLicense -UserId '${a.id}' -AddLicenses @(@{ SkuId = '${SPE_E3_SKU_ID}' }) -RemoveLicenses @('${SPE_E5_SKU_ID}') | Out-Null }`,
+                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation license/CA state (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
             ),
-          `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore NSG rules/tags to pre-remediation state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca-policy-001' -BodyParameter @{ state = 'enabled' } | Out-Null }`,
+          `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore NSG rules/tags to pre-remediation state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca001a11-2b3c-4d5e-8f9a-0b1c2d3e4f01' -BodyParameter @{ state = 'enabled' } | Out-Null }`,
         ];
 
   const powershellScript = [

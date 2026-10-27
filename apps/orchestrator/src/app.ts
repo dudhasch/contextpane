@@ -49,7 +49,7 @@ import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skil
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
-import { SAMPLE_UNSCRIPTED_TICKETS, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket } from "./local/custom-ticket.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket } from "./local/custom-ticket.ts";
 import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
 import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
@@ -757,6 +757,7 @@ app.post("/api/lab/reset-drift", async (c) => {
       // The canvas reverts on this push at once; the Graph writes land behind it.
       convergenceStore.clear(scenarioId, tenantId);
       closureStore.clear(scenarioId);
+      remediationStore.clear(scenarioId);
       // A custom ticket's lab objects are those of its base pattern; a full reset already restored them.
       const write = isScenarioId(scenarioId) || body.scenarioId || body.tenantId ? await applyScenarioState(baseScenarioOf(scenarioId), "drifted") : { source: "simulated" as const, latencyMs: 0, results: [], summary: "custom ticket cleared (base pattern reset separately)" };
       invalidateContext(scenarioId);
@@ -778,6 +779,9 @@ app.post("/api/lab/reset-drift", async (c) => {
       return { scenarioId, tenantId, source: write.source, fallbackReason: write.fallbackReason, latencyMs: write.latencyMs, summary: write.summary, items: write.results.map((r) => r.id), failed };
     }),
   );
+  if (!body.scenarioId && !body.tenantId) {
+    clearCustomTickets("unscripted");
+  }
   return c.json({ ok: results.every((r) => r.failed.length === 0), latencyMs: Math.round(performance.now() - started), results });
 });
 

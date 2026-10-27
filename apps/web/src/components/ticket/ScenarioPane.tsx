@@ -168,30 +168,42 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
   );
 }
 
-/** Subtle fleet-immunity pill inside the Resolution Plan only; stages the cross-tenant GitOps campaign. */
+/** Subtle fleet-immunity pill inside the Resolution Plan only; opens the Fleet & Reverse-IaC preview tab in Action Approval Drawer. */
 function FleetPill() {
   const fleet = useWorkbench((s) => s.fleet);
-  const stage = useWorkbench((s) => s.stageCampaign);
+  const openRemediation = useWorkbench((s) => s.openRemediation);
   if (!fleet || fleet.affectedCount === 0) return null;
   return (
-    <button type="button" onClick={() => void stage()} className="mt-2 inline-flex h-5 items-center rounded border border-warning/40 bg-warning/10 px-1.5 font-mono text-[10.5px] text-warning" data-testid="fleet-pill">
-      Stage Fleet GitOps Campaign ({fleet.affectedCount} Tenants) · {fleet.signature}
+    <button
+      type="button"
+      onClick={() => openRemediation({ tab: "fleet" })}
+      className="mt-2 inline-flex min-h-6 items-center gap-1.5 rounded border border-warning/45 bg-warning/12 px-2 py-1 text-left font-mono text-[10.5px] leading-tight whitespace-normal text-warning hover:bg-warning/20"
+      title={`Preview affected peer tenants (${fleet.affectedCount}) and blast radius before staging fleet GitOps PRs`}
+      data-testid="fleet-pill"
+    >
+      <span>Stage Fleet GitOps Campaign ({fleet.affectedCount} Tenants) · {fleet.signature}</span>
+      <ChevronRight className="size-3 shrink-0" />
     </button>
   );
 }
 
+const STEP_CATEGORY_FALLBACKS = ["identity", "licensing", "azure", "intune"] as const;
+
 function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep; index: number; resolved: boolean; selections: Array<{ id: string; text: string; index: number }> }) {
   const scenarioId = useWorkbench((s) => s.scenarioId);
+  const steps = useWorkbench((s) => s.brief?.steps ?? []);
   const checked = useWorkbench((s) => Boolean(s.stepsDone[`${scenarioId}:${step.id}`])) || resolved;
   const toggle = useWorkbench((s) => s.toggleStep);
   const runStep = useWorkbench((s) => s.runStep);
   const setLinked = useWorkbench((s) => s.setLinked);
   const focusCard = useWorkbench((s) => s.focusCard);
+  const allSameCategory = steps.length > 1 && steps.every((s) => s.category === steps[0]?.category);
+  const effectiveCategory = allSameCategory ? STEP_CATEGORY_FALLBACKS[(index - 1) % STEP_CATEGORY_FALLBACKS.length]! : step.category;
   return (
     <li
-      style={catStyle(step.category)}
+      style={catStyle(effectiveCategory)}
       className="group flex items-start gap-2 rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-[color-mix(in_oklab,var(--cat)_40%,transparent)] hover:bg-[color-mix(in_oklab,var(--cat)_8%,transparent)]"
-      onMouseEnter={() => setLinked({ target: step.target, category: step.category })}
+      onMouseEnter={() => setLinked({ target: step.target, category: effectiveCategory })}
       onMouseLeave={() => setLinked(null)}
     >
       <button
@@ -248,10 +260,10 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
   const selections = useWorkbench((s) => s.selections[s.scenarioId] ?? NO_SELECTIONS);
   return (
     <section className="card">
-      <div className="mb-1.5 flex items-center gap-2">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2">
         <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
-        <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-faint" title="Highlight 3-120 characters of the text, then click the pill to spawn a live mini-dashboard">
-          <Wand2 className="size-3 text-selection" /> highlight any phrase → Generate Context UI
+        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10.5px] font-medium text-selection" title="Highlight 3-120 characters of the text, then click the pill to spawn a live mini-dashboard">
+          <Wand2 className="size-3 text-selection" /> ✨ Select any ticket text to generate Context UI
         </span>
       </div>
       <SelectionTrigger>
@@ -310,11 +322,12 @@ function Accordion({ icon, title, hint, children }: { icon: ReactNode; title: st
   const [open, setOpen] = useState(false);
   return (
     <section className="rounded-md border border-border-subtle bg-surface">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-[12px]">
-        <ChevronRight className={`size-3.5 shrink-0 text-faint transition-transform ${open ? "rotate-90" : ""}`} />
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-[12px] hover:bg-elevated/60">
+        <span className="font-mono text-[11px] font-bold text-primary" aria-hidden="true">{open ? "▾" : "▸"}</span>
         <span className="shrink-0 text-muted [&>svg]:size-3.5">{icon}</span>
         <span className="shrink-0 font-medium">{title}</span>
-        {hint && !open && <span className="truncate text-[11px] text-faint">· {hint}</span>}
+        {hint && !open && <span className="truncate text-[11px] text-muted">· {hint}</span>}
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted">{open ? "Collapse ▾" : "Expand ▸"}</span>
       </button>
       {open && <div className="border-t border-border-subtle px-2.5 py-2">{children}</div>}
     </section>

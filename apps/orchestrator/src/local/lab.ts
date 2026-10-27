@@ -38,17 +38,23 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
   switch (scenarioId) {
     case "INC-4092": {
       const targets = upns?.length ? upns : contosoDriftedUpns();
-      // Graph and ARM are independent writes; the NSG one waits for each long-running operation.
-      const [w, nsg] = await Promise.all([msgraphService.setLicenseExtensionState(tenantId, targets, state), azureIacService.setNsgState(tenantId, state)]);
+      // Graph (licensing + Conditional Access) and ARM (NSG) are independent writes; the NSG one waits for each long-running operation.
+      const [w, ca, nsg] = await Promise.all([
+        msgraphService.setLicenseExtensionState(tenantId, targets, state),
+        msgraphService.setConditionalAccessState(tenantId, state),
+        azureIacService.setNsgState(tenantId, state),
+      ]);
       const ok = w.results.filter((r) => r.ok).length;
       const nsgOps = nsg.results.map((r) => r.id).join(", ") || "already at target";
+      const caSummary = fixed ? "CA Block AVD → report-only (excludes SG-Contoso-Finance-AVD)" : "CA Block AVD → enabled";
       return {
         ...pick(w),
         results: [
           ...w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
+          ...ca.results.map((r) => ({ id: `ca ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
           ...nsg.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
         ],
-        summary: `${ok}/${w.results.length} users → ${fixed ? "SPE_E5 / Compliant" : "SPE_E3 / Drift_Missing_E5_SKU"} · NSG ${nsg.source === "live-azure" ? `(ARM): ${nsgOps}` : `simulated (${nsg.fallbackReason ?? "no Azure context"})`}`,
+        summary: `${ok}/${w.results.length} users → ${fixed ? "SPE_E5 / Compliant" : "SPE_E3 / Drift_Missing_E5_SKU"} · ${caSummary} · NSG ${nsg.source === "live-azure" ? `(ARM): ${nsgOps}` : `simulated (${nsg.fallbackReason ?? "no Azure context"})`}`,
         arm: nsg,
       };
     }

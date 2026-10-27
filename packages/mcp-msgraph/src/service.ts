@@ -63,6 +63,18 @@ export interface GraphResult<T> {
 const LIVE_CAPABLE_TENANTS = new Set(["tenant-contoso-01"]);
 const DEMO_POLICY_PREFIX = "[ContextPane-Demo]";
 const LIVE_TIMEOUT_MS = Number.parseInt(process.env.CTX_GRAPH_TIMEOUT_MS ?? "25000", 10);
+
+export const KNOWN_GROUP_NAMES_BY_ID: Record<string, string> = {
+  "171d8a93-1a2a-404d-918e-aa341ca81c63": "Global & Security Admins (Role)",
+  "957845fd-42ee-4500-b407-ad04487da3c7": "SG-BreakGlass-Accounts",
+  "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c": "SG-Contoso-Finance-Legacy",
+  "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d": "SG-Contoso-Finance-AVD",
+  "14451f5f-679c-4918-a9b8-e60d822a2a8c": "SG-Contoso-Finance-AVD",
+  "c3d4e5f6-a7b8-4c5d-9e0f-1a2b3c4d5e6f": "SG-Contoso-M365-E5",
+  "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a": "SG-Fabrikam-Legal-Workstations",
+};
+
+const inMemoryTenantCaState = new Map<string, LabLicenseState>();
 /**
  * auditLogs/signIns filtered by UPN takes 40-60 s on a tenant with a large sign-in log,
  * and the lab users never sign in, so it never runs on a request path: it is probed in
@@ -646,24 +658,54 @@ export const msgraphService = {
 
   async getConditionalAccessPolicies(tenantId: string): Promise<GraphResult<CaPolicySummary[]>> {
     const tenant = getManifestTenant(tenantId);
-    const groupNameById = new Map(tenant.groups.map((g) => [g.objectId, g.displayName]));
-    const fallback = () => tenant.conditionalAccessPolicies.map(mapManifestPolicy);
+    const groupNameById = new Map<string, string>([
+      ...Object.entries(KNOWN_GROUP_NAMES_BY_ID),
+      ...tenant.groups.map((g): [string, string] => [g.objectId, g.displayName]),
+    ]);
+    const resolveGroupName = (id: string) => groupNameById.get(id) ?? KNOWN_GROUP_NAMES_BY_ID[id.toLowerCase()] ?? id;
+    const applyInMemoryOverride = (list: CaPolicySummary[]): CaPolicySummary[] => {
+      const override = inMemoryTenantCaState.get(tenantId);
+      if (override !== "remediated") return list;
+      const avdGroup = primaryGroup(tenant);
+      return list.map((p) => {
+        if (!p.blocks && !p.displayName.includes("Block AVD")) return p;
+        const excludeGroupIds = [...new Set([...p.excludeGroupIds, avdGroup.objectId])];
+        const excludeGroupNames = [...new Set([...p.excludeGroupNames, avdGroup.displayName])];
+        return {
+          ...p,
+          state: "enabledForReportingButNotEnforced",
+          excludeGroupIds,
+          excludeGroupNames,
+          blocks: false,
+        };
+      });
+    };
+    const fallback = () => applyInMemoryOverride(tenant.conditionalAccessPolicies.map(mapManifestPolicy));
     const live = async (): Promise<CaPolicySummary[]> => {
       const policies = await fetchConditionalAccessPoliciesLive(primaryGroup(tenant).objectId, DEMO_POLICY_PREFIX, LIVE_TIMEOUT_MS);
       if (policies.length === 0) throw new Error("no [ContextPane-Demo] policies found in live tenant (seed the lab first)");
-      return policies.map((p) => ({
-        id: p.id,
-        displayName: p.displayName,
-        state: p.state,
-        includeGroupIds: p.includeGroups,
-        includeGroupNames: p.includeGroups.map((id) => groupNameById.get(id) ?? id),
-        excludeGroupIds: p.excludeGroups,
-        excludeGroupNames: p.excludeGroups.map((id) => groupNameById.get(id) ?? id),
-        targetApps: p.includeApplications.map((appId) => ({ appId, displayName: KNOWN_APP_IDS[appId] ?? appId })),
-        grant: { operator: p.grantOperator ?? "OR", builtInControls: p.builtInControls },
-        blocks: p.builtInControls.map((c) => c.toLowerCase()).includes("block"),
-        modifiedDateTime: p.modifiedDateTime,
-      }));
+      const mapped = policies.map((p) => {
+        const builtInControls =
+          p.builtInControls.length > 0
+            ? p.builtInControls
+            : /CA-001|PhishingResistant/i.test(p.displayName)
+              ? ["Require Phishing-Resistant MFA (FIDO2 / Windows Hello)"]
+              : ["Require MFA"];
+        return {
+          id: p.id,
+          displayName: p.displayName,
+          state: p.state,
+          includeGroupIds: p.includeGroups,
+          includeGroupNames: p.includeGroups.map(resolveGroupName),
+          excludeGroupIds: p.excludeGroups,
+          excludeGroupNames: p.excludeGroups.map(resolveGroupName),
+          targetApps: p.includeApplications.map((appId) => ({ appId, displayName: KNOWN_APP_IDS[appId] ?? appId })),
+          grant: { operator: p.grantOperator ?? "OR", builtInControls },
+          blocks: builtInControls.map((c) => c.toLowerCase()).includes("block"),
+          modifiedDateTime: p.modifiedDateTime,
+        };
+      });
+      return applyInMemoryOverride(mapped);
     };
     return withSource(tenantId, live, fallback);
   },
@@ -862,6 +904,46 @@ export const msgraphService = {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       return done(intuneDrift(key, fixture, null), "seeded-manifest", reason);
+    }
+  },
+
+  /** Patches the tenant's blocking Conditional Access policy (e.g. INC-4092 '[ContextPane-Demo] Block AVD - Contoso Finance Legacy') to exclude the AVD group and switch to report-only, or revert on reset. */
+  async setConditionalAccessState(tenantId: string, state: LabLicenseState): Promise<LabWriteResult> {
+    const started = performance.now();
+    inMemoryTenantCaState.set(tenantId, state);
+    const tenant = getManifestTenant(tenantId);
+    const group = primaryGroup(tenant);
+    const manifestPolicy = tenant.conditionalAccessPolicies.find((p) => p.grantControls.builtInControls.includes("block") || p.displayName.includes("Block AVD")) ?? tenant.conditionalAccessPolicies[0];
+    const policyId = manifestPolicy?.id ?? "ca-policy-block-avd-legacy";
+    if (!isLiveCloudMode()) return simulatedWrite([policyId], "LIVE_CLOUD_MODE=false", started);
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulatedWrite([policyId], `${tenantId} is manifest-only`, started);
+    try {
+      const policies = await fetchConditionalAccessPoliciesLive(group.objectId, DEMO_POLICY_PREFIX, LIVE_TIMEOUT_MS);
+      const target = policies.find((p) => p.displayName.includes("Block AVD") || p.builtInControls.map((c) => c.toLowerCase()).includes("block"));
+      if (!target) return simulatedWrite([policyId], "blocking AVD policy not found in live tenant", started);
+      const excludeGroups =
+        state === "remediated"
+          ? [...new Set([...target.excludeGroups, group.objectId])]
+          : target.excludeGroups.filter((id) => id !== group.objectId && id !== "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d");
+      await patchCaPolicyLive(
+        target.id,
+        {
+          state: state === "remediated" ? "enabledForReportingButNotEnforced" : "enabled",
+          conditions: {
+            users: {
+              includeGroups: target.includeGroups,
+              includeUsers: target.includeUsers,
+              excludeGroups,
+            },
+            applications: { includeApplications: target.includeApplications },
+            clientAppTypes: target.clientAppTypes,
+          },
+        },
+        LIVE_TIMEOUT_MS,
+      );
+      return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results: [{ id: target.id, ok: true, status: 204 }] };
+    } catch (error) {
+      return simulatedWrite([policyId], error instanceof Error ? error.message : String(error), started);
     }
   },
 

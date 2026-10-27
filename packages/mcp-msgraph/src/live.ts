@@ -180,7 +180,11 @@ interface GraphPolicy {
     applications?: { includeApplications?: string[] };
     clientAppTypes?: string[];
   };
-  grantControls?: { operator?: string | null; builtInControls?: string[] } | null;
+  grantControls?: {
+    operator?: string | null;
+    builtInControls?: string[];
+    authenticationStrength?: { id?: string; displayName?: string } | string | null;
+  } | null;
 }
 
 const SNAPSHOT_TTL_MS = 5_000;
@@ -245,6 +249,14 @@ export function fetchGraphSnapshot(groupId: string, timeoutMs: number): Promise<
 }
 
 function mapPolicy(p: GraphPolicy): LiveCaPolicy {
+  const builtIn = [...(p.grantControls?.builtInControls ?? [])];
+  if (builtIn.length === 0) {
+    const authStrength = p.grantControls?.authenticationStrength;
+    const strengthLabel = typeof authStrength === "string" ? authStrength : authStrength?.displayName;
+    if (strengthLabel || /CA-001|PhishingResistant/i.test(p.displayName ?? "")) {
+      builtIn.push("Require Phishing-Resistant MFA (FIDO2 / Windows Hello)");
+    }
+  }
   return {
     id: p.id,
     displayName: p.displayName,
@@ -257,7 +269,7 @@ function mapPolicy(p: GraphPolicy): LiveCaPolicy {
     includeApplications: p.conditions?.applications?.includeApplications ?? [],
     clientAppTypes: p.conditions?.clientAppTypes ?? [],
     grantOperator: p.grantControls?.operator ?? null,
-    builtInControls: p.grantControls?.builtInControls ?? [],
+    builtInControls: builtIn,
   };
 }
 

@@ -43,6 +43,8 @@ export function VoiceSteerPanel() {
   const inputRef = useRef<HTMLInputElement>(null);
   const autoCloseRef = useRef<number | undefined>(undefined);
 
+  const panelRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (open) {
       window.clearTimeout(autoCloseRef.current);
@@ -51,6 +53,27 @@ export function VoiceSteerPanel() {
     return () => window.clearTimeout(autoCloseRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (panelRef.current?.contains(target)) return;
+      const el = target instanceof Element ? target : target.parentElement;
+      if (el?.closest('[aria-label="Voice Steer"]')) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, setOpen]);
 
   const submit = async (command: string, audio?: { base64: string; mimeType: string }) => {
     if (!command.trim() && !audio) return;
@@ -128,7 +151,7 @@ export function VoiceSteerPanel() {
 
   if (!open) return null;
   return (
-    <aside className="absolute top-14 right-3 z-30 w-[420px] animate-fade-in card shadow-popover">
+    <aside ref={panelRef} className="absolute top-14 right-3 z-30 w-[420px] animate-fade-in card shadow-popover" data-testid="voice-steer-panel">
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Mic className="size-4 text-meta" />

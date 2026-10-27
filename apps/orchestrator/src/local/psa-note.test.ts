@@ -67,6 +67,7 @@ describe("auto-drafted Customer & PSA Resolution Note", () => {
     expect(closedNote.status).toBe("CLOSED");
     expect(closedNote.markdown).toContain("CLOSED · closed");
     closureStore.clear("INC-4092");
+    remediationStore.clear("INC-4092");
   });
 
   test("preserves 3 remediated users and root cause even when post-convergence brief or remediatedUpns has 0 drifted users", async () => {

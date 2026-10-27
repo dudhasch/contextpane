@@ -73,7 +73,7 @@ export function buildLicenseDriftCard(ctx: CorrelationContext): LicenseDriftCard
     skuPools: inv.skuPools,
     groupErrors: inv.groupErrors,
     users: inv.users,
-    state: failed.length || orphaned.length ? "critical" : drifted.length ? "warning" : "healthy",
+    state: failed.length || orphaned.length || drifted.length >= 3 ? "critical" : drifted.length ? "warning" : "healthy",
   };
 }
 
@@ -109,6 +109,15 @@ function inspectTicketPolicy(ctx: CorrelationContext, p: CaPolicySummary, blocke
   // INC-4092: the fix excludes the entitlement group from the legacy block and switches it to report-only.
   const neutralise = p.blocks && ctx.scenarioId === "INC-4092" && entitlement;
   const state = p.state === "enabled" || p.state === "disabled" ? p.state : "enabledForReportingButNotEnforced";
+  const rawGrantControls = p.grant.builtInControls
+    .map((c) => (c === "compliantDevice" ? "Require compliant device" : c === "block" ? "Block" : c))
+    .slice(0, 6);
+  const grantControls =
+    rawGrantControls.length > 0
+      ? rawGrantControls
+      : p.displayName.includes("PhishingResistant") || p.displayName.includes("CA-001")
+        ? ["Require Phishing-Resistant MFA (FIDO2 / Windows Hello)"]
+        : [];
   return {
     id: p.id,
     displayName: p.displayName,
@@ -118,7 +127,7 @@ function inspectTicketPolicy(ctx: CorrelationContext, p: CaPolicySummary, blocke
     excludeGroups: p.excludeGroupNames.slice(0, 10),
     targetApps: p.targetApps.map((a) => a.displayName).slice(0, 10),
     clientAppTypes: [],
-    grantControls: p.grant.builtInControls.map((c) => (c === "compliantDevice" ? "Require compliant device" : c === "block" ? "Block" : c)).slice(0, 6),
+    grantControls,
     drift: [],
     ...(neutralise ? { fixedState: "enabledForReportingButNotEnforced" as const, fixedExcludeGroups: [...new Set([...p.excludeGroupNames, entitlement])].slice(0, 10) } : {}),
     modifiedDateTime: p.modifiedDateTime,
@@ -207,7 +216,7 @@ function buildWorkloadIdentityTimeline(ctx: CorrelationContext): EntraSignInTime
     baselineDiff: [
       `--- tenant-live/${WORKLOAD_GOLDEN_FILE} (live app state)`,
       `+++ ${WORKLOAD_GOLDEN_FILE} (golden baseline)`,
-      "@@ workload identity @@",
+      "@@ -1,6 +1,18 @@",
       `- owners: ${w.owner.upn}`,
       "+ owners: (none)",
       `- applicationPermissions: ${granted}`,

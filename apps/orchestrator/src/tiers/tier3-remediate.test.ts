@@ -12,6 +12,9 @@ const { buildScenarioBrief } = await import("../local/brief.ts");
 const { buildLayout } = await import("../local/hydrate.ts");
 const { buildRemediationPlan } = await import("../local/remediate.ts");
 const { buildHoverDiagnostic } = await import("../local/hover.ts");
+const { buildInverseRollback } = await import("../local/formal-verifier.ts");
+const { buildResolutionNote } = await import("../local/psa-note.ts");
+const { clearCustomTickets, registerCustomTicket, SAMPLE_UNSCRIPTED_TICKETS } = await import("../local/custom-ticket.ts");
 
 const DIFF = `===================================================================
 --- azure-live/nsg-contoso-avd-hostpool-01.tf	live state (Azure)
@@ -117,8 +120,88 @@ describe("every scenario (offline fixtures)", () => {
       // Terraform ships with the IaC card, plus ANOM-APP-401's OpenTofu OIDC federation resource.
       expect(Boolean(plan.bundle.terraformDiff)).toBe(cards.includes("IaCDriftBanner") || scenarioId === "ANOM-APP-401");
       expect(() => JSON.parse(plan.bundle.graphPatch)).not.toThrow();
+
+      // Zero <...> placeholders in powershellScript, graphPatch, terraformDiff, or inverseRollback
+      const anglePlaceholderRe = /<[^>\n]+ (?:id|skuId)>/i;
+      expect(plan.bundle.powershellScript).not.toMatch(anglePlaceholderRe);
+      expect(plan.bundle.graphPatch).not.toMatch(anglePlaceholderRe);
+      expect(plan.bundle.terraformDiff).not.toMatch(anglePlaceholderRe);
+      const rollback = buildInverseRollback(scenarioId);
+      expect(rollback.powershellScript).not.toMatch(anglePlaceholderRe);
+      expect(rollback.terraformDiff).not.toMatch(anglePlaceholderRe);
+
+      // Valid unified diff headers when terraformDiff is present
+      if (plan.bundle.terraformDiff) {
+        expect(plan.bundle.terraformDiff).toMatch(/@@ -\d+,\d+ \+\d+,\d+ @@/);
+        expect(plan.bundle.terraformDiff).not.toContain("@@ workload identity @@");
+      }
     });
   }
+
+  test("INC-4092 uses group-based licensing (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser) and preserves CA includeGroups", async () => {
+    const ctx = await gatherContext("INC-4092", { fresh: true });
+    const plan = buildRemediationPlan(ctx);
+    expect(plan.bundle.powershellScript).toContain("Remove-MgGroupMemberByRef");
+    expect(plan.bundle.powershellScript).toContain("Invoke-MgLicenseUser");
+    expect(plan.bundle.powershellScript).not.toContain("Set-MgUserLicense");
+    const ops = JSON.parse(plan.bundle.graphPatch) as Array<{ method: string; url: string; body?: Record<string, unknown> }>;
+    expect(ops.some((o) => o.url.includes("/reprocessLicenseAssignment"))).toBe(true);
+    const caPatch = ops.find((o) => o.method === "PATCH" && o.url.includes("/identity/conditionalAccess/policies/"));
+    expect(caPatch).toBeDefined();
+    const usersCond = (caPatch?.body?.conditions as { users?: { includeGroups?: string[]; excludeGroups?: string[] } })?.users;
+    expect(usersCond?.includeGroups).toEqual(["6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c"]);
+    expect(usersCond?.excludeGroups).toContain("a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d");
+  });
+
+  test("INC-4099 primary script and graphPatch include New-MgBetaDeviceManagementDeviceHealthScript for tattooed BitLocker registry cleanup", async () => {
+    const ctx = await gatherContext("INC-4099", { fresh: true });
+    const plan = buildRemediationPlan(ctx);
+    expect(plan.bundle.powershellScript).toContain("New-MgBetaDeviceManagementDeviceHealthScript");
+    expect(plan.bundle.powershellScript).toContain("EncryptionMethodWithXtsOs");
+    const ops = JSON.parse(plan.bundle.graphPatch) as Array<{ method: string; url: string }>;
+    expect(ops.some((o) => o.url === "/beta/deviceManagement/deviceHealthScripts")).toBe(true);
+  });
+
+  test("ANOM-APP-401 scopes appRoleAssignment removal to over-privileged roles and grants SharePoint site permission via New-MgSitePermission", async () => {
+    const ctx = await gatherContext("ANOM-APP-401", { fresh: true });
+    const plan = buildRemediationPlan(ctx);
+    expect(plan.bundle.powershellScript).toContain("$overprivilegedRoleIds");
+    expect(plan.bundle.powershellScript).toContain("Where-Object { $overprivilegedRoleIds -contains $_.AppRoleId");
+    expect(plan.bundle.powershellScript).toContain("New-MgSitePermission");
+    const ops = JSON.parse(plan.bundle.graphPatch) as Array<{ method: string; url: string }>;
+    expect(ops.some((o) => o.url.includes("/sites/") && o.url.endsWith("/permissions"))).toBe(true);
+  });
+
+  test("PSA resolution note on custom unscripted ticket contains zero internal triage debug text", async () => {
+    const sample = SAMPLE_UNSCRIPTED_TICKETS[2]!;
+    const entry = registerCustomTicket(sample);
+    try {
+      const ctx = await gatherContext(entry.scenarioId, { fresh: true });
+      const brief = buildScenarioBrief(ctx);
+      const note = buildResolutionNote({
+        brief,
+        convergence: {
+          scenarioId: entry.scenarioId,
+          tenantId: entry.tenantId,
+          remediationId: "rem-test-01",
+          ticketId: entry.scenarioId,
+          convergedAt: "2026-10-27T16:00:00.000Z",
+          latencyMs: 12,
+          prUrl: null,
+          gitBranch: "fix/ANOM-APP-401-contoso-remediation",
+          execution: "simulated",
+          remediatedUpns: [],
+          reclaimedUpns: [],
+        },
+      });
+      expect(note.customerSummary).not.toContain("Unscripted ticket triaged live");
+      expect(note.customerSummary).not.toContain("matched MCP data");
+      expect(note.customerSummary).not.toContain("inheriting the");
+      expect(note.rootCause).not.toContain("Unscripted ticket triaged live");
+    } finally {
+      clearCustomTickets("unscripted");
+    }
+  });
 
   test("user hover: assigned vs expected SKU, assignment state, groups, last block + two micro-actions", async () => {
     const ctx = await gatherContext("INC-4092");

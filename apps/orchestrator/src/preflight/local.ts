@@ -68,7 +68,19 @@ function exec(command: string, args: string[], options: { cwd?: string; timeoutM
 
 const ALLOWED_VERBS = new Set(["Get", "Set", "Update", "New", "Add", "Connect", "Select", "Where", "ForEach", "Write", "Out", "Test", "ConvertTo", "ConvertFrom", "Format", "Measure", "Sort", "Group", "Start", "Import", "Compare", "Join", "Split"]);
 /** Narrow exceptions to the verb allow-list: each is a scoped, reversible Graph operation. */
-const ALLOWED_COMMANDS = new Set(["remove-mggroupmemberbyref", "invoke-mglicenseuser", "invoke-mggraphrequest", "sync-mgdevicemanagementmanageddevice"]);
+const ALLOWED_COMMANDS = new Set([
+  "remove-mggroupmemberbyref",
+  "new-mggroupmemberbyref",
+  "invoke-mglicenseuser",
+  "invoke-mggraphrequest",
+  "sync-mgdevicemanagementmanageddevice",
+  "new-mgbetadevicemanagementdevicehealthscript",
+  "new-mgsitepermission",
+  "remove-mgapplicationownerbyref",
+  "remove-mgoauth2permissiongrant",
+  "remove-mgserviceprincipalapproleassignment",
+  "remove-mgapplicationpassword",
+]);
 const FORBIDDEN_COMMANDS = ["invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod", "set-executionpolicy"];
 const DEFAULT_REQUIRED_COMMANDS = ["set-mguserlicense"];
 

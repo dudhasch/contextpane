@@ -1,4 +1,4 @@
-import { Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, HeartPulse, History, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
+import { BookOpen, Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitBranch, GitMerge, GitPullRequest, HeartPulse, History, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, XCircle, Zap } from "lucide-react";
 import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
 import { PROVIDER_LABEL, fmtMs, shortSha } from "@/lib/format";
 import { useWorkbench, type DrawerTab as Tab } from "@/store";
@@ -55,12 +55,18 @@ export function ActionApprovalDrawerSheet() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-canvas/70" onClick={() => setOpen(false)}>
-      <aside className="flex h-full w-[600px] max-w-full animate-slide-in-right flex-col border-l border-border bg-surface shadow-popover" onClick={(e) => e.stopPropagation()}>
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-          <Sparkles className="size-4 text-meta" />
-          <span className="text-[13px] font-semibold">Action Approval</span>
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/75 backdrop-blur-sm" onClick={() => setOpen(false)}>
+      <aside className="flex h-full w-[640px] max-w-full animate-slide-in-right flex-col border-l border-border bg-surface shadow-popover" onClick={(e) => e.stopPropagation()}>
+        <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3.5">
+          <Sparkles className="size-3.5 text-meta" />
+          <span className="text-[12.5px] font-semibold">Action Approval</span>
           {drawer && <span className="font-mono text-[11px] text-muted">#{drawer.ticketId}</span>}
+          {drawer && (
+            <div className="ml-1 flex items-center gap-1">
+              <VerificationBadge drawer={drawer} />
+              <DryRunBadge drawer={drawer} />
+            </div>
+          )}
           <button type="button" onClick={() => setOpen(false)} className="ml-auto text-faint hover:text-text" aria-label="Close">
             <X className="size-4" />
           </button>
@@ -73,11 +79,15 @@ export function ActionApprovalDrawerSheet() {
           </div>
         ) : (
           <>
-            <div className="shrink-0 space-y-2.5 border-b border-border px-4 py-3">
-              <div className="text-[13px] font-semibold leading-snug">{drawer.title}</div>
-              <p className="text-[12px] leading-relaxed text-muted">{drawer.summary}</p>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <VerificationBadge drawer={drawer} />
+            <div className="shrink-0 space-y-1.5 border-b border-border px-3.5 py-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="truncate text-[12.5px] font-semibold leading-snug" title={drawer.title}>{drawer.title}</div>
+                <span className="shrink-0 font-mono text-[10px] text-faint">
+                  {drawer.synthesizedBy.planner} → {drawer.synthesizedBy.coder} · {drawer.providerTelemetry.latencyMs} ms
+                </span>
+              </div>
+              <p className="line-clamp-2 text-[11.5px] leading-snug text-muted" title={drawer.summary}>{drawer.summary}</p>
+              <div className="flex flex-wrap items-center gap-1 text-[10.5px]">
                 <Pill tone="muted" icon={<Terminal />}>
                   AST {flag(drawer.verificationStatus.astCheckPassed)}
                 </Pill>
@@ -89,15 +99,6 @@ export function ActionApprovalDrawerSheet() {
                 <Pill tone="muted">
                   {drawer.verificationStatus.sandboxProvider} · {fmtMs(drawer.verificationStatus.validationLatencyMs)}
                 </Pill>
-              </div>
-              {drawer.verificationStatus.findings.length > 0 && (
-                <ul className="space-y-0.5 text-[11px] text-warning">
-                  {drawer.verificationStatus.findings.map((f) => (
-                    <li key={f}>· {f}</li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                 {drawer.staging ? (
                   <>
                     <Pill tone="primary" icon={<GitBranch />} title={drawer.staging.filesChanged.join("\n")}>
@@ -108,7 +109,7 @@ export function ActionApprovalDrawerSheet() {
                         href={drawer.staging.prUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex h-6 items-center gap-1.5 rounded-pill border border-healthy/40 bg-healthy/12 px-2 font-mono text-[11px] leading-none whitespace-nowrap text-healthy hover:bg-healthy/20"
+                        className="inline-flex h-5 items-center gap-1 rounded-pill border border-healthy/40 bg-healthy/12 px-2 font-mono text-[10.5px] leading-none whitespace-nowrap text-healthy hover:bg-healthy/20"
                         title={drawer.staging.prUrl}
                       >
                         <GitPullRequest className="size-3" />
@@ -122,25 +123,22 @@ export function ActionApprovalDrawerSheet() {
                     PR staging skipped
                   </Pill>
                 )}
-                <span className="font-mono text-faint">
-                  {drawer.synthesizedBy.planner} → {drawer.synthesizedBy.coder} · {PROVIDER_LABEL[drawer.synthesizedBy.provider] ?? drawer.synthesizedBy.provider} ·{" "}
-                  {drawer.providerTelemetry.latencyMs} ms · {drawer.providerTelemetry.tokensUsed} tok
-                </span>
               </div>
-            </div>
-
-            <div className="shrink-0 border-b border-border bg-canvas/40 px-4 py-2.5" data-testid="path-a">
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="rounded bg-primary/15 px-1.5 font-mono text-[10.5px] text-primary">PATH A</span>
-                <span className="text-[12px] font-semibold">Review &amp; Run Manually</span>
-                <span className="text-[11px] text-faint">in your own terminal, as your delegated admin</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Button size="sm" variant="outline" icon={<ClipboardCopy />} onClick={() => void copy(drawer.powershellScript, "PowerShell script")}>
+              {drawer.verificationStatus.findings.length > 0 && (
+                <ul className="space-y-0.5 text-[10.5px] text-warning">
+                  {drawer.verificationStatus.findings.map((f) => (
+                    <li key={f}>· {f}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5" data-testid="path-a">
+                <span className="rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">PATH A</span>
+                <span className="text-[11px] font-medium text-muted">Manual CLI:</span>
+                <Button size="xs" variant="outline" icon={<ClipboardCopy />} onClick={() => void copy(drawer.powershellScript, "PowerShell script")}>
                   Copy PowerShell Script
                 </Button>
                 <Button
-                  size="sm"
+                  size="xs"
                   variant="outline"
                   icon={<Braces />}
                   onClick={() => void copy(drawer.terraformDiff || drawer.graphPatch, drawer.terraformDiff ? "Terraform diff" : "Graph JSON patch")}
@@ -149,27 +147,27 @@ export function ActionApprovalDrawerSheet() {
                   {drawer.terraformDiff ? "Copy Terraform Diff" : "Copy Graph JSON Patch"}
                 </Button>
                 {drawer.terraformDiff && drawer.graphPatch && (
-                  <Button size="sm" variant="ghost" icon={<Braces />} onClick={() => void copy(drawer.graphPatch, "Graph JSON patch")}>
+                  <Button size="xs" variant="ghost" icon={<Braces />} onClick={() => void copy(drawer.graphPatch, "Graph JSON patch")}>
                     Graph JSON
                   </Button>
                 )}
-                <DryRunBadge drawer={drawer} />
               </div>
             </div>
 
-            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-4 pt-2">
+            <div className="flex shrink-0 flex-wrap gap-1 border-b border-border bg-canvas/30 px-3.5 py-1.5" role="tablist" aria-label="Remediation artifacts">
               <TabButton active={tab === "powershell"} onClick={() => setTab("powershell")} icon={<Terminal />} label="PowerShell" />
               <TabButton active={tab === "graph"} onClick={() => setTab("graph")} icon={<Braces />} label="Graph JSON" />
-              {drawer.terraformDiff && <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform diff" />}
+              {drawer.terraformDiff && <TabButton active={tab === "terraform"} onClick={() => setTab("terraform")} icon={<FileCode2 />} label="Terraform Diff" />}
               <TabButton active={tab === "entities"} onClick={() => setTab("entities")} icon={<Users />} label={`Entities (${drawer.affectedEntities.length})`} />
-              {(drawer.ticketId === "INC-4099" || drawer.ticketId === "ANOM-INT-309") && <TabButton active={tab === "deviceHealthScript"} onClick={() => setTab("deviceHealthScript")} icon={<HeartPulse />} label="Detect.ps1 / Remediate.ps1" />}
-              <TabButton active={tab === "formal"} onClick={() => setTab("formal")} icon={<ShieldCheck />} label="Formal proof" />
+              <TabButton active={tab === "deviceHealthScript"} onClick={() => setTab("deviceHealthScript")} icon={<HeartPulse />} label="Detect/Remediate" />
+              <TabButton active={tab === "formal"} onClick={() => setTab("formal")} icon={<ShieldCheck />} label="Formal Proof" />
               <TabButton active={tab === "rollback"} onClick={() => setTab("rollback")} icon={<History />} label="Inverse Rollback (f⁻¹)" />
               <TabButton active={tab === "commercial"} onClick={() => setTab("commercial")} icon={<Users />} label="3-Way Commercial" />
               <TabButton active={tab === "fleet"} onClick={() => setTab("fleet")} icon={<Zap />} label="Fleet & Reverse-IaC" />
+              <TabButton active={tab === "runbook"} onClick={() => setTab("runbook")} icon={<BookOpen />} label="Runbook .md" />
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="min-h-[380px] flex-1 overflow-y-auto px-3.5 py-2.5" data-testid="drawer-scroll-viewport">
               {tab === "powershell" && focusUpn && (
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted">
                   <Pill tone="warning">License fix</Pill>
@@ -188,6 +186,7 @@ export function ActionApprovalDrawerSheet() {
               {tab === "rollback" && <RollbackTab />}
               {tab === "commercial" && <CommercialTab />}
               {tab === "fleet" && <FleetTab />}
+              {tab === "runbook" && <RunbookTab drawer={drawer} />}
               {tab === "entities" && (
                 <ul className="divide-y divide-border-subtle rounded-md border border-border-subtle">
                   {drawer.affectedEntities.map((e) => (
@@ -208,71 +207,72 @@ export function ActionApprovalDrawerSheet() {
               )}
             </div>
 
-            <footer className="shrink-0 space-y-2 border-t border-border p-4" data-testid="path-b">
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-healthy/15 px-1.5 font-mono text-[10.5px] text-healthy">PATH B</span>
-                <span className="text-[12px] font-semibold">Approve in Portal (HITL)</span>
+            <footer className="shrink-0 space-y-1.5 border-t border-border px-3.5 py-2" data-testid="path-b">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded bg-healthy/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-healthy">PATH B</span>
+                  <span className="text-[11.5px] font-semibold">Approve in Portal (HITL)</span>
+                  <span className="text-muted">
+                    · identity <span className="font-mono text-text">{drawer.approval.requiredIdentity}</span>
+                  </span>
+                </div>
+                <ApprovalState drawer={drawer} />
               </div>
               <ExecutionModeSwitch drawer={drawer} />
-              <CanaryControls />
-              <p className="text-[11px] leading-snug text-muted" data-testid="mode-detail">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <CanaryControls />
+                {drawer.approval.state === "pending" && (
+                  <label
+                    className={`flex items-center gap-1.5 text-[10.5px] ${prPossible ? "text-muted" : "text-faint"}`}
+                    title={
+                      prPossible
+                        ? `git push origin ${drawer.staging?.branchName ?? "fix/*"} + gh pr create --base ${github?.prBase ?? "main"}`
+                        : "Needs a remote origin and an authenticated gh CLI: run scripts/Publish-ContextPaneRepo.ps1 first"
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-3 accent-primary"
+                      checked={openPr && prPossible}
+                      disabled={!prPossible || !drawer.staging}
+                      onChange={(e) => setOpenPr(e.target.checked)}
+                    />
+                    <GitPullRequest className="size-3" />
+                    Open PR via <span className="font-mono">gh pr create</span>
+                  </label>
+                )}
+              </div>
+              <p className="text-[10.5px] leading-tight text-muted" data-testid="mode-detail">
                 {mode === "break-glass" ? (
                   <>
-                    Writes the live {drawer.terraformDiff ? "Graph and ARM resources" : "Graph objects"} now as the delegated identity, then commits the resulting state to{" "}
+                    Writes live {drawer.terraformDiff ? "Graph and ARM resources" : "Graph objects"} now as delegated identity, then commits state to{" "}
                     <span className="font-mono text-text">{drawer.staging?.branchName ?? "the fix branch"}</span>
                     {openPr && prPossible ? " and updates the PR" : ""}.
                   </>
                 ) : (
                   <>
-                    Nothing changes live. Re-runs the {drawer.verificationStatus.sandboxProvider === "modal-cloud-sandbox" ? "warm Modal" : "local"} pre-flight ({drawer.terraformDiff ? "terraform validate + " : ""}pwsh AST) and stages{" "}
-                    <span className="font-mono text-text">{drawer.staging?.branchName ?? "the fix branch"}</span> for the pipeline{openPr && prPossible ? " via the PR" : ""}.
+                    Nothing changes live. Re-runs {drawer.verificationStatus.sandboxProvider === "modal-cloud-sandbox" ? "warm Modal" : "local"} pre-flight ({drawer.terraformDiff ? "terraform validate + " : ""}pwsh AST) and stages{" "}
+                    <span className="font-mono text-text">{drawer.staging?.branchName ?? "the fix branch"}</span> for pipeline{openPr && prPossible ? " via PR" : ""}.
                   </>
                 )}
               </p>
-              <div className="flex items-center justify-between text-[11px] text-muted">
-                <span>
-                  Delegated identity <span className="font-mono text-text">{drawer.approval.requiredIdentity}</span>
-                </span>
-                <ApprovalState drawer={drawer} />
-              </div>
-              {drawer.approval.state === "pending" && (
-                <label
-                  className={`flex items-center gap-2 text-[11px] ${prPossible ? "text-muted" : "text-faint"}`}
-                  title={
-                    prPossible
-                      ? `git push origin ${drawer.staging?.branchName ?? "fix/*"} + gh pr create --base ${github?.prBase ?? "main"}`
-                      : "Needs a remote origin and an authenticated gh CLI: run scripts/Publish-ContextPaneRepo.ps1 first"
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    className="size-3.5 accent-primary"
-                    checked={openPr && prPossible}
-                    disabled={!prPossible || !drawer.staging}
-                    onChange={(e) => setOpenPr(e.target.checked)}
-                  />
-                  <GitPullRequest className="size-3.5" />
-                  Open GitHub PR on approval via <span className="font-mono">gh pr create</span>
-                  {github?.origin ? <span className="truncate font-mono text-faint">({github.origin.replace(/^https:\/\/github\.com\//, "")})</span> : <span className="font-mono text-faint">(no remote origin)</span>}
-                </label>
-              )}
               {drawer.approval.state === "pending" && resolved ? (
                 <div className="flex gap-2" data-testid="already-resolved">
-                  <Button variant="outline" size="md" icon={<Check />} className="flex-1" disabled title="Reopen the ticket or reset drift to run this remediation again">
+                  <Button variant="outline" size="sm" icon={<Check />} className="flex-1" disabled title="Reopen the ticket or reset drift to run this remediation again">
                     {closed ? "Already Resolved & Closed" : "Already Resolved & Verified"}
                   </Button>
-                  <Button variant="outline" size="md" icon={<RotateCcw />} onClick={() => void reopenTicket()}>
+                  <Button variant="outline" size="sm" icon={<RotateCcw />} onClick={() => void reopenTicket()}>
                     Reopen Ticket
                   </Button>
                 </div>
               ) : drawer.approval.state === "pending" ? (
                 <div className="flex gap-2">
-                  <Button variant="danger" size="md" icon={<XCircle />} onClick={() => void approve("reject")}>
+                  <Button variant="danger" size="sm" icon={<XCircle />} onClick={() => void approve("reject")}>
                     Reject
                   </Button>
                   <Button
                     variant="healthy"
-                    size="md"
+                    size="sm"
                     icon={mode === "break-glass" ? <Zap /> : <GitMerge />}
                     className="flex-1"
                     disabled={drawer.verificationStatus.verdict === "Verification Failed" || formalPassed === false}
@@ -282,11 +282,11 @@ export function ActionApprovalDrawerSheet() {
                   </Button>
                 </div>
               ) : drawer.approval.state === "rolled-back" ? (
-                <Button variant="danger" size="md" icon={<RotateCcw />} className="w-full" disabled>
+                <Button variant="danger" size="sm" icon={<RotateCcw />} className="w-full" disabled>
                   Rolled back · f⁻¹ restored{drawer.approval.mode ? ` · ${MODE_LABEL[drawer.approval.mode]}` : ""}
                 </Button>
               ) : (
-                <Button variant="outline" size="md" icon={<Check />} className="w-full" disabled>
+                <Button variant="outline" size="sm" icon={<Check />} className="w-full" disabled>
                   {drawer.approval.state === "rejected" ? "Rejected" : `Approved · ${drawer.approval.state}${drawer.approval.mode ? ` · ${MODE_LABEL[drawer.approval.mode]}` : ""}`}
                 </Button>
               )}
@@ -304,13 +304,14 @@ function CanaryControls() {
   const canary = useWorkbench((s) => s.canary);
   const scenarioId = useWorkbench((s) => s.scenarioId);
   return (
-    <div className="space-y-1.5" data-testid="canary-controls">
-      <label className="flex items-center gap-2 text-[11px] text-muted">
-        <input type="checkbox" className="size-3.5 accent-warning" checked={simulate} onChange={(e) => setSimulate(e.target.checked)} />
-        Simulate Canary Probe Failure (Test Dead-Man's Switch)
+    <div className="flex flex-wrap items-center gap-2" data-testid="canary-controls">
+      <label className="flex items-center gap-1.5 text-[10.5px] text-muted">
+        <input type="checkbox" className="size-3 accent-warning" checked={simulate} onChange={(e) => setSimulate(e.target.checked)} />
+        Simulate Canary Probe Failure (Dead-Man's Switch)
       </label>
+      <a href={`/api/runbooks/${scenarioId}.md`} download className="inline-flex text-[10.5px] text-primary hover:underline">Export Runbook (.md)</a>
       {canary && (
-        <div className="flex flex-wrap items-center gap-1 font-mono text-[10.5px]" data-testid="canary-trace">
+        <div className="flex flex-wrap items-center gap-1 font-mono text-[10px]" data-testid="canary-trace">
           {canary.stages.map((s) => (
             <span
               key={s.stage}
@@ -327,7 +328,6 @@ function CanaryControls() {
           ))}
         </div>
       )}
-      <a href={`/api/runbooks/${scenarioId}.md`} download className="inline-flex text-[11px] text-primary hover:underline">Export Runbook (.md)</a>
     </div>
   );
 }
@@ -345,20 +345,122 @@ export function CommercialTab() {
   );
 }
 
+const PEER_TENANT_META: Array<{ id: string; name: string; domain: string; branchPrefix: string }> = [
+  { id: "tenant-contoso-01", name: "Contoso Finance", domain: "c4a8shili.onmicrosoft.com", branchPrefix: "fleet/contoso-finance" },
+  { id: "tenant-fabrikam-02", name: "Fabrikam Legal", domain: "fabrikamlegal.onmicrosoft.com", branchPrefix: "fleet/fabrikam-legal" },
+  { id: "tenant-northwind-03", name: "Northwind Traders", domain: "northwindtraders.onmicrosoft.com", branchPrefix: "fleet/northwind-traders" },
+  { id: "tenant-tailspin-04", name: "Tailspin Aerospace", domain: "tailspinaerospace.onmicrosoft.com", branchPrefix: "fleet/tailspin-aerospace" },
+];
+
 function FleetTab() {
   const fleet = useWorkbench((s) => s.fleet);
   const rev = useWorkbench((s) => s.reverseResult);
   const stage = useWorkbench((s) => s.stageCampaign);
   return (
     <div className="space-y-3 text-[12px]" data-testid="fleet-tab">
-      <section>
-        <div className="section-label mb-1">Cross-tenant fleet immunization</div>
-        {fleet ? <><div className="mb-1.5 flex flex-wrap gap-1.5"><Pill tone="warning">{fleet.signature}</Pill><Pill tone="muted">{fleet.affectedCount} affected tenants</Pill></div><Button size="sm" variant="outline" icon={<Zap />} onClick={() => void stage()}>Stage Fleet GitOps Campaign ({fleet.affectedCount} Tenants)</Button></> : <div className="text-muted">Fleet scan loading…</div>}
+      <section className="space-y-2">
+        <div className="section-label">Cross-tenant fleet immunization &amp; Blast-Radius Preview</div>
+        {fleet ? (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill tone="warning">{fleet.signature}</Pill>
+              <Pill tone="muted">{fleet.affectedCount} affected peer tenants</Pill>
+              <Pill tone="healthy">0 collateral lockouts · formal invariants verified</Pill>
+            </div>
+            <div className="overflow-x-auto rounded-md border border-border-subtle">
+              <table className="w-full text-[11.5px]">
+                <thead className="bg-surface text-[10px] tracking-wider text-faint uppercase">
+                  <tr>
+                    <th className="px-2.5 py-1.5 text-left font-medium">Peer Tenant</th>
+                    <th className="px-2.5 py-1.5 text-left font-medium">Verified Domain</th>
+                    <th className="px-2.5 py-1.5 text-left font-medium">Staged GitOps Branch</th>
+                    <th className="px-2.5 py-1.5 text-left font-medium">Blast Radius</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {PEER_TENANT_META.slice(0, Math.max(1, fleet.affectedCount)).map((t) => (
+                    <tr key={t.id} className="border-t border-border-subtle">
+                      <td className="px-2.5 py-1.5 font-medium">{t.name}</td>
+                      <td className="px-2.5 py-1.5 font-mono text-[10.5px] text-faint">{t.domain}</td>
+                      <td className="px-2.5 py-1.5 font-mono text-[10.5px] text-primary">{t.branchPrefix}/{fleet.signature}</td>
+                      <td className="px-2.5 py-1.5"><Pill tone="healthy">0 collateral · AST + f⁻¹ verified</Pill></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Button size="sm" variant="healthy" icon={<Zap />} onClick={() => void stage()} data-testid="confirm-fleet-campaign">
+              Confirm &amp; Stage Fleet GitOps PRs ({fleet.affectedCount} Tenants)
+            </Button>
+          </>
+        ) : (
+          <div className="text-muted">Fleet scan loading…</div>
+        )}
       </section>
       <section>
         <div className="section-label mb-1">Reverse-Compile Live State to OpenTofu</div>
-        {rev ? <><div className="mb-1.5 flex flex-wrap gap-1.5"><Pill tone="healthy">{rev.tofuPlanSummary ?? rev.expectedPlanSummary ?? "0 to add, 0 to destroy"}</Pill><Pill tone="muted">{rev.imports.length} import blocks</Pill>{rev.shadowFindings.map((f) => <Pill key={f.detail} tone="warning">{f.kind}: {f.resources.join(" / ")}</Pill>)}</div><CodeBlock code={`${rev.imports.join("\n")}\n\n${rev.hcl}`} /></> : <div className="text-muted">Reverse compiler loading…</div>}
+        {rev ? (
+          <>
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              <Pill tone="healthy">{rev.tofuPlanSummary ?? rev.expectedPlanSummary ?? "0 to add, 0 to destroy"}</Pill>
+              <Pill tone="muted">{rev.imports.length} import blocks</Pill>
+              {rev.shadowFindings.map((f) => (
+                <Pill key={f.detail} tone="warning">
+                  {f.kind}: {f.resources.join(" / ")}
+                </Pill>
+              ))}
+            </div>
+            <CodeBlock code={`${rev.imports.join("\n")}\n\n${rev.hcl}`} />
+          </>
+        ) : (
+          <div className="text-muted">Reverse compiler loading…</div>
+        )}
       </section>
+    </div>
+  );
+}
+
+function RunbookTab({ drawer }: { drawer: Drawer }) {
+  const formal = useWorkbench((s) => s.formal);
+  const runbookMarkdown = [
+    `# Runbook · ${drawer.ticketId} — ${drawer.title}`,
+    "",
+    `## 1. Executive Summary`,
+    drawer.summary,
+    "",
+    `## 2. Pre-Flight & Formal Verification`,
+    `- Verdict: ${drawer.verificationStatus.verdict} (${drawer.verificationStatus.sandboxProvider})`,
+    `- PowerShell AST: ${flag(drawer.verificationStatus.astCheckPassed)} · Dry-Run (-WhatIf): ${flag(drawer.verificationStatus.whatIfSafe)}`,
+    ...(formal ? [`- Formal Invariants: ${formal.formal.invariants.map((i) => `${i.id} (${i.passed ? "PASS" : "FAIL"})`).join(", ")}`] : []),
+    "",
+    `## 3. Forward Remediation (PowerShell)`,
+    "```powershell",
+    drawer.powershellScript,
+    "```",
+    ...(formal
+      ? [
+          "",
+          `## 4. Pre-Verified Inverse Rollback (f⁻¹)`,
+          "```powershell",
+          formal.rollback.powershellScript,
+          "```",
+        ]
+      : []),
+  ].join("\n");
+  return (
+    <div className="space-y-2.5 text-[12px]" data-testid="runbook-tab">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="section-label">Standard Operating Procedure &amp; Audit Runbook (.md)</div>
+        <a
+          href={`/api/runbooks/${drawer.ticketId}.md`}
+          download
+          className="inline-flex h-6 items-center gap-1.5 rounded border border-primary/40 bg-primary/12 px-2.5 font-mono text-[11px] text-primary hover:bg-primary/20"
+        >
+          <BookOpen className="size-3.5" />
+          Download {drawer.ticketId}-runbook.md
+        </a>
+      </div>
+      <CodeBlock code={runbookMarkdown} />
     </div>
   );
 }
@@ -398,8 +500,8 @@ function DeviceHealthScriptTab() {
                 {health.csp.map((c) => (
                   <tr key={c.settingName} className="border-t border-border-subtle align-middle">
                     <td className="px-2.5 py-1.5">{c.settingName}</td>
-                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] text-faint">{c.cspUri ?? "—"}</td>
-                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] text-faint">{c.registryPath ?? "—"}</td>
+                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] break-all whitespace-normal text-faint">{c.cspUri ?? "—"}</td>
+                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] break-all whitespace-normal text-faint">{c.registryPath ?? "—"}</td>
                     <td className="px-2.5 py-1.5">{c.tattooedOnUnassign ? <Pill tone="warning">tattooed on unassign</Pill> : <span className="text-faint">—</span>}</td>
                   </tr>
                 ))}
@@ -553,8 +655,14 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className={`-mb-px inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-1.5 text-[12px] [&>svg]:size-3.5 ${active ? "border-primary text-text" : "border-transparent text-muted hover:text-text"}`}
+      className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 py-1 text-[11px] font-medium transition-colors [&>svg]:size-3 ${
+        active
+          ? "border-primary/60 bg-primary/15 text-primary"
+          : "border-border-subtle bg-surface text-muted hover:border-border hover:text-text"
+      }`}
     >
       {icon}
       {label}

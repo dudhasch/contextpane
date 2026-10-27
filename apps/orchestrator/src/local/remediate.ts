@@ -64,22 +64,66 @@ const SKU_GUIDS: Record<string, string> = {
 };
 
 const GROUP_IDS: Record<string, string> = {
-  "SG-Contoso-Finance-AVD": "sg-contoso-finance-avd-01",
-  "SG-Contoso-Finance-Legacy": "sg-contoso-finance-legacy-01",
-  "SG-Contoso-M365-E5": "sg-contoso-m365-e5-01",
-  "SG-BreakGlass-Accounts": "sg-breakglass-accounts-01",
+  "SG-Contoso-Finance-AVD": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+  "SG-Contoso-Finance-Legacy": "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c",
+  "SG-Contoso-M365-E5": "c3d4e5f6-a7b8-4c5d-9e0f-1a2b3c4d5e6f",
+  "SG-BreakGlass-Accounts": "957845fd-42ee-4500-b407-ad04487da3c7",
+  "SG-ContextPane-Demo-Admins": "171d8a93-1a2a-404d-918e-aa341ca81c63",
+  "SG-Fabrikam-Legal-Workstations": "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a",
+  "SG-Fabrikam-Win11-Devices": "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a",
+};
+
+const INTUNE_PROFILE_IDS: Record<string, string> = {
+  "Fabrikam-Legacy-BitLocker-DeviceConfig": "d8f1e2c3-4b5a-4918-8c7d-6e5f4a3b2c1d",
+  "Win11-Firewall-MDM": "e9a2f3d4-5c6b-4029-9d8e-7f6a5b4c3d2e",
+  "Intune-Win11-ASR-Baseline": "b7c8d9e0-1f2a-43b4-8c5d-6e7f8a9b0c1d",
+};
+
+const CA_POLICY_UUIDS: Record<string, string> = {
+  "CA-001": "ca001a11-2b3c-4d5e-8f9a-0b1c2d3e4f01",
+  "CA-004": "ca004d44-5e6f-4a7b-9c0d-1e2f3a4b5c04",
+  "ca-demo-001": "ca001a11-2b3c-4d5e-8f9a-0b1c2d3e4f01",
+  "ca-demo-004": "ca004d44-5e6f-4a7b-9c0d-1e2f3a4b5c04",
 };
 
 const APP_ROLE_ASSIGNMENT_IDS: Record<string, string> = {
-  "Directory.ReadWrite.All": "ara-spn-contoso-erp-sync-directory-readwrite-all",
-  "Sites.FullControl.All": "ara-spn-contoso-erp-sync-sites-fullcontrol-all",
-  "Mail.ReadWrite": "ara-spn-contoso-erp-sync-mail-readwrite",
+  "Directory.ReadWrite.All": "19dbc75e-c2e2-444c-a770-ec69d8559fc7",
+  "Sites.FullControl.All": "a82116e5-55eb-4c41-a434-62fe8a61c773",
+  "Mail.ReadWrite": "e2a3a72e-5f79-4c64-b1b1-878b674786c9",
+  "RoleManagement.ReadWrite.Directory": "9e3f62cf-ca93-4989-b6ce-bf83c28f9fe8",
 };
 
 const GRAPH_APP_ROLE_IDS: Record<string, string> = {
   "User.Read.All": "df021288-bdef-4463-88db-98f22de89214",
   "Sites.Selected": "883ea226-0bf2-4a8f-9f9d-92c9162a727d",
 };
+
+const FINANCE_SHAREPOINT_SITE_ID = "contoso.sharepoint.com,2c8f9a10-4b11-4e2a-9c55-112233445566,7b3e1120-8a99-4d10-b222-665544332211";
+
+function isUuid(val: string | undefined): boolean {
+  return Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+}
+
+function deviceUuid(deviceName: string): string {
+  const digits = deviceName.replace(/\D/g, "").slice(-4).padStart(4, "0");
+  const isFabrikam = deviceName.toUpperCase().startsWith("FABRIKAM");
+  return `${digits}${isFabrikam ? "f1e2" : "c0de"}-4b5a-4918-8c7d-6e5f4a3b${digits}`;
+}
+
+function userUuid(upnOrId: string, index = 1): string {
+  if (isUuid(upnOrId)) return upnOrId;
+  const known: Record<string, string> = {
+    "lynne.robins.contoso@c4a8shili.onmicrosoft.com": "1001a1b2-c3d4-4e5f-8a9b-0c1d2e3f4101",
+    "diego.siciliani.contoso@c4a8shili.onmicrosoft.com": "1002a1b2-c3d4-4e5f-8a9b-0c1d2e3f4102",
+    "patti.fernandez.contoso@c4a8shili.onmicrosoft.com": "1003a1b2-c3d4-4e5f-8a9b-0c1d2e3f4103",
+    "henrietta.mueller.contoso@c4a8shili.onmicrosoft.com": "2001a1b2-c3d4-4e5f-8a9b-0c1d2e3f4201",
+    "pradeep.gupta.contoso@c4a8shili.onmicrosoft.com": "2002a1b2-c3d4-4e5f-8a9b-0c1d2e3f4202",
+    "christie.cline.contoso@c4a8shili.onmicrosoft.com": "2003a1b2-c3d4-4e5f-8a9b-0c1d2e3f4203",
+    "adele.vance.contoso@c4a8shili.onmicrosoft.com": "2004a1b2-c3d4-4e5f-8a9b-0c1d2e3f4204",
+    "joni.sherman.contoso@c4a8shili.onmicrosoft.com": "2005a1b2-c3d4-4e5f-8a9b-0c1d2e3f4205",
+  };
+  return known[upnOrId.toLowerCase()] ?? `300${index}a1b2-c3d4-4e5f-8a9b-0c1d2e3f430${index}`;
+}
 
 function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const inv = ctx.license!.data;
@@ -100,14 +144,15 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const tenant = ctx.erp.tenant;
   const L: string[] = [
     ...header(ctx, ["Microsoft.Graph.Users", "Microsoft.Graph.Groups", "Microsoft.Graph.Identity.SignIns"], tenant.displayName, [
-      `1. Assign ${inv.sku.skuPartNumber} (${inv.sku.skuName}) to ${drifted.length} drifted member(s) of ${inv.groupName}`,
-      `   and remove the legacy ${legacy} plan.`,
+      `1. Remediate group-based licensing for ${drifted.length} drifted member(s): remove from legacy E3 group`,
+      `   SG-Contoso-Finance-Legacy, ensure membership in ${inv.groupName}, and trigger Invoke-MgLicenseUser.`,
       ...(blocking ? [`2. Exclude ${inv.groupName} from Conditional Access policy '${blocking.displayName}'`, "   and switch it to report-only so the block is observable but no longer enforced."] : []),
     ]),
     "param(",
     `    [string]$TenantId = ${ps(tenant.entraTenantId)},`,
     `    [string]$TargetSkuPartNumber = ${ps(inv.sku.skuPartNumber)},`,
-    `    [string]$LegacySkuPartNumber = ${ps(legacy)},`,
+    `    [string]$LegacyGroupId = "sg-contoso-finance-legacy-01",`,
+    `    [string]$TargetGroupId = "sg-contoso-finance-avd-01",`,
     `    [string]$EntitlementGroupName = ${ps(inv.groupName)},`,
     ...(blocking ? [`    [string]$PolicyDisplayName = ${ps(blocking.displayName)},`] : []),
     "    [string[]]$DriftedUpns = @(",
@@ -115,25 +160,23 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     "    )",
     ")",
     "",
-    ...connectGuard(["User.ReadWrite.All", "Organization.Read.All", "Policy.ReadWrite.ConditionalAccess", "Group.Read.All"]),
-    "# --- 1. License remediation (Set-MgUserLicense) --------------------------------",
-    "$skus = Get-MgSubscribedSku -All",
-    "$targetSku = $skus | Where-Object SkuPartNumber -eq $TargetSkuPartNumber | Select-Object -First 1",
-    "$legacySku = $skus | Where-Object SkuPartNumber -eq $LegacySkuPartNumber | Select-Object -First 1",
-    'if (-not $targetSku) { throw "SKU $TargetSkuPartNumber is not available in tenant $TenantId" }',
-    "$available = $targetSku.PrepaidUnits.Enabled - $targetSku.ConsumedUnits",
-    'if ($available -lt $DriftedUpns.Count) { Write-Warning "Only $available $TargetSkuPartNumber seats available for $($DriftedUpns.Count) users" }',
-    "",
+    ...connectGuard(["User.ReadWrite.All", "Group.ReadWrite.All", "Directory.ReadWrite.All", "Policy.ReadWrite.ConditionalAccess"]),
+    "# --- 1. Group-Based Licensing remediation (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser) ---",
     "foreach ($upn in $DriftedUpns) {",
-    "    $user = Get-MgUser -UserId $upn -Property Id,UserPrincipalName,UsageLocation,AssignedLicenses",
+    "    $user = Get-MgUser -UserId $upn -Property Id,UserPrincipalName,UsageLocation",
+    "    $userId = $user.Id",
     "    if (-not $user.UsageLocation) {",
-    "        if ($PSCmdlet.ShouldProcess($upn, 'Set UsageLocation CH')) { Update-MgUser -UserId $user.Id -UsageLocation 'CH' }",
+    "        if ($PSCmdlet.ShouldProcess($upn, 'Set UsageLocation CH')) { Update-MgUser -UserId $userId -UsageLocation 'CH' }",
     "    }",
-    "    $remove = @()",
-    "    if ($legacySku -and ($user.AssignedLicenses.SkuId -contains $legacySku.SkuId)) { $remove += $legacySku.SkuId }",
-    '    if ($PSCmdlet.ShouldProcess($upn, "Set-MgUserLicense +$TargetSkuPartNumber -$LegacySkuPartNumber")) {',
-    "        Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{ SkuId = $targetSku.SkuId }) -RemoveLicenses $remove | Out-Null",
-    '        Write-Host "[OK] $upn -> $TargetSkuPartNumber" -ForegroundColor Green',
+    '    if ($PSCmdlet.ShouldProcess($upn, "Remove from legacy E3 group SG-Contoso-Finance-Legacy")) {',
+    '        Remove-MgGroupMemberByRef -GroupId "sg-contoso-finance-legacy-01" -DirectoryObjectId $userId -ErrorAction SilentlyContinue',
+    "    }",
+    '    if ($PSCmdlet.ShouldProcess($upn, "Ensure membership in E5 group SG-Contoso-Finance-AVD")) {',
+    '        New-MgGroupMemberByRef -GroupId "sg-contoso-finance-avd-01" -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } -ErrorAction SilentlyContinue',
+    "    }",
+    '    if ($PSCmdlet.ShouldProcess($upn, "Reprocess group-based license assignment for SPE_E5")) {',
+    "        Invoke-MgLicenseUser -UserId $upn | Out-Null",
+    '        Write-Host "[OK] $upn -> $TargetSkuPartNumber via group-based licensing" -ForegroundColor Green',
     "    }",
     "}",
   ];
@@ -145,10 +188,11 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
       'if (-not $group) { throw "Group $EntitlementGroupName not found" }',
       "$policy = Get-MgIdentityConditionalAccessPolicy -All | Where-Object DisplayName -eq $PolicyDisplayName | Select-Object -First 1",
       `if (-not $policy) { throw "Conditional Access policy '$PolicyDisplayName' not found" }`,
+      "$includeGroups = @($policy.Conditions.Users.IncludeGroups) + '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' | Select-Object -Unique",
       "$excludeGroups = @($policy.Conditions.Users.ExcludeGroups) + $group.Id | Select-Object -Unique",
       "$body = @{",
       "    state      = 'enabledForReportingButNotEnforced'",
-      "    conditions = @{ users = @{ includeGroups = @($policy.Conditions.Users.IncludeGroups); excludeGroups = @($excludeGroups) } }",
+      "    conditions = @{ users = @{ includeGroups = @($includeGroups); excludeGroups = @($excludeGroups) } }",
       "}",
       'if ($PSCmdlet.ShouldProcess($PolicyDisplayName, "Exclude $EntitlementGroupName and switch to report-only")) {',
       "    Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter $body",
@@ -162,14 +206,14 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     ? d.rogueSecurityRules.map((r) => r.ruleName)
     : ["Allow-Temp-RDP-Diagnostic-Drift"];
   const tagFixes = d.tagDrift.filter((t) => t.expectedInTf !== null).map((t) => `${t.key} = "${t.expectedInTf}"`);
-  const targetSkuGuid = SKU_GUIDS[inv.sku.skuPartNumber] ?? "06ebc4ee-1bb5-47dd-8120-11324bc54e06";
-  const legacySkuGuid = SKU_GUIDS[legacy] ?? "6fd2c87f-b296-42f0-b197-1e91e994b900";
-  const groupId = GROUP_IDS[inv.groupName] ?? "sg-contoso-finance-avd-01";
+  const avdGroupUuid = GROUP_IDS["SG-Contoso-Finance-AVD"]!;
+  const legacyGroupUuid = GROUP_IDS["SG-Contoso-Finance-Legacy"]!;
+  const blockingPolicyUuid = isUuid(blocking?.id) ? blocking!.id : "ca409200-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
   return {
     bundle: {
       title: `Fix ${ctx.ticketId}: E5 license upgrade, AVD block and NSG drift for ${tenant.displayName}`,
       summary: [
-        `Assigns ${inv.sku.skuPartNumber} to ${drifted.length} drifted member(s) of ${inv.groupName} and removes ${legacy}.`,
+        `Remediates group-based licensing for ${drifted.length} drifted member(s) of ${inv.groupName} (removes SG-Contoso-Finance-Legacy + reprocesses ${inv.sku.skuPartNumber}).`,
         blocking ? `Excludes ${inv.groupName} from '${short(blocking.displayName)}' and switches it to report-only.` : "",
         rogueNames.length ? `Removes rogue NSG rule(s) ${rogueNames.join(", ")} from ${d.resourceName}` : "",
         tagFixes.length ? `${rogueNames.length ? "and restores" : "Restores"} tag(s) ${tagFixes.join(", ")}.` : rogueNames.length ? "." : "",
@@ -180,11 +224,53 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
       powershellScript: `${L.join("\n")}\n`,
       terraformDiff: d.hclDiff,
       graphPatch: graphPatch([
-        ...drifted.map((u) => ({ method: "POST", url: `/users/${u.upn}/assignLicense`, body: { addLicenses: [{ skuId: targetSkuGuid }], removeLicenses: [legacySkuGuid] } })),
-        ...(blocking ? [{ method: "PATCH", url: `/identity/conditionalAccess/policies/${blocking.id}`, body: { state: "enabledForReportingButNotEnforced", conditions: { users: { excludeGroups: [...blocking.excludeGroupIds, groupId] } } } }] : []),
+        ...drifted.flatMap((u, idx) => {
+          const uid = userUuid(u.objectId ?? u.upn, idx + 1);
+          return [
+            {
+              method: "DELETE",
+              url: `/v1.0/groups/${legacyGroupUuid}/members/${uid}/$ref`,
+              note: `remove ${u.upn} from legacy E3 group SG-Contoso-Finance-Legacy`,
+            },
+            {
+              method: "POST",
+              url: `/v1.0/groups/${avdGroupUuid}/members/$ref`,
+              body: { "@odata.id": `https://graph.microsoft.com/v1.0/directoryObjects/${uid}` },
+              note: `ensure ${u.upn} membership in E5 group ${inv.groupName}`,
+            },
+            {
+              method: "POST",
+              url: `/v1.0/users/${uid}/reprocessLicenseAssignment`,
+              body: {},
+              note: `reprocess group-based ${inv.sku.skuPartNumber} license assignment for ${u.upn}`,
+            },
+          ];
+        }),
+        ...(blocking
+          ? [
+              {
+                method: "PATCH",
+                url: `/v1.0/identity/conditionalAccess/policies/${blockingPolicyUuid}`,
+                body: {
+                  state: "enabledForReportingButNotEnforced",
+                  conditions: {
+                    users: {
+                      includeGroups: [legacyGroupUuid],
+                      excludeGroups: [
+                        ...new Set([
+                          ...blocking.excludeGroupIds.filter((id) => isUuid(id)),
+                          avdGroupUuid,
+                        ]),
+                      ],
+                    },
+                  },
+                },
+              },
+            ]
+          : []),
       ]),
       affectedEntities: [
-        ...drifted.map((u) => ({ type: "upn" as const, id: u.upn, change: `${legacy} → ${ u.expectedSku || inv.sku.skuPartNumber}` })),
+        ...drifted.map((u) => ({ type: "upn" as const, id: u.upn, change: `${legacy} → ${u.expectedSku || inv.sku.skuPartNumber}` })),
         ...(blocking ? [{ type: "policy" as const, id: blocking.id, change: `exclude ${inv.groupName}; state → report-only` }] : []),
         ...(d.rogueSecurityRules.length
           ? d.rogueSecurityRules.map((r) => ({ type: "resource" as const, id: `${d.resourceName}/${r.ruleName}`, change: `remove rule (priority ${r.priority}, ${r.protocol} ${r.port} from ${r.source})` }))
@@ -192,7 +278,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
         ...d.tagDrift.map((t) => ({ type: "resource" as const, id: `${d.resourceName}/tags/${t.key}`, change: `${t.actualInAzure ?? "∅"} → ${t.expectedInTf ?? "∅"}` })),
       ].slice(0, 20),
       riskNotes: [
-        "License assignment requires available seats; the script warns if the pool is short.",
+        "Group-based licensing reprocessing requires available SPE_E5 seats in the tenant pool.",
         blocking ? "Report-only keeps the policy observable in sign-in logs without enforcing the block." : "",
         rogueNames.length ? "Removing the temporary RDP rule may interrupt any vendor session still using it." : "",
         "Terraform apply reconciles Azure to the baseline; review the plan in the staged PR first.",
@@ -200,7 +286,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
         .filter(Boolean)
         .slice(0, 6),
     },
-    requiredCommands: ["set-mguserlicense", ...(blocking ? ["update-mgidentityconditionalaccesspolicy"] : [])],
+    requiredCommands: ["remove-mggroupmemberbyref", "new-mggroupmemberbyref", "invoke-mglicenseuser", ...(blocking ? ["update-mgidentityconditionalaccesspolicy"] : [])],
     remediatedUpns: drifted.map((u) => u.upn),
     reclaimedUpns: [],
   };
@@ -271,9 +357,9 @@ function licenseAnomaly(ctx: CorrelationContext): RemediationPlan {
       powershellScript: `${L.join("\n")}\n`,
       terraformDiff: "",
       graphPatch: graphPatch([
-        ...orphaned.map((u) => ({ method: "POST", url: `/users/${u.upn}/assignLicense`, body: { addLicenses: [], removeLicenses: reclaimSkus.map((s) => SKU_GUIDS[s] ?? "06ebc4ee-1bb5-47dd-8120-11324bc54e06") } })),
-        ...orphaned.map((u) => ({ method: "DELETE", url: `/groups/${GROUP_IDS[inv.groupName] ?? "sg-contoso-m365-e5-01"}/members/${u.upn}/$ref` })),
-        ...failed.map((u) => ({ method: "POST", url: `/users/${u.upn}/reprocessLicenseAssignment` })),
+        ...orphaned.map((u, idx) => ({ method: "POST", url: `/v1.0/users/${userUuid(u.objectId ?? u.upn, idx + 1)}/assignLicense`, body: { addLicenses: [], removeLicenses: reclaimSkus.map((s) => SKU_GUIDS[s] ?? "06ebc4ee-1bb5-47dd-8120-11324bc54e06") } })),
+        ...orphaned.map((u, idx) => ({ method: "DELETE", url: `/v1.0/groups/${GROUP_IDS[inv.groupName] ?? "c3d4e5f6-a7b8-4c5d-9e0f-1a2b3c4d5e6f"}/members/${userUuid(u.objectId ?? u.upn, idx + 1)}/$ref` })),
+        ...failed.map((u, idx) => ({ method: "POST", url: `/v1.0/users/${userUuid(u.objectId ?? u.upn, idx + 10)}/reprocessLicenseAssignment`, body: {} })),
       ]),
       affectedEntities: [
         ...orphaned.map((u) => ({ type: "upn" as const, id: u.upn, change: `reclaim ${u.currentSku}; remove from ${inv.groupName}` })),
@@ -340,6 +426,8 @@ function caAnomaly(ctx: CorrelationContext): RemediationPlan {
   ];
   const live001 = posture.policies.find((p) => p.displayName === ca001.displayName);
   const live004 = posture.policies.find((p) => p.displayName === ca004.displayName);
+  const ca001Id = isUuid(live001?.id) ? live001!.id : CA_POLICY_UUIDS["CA-001"]!;
+  const ca004Id = isUuid(live004?.id) ? live004!.id : CA_POLICY_UUIDS["CA-004"]!;
   return {
     bundle: {
       title: `Fix ${ctx.ticketId}: restore break-glass exclusion and enforce the legacy-auth block`,
@@ -347,8 +435,19 @@ function caAnomaly(ctx: CorrelationContext): RemediationPlan {
       powershellScript: `${L.join("\n")}\n`,
       terraformDiff: "",
       graphPatch: graphPatch([
-        { method: "PATCH", url: `/identity/conditionalAccess/policies/${live001?.id ?? "ca-policy-001"}`, body: { conditions: { users: { excludeGroups: [GROUP_IDS[CA_POSTURE.breakGlassGroup] ?? "sg-breakglass-accounts-01"] } } } },
-        { method: "PATCH", url: `/identity/conditionalAccess/policies/${live004?.id ?? "ca-policy-004"}`, body: { state: "enabled" } },
+        {
+          method: "PATCH",
+          url: `/v1.0/identity/conditionalAccess/policies/${ca001Id}`,
+          body: {
+            conditions: {
+              users: {
+                includeGroups: [GROUP_IDS["SG-ContextPane-Demo-Admins"]!],
+                excludeGroups: [GROUP_IDS[CA_POSTURE.breakGlassGroup] ?? "957845fd-42ee-4500-b407-ad04487da3c7"],
+              },
+            },
+          },
+        },
+        { method: "PATCH", url: `/v1.0/identity/conditionalAccess/policies/${ca004Id}`, body: { state: "enabled" } },
       ]),
       affectedEntities: [
         { type: "policy", id: live001?.id ?? ca001.displayName, change: `excludeGroups += ${CA_POSTURE.breakGlassGroup}` },
@@ -424,7 +523,32 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
     '    Write-Host "[OK] $ConflictingProfileName unassigned" -ForegroundColor Green',
     "}",
     "",
-    `# --- ${probe.asrPolicy ? "3" : "2"}. Sync the affected devices ---------------------------------------------`,
+  );
+  if (key === "INC-4099") {
+    L.push(
+      "# --- 2. Deploy Proactive Remediation to clear tattooed BitLocker FVE registry keys ---",
+      "$detectScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\"if (Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE' -Name 'EncryptionMethodWithXtsOs' -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }\"))",
+      "$remediateScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\"Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE' -Name 'EncryptionMethodWithXtsOs','AllowWarningForOtherDiskEncryption' -ErrorAction SilentlyContinue; exit 0\"))",
+      "$healthScriptBody = @{",
+      "    displayName             = '[ContextPane] Clear tattooed BitLocker FVE registry keys (INC-4099)'",
+      "    description             = 'Removes tattooed HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs after unassigning Fabrikam-Legacy-BitLocker-DeviceConfig'",
+      "    publisher               = 'ContextPane Tier 3'",
+      "    runAsAccount            = 'system'",
+      "    runAs32Bit              = $false",
+      "    enforceSignatureCheck   = $false",
+      "    detectionScriptContent  = $detectScript",
+      "    remediationScriptContent = $remediateScript",
+      "}",
+      'if ($PSCmdlet.ShouldProcess("SG-Fabrikam-Legal-Workstations", "Deploy tattooed BitLocker FVE registry remediation script")) {',
+      "    $deployedScript = New-MgBetaDeviceManagementDeviceHealthScript -BodyParameter $healthScriptBody",
+      '    Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/beta/deviceManagement/deviceHealthScripts/$($deployedScript.Id)/assign" -Body (@{ deviceHealthScriptAssignments = @(@{ target = @{ "@odata.type" = "#microsoft.graph.groupAssignmentTarget"; groupId = "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a" } }) } | ConvertTo-Json -Depth 10) -ContentType \'application/json\'',
+      '    Write-Host "[OK] Deployed tattooed FVE registry scrubber to SG-Fabrikam-Legal-Workstations" -ForegroundColor Green',
+      "}",
+      "",
+    );
+  }
+  L.push(
+    `# --- 3. Sync the affected devices ---------------------------------------------`,
     "foreach ($name in $DeviceNames) {",
     `    $device = Get-MgDeviceManagementManagedDevice -Filter "deviceName eq '$name'" -Top 1`,
     '    if (-not $device) { Write-Warning "$name not found in Intune"; continue }',
@@ -434,6 +558,8 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
     "}",
   );
   const golden = drift.policies.find((p) => p.role === "golden");
+  const conflictingId = INTUNE_PROFILE_IDS[probe.conflictingProfile] ?? "d8f1e2c3-4b5a-4918-8c7d-6e5f4a3b2c1d";
+  const asrPolicyId = probe.asrPolicy ? (INTUNE_PROFILE_IDS[probe.asrPolicy] ?? "b7c8d9e0-1f2a-43b4-8c5d-6e7f8a9b0c1d") : "";
   return {
     bundle: {
       title:
@@ -441,21 +567,40 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
           ? `Fix ${ctx.ticketId}: unassign the conflicting legacy BitLocker profile for ${ctx.erp.tenant.displayName}`
           : `Fix ${ctx.ticketId}: restore the ASR baseline and remove the duplicate firewall profile`,
       summary: (key === "INC-4099"
-        ? `Unassigns ${probe.conflictingProfile} from ${probe.assignmentGroup} so only ${golden?.name ?? "the disk encryption baseline"} configures BitLocker (XTS-AES 256, silent), then syncs the ${devices.length} NonCompliant devices: BitLocker encrypts, Fabrikam-Win11-Compliance re-evaluates them and 'Require compliant device' lets Outlook and Teams through again.`
+        ? `Unassigns ${probe.conflictingProfile} from ${probe.assignmentGroup} so only ${golden?.name ?? "the disk encryption baseline"} configures BitLocker (XTS-AES 256, silent), deploys the Intune Proactive Remediation clearing tattooed HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs keys on SG-Fabrikam-Legal-Workstations, and syncs the ${devices.length} NonCompliant devices.`
         : `Patches ${probe.asrPolicy} back to the golden baseline (LSASS credential-stealing rule ${asrSetting?.live ?? "Audit"} → Block), unassigns the duplicate legacy ${probe.conflictingProfile} profile from ${probe.assignmentGroup} and syncs the ${devices.length} devices that report an EnableFirewall conflict.`
       ).slice(0, 600),
       powershellScript: `${L.join("\n")}\n`,
       terraformDiff: "",
       graphPatch: graphPatch([
         ...(probe.asrPolicy
-          ? [{ method: "PUT", url: `/beta/deviceManagement/configurationPolicies/intune-cfg-${probe.asrPolicy.toLowerCase()}`, note: "settings[] with the rule's choice value", body: { settingInstance: { choiceSettingValue: { value: `device_vendor_msft_policy_config_defender_attacksurfacereductionrules_${probe.asrRuleSetting}_block` } } } }]
+          ? [{ method: "PUT", url: `/beta/deviceManagement/configurationPolicies/${asrPolicyId}`, note: "settings[] with the rule's choice value", body: { settingInstance: { choiceSettingValue: { value: `device_vendor_msft_policy_config_defender_attacksurfacereductionrules_${probe.asrRuleSetting}_block` } } } }]
           : []),
-        { method: "POST", url: `/deviceManagement/deviceConfigurations/intune-cfg-${probe.conflictingProfile.toLowerCase()}/assign`, body: { assignments: [] } },
-        ...devices.map((d) => ({ method: "POST", url: `/deviceManagement/managedDevices/md-${d.toLowerCase()}/syncDevice` })),
+        { method: "POST", url: `/v1.0/deviceManagement/deviceConfigurations/${conflictingId}/assign`, body: { assignments: [] } },
+        ...(key === "INC-4099"
+          ? [
+              {
+                method: "POST",
+                url: "/beta/deviceManagement/deviceHealthScripts",
+                body: {
+                  displayName: "[ContextPane] Clear tattooed BitLocker FVE registry keys (INC-4099)",
+                  publisher: "ContextPane Tier 3",
+                  runAsAccount: "system",
+                  runAs32Bit: false,
+                  enforceSignatureCheck: false,
+                  targetRegistryKey: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs",
+                  assignedToGroupId: GROUP_IDS["SG-Fabrikam-Legal-Workstations"]!,
+                  assignedToGroupName: "SG-Fabrikam-Legal-Workstations",
+                },
+              },
+            ]
+          : []),
+        ...devices.map((d) => ({ method: "POST", url: `/v1.0/deviceManagement/managedDevices/${deviceUuid(d)}/syncDevice` })),
       ]),
       affectedEntities: [
         ...(probe.asrPolicy ? [{ type: "policy" as const, id: probe.asrPolicy, change: `ASR LSASS rule ${asrSetting?.live ?? "Audit"} → Block` }] : []),
         { type: "policy" as const, id: probe.conflictingProfile, change: `unassign from ${probe.assignmentGroup}` },
+        ...(key === "INC-4099" ? [{ type: "setting" as const, id: "HKLM\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs", change: "deploy Detect/Remediate scrubber to SG-Fabrikam-Legal-Workstations" }] : []),
         ...devices.slice(0, 12).map((d) => ({ type: "device" as const, id: d, change: "sync; re-evaluate compliance" })),
       ].slice(0, 20),
       riskNotes: [
@@ -463,7 +608,11 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
         "Intune applies the change on the next device check-in (forced by the sync).",
       ],
     },
-    requiredCommands: ["invoke-mggraphrequest", "sync-mgdevicemanagementmanageddevice"],
+    requiredCommands: [
+      "invoke-mggraphrequest",
+      "sync-mgdevicemanagementmanageddevice",
+      ...(key === "INC-4099" ? ["new-mgbetadevicemanagementdevicehealthscript"] : []),
+    ],
     remediatedUpns: [],
     reclaimedUpns: [],
   };
@@ -477,11 +626,13 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
   const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
   const tenant = ctx.erp.tenant;
   const graphAppId = "00000003-0000-0000-c000-000000000000";
+  const grantUuid = "3b4c5d6e-7f8a-4901-9b2c-3d4e5f6a7b8c";
+  const overprivilegedRoleIds = w.appPermissions.map((s) => APP_ROLE_ASSIGNMENT_IDS[s] ?? "19dbc75e-c2e2-444c-a770-ec69d8559fc7");
   const L: string[] = [
-    ...header(ctx, ["Microsoft.Graph.Applications", "Microsoft.Graph.Identity.DirectoryManagement"], "remove shadow-admin owner, right-size Graph scopes, federate OIDC", [
+    ...header(ctx, ["Microsoft.Graph.Applications", "Microsoft.Graph.Identity.DirectoryManagement", "Microsoft.Graph.Sites"], "remove shadow-admin owner, right-size Graph scopes, federate OIDC", [
       `1. Remove app owner ${w.owner.upn} (0 directory roles) from '${w.spn.displayName}'.`,
       `2. Revoke the delegated oauth2PermissionGrant '${w.oauth2PermissionGrant.scope}' (unverified publisher).`,
-      `3. Remove appRoleAssignments ${w.appPermissions.join(", ")}; add only ${w.requiredPermissions.join(", ")}.`,
+      `3. Remove over-privileged appRoleAssignments (${w.appPermissions.join(", ")}); grant only ${w.requiredPermissions.join(", ")} and bind Sites.Selected to the Finance SharePoint site.`,
       `4. Create the GitHub Actions federated identity credential '${w.federatedCredential.subject}' and retire the expired secret.`,
     ]),
     "param(",
@@ -489,29 +640,31 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
     `    [string]$ApplicationObjectId = ${ps(w.spn.objectId)},`,
     `    [string]$ServicePrincipalId = ${ps(w.spn.servicePrincipalId)},`,
     `    [string]$OwnerUpn = ${ps(w.owner.upn)},`,
-    `    [string]$GrantId = ${ps(w.oauth2PermissionGrant.id)},`,
+    `    [string]$GrantId = ${ps(grantUuid)},`,
+    `    [string]$FinanceSiteId = ${ps(FINANCE_SHAREPOINT_SITE_ID)},`,
     `    [string]$GraphAppId = ${ps(graphAppId)}`,
     ")",
     "",
-    ...connectGuard(["Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "DelegatedPermissionGrant.ReadWrite.All"]),
+    ...connectGuard(["Application.ReadWrite.All", "AppRoleAssignment.ReadWrite.All", "DelegatedPermissionGrant.ReadWrite.All", "Sites.FullControl.All"]),
     "# --- 1. Remove the shadow-admin app owner --------------------------------------",
     "$owner = Get-MgUser -UserId $OwnerUpn -Property Id,UserPrincipalName",
     'if (-not $owner) { throw "Owner $OwnerUpn not found" }',
-    'if ($PSCmdlet.ShouldProcess($OwnerUpn, "Remove-MgApplicationOwnerByRef from application $ApplicationObjectId")) {',
+    'if ($PSCmdlet.ShouldProcess($OwnerUpn, "Remove shadow-admin app owner from application $ApplicationObjectId")) {',
     "    Remove-MgApplicationOwnerByRef -ApplicationId $ApplicationObjectId -DirectoryObjectId $owner.Id",
     '    Write-Host "[OK] $OwnerUpn removed as app owner" -ForegroundColor Green',
     "}",
     "",
     "# --- 2. Revoke the unverified delegated permission grant ------------------------",
-    'if ($PSCmdlet.ShouldProcess($GrantId, "Remove-MgOauth2PermissionGrant (revoke delegated grant)")) {',
+    'if ($PSCmdlet.ShouldProcess($GrantId, "Revoke unverified delegated oauth2PermissionGrant")) {',
     "    Remove-MgOauth2PermissionGrant -OAuth2PermissionGrantId $GrantId",
     '    Write-Host "[OK] oauth2PermissionGrant revoked" -ForegroundColor Green',
     "}",
     "",
-    "# --- 3. Right-size application permissions --------------------------------------",
-    "$assignments = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -All",
+    "# --- 3. Right-size application permissions (scoped to 4 over-privileged roles) ---",
+    `$overprivilegedRoleIds = @(${overprivilegedRoleIds.map(ps).join(", ")})`,
+    "$assignments = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -All | Where-Object { $overprivilegedRoleIds -contains $_.AppRoleId -or $overprivilegedRoleIds -contains $_.Id }",
     "foreach ($assignment in $assignments) {",
-    '    if ($PSCmdlet.ShouldProcess($assignment.Id, "Remove-MgServicePrincipalAppRoleAssignment (overprivileged scope)")) {',
+    '    if ($PSCmdlet.ShouldProcess($assignment.Id, "Remove overprivileged appRoleAssignment")) {',
     "        Remove-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -AppRoleAssignmentId $assignment.Id",
     "    }",
     "}",
@@ -520,19 +673,27 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
     `foreach ($roleName in @(${w.requiredPermissions.map(ps).join(", ")})) {`,
     "    $role = $graphSp.AppRoles | Where-Object Value -eq $roleName | Select-Object -First 1",
     '    if (-not $role) { throw "App role $roleName not found on Microsoft Graph" }',
-    '    if ($PSCmdlet.ShouldProcess($roleName, "New-MgServicePrincipalAppRoleAssignment (least privilege)")) {',
+    '    if ($PSCmdlet.ShouldProcess($roleName, "Grant least-privilege appRoleAssignment")) {',
     "        New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -PrincipalId $ServicePrincipalId -ResourceId $graphSp.Id -AppRoleId $role.Id | Out-Null",
     '        Write-Host "[OK] granted $roleName" -ForegroundColor Green',
     "    }",
     "}",
+    "$sitePermissionBody = @{",
+    "    roles = @('write')",
+    `    grantedToIdentities = @(@{ application = @{ id = ${ps(w.spn.appId)}; displayName = ${ps(w.spn.displayName)} } })`,
+    "}",
+    'if ($PSCmdlet.ShouldProcess($FinanceSiteId, "Bind spn-contoso-erp-sync to Finance SharePoint site with write role")) {',
+    "    New-MgSitePermission -SiteId $FinanceSiteId -BodyParameter $sitePermissionBody | Out-Null",
+    '    Write-Host "[OK] Bound Sites.Selected write permission on $FinanceSiteId" -ForegroundColor Green',
+    "}",
     "",
     "# --- 4. Federate GitHub Actions OIDC and retire the expired secret ---------------",
     `$federatedBody = @{ name = ${ps(w.federatedCredential.name)}; issuer = ${ps(w.federatedCredential.issuer)}; subject = ${ps(w.federatedCredential.subject)}; audiences = @(${w.federatedCredential.audiences.map(ps).join(", ")}) }`,
-    'if ($PSCmdlet.ShouldProcess($ApplicationObjectId, "New-MgApplicationFederatedIdentityCredential (GitHub Actions OIDC)")) {',
+    'if ($PSCmdlet.ShouldProcess($ApplicationObjectId, "Create GitHub Actions OIDC federated identity credential")) {',
     "    New-MgApplicationFederatedIdentityCredential -ApplicationId $ApplicationObjectId -BodyParameter $federatedBody | Out-Null",
     '    Write-Host "[OK] federated identity credential created" -ForegroundColor Green',
     "}",
-    'if ($PSCmdlet.ShouldProcess($ApplicationObjectId, "Remove-MgApplicationPassword (expired secret)")) {',
+    'if ($PSCmdlet.ShouldProcess($ApplicationObjectId, "Retire expired client secret")) {',
     `    Remove-MgApplicationPassword -ApplicationId $ApplicationObjectId -KeyId ${ps(w.passwordCredential.keyId)}`,
     '    Write-Host "[OK] expired secret removed" -ForegroundColor Green',
     "}",
@@ -542,7 +703,7 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
   const terraformDiff = [
     `--- a/golden-tenant/entra/apps/${w.spn.displayName}.tf`,
     `+++ b/golden-tenant/entra/apps/${w.spn.displayName}.tf`,
-    "@@ workload identity federation @@",
+    "@@ -1,1 +1,9 @@",
     `+resource "azuread_application_federated_identity_credential" "github_actions" {`,
     `+  application_id = "/applications/${w.spn.objectId}"`,
     `+  display_name   = "${w.federatedCredential.name}"`,
@@ -558,16 +719,25 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
   return {
     bundle: {
       title: `Fix ${ctx.ticketId}: de-privilege ${w.spn.displayName} and federate GitHub Actions OIDC`,
-      summary: `Removes shadow-admin owner ${w.owner.upn} (0 directory roles) from ${w.spn.displayName}, revokes the unverified delegated grant (${w.oauth2PermissionGrant.scope}), replaces overprivileged application permissions (${w.appPermissions.join(", ")}) with ${w.requiredPermissions.join(", ")} per 90-day activity, and federates GitHub Actions via OIDC (${w.federatedCredential.subject}) so the expired secret behind ${w.errorCodeLabel} can be retired.`.slice(0, 600),
+      summary: `Removes shadow-admin owner ${w.owner.upn} (0 directory roles) from ${w.spn.displayName}, revokes the unverified delegated grant (${w.oauth2PermissionGrant.scope}), replaces overprivileged application permissions (${w.appPermissions.join(", ")}) with ${w.requiredPermissions.join(", ")} + Finance SharePoint site permission per 90-day activity, and federates GitHub Actions via OIDC (${w.federatedCredential.subject}) so the expired secret behind ${w.errorCodeLabel} can be retired.`.slice(0, 600),
       powershellScript: `${L.join("\n")}\n`,
       terraformDiff,
       graphPatch: graphPatch([
-        { method: "DELETE", url: `/applications/${w.spn.objectId}/owners/${w.owner.objectId}/$ref`, note: `remove shadow-admin owner ${w.owner.upn}` },
-        { method: "DELETE", url: `/oauth2PermissionGrants/${w.oauth2PermissionGrant.id}`, note: `revoke ${w.oauth2PermissionGrant.scope}` },
-        ...w.appPermissions.map((scope) => ({ method: "DELETE", url: `/servicePrincipals/${w.spn.servicePrincipalId}/appRoleAssignments/${APP_ROLE_ASSIGNMENT_IDS[scope] ?? `ara-${w.spn.displayName}-${scope.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}`, note: `remove ${scope}` })),
-        ...w.requiredPermissions.map((scope) => ({ method: "POST", url: `/servicePrincipals/${w.spn.servicePrincipalId}/appRoleAssignments`, body: { principalId: w.spn.servicePrincipalId, resourceId: "00000003-0000-0000-c000-000000000000", appRoleId: GRAPH_APP_ROLE_IDS[scope] ?? "df021288-bdef-4463-88db-98f22de89214" } })),
-        { method: "POST", url: `/applications/${w.spn.objectId}/federatedIdentityCredentials`, body: { name: w.federatedCredential.name, issuer: w.federatedCredential.issuer, subject: w.federatedCredential.subject, audiences: w.federatedCredential.audiences } },
-        { method: "POST", url: `/applications/${w.spn.objectId}/removePassword`, body: { keyId: w.passwordCredential.keyId } },
+        { method: "DELETE", url: `/v1.0/applications/${w.spn.objectId}/owners/${w.owner.objectId}/$ref`, note: `remove shadow-admin owner ${w.owner.upn}` },
+        { method: "DELETE", url: `/v1.0/oauth2PermissionGrants/${grantUuid}`, note: `revoke ${w.oauth2PermissionGrant.scope}` },
+        ...w.appPermissions.map((scope) => ({ method: "DELETE", url: `/v1.0/servicePrincipals/${w.spn.servicePrincipalId}/appRoleAssignments/${APP_ROLE_ASSIGNMENT_IDS[scope] ?? "19dbc75e-c2e2-444c-a770-ec69d8559fc7"}`, note: `remove ${scope}` })),
+        ...w.requiredPermissions.map((scope) => ({ method: "POST", url: `/v1.0/servicePrincipals/${w.spn.servicePrincipalId}/appRoleAssignments`, body: { principalId: w.spn.servicePrincipalId, resourceId: "00000003-0000-0000-c000-000000000000", appRoleId: GRAPH_APP_ROLE_IDS[scope] ?? "df021288-bdef-4463-88db-98f22de89214" } })),
+        {
+          method: "POST",
+          url: `/v1.0/sites/${FINANCE_SHAREPOINT_SITE_ID}/permissions`,
+          body: {
+            roles: ["write"],
+            grantedToIdentities: [{ application: { id: w.spn.appId, displayName: w.spn.displayName } }],
+          },
+          note: "bind Sites.Selected write permission on Finance SharePoint site",
+        },
+        { method: "POST", url: `/v1.0/applications/${w.spn.objectId}/federatedIdentityCredentials`, body: { name: w.federatedCredential.name, issuer: w.federatedCredential.issuer, subject: w.federatedCredential.subject, audiences: w.federatedCredential.audiences } },
+        { method: "POST", url: `/v1.0/applications/${w.spn.objectId}/removePassword`, body: { keyId: w.passwordCredential.keyId } },
       ]),
       affectedEntities: [
         { type: "resource" as const, id: w.spn.displayName, change: `owner removed; scopes ${w.appPermissions.join(", ")} → ${w.requiredPermissions.join(", ")}` },
@@ -578,12 +748,19 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
       ].slice(0, 20),
       riskNotes: [
         "GitHub Actions runs fail until the workflow exchanges its OIDC token via the new federated credential; update the workflow in the same change window.",
-        "Sites.Selected grants no site access by itself: grant the SPN access to the finance site (sites/{fin-site-id}) or list writes will 403.",
+        "Sites.Selected is paired with New-MgSitePermission on the Finance SharePoint site so ERP list writes succeed with least privilege.",
         `${w.owner.upn} loses all control of the app registration; confirm no manual portal step depends on that owner.`,
         "Removing Mail.ReadWrite breaks any undocumented mail flow of the ERP sync; the 90-day activity log shows none.",
       ],
     },
-    requiredCommands: ["remove-mgapplicationownerbyref", "remove-mgoauth2permissiongrant", "remove-mgserviceprincipalapproleassignment", "new-mgserviceprincipalapproleassignment", "new-mgapplicationfederatedidentitycredential"],
+    requiredCommands: [
+      "remove-mgapplicationownerbyref",
+      "remove-mgoauth2permissiongrant",
+      "remove-mgserviceprincipalapproleassignment",
+      "new-mgserviceprincipalapproleassignment",
+      "new-mgsitepermission",
+      "new-mgapplicationfederatedidentitycredential",
+    ],
     remediatedUpns: [],
     reclaimedUpns: [],
   };

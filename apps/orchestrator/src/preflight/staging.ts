@@ -96,7 +96,8 @@ async function stageNow(bundle: StagingBundle): Promise<{ staging: StagingInfo |
     const absDir = join(worktreeDir, relDir);
     mkdirSync(absDir, { recursive: true });
     const scriptFile = join(relDir, `Invoke-Remediate-${bundle.ticketId}.ps1`);
-    const patchFile = join(relDir, "nsg-drift.patch");
+    const isNsgPatch = bundle.ticketId === "INC-4092" || bundle.terraformDiff.includes("security_rule");
+    const patchFile = join(relDir, isNsgPatch ? "nsg-drift.patch" : "remediation.patch");
     const graphFile = join(relDir, "graph-requests.json");
     const readmeFile = join(relDir, "REMEDIATION.md");
     const hasIac = bundle.terraformDiff.trim() !== "";

@@ -72,9 +72,73 @@ describe("convergeLayout", () => {
     expect(iac.props.driftState).toBe("in-sync");
     expect(iac.props.tagDrift).toHaveLength(0);
     expect(iac.props.azurePolicies.every((p) => p.compliance === "Compliant")).toBe(true);
+    expect(iac.props.azurePolicies[0]?.detail).toBe("0 management ports exposed to Internet — TCP/3389 closed");
 
     expect(LayoutSchema.safeParse(after).success).toBe(true);
     expect(licenseOf(before).users.filter((u) => u.driftStatus === "drifted")).toHaveLength(3);
+  });
+
+  test("converges EntraSignInTimeline events to success and sets accurate workload-identity vs CA headline", () => {
+    const workloadLayout = LayoutSchema.parse({
+      ...driftedLayout(),
+      components: [
+        {
+          type: "EntraSignInTimeline",
+          id: "entra",
+          props: {
+            headline: "AADSTS7000222 nightly failures",
+            focusUpn: "alex.wilber@c4a8shili.onmicrosoft.com",
+            windowStart: "2026-10-26T00:00:00Z",
+            windowEnd: "2026-10-26T08:00:00Z",
+            events: [
+              {
+                id: "ev-1",
+                timestamp: "2026-10-26T02:00:00Z",
+                upn: "spn-contoso-erp-sync",
+                displayName: "spn-contoso-erp-sync",
+                appDisplayName: "Microsoft Graph",
+                appId: "00000003-0000-0000-c000-000000000000",
+                status: "failure",
+                errorCode: 7000222,
+                errorCodeLabel: "AADSTS7000222",
+                conditionalAccessStatus: "notApplied",
+                clientApp: "GitHub Actions",
+                location: "Dublin, IE",
+                ipAddress: "185.199.108.40",
+                deviceName: "",
+                deviceCompliant: null,
+                isHighlighted: true,
+              },
+            ],
+            rootCause: { errorCodeLabel: "AADSTS7000222", targetApp: "Microsoft Graph", explanation: "Secret expired" },
+            policies: [
+              {
+                id: "spn-contoso-erp-sync-01",
+                displayName: "spn-contoso-erp-sync",
+                state: "enabled",
+                role: "drifted",
+                includeGroups: ["alex.wilber@c4a8shili.onmicrosoft.com"],
+                excludeGroups: [],
+                targetApps: ["Microsoft Graph"],
+                clientAppTypes: ["GitHub Actions"],
+                grantControls: ["Directory.ReadWrite.All"],
+                drift: [{ field: "owners", expected: "none", actual: "alex", severity: "critical" }],
+                modifiedDateTime: "2026-10-26T00:00:00Z",
+              },
+            ],
+            microActions: [],
+            state: "critical",
+          },
+        },
+      ],
+    });
+    const converged = convergeLayout(workloadLayout, { remediatedUpns: [], reclaimedUpns: [] });
+    const entra = converged.components[0];
+    if (entra?.type !== "EntraSignInTimeline") throw new Error("entra missing");
+    expect(entra.props.headline).toBe("Resolved · OIDC federation active, shadow-admin owner removed & Graph scopes right-sized");
+    expect(entra.props.events[0]?.status).toBe("success");
+    expect(entra.props.events[0]?.errorCodeLabel).toBeUndefined();
+    expect(entra.props.policies[0]?.drift).toEqual([]);
   });
 
   test("a partial remediation leaves the rest drifted", () => {

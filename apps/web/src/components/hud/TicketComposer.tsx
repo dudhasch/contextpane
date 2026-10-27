@@ -30,8 +30,8 @@ export function TicketComposer() {
     await triage({ title: title.trim(), body: body.trim(), ...(customer.trim() ? { customerName: customer.trim() } : {}) });
   };
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-canvas/70 backdrop-blur-[2px]" onClick={() => setOpen(false)}>
-      <div className="w-[720px] max-w-[95vw] animate-fade-in card shadow-popover" onClick={(e) => e.stopPropagation()} data-testid="ticket-composer">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 backdrop-blur-md" onClick={() => setOpen(false)}>
+      <div className="w-[740px] max-w-[95vw] animate-fade-in card shadow-popover" onClick={(e) => e.stopPropagation()} data-testid="ticket-composer">
         <div className="flex items-center gap-2">
           <FilePlus2 className="size-4 text-primary" />
           <span className="text-[13px] font-semibold">Triage Unscripted Ticket</span>
@@ -40,24 +40,26 @@ export function TicketComposer() {
             <X className="size-4" />
           </button>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-muted">Quick samples:</span>
-          {samples.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              data-sample={s.id}
-              onClick={() => {
-                setTitle(s.title);
-                setBody(s.body);
-                setCustomer(s.customerName);
-              }}
-              className="inline-flex h-6 max-w-[220px] items-center truncate rounded border border-border px-2 text-[11px] text-muted hover:border-primary/50 hover:text-text"
-              title={s.body}
-            >
-              {s.title}
-            </button>
-          ))}
+        <div className="mt-3 space-y-1.5">
+          <span className="block text-[11px] font-medium text-muted">Quick samples (1-click populate):</span>
+          <div className="grid gap-1.5 sm:grid-cols-3">
+            {samples.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                data-sample={s.id}
+                onClick={() => {
+                  setTitle(s.title);
+                  setBody(s.body);
+                  setCustomer(s.customerName);
+                }}
+                className="flex min-h-7 items-start rounded-md border border-border bg-surface/70 px-2.5 py-1.5 text-left text-[11px] leading-snug whitespace-normal text-muted transition-colors hover:border-primary/50 hover:bg-elevated hover:text-text"
+                title={s.body}
+              >
+                {s.title}
+              </button>
+            ))}
+          </div>
         </div>
         <label className="mt-3 block text-[11px] text-muted">
           Subject

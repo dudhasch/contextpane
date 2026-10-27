@@ -74,10 +74,10 @@ export const CA_POSTURE = {
     {
       key: "CA-001",
       displayName: demoName("CA-001-Require-PhishingResistant-MFA-Admins"),
-      includeGroups: ["SG-ContextPane-Demo-Admins"],
+      includeGroups: ["Global & Security Admins (Role)"],
       targetApps: ["All cloud apps"],
       clientAppTypes: ["all"],
-      grantControls: ["Authentication strength: Phishing-resistant MFA"],
+      grantControls: ["Require Phishing-Resistant MFA (FIDO2 / Windows Hello)"],
       golden: { state: "enabled", excludeGroups: ["SG-BreakGlass-Accounts"] },
       drifted: { state: "enabled", excludeGroups: [] },
     },

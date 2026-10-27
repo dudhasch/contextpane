@@ -175,7 +175,7 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
       return {
         summary: `${plural(driftedCount, "Finance user")} in ${group} still hold SPE_E3 instead of SPE_E5 and remain in the legacy block group, so '${blockingLabel}' rejects Azure Virtual Desktop with AADSTS53003. Separately, a vendor left ${rogueRuleName} (${rogueProtoPort} from ${rogueSource}) open on ${nsgName}.`,
         steps: [
-          step("license", "licensing", "License Upgrade", `Upgrade ${plural(driftedCount, "user")} in ${group} from SPE_E3 to SPE_E5 (Set-MgUserLicense).`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
+          step("license", "licensing", "License Upgrade", `Move ${plural(driftedCount, "user")} in ${group} out of SG-Contoso-Finance-Legacy and reprocess group SPE_E5 licensing (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser).`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
           step(
             "ca",
             "identity",
@@ -224,8 +224,8 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
             : `Seats reclaimed: ${LICENSE_ANOMALY.groupName} assigns SPE_E5 to every member with ${e5?.available ?? 0} seat(s) to spare and no new purchase.`,
         steps: [
           step("reclaim", "licensing", "Reclaim Seats", `Remove SPE_E5${copilot ? " and Copilot" : ""} from ${plural(orphaned.length || 3, "disabled account")} (Set-MgUserLicense) and drop them from ${LICENSE_ANOMALY.groupName} (Remove-MgGroupMemberByRef).`, "LicenseDriftCard", { label: "Stage License Fix", kind: "stage-fix" }, "users"),
-          step("reprocess", "licensing", "Reprocess Group Licensing", `Run Invoke-MgLicenseUser for the ${plural(failed.length || 2, "CountViolation member")} so they resolve to Active with 0 new purchases.`, "LicenseDriftCard", { label: "Inspect Assignments", kind: "inspect" }, "users"),
-          step("pool", "licensing", "Verify Pool", "Confirm SPE_E5 shows available seats again and the group reports no licensing errors.", "LicenseDriftCard", { label: "Inspect Pool", kind: "inspect" }, "pool"),
+          step("reprocess", "identity", "Reprocess Group Licensing", `Run Invoke-MgLicenseUser for the ${plural(failed.length || 2, "CountViolation member")} so they resolve to Active with 0 new purchases.`, "LicenseDriftCard", { label: "Inspect Assignments", kind: "inspect" }, "users"),
+          step("pool", "azure", "Verify Pool", "Confirm SPE_E5 shows available seats again and the group reports no licensing errors.", "LicenseDriftCard", { label: "Inspect Pool", kind: "inspect" }, "pool"),
         ],
       };
     }
@@ -239,8 +239,8 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
           : "Both Conditional Access policies match the golden baseline: break-glass excluded, legacy authentication blocked.",
         steps: [
           step("breakglass", "identity", "Break-Glass Exclusion", `Restore the ${CA_POSTURE.breakGlassGroup} exclusion on CA-001-Require-PhishingResistant-MFA-Admins.`, "EntraSignInTimeline", { label: "Inspect Policy", kind: "inspect" }, "policies"),
-          step("legacy", "identity", "Enforce Legacy Auth Block", "Flip CA-004-Block-Legacy-Auth from enabledForReportingButNotEnforced to enabled (Update-MgIdentityConditionalAccessPolicy).", "EntraSignInTimeline", { label: "Stage CA Fix", kind: "stage-fix" }, "policies"),
-          step("verify", "identity", "Verify Sign-Ins", `Check the ${legacy} legacy sign-ins (3 from an unfamiliar ASN) and that bg-admin-01 stays excluded.`, "EntraSignInTimeline", { label: "Inspect Sign-Ins", kind: "inspect" }, "signins"),
+          step("legacy", "azure", "Enforce Legacy Auth Block", "Flip CA-004-Block-Legacy-Auth from enabledForReportingButNotEnforced to enabled (Update-MgIdentityConditionalAccessPolicy).", "EntraSignInTimeline", { label: "Stage CA Fix", kind: "stage-fix" }, "policies"),
+          step("verify", "licensing", "Verify Sign-Ins", `Check the ${legacy} legacy sign-ins (3 from an unfamiliar ASN) and that bg-admin-01 stays excluded.`, "EntraSignInTimeline", { label: "Inspect Sign-Ins", kind: "inspect" }, "signins"),
         ],
       };
     }
@@ -250,8 +250,8 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
         summary: `${w.spn.displayName} (appId ${w.spn.appId.slice(0, 8)}…) is owned by ${w.owner.upn} (0 directory roles, shadow admin). Its secret '${w.passwordCredential.displayName}' expired ${w.passwordCredential.endDateTime.slice(0, 10)}, so nightly GitHub Actions runs fail with ${w.errorCodeLabel}; granted scopes (${w.appPermissions.join(", ")}) far exceed the ${w.requiredPermissions.join(", ")} its 90-day activity needs.`,
         steps: [
           step("owner", "identity", "Remove Shadow-Admin Owner", `Remove ${w.owner.upn} (0 directory roles) as owner of ${w.spn.displayName} so a non-admin no longer controls the workload identity.`, "EntraSignInTimeline", { label: "Stage Workload Fix", kind: "stage-fix" }, "policies"),
-          step("scopes", "identity", "Revoke Grant, Right-Size", `Revoke the unverified delegated grant (${w.oauth2PermissionGrant.scope}) and replace ${w.appPermissions.join(", ")} with ${w.requiredPermissions.join(", ")} per 90-day activity.`, "EntraSignInTimeline", { label: "Inspect App Grants", kind: "inspect" }, "policies"),
-          step("oidc", "identity", "Federate OIDC, Retire Secret", `Add the GitHub Actions federated credential (${w.federatedCredential.subject}) and remove the expired secret '${w.passwordCredential.displayName}' (${w.errorCodeLabel} clears).`, "EntraSignInTimeline", { label: "Stage Workload Fix", kind: "stage-fix" }, "signins"),
+          step("scopes", "licensing", "Revoke Grant, Right-Size", `Revoke the unverified delegated grant (${w.oauth2PermissionGrant.scope}) and replace ${w.appPermissions.join(", ")} with ${w.requiredPermissions.join(", ")} per 90-day activity.`, "EntraSignInTimeline", { label: "Inspect App Grants", kind: "inspect" }, "policies"),
+          step("oidc", "azure", "Federate OIDC, Retire Secret", `Add the GitHub Actions federated credential (${w.federatedCredential.subject}) and remove the expired secret '${w.passwordCredential.displayName}' (${w.errorCodeLabel} clears).`, "EntraSignInTimeline", { label: "Stage Workload Fix", kind: "stage-fix" }, "signins"),
         ],
       };
     }
@@ -265,8 +265,8 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
           : "The ASR baseline and firewall policies match the golden Git baseline and no device reports a conflict.",
         steps: [
           step("asr", "intune", "ASR Baseline Drift", "Patch Intune-Win11-ASR-Baseline: LSASS credential-stealing rule Audit → Block (Settings Catalog, golden baseline).", "IntuneDriftCard", { label: "View Diff & Fix", kind: "view-diff" }, "settings"),
-          step("firewall", "intune", "Firewall Conflict", "Unassign the duplicate legacy Win11-Firewall-MDM profile from SG-All-Workstations.", "IntuneDriftCard", { label: "Stage Intune Fix", kind: "stage-fix" }, "settings"),
-          step("sync", "intune", "Device Re-evaluation", `Sync the ${plural(n || 11, "device")} so they re-report EnableFirewall = True and clear the Conflict state.`, "IntuneDriftCard", { label: "Inspect Devices", kind: "inspect" }, "devices"),
+          step("firewall", "azure", "Firewall Conflict", "Unassign the duplicate legacy Win11-Firewall-MDM profile from SG-All-Workstations.", "IntuneDriftCard", { label: "Stage Intune Fix", kind: "stage-fix" }, "settings"),
+          step("sync", "identity", "Device Re-evaluation", `Sync the ${plural(n || 11, "device")} so they re-report EnableFirewall = True and clear the Conflict state.`, "IntuneDriftCard", { label: "Inspect Devices", kind: "inspect" }, "devices"),
         ],
       };
     }
@@ -486,7 +486,7 @@ function extraDomainSteps(cards: Set<CanvasComponentType>, existingSteps: Resolu
         "license",
         "licensing",
         "License Upgrade",
-        "Upgrade 3 users in SG-Contoso-Finance-AVD from SPE_E3 to SPE_E5 (Set-MgUserLicense).",
+        "Move 3 users in SG-Contoso-Finance-AVD out of SG-Contoso-Finance-Legacy and reprocess group SPE_E5 licensing (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser).",
         "LicenseDriftCard",
         { label: "Inspect / Stage Fix", kind: "stage-fix" },
         "users",

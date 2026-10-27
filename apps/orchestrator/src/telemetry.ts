@@ -59,6 +59,8 @@ class TelemetryBus {
       this.savings.tokens += event.estimatedSavings.tokens;
       this.savings.ms += event.estimatedSavings.ms;
       this.savings.zeroTokenRequests += 1;
+    } else if (event.tokensUsed.total === 0 || event.tier === "Tier 0") {
+      this.savings.zeroTokenRequests += 1;
     }
 
     for (const listener of this.listeners) {

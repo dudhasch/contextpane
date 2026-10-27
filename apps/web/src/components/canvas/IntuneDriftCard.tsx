@@ -108,9 +108,9 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
                   <span className="font-mono text-healthy">{s.golden}</span>,
                   <span className={`font-mono ${s.status === "in-sync" ? "text-healthy" : "text-critical"}`}>{s.live}</span>,
                   <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{s.status}</Pill>,
-                  <div className="space-y-1">
-                    {csp.cspUri && <div className="font-mono text-[10px] text-faint">{csp.cspUri}</div>}
-                    {csp.registryPath && <div className="font-mono text-[10px] text-faint">{csp.registryPath}</div>}
+                  <div className="max-w-[340px] space-y-1 break-all whitespace-normal">
+                    {csp.cspUri && <div className="font-mono text-[10px] leading-snug break-all whitespace-normal text-faint" title={csp.cspUri}>{csp.cspUri}</div>}
+                    {csp.registryPath && <div className="font-mono text-[10px] leading-snug break-all whitespace-normal text-faint" title={csp.registryPath}>{csp.registryPath}</div>}
                     {csp.tattooedOnUnassign && <Pill tone="warning">tattooed on unassign</Pill>}
                     {!csp.cspUri && !csp.registryPath && !csp.tattooedOnUnassign && <span className="text-faint">—</span>}
                   </div>,

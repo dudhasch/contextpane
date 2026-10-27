@@ -187,12 +187,28 @@ export const DATASET_PII_FIELDS: Partial<Record<DatasetKey, PiiField[]>> = {
 
 export interface PiiVaultMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: true; sampleMappings: Record<string, string>; tokenMappings: Record<string, string> }
 
+const GITHUB_RUNNER_IPS = new Set(["185.199.108.40", "185.199.109.40", "185.199.110.40", "185.199.111.40", "140.82.112.10"]);
+
+export function isMachineOrNonPersonalPii(field: string, raw: string, row?: Record<string, unknown>): boolean {
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("spn-") || lower.startsWith("app-") || lower.startsWith("svc-")) return true;
+  if (field === "ipAddress" && (GITHUB_RUNNER_IPS.has(trimmed) || trimmed.startsWith("185.199.108."))) return true;
+  if (row) {
+    const rowUpn = typeof row.upn === "string" ? row.upn.toLowerCase() : "";
+    const rowClient = typeof row.clientApp === "string" ? row.clientApp.toLowerCase() : "";
+    if (rowUpn.startsWith("spn-") && (field === "upn" || field === "displayName" || field === "ipAddress")) return true;
+    if (rowClient.includes("github actions") && field === "ipAddress") return true;
+  }
+  return false;
+}
+
 export class PiiVault {
   private tokenByReal = new Map<string, string>();
   private realByToken = new Map<string, string>();
   private counters = new Map<string, number>();
   vault(value: string, field: PiiField | string): string {
-    if (!value) return value;
+    if (!value || isMachineOrNonPersonalPii(String(field), value)) return value;
     const key = `${field}:${value}`;
     const hit = this.tokenByReal.get(key);
     if (hit) return hit;
@@ -211,7 +227,13 @@ export class PiiVault {
   pseudonymize(value: unknown): unknown {
     if (Array.isArray(value)) return value.map((v) => this.pseudonymize(v));
     if (value && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, isPiiField(k) && typeof v === "string" ? this.vault(v, k) : this.pseudonymize(v)]));
+      const rec = value as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(rec).map(([k, v]) => [
+          k,
+          isPiiField(k) && typeof v === "string" && !isMachineOrNonPersonalPii(k, v, rec) ? this.vault(v, k) : this.pseudonymize(v),
+        ]),
+      );
     }
     return value;
   }

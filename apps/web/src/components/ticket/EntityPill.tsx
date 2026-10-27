@@ -81,12 +81,12 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
   const { refs, floatingStyles, context } = useFloating({
     open: open && hoverable,
     onOpenChange: setOpen,
-    placement: "bottom-start",
-    middleware: [offset(6), flip(), shift({ padding: 8 })],
+    placement: "top-start",
+    middleware: [offset(6), flip({ fallbackPlacements: ["bottom-start", "right-start"] }), shift({ padding: 8 })],
     whileElementsMounted: autoUpdate,
   });
   const { getReferenceProps, getFloatingProps } = useInteractions([
-    useHover(context, { delay: { open: 150, close: 120 }, handleClose: safePolygon() }),
+    useHover(context, { delay: { open: 150, close: 180 }, handleClose: safePolygon({ buffer: 2 }) }),
     useFocus(context),
     useDismiss(context),
     useRole(context, { role: "dialog" }),
@@ -134,7 +134,7 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
             ref={refs.setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className="z-[9999] w-80 animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
+            className="z-[9999] w-[288px] max-w-[300px] animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-2.5 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
           >
             <HoverPopoverBody entityId={entity.id} tone={tone} onClose={() => setOpen(false)} />
           </div>

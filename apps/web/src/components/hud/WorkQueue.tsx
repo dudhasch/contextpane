@@ -123,6 +123,7 @@ export function WorkQueue() {
 
       {open && (
         <FloatingPortal>
+          <div className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-md" onClick={() => setOpen(false)} aria-hidden="true" />
           <div ref={refs.setFloating} style={floatingStyles} className="z-50 w-[640px] max-w-[95vw] animate-fade-in rounded-[10px] border border-border bg-surface shadow-popover" role="listbox" aria-label="Work queue" data-testid="work-queue" onKeyDown={onKey}>
             <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
               <Search className="size-3.5 shrink-0 text-muted" />
@@ -136,9 +137,9 @@ export function WorkQueue() {
                   type="button"
                   onClick={() => setFilter(f.id)}
                   data-queue-filter={f.id}
-                  className={`inline-flex h-5 items-center gap-1 rounded-pill border px-2 font-mono text-[10.5px] transition-colors ${filter === f.id ? "border-primary/50 bg-primary/15 text-primary" : "border-border text-muted hover:text-text"}`}
+                  className={`inline-flex h-5 items-center gap-1.5 rounded-pill border px-2 font-mono text-[10.5px] transition-colors ${filter === f.id ? "border-primary/50 bg-primary/15 text-primary" : "border-border text-muted hover:text-text"}`}
                 >
-                  {f.label} <span className="text-faint">{counts[f.id] ?? 0}</span>
+                  {f.label} <span className={`rounded px-1 text-[10px] font-semibold ${filter === f.id ? "bg-primary/20 text-primary" : "bg-elevated text-text/90"}`}>{counts[f.id] ?? 0}</span>
                 </button>
               ))}
             </div>

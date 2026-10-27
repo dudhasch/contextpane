@@ -52,9 +52,9 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
       style={{ ["--cat" as string]: "var(--color-selection)", ["--flash-color" as string]: "var(--color-selection)" }}
       className={`card scroll-mt-2 animate-fade-in border-l-4 border-l-selection transition-[box-shadow] duration-150 ${pulsing ? "ring-2 ring-selection animate-pulse-ring" : ""}`}
     >
-      <header className="flex items-center gap-2">
+      <header className="flex flex-wrap items-center gap-2">
         <Sparkles className="size-4 shrink-0 text-selection" />
-        <h3 className="min-w-0 truncate text-[13px] font-semibold" title={card.title}>
+        <h3 className="min-w-[200px] flex-1 text-[13px] font-semibold leading-snug" title={card.title}>
           {card.title}
         </h3>
         <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-selection/45 bg-selection/12 px-1.5 font-mono text-[10.5px] text-selection" title={`Selection #${entry.index} · ${entry.modelId} · ${entry.tokenCount} tokens`} data-testid="selection-badge">

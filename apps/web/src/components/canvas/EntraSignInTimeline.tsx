@@ -26,22 +26,26 @@ function collapseEvents(events: SignInEvent[], pinned: string | null): SignInEve
 const STATE_LABEL: Record<CaPolicyInspector["state"], string> = { enabled: "On", disabled: "Off", enabledForReportingButNotEnforced: "Report-Only" };
 const short = (name: string) => name.replace("[ContextPane-Demo] ", "");
 
-/** User Sign-In History & Conditional Access card (rose). */
+/** User Sign-In History & Conditional Access card (rose), or Workload Identity & OAuth Grants for ANOM-APP-401. */
 export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
   const focusCard = useWorkbench((s) => s.focusCard);
   const openRemediation = useWorkbench((s) => s.openRemediation);
   const drifted = props.policies.filter((p) => p.drift.length || p.role === "blocking");
+  const isWorkloadIdentity =
+    props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" || e.upn.toLowerCase().startsWith("spn-")) ||
+    props.policies.some((p) => p.displayName === "spn-contoso-erp-sync" || p.id.startsWith("spn-") || p.id.startsWith("app-")) ||
+    triggeredBy.includes("spn-contoso-erp-sync");
   return (
     <CardShell
       type="EntraSignInTimeline"
       icon={<LogIn />}
-      title="Sign-In History & Conditional Access"
+      title={isWorkloadIdentity ? "Workload Identity, OAuth Grants & Sign-In History" : "Sign-In History & Conditional Access"}
       state={props.state}
       triggeredBy={triggeredBy}
       codeLens={props.sourceRef}
       tabs={[
-        { id: "signins", label: "User Sign-In & Audit History", badge: props.events.length },
-        { id: "policies", label: "Conditional Access Policy Inspector", badge: props.policies.length },
+        { id: "signins", label: isWorkloadIdentity ? "Service Principal Sign-In History" : "User Sign-In & Audit History", badge: props.events.length },
+        { id: "policies", label: isWorkloadIdentity ? "Workload Identity & OAuth Grants" : "Conditional Access Policy Inspector", badge: props.policies.length },
       ]}
       summary={
         <div className="space-y-1">
@@ -76,14 +80,11 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
         drifted.length > 0 && (
           <>
             <Button size="xs" variant="meta" icon={<ShieldBan />} onClick={() => focusCard("EntraSignInTimeline", "policies")}>
-              Inspect Policy &amp; Fix
+              {isWorkloadIdentity ? "Inspect App Grants & Fix" : "Inspect Policy & Fix"}
             </Button>
             {props.microActions.some((a) => a.kind === "generate-fix") && (
               <Button size="xs" variant="outline" icon={<Wrench />} onClick={() => openRemediation({ tab: "powershell" })}>
-                {props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" || e.upn.startsWith("spn-")) ||
-                triggeredBy.includes("spn-contoso-erp-sync")
-                  ? "Stage Workload Identity Fix"
-                  : "Stage CA Fix"}
+                {isWorkloadIdentity ? "Stage Workload Identity Fix" : "Stage CA Fix"}
               </Button>
             )}
           </>
@@ -161,55 +162,77 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
   );
 }
 
+const FRIENDLY_GUID_NAMES: Record<string, string> = {
+  "171d8a93-1a2a-404d-918e-aa341ca81c63": "Global & Security Admins (Role)",
+  "957845fd-42ee-4500-b407-ad04487da3c7": "SG-BreakGlass-Accounts",
+  "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c": "SG-Contoso-Finance-Legacy",
+  "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d": "SG-Contoso-Finance-AVD",
+};
+
+function formatPrincipalList(items: string[]): string {
+  if (!items.length) return "";
+  return items.map((item) => FRIENDLY_GUID_NAMES[item.toLowerCase()] ?? item).join(", ");
+}
+
 /** Included / excluded groups, target apps, grant controls and the drift against the golden baseline, per policy. */
 function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
   return (
     <div className="space-y-2" data-testid="policy-inspector">
-      {policies.map((p) => (
-        <div key={p.id} className={`rounded-md border p-2 ${p.drift.length || p.role === "blocking" ? "border-critical/40 bg-critical/5" : "border-border-subtle bg-surface"}`}>
-          <div className="flex items-center gap-2 text-[12px]">
-            <ShieldBan className={`size-3.5 shrink-0 ${p.drift.length || p.role === "blocking" ? "text-critical" : "text-muted"}`} />
-            <span className="truncate font-medium" title={p.displayName}>
-              {p.displayName}
-            </span>
-            <Pill tone={p.state === "enabled" ? (p.role === "blocking" ? "critical" : "healthy") : "warning"}>{STATE_LABEL[p.state]}</Pill>
-            <span className="ml-auto font-mono text-[10px] text-faint">{p.role}</span>
-          </div>
-          <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
-            <dt className="text-faint">Include</dt>
-            <dd className="font-mono">{p.includeGroups.join(", ") || "—"}</dd>
-            <dt className="text-faint">Exclude</dt>
-            <dd className={`font-mono ${p.excludeGroups.length ? "" : "text-critical"}`}>{p.excludeGroups.join(", ") || "(none)"}</dd>
-            <dt className="text-faint">Target apps</dt>
-            <dd>{p.targetApps.join(", ")}</dd>
-            {p.clientAppTypes.length > 0 && (
-              <>
-                <dt className="text-faint">Client apps</dt>
-                <dd className="font-mono">{p.clientAppTypes.join(", ")}</dd>
-              </>
-            )}
-            <dt className="text-faint">Grant</dt>
-            <dd>{p.grantControls.join(", ")}</dd>
-          </dl>
-          {p.drift.length > 0 && (
-            <DataTable
-              className="mt-1.5"
-              head={["Drift", "Golden baseline", "Live tenant"]}
-              rows={p.drift.map((d) => [
-                <span className="font-mono">{d.field}</span>,
-                <span className="font-mono text-healthy">{d.expected}</span>,
-                <span className="font-mono text-critical">{d.actual}</span>,
-              ])}
-            />
-          )}
-          {(p.fixedState || p.fixedExcludeGroups) && (p.fixedState !== p.state || p.fixedExcludeGroups?.join() !== p.excludeGroups.join()) && (
-            <div className="mt-1.5 text-[11px] text-muted">
-              Staged fix → state <span className="font-mono text-healthy">{STATE_LABEL[p.fixedState ?? p.state]}</span>, exclude{" "}
-              <span className="font-mono text-healthy">{(p.fixedExcludeGroups ?? p.excludeGroups).join(", ")}</span>
+      {policies.map((p) => {
+        const grantText =
+          p.grantControls.length > 0
+            ? p.grantControls.join(", ")
+            : p.displayName.includes("PhishingResistant") || p.displayName.includes("CA-001")
+              ? "Require Phishing-Resistant MFA (FIDO2 / Windows Hello)"
+              : "Block / Policy-specific control";
+        const includeText = formatPrincipalList(p.includeGroups) || "—";
+        const excludeText = formatPrincipalList(p.excludeGroups) || "(none)";
+        return (
+          <div key={p.id} className={`rounded-md border p-2 ${p.drift.length || p.role === "blocking" ? "border-critical/40 bg-critical/5" : "border-border-subtle bg-surface"}`}>
+            <div className="flex items-center gap-2 text-[12px]">
+              <ShieldBan className={`size-3.5 shrink-0 ${p.drift.length || p.role === "blocking" ? "text-critical" : "text-muted"}`} />
+              <span className="truncate font-medium" title={p.displayName}>
+                {p.displayName}
+              </span>
+              <Pill tone={p.state === "enabled" ? (p.role === "blocking" ? "critical" : "healthy") : "warning"}>{STATE_LABEL[p.state]}</Pill>
+              <span className="ml-auto font-mono text-[10px] text-faint">{p.role}</span>
             </div>
-          )}
-        </div>
-      ))}
+            <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
+              <dt className="text-faint">Include</dt>
+              <dd className="font-mono" title={p.includeGroups.join(", ")}>{includeText}</dd>
+              <dt className="text-faint">Exclude</dt>
+              <dd className={`font-mono ${p.excludeGroups.length ? "" : "text-critical"}`} title={p.excludeGroups.join(", ")}>{excludeText}</dd>
+              <dt className="text-faint">Target apps</dt>
+              <dd>{p.targetApps.join(", ")}</dd>
+              {p.clientAppTypes.length > 0 && (
+                <>
+                  <dt className="text-faint">Client apps</dt>
+                  <dd className="font-mono">{p.clientAppTypes.join(", ")}</dd>
+                </>
+              )}
+              <dt className="text-faint">Grant</dt>
+              <dd className="font-medium text-text">{grantText}</dd>
+            </dl>
+            {p.drift.length > 0 && (
+              <DataTable
+                className="mt-1.5"
+                head={["Drift", "Golden baseline", "Live tenant"]}
+                rows={p.drift.map((d) => [
+                  <span className="font-mono">{d.field}</span>,
+                  <span className="font-mono text-healthy">{d.expected}</span>,
+                  <span className="font-mono text-critical">{d.actual}</span>,
+                ])}
+              />
+            )}
+            {(p.fixedState || p.fixedExcludeGroups) && (p.fixedState !== p.state || p.fixedExcludeGroups?.join() !== p.excludeGroups.join()) && (
+              <div className="mt-1.5 text-[11px] text-muted">
+                Staged fix → state <span className="font-mono text-healthy">{STATE_LABEL[p.fixedState ?? p.state]}</span>, exclude{" "}
+                <span className="font-mono text-healthy">{formatPrincipalList(p.fixedExcludeGroups ?? p.excludeGroups)}</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

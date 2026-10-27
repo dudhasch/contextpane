@@ -4,6 +4,7 @@ import {
   SCENARIO_REGISTRY,
   TENANT_REGISTRY,
   TicketExtractionSchema,
+  clearCustomScenarios,
   customScenarioId,
   displayScenarioId,
   getCustomScenario,
@@ -357,6 +358,13 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
 export function removeCustomTicket(scenarioId: string): boolean {
   const removed = unregisterCustomScenario(scenarioId);
   if (removed) save();
+  return removed;
+}
+
+/** Clears unscripted (or all) custom tickets on demo reset and persists the registry. */
+export function clearCustomTickets(originFilter?: "unscripted" | "erp-drop"): string[] {
+  const removed = clearCustomScenarios(originFilter);
+  if (removed.length > 0) save();
   return removed;
 }
 

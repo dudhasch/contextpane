@@ -82,8 +82,9 @@ function clipPlanText(raw: unknown): unknown {
 }
 
 const CODER_PROMPT = `You are ContextPane's remediation coder (Tier 3B). Produce the exact artefacts a human will approve:
-1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use every cmdlet listed in requiredCommands, wrap every mutation in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs.
-2. terraformDiff: only when the reference bundle has one, a unified diff (---/+++ headers, @@ hunks) that transforms the live NSG state into the Terraform baseline; reproduce the reference exactly unless it is wrong. Otherwise an empty string.
+1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use every cmdlet listed in requiredCommands, wrap every mutation in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs. For INC-4092 group-licensed users, use Remove-MgGroupMemberByRef + New-MgGroupMemberByRef + Invoke-MgLicenseUser (never Set-MgUserLicense -RemoveLicenses).
+2. terraformDiff: only when the reference bundle has one, a unified diff (---/+++ headers, valid @@ -a,b +c,d @@ hunks) that transforms the live state into the baseline; reproduce the reference exactly unless it is wrong. Otherwise an empty string.
+3. NEVER emit angle-bracket placeholders like <... id> or <... skuId> anywhere in powershellScript, graphPatch, or terraformDiff; always use concrete deterministic UUIDs from the context.
 Use only identifiers from the context. A deterministic reference bundle is supplied: match its cmdlets and entities, improve clarity where useful. Respond only through emit_remediation_bundle.`;
 
 function metaStep(modelId: string): ChainStep {
@@ -97,6 +98,10 @@ function bundleIsSound(bundle: RemediationBundleArgs, plan: RemediationPlan): st
   for (const cmd of plan.requiredCommands) if (!ps.includes(cmd)) issues.push(`powershellScript lacks ${cmd}`);
   if (reference.terraformDiff && (!/^---\s/m.test(bundle.terraformDiff) || !/^\+\+\+\s/m.test(bundle.terraformDiff) || !/^@@/m.test(bundle.terraformDiff))) {
     issues.push("terraformDiff is not a unified diff");
+  }
+  const strippedPs = bundle.powershellScript.replace(/<#[\s\S]*?#>/g, "");
+  if (/<[A-Za-z0-9_.\s-]+>/.test(strippedPs)) {
+    issues.push("powershellScript contains angle-bracket placeholder");
   }
   for (const e of reference.affectedEntities.filter((x) => x.type === "upn")) {
     if (!ps.includes(e.id.toLowerCase())) issues.push(`powershellScript does not mention ${e.id}`);
@@ -281,9 +286,10 @@ async function preflight(
   plan: RemediationPlan,
   report: (step: string, message: string, data?: Record<string, unknown>) => void,
 ): Promise<VerificationStatus> {
+  const hasHclBaseline = Boolean(ctx.drift?.data.actualHcl && ctx.drift?.data.expectedHcl);
   const input = {
     powershellScript: bundle.powershellScript,
-    terraformDiff: bundle.terraformDiff,
+    terraformDiff: hasHclBaseline ? bundle.terraformDiff : "",
     actualHcl: ctx.drift?.data.actualHcl ?? "",
     expectedHcl: ctx.drift?.data.expectedHcl ?? "",
     requiredCommands: plan.requiredCommands,
@@ -524,7 +530,16 @@ export function pullRequestBody(drawer: ActionApprovalDrawer, state: string, log
   }
 
   const changes: string[] = [];
-  for (const e of upns) changes.push(`- ${/reclaim/i.test(e.change) ? "`Set-MgUserLicense -RemoveLicenses`" : /CountViolation/i.test(e.change) ? "`Invoke-MgLicenseUser`" : "`Set-MgUserLicense`"} · ${e.id}: ${e.change}`);
+  for (const e of upns) {
+    const cmdLabel = /reclaim/i.test(e.change)
+      ? "`Set-MgUserLicense -RemoveLicenses`"
+      : /CountViolation/i.test(e.change)
+        ? "`Invoke-MgLicenseUser`"
+        : /owner removed/i.test(e.change)
+          ? "`Remove-MgApplicationOwnerByRef`"
+          : "`Remove-MgGroupMemberByRef` + `Invoke-MgLicenseUser`";
+    changes.push(`- ${cmdLabel} · ${e.id}: ${e.change}`);
+  }
   for (const e of policies) changes.push(`- ${ctx?.intune ? "Intune" : "`Update-MgIdentityConditionalAccessPolicy`"} · \`${e.id}\`: ${e.change}`);
   if (devices.length) changes.push(`- \`Sync-MgDeviceManagementManagedDevice\` · ${devices.length} device(s): ${devices.map((d) => d.id).join(", ")}`);
 
