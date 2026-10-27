@@ -381,3 +381,146 @@ export const ActionApprovalDrawerSchema = z.object({
   providerTelemetry: ProviderTelemetrySchema,
 });
 export type ActionApprovalDrawer = z.infer<typeof ActionApprovalDrawerSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* 7. SynthesizedDynamicCard · Self-Expanding N+k Composable Element (teal)    */
+/* -------------------------------------------------------------------------- */
+
+export const SynthesizedPrimitiveKindSchema = z.enum([
+  "quota-gauges",
+  "policy-chain",
+  "data-table",
+  "config-diff",
+  "event-stream",
+]);
+export type SynthesizedPrimitiveKind = z.infer<typeof SynthesizedPrimitiveKindSchema>;
+
+export const SynthesizedDomainSchema = z.enum([
+  "azure",
+  "identity",
+  "intune",
+  "licensing",
+  "network",
+  "cloud-status",
+]);
+export type SynthesizedDomain = z.infer<typeof SynthesizedDomainSchema>;
+
+export const QuotaGaugeItemSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  region: z.string().optional(),
+  used: z.number().nonnegative(),
+  limit: z.number().positive(),
+  unit: z.string().default("vCPUs"),
+  status: HealthStateSchema,
+  errorCode: z.string().optional(),
+  detail: z.string().optional(),
+});
+export type QuotaGaugeItem = z.infer<typeof QuotaGaugeItemSchema>;
+
+export const QuotaGaugeBlockSchema = z.object({
+  kind: z.literal("quota-gauges"),
+  title: z.string(),
+  gauges: z.array(QuotaGaugeItemSchema).min(1).max(8),
+});
+export type QuotaGaugeBlock = z.infer<typeof QuotaGaugeBlockSchema>;
+
+export const PolicyChainHopSchema = z.object({
+  step: z.string(),
+  node: z.string(),
+  effect: z.enum(["Allow", "Audit", "Deny", "Pass"]),
+  code: z.string().optional(),
+  detail: z.string(),
+  policyId: z.string().optional(),
+});
+export type PolicyChainHop = z.infer<typeof PolicyChainHopSchema>;
+
+export const PolicyChainBlockSchema = z.object({
+  kind: z.literal("policy-chain"),
+  title: z.string(),
+  hops: z.array(PolicyChainHopSchema).min(1).max(8),
+});
+export type PolicyChainBlock = z.infer<typeof PolicyChainBlockSchema>;
+
+export const DataTableColumnSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  mono: z.boolean().default(false),
+});
+export type DataTableColumn = z.infer<typeof DataTableColumnSchema>;
+
+export const DataTableBlockSchema = z.object({
+  kind: z.literal("data-table"),
+  title: z.string(),
+  columns: z.array(DataTableColumnSchema).min(1).max(8),
+  rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).max(30),
+});
+export type DataTableBlock = z.infer<typeof DataTableBlockSchema>;
+
+export const ConfigDiffBlockSchema = z.object({
+  kind: z.literal("config-diff"),
+  title: z.string(),
+  filePath: z.string(),
+  language: z.enum(["bicep", "terraform", "arm-json", "powershell", "json"]).default("terraform"),
+  diff: z.string(),
+});
+export type ConfigDiffBlock = z.infer<typeof ConfigDiffBlockSchema>;
+
+export const EventStreamItemSchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  operation: z.string(),
+  status: z.enum(["Failed", "Succeeded", "Warning"]),
+  code: z.string(),
+  caller: z.string(),
+  detail: z.string(),
+});
+export type EventStreamItem = z.infer<typeof EventStreamItemSchema>;
+
+export const EventStreamBlockSchema = z.object({
+  kind: z.literal("event-stream"),
+  title: z.string(),
+  events: z.array(EventStreamItemSchema).min(1).max(20),
+});
+export type EventStreamBlock = z.infer<typeof EventStreamBlockSchema>;
+
+export const SynthesizedBlockSchema = z.discriminatedUnion("kind", [
+  QuotaGaugeBlockSchema,
+  PolicyChainBlockSchema,
+  DataTableBlockSchema,
+  ConfigDiffBlockSchema,
+  EventStreamBlockSchema,
+]);
+export type SynthesizedBlock = z.infer<typeof SynthesizedBlockSchema>;
+
+export const SynthesizedCardActionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  command: z.string().optional(),
+  kind: z.enum(["stage-fix", "view-diff", "inspect"]).default("stage-fix"),
+});
+export type SynthesizedCardAction = z.infer<typeof SynthesizedCardActionSchema>;
+
+export const SynthesizedDynamicCardSchema = z.object({
+  elementId: z.string().describe("PascalCase element identifier, e.g. AzureVmDeploymentQuotaAndPolicyCard"),
+  title: z.string().describe("Human-readable card title, e.g. Azure VM Regional Quota & Policy Blocker (westeurope)"),
+  headline: z.string().max(240).describe("One-line summary shown in the card header"),
+  domain: SynthesizedDomainSchema,
+  reason: z.string().max(320).describe("Why muse-spark-1.3 flagged element_not_existent and muse-wonder-1.0 synthesized this element"),
+  state: HealthStateSchema,
+  requiredPrimitives: z.array(SynthesizedPrimitiveKindSchema).min(1),
+  blocks: z.array(SynthesizedBlockSchema).min(1).max(6),
+  recommendedActions: z.array(SynthesizedCardActionSchema).max(4).default([]),
+  synthesisMeta: z.object({
+    gatekeeperModel: z.string().default("muse-spark-1.3"),
+    synthesizerModel: z.string().default("muse-wonder-1.0"),
+    latencyMs: z.number().int().nonnegative().default(0),
+    reusedFromCatalog: z.boolean().default(false),
+    reuseCount: z.number().int().positive().default(1),
+    tsxStubPath: z.string(),
+    synthesizedAt: z.string(),
+  }),
+  sourceRef: SourceRefSchema.nullable().default(null),
+});
+export type SynthesizedDynamicCard = z.infer<typeof SynthesizedDynamicCardSchema>;

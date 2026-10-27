@@ -349,6 +349,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface DynamicCatalogResponse {
+  catalog: {
+    version: string;
+    builtInElements: string[];
+    dynamicElements: Array<{
+      elementId: string;
+      title: string;
+      domain: string;
+      reason: string;
+      requiredPrimitives: string[];
+      createdAt: string;
+      lastUsedAt: string;
+      reuseCount: number;
+      gatekeeperModel: string;
+      synthesizerModel: string;
+      tsxStubPath: string;
+    }>;
+  };
+  dynamicCount: number;
+  builtInCount: number;
+  auditLog: Array<{
+    id: string;
+    timestamp: string;
+    triggerTicketId: string;
+    ticketPrompt: string;
+    elementId: string;
+    title: string;
+    domain: string;
+    gatekeeperModel: string;
+    modelUsed: string;
+    latencyMs: number;
+    reusedFromCatalog: boolean;
+    reuseCount: number;
+    tsxStubPath: string;
+  }>;
+}
+
 export const api = {
   health: () => request<HealthResponse>("/api/health"),
   scenarios: () => request<{ scenarios: ScenarioListItem[] }>("/api/scenarios"),
@@ -393,6 +430,8 @@ export const api = {
   resolutionNote: (scenarioId: string) => request<{ note: PsaResolutionNote }>(`/api/tickets/${encodeURIComponent(scenarioId)}/resolution-note`),
   closeTicket: (scenarioId: string, closedBy?: string) => request<{ ok: boolean; note: PsaResolutionNote; audit: AuditEntry }>("/api/tickets/close", { method: "POST", body: JSON.stringify({ scenarioId, ...(closedBy ? { closedBy } : {}) }) }),
   reopenTicket: (scenarioId: string) => request<{ ok: boolean; scenarioId: string; audit: AuditEntry }>("/api/tickets/reopen", { method: "POST", body: JSON.stringify({ scenarioId }) }),
+  dynamicCatalog: () => request<DynamicCatalogResponse>("/api/dynamic-catalog"),
+  clearDynamicCatalog: () => request<{ ok: boolean; removed: number }>("/api/dynamic-catalog/clear", { method: "POST", body: "{}" }),
 };
 
 /* -------------------------------------------------------------------------- */

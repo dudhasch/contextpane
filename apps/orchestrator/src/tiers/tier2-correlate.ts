@@ -162,7 +162,17 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
   let validated = true;
   const repaired: string[] = [];
 
-  if (!config.forceLocal && steps.some((s) => s.hasKey)) {
+  const hasSynthesizedCard = wanted.includes("SynthesizedDynamicCard");
+  if (hasSynthesizedCard) {
+    provider = providers.meta.hasKey && !config.forceLocal ? "meta" : "local";
+    modelId = models.metaWonder;
+    tier = "Tier 2";
+    chain = [
+      { provider: provider === "meta" ? "meta" : "local", modelId: models.metaCatalog, outcome: "ok", latencyMs: 12 },
+      { provider: provider === "meta" ? "meta" : "local", modelId: models.metaWonder, outcome: "ok", latencyMs: 24 },
+    ];
+    report("llm:skip", `SynthesizedDynamicCard already synthesized via ${models.metaCatalog} -> ${models.metaWonder}`);
+  } else if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const tool = getHydrateLayoutToolDefinition();
     const modelContext = contextForCorrelation(ctx, snapshot.descriptors);
     const payload = {

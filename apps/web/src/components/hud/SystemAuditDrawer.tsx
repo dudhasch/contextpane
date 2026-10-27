@@ -1,5 +1,6 @@
-import { Activity, Cable, Cpu, Gauge, GitPullRequest, Layers, PiggyBank, ShieldCheck, Sparkles, Wifi, WifiOff, X } from "lucide-react";
-import { useEffect } from "react";
+import { Activity, Cable, Cpu, Gauge, GitPullRequest, Layers, PiggyBank, ShieldCheck, Sparkles, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api, type DynamicCatalogResponse } from "@/lib/api";
 import { PROVIDER_LABEL, TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens } from "@/lib/format";
 import { useWorkbench, type SystemTab } from "@/store";
 import { Dot, Pill, type Tone } from "../ui/Pill";
@@ -37,10 +38,97 @@ export function SystemAuditDrawer() {
           {tab === "audit" && <AuditLogBody />}
           {tab === "providers" && <ProvidersBody />}
           {tab === "skills" && <SkillsPiiBody />}
+          <SynthesizedElementsLedgerSection />
           <OmegaPrimeTelemetrySection />
         </div>
       </aside>
     </div>
+  );
+}
+
+function SynthesizedElementsLedgerSection() {
+  const [catalog, setCatalog] = useState<DynamicCatalogResponse | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const toast = useWorkbench((s) => s.toast);
+
+  const loadCatalog = () => {
+    api
+      .dynamicCatalog()
+      .then((res) => setCatalog(res))
+      .catch(() => undefined);
+  };
+
+  useEffect(() => {
+    loadCatalog();
+  }, []);
+
+  const handleClear = async () => {
+    setClearing(true);
+    try {
+      const res = await api.clearDynamicCatalog();
+      loadCatalog();
+      toast({
+        tone: "info",
+        title: `Cleared ${res.removed} synthesized UI element${res.removed === 1 ? "" : "s"}`,
+        detail: "data/dynamic-catalog.json reset to 0 runtime elements.",
+      });
+    } catch (e) {
+      toast({ tone: "critical", title: "Failed to clear dynamic catalog", detail: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const elements = catalog?.catalog?.dynamicElements ?? [];
+
+  return (
+    <section className="rounded-md border border-border-subtle bg-canvas/50 p-3 text-[11.5px]" data-testid="synthesized-elements-ledger">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="size-3.5 text-primary" />
+          <span className="section-label">Synthesized UI Elements (N+k Catalog · k={elements.length})</span>
+        </div>
+        {elements.length > 0 && (
+          <button
+            type="button"
+            disabled={clearing}
+            onClick={() => void handleClear()}
+            data-testid="clear-synthesized-elements"
+            className="inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10.5px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+          >
+            <Trash2 className="size-3" />
+            Clear Synthesized Elements
+          </button>
+        )}
+      </div>
+      <div className="mb-2 text-[10.5px] text-muted">
+        Gatekeeper: <span className="font-mono text-text">muse-spark-1.3</span> → Synthesizer:{" "}
+        <span className="font-mono text-primary">muse-wonder-1.0</span> · Persisted in{" "}
+        <span className="font-mono text-text">data/dynamic-catalog.json</span>
+      </div>
+      {elements.length === 0 ? (
+        <div className="rounded border border-border-subtle bg-surface px-2.5 py-2 text-[11px] text-muted">
+          No runtime-synthesized elements yet. Submit an unscripted ticket outside the 6 built-in cards to trigger Stage 1 (muse-spark-1.3) → Stage 2 (muse-wonder-1.0) on-the-fly synthesis.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {elements.map((el) => (
+            <div key={el.elementId} className="rounded border border-border-subtle bg-surface p-2">
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <span className="font-mono text-[11.5px] font-semibold text-primary">&lt;{el.elementId} /&gt;</span>
+                <div className="flex items-center gap-1">
+                  <Pill tone="meta">{el.synthesizerModel}</Pill>
+                  <Pill tone="healthy">reused {el.reuseCount}×</Pill>
+                </div>
+              </div>
+              <div className="mt-0.5 text-[11px] font-medium text-text">{el.title}</div>
+              <div className="mt-0.5 text-[10.5px] text-muted">{el.reason}</div>
+              <div className="mt-1 font-mono text-[10px] text-faint">Stub: {el.tsxStubPath}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

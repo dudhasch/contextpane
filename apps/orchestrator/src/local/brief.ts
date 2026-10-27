@@ -9,6 +9,7 @@ import {
 } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
+import { correlateUpstreamCloudStatusSync } from "./cloud-status-correlator.ts";
 
 /**
  * The left pane, deterministically: what the issue is (summary), what MCP enriched
@@ -360,6 +361,10 @@ function anomalyBody(ctx: CorrelationContext): { title: string; origin: string; 
 export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
   const { tenant, contract, ticket } = ctx.erp;
   const { summary, steps } = summaryAndSteps(ctx);
+  const defaultCloudCorrelation = correlateUpstreamCloudStatusSync({
+    ticketText: ticket ? `${ticket.title}\n${ticket.description}` : ctx.scenarioId,
+    createdAt: ticket?.openedAt ?? ctx.gatheredAt,
+  });
   const base = {
     scenarioId: ctx.ticketId,
     kind: ctx.kind,
@@ -371,6 +376,8 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     entities: scenarioEntities(ctx).slice(0, 24),
     sources: ctx.sourcesUsed,
     extraction: null,
+    elementRouting: null,
+    cloudStatusCorrelation: defaultCloudCorrelation,
     originKind: ctx.custom ? ctx.custom.origin : ctx.kind === "ticket" ? ("psa" as const) : ("anomaly" as const),
     displayId: displayScenarioId(ctx.ticketId),
     priority: null,
@@ -426,15 +433,23 @@ export function triggeredBy(ctx: CorrelationContext, type: CanvasComponentType):
 /* Unscripted tickets                                                          */
 /* -------------------------------------------------------------------------- */
 
-const EXTRACTED_TARGET: Record<string, CanvasComponentType> = { licensing: "LicenseDriftCard", identity: "EntraSignInTimeline", intune: "IntuneDriftCard", azure: "IaCDriftBanner" };
+const EXTRACTED_TARGET: Record<string, CanvasComponentType> = {
+  licensing: "LicenseDriftCard",
+  identity: "EntraSignInTimeline",
+  intune: "IntuneDriftCard",
+  azure: "IaCDriftBanner",
+};
 
 /**
- * The pills of a custom ticket: the base scenario's entities for the cards it renders,
- * then what the extractor found in the pasted text. Extracted mentions are hoverable only
- * when they resolved to a live object the hover tier knows (a user, a policy, a code).
+ * The pills of a custom ticket: for N+k synthesized dynamic tickets, returns the
+ * Stage-1 extracted entities targeting SynthesizedDynamicCard; for seeded-pattern
+ * tickets, returns the matched entities and base scenario entities for the cards it renders.
  */
 export function customEntities(ctx: CorrelationContext): EnrichedEntity[] {
   const custom = ctx.custom!;
+  if (custom.elementRouting && custom.elementRouting.missingElements.length > 0) {
+    return custom.elementRouting.extractedEntities.slice(0, 24);
+  }
   const cards = new Set(custom.components);
   const inherited = scenarioEntities(ctx).filter((e) => cards.has(e.target));
   const seen = new Set(inherited.map((e) => e.id.toLowerCase()));
@@ -496,19 +511,89 @@ function extraDomainSteps(cards: Set<CanvasComponentType>, existingSteps: Resolu
   return extras;
 }
 
-function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "title" | "status" | "openedAt" | "origin" | "body" | "signals" | "requester" | "contract" | "infrastructureSpec" | "timeline" | "attachments">): ScenarioBrief {
+function buildCustomBrief(
+  ctx: CorrelationContext,
+  base: Omit<ScenarioBrief, "title" | "status" | "openedAt" | "origin" | "body" | "signals" | "requester" | "contract" | "infrastructureSpec" | "timeline" | "attachments">,
+): ScenarioBrief {
   const custom = ctx.custom!;
+  const routing = custom.elementRouting ?? null;
+  const hasSynthesizedElements = Boolean(routing && routing.missingElements.length > 0);
+  const cloudCorrelation =
+    custom.cloudStatusCorrelation ??
+    correlateUpstreamCloudStatusSync({
+      ticketText: `${custom.ticket.title}\n${custom.ticket.body}`,
+      createdAt: custom.createdAt,
+    });
+
+  const customer = custom.ticket.customerName ?? ctx.erp.tenant.displayName;
+  const drop = custom.origin === "erp-drop" ? custom.erpDrop : undefined;
+  const displayId = displayScenarioId(custom.scenarioId);
+
+  if (hasSynthesizedElements && routing) {
+    const customSteps: ResolutionStep[] = routing.customBrief.steps.map((s, idx) =>
+      step(
+        `syn-step-${idx + 1}`,
+        s.category,
+        s.title,
+        s.detail,
+        "SynthesizedDynamicCard",
+        {
+          label: s.actionLabel.slice(0, 32),
+          kind: s.actionLabel.toLowerCase().includes("diff") ? "view-diff" : s.actionLabel.toLowerCase().includes("inspect") ? "inspect" : "stage-fix",
+        },
+      ),
+    );
+    const missingNames = routing.missingElements.map((m) => m.elementId).join(", ");
+    return {
+      ...base,
+      summary: cleanTruncate(routing.customBrief.summary, 700),
+      steps: customSteps,
+      entities: customEntities(ctx),
+      extraction: custom.extraction,
+      elementRouting: routing,
+      cloudStatusCorrelation: cloudCorrelation,
+      title: custom.ticket.title,
+      status: drop ? "New" : "Open",
+      openedAt: custom.createdAt,
+      origin: `Unscripted ticket · ${customer} · Dynamic UI (${missingNames})`,
+      body: custom.ticket.body,
+      signals: [
+        {
+          label: "N+k Catalog Synthesis",
+          value: `muse-spark-1.3 flagged element_not_existent -> muse-wonder-1.0 synthesized ${missingNames}`,
+          category: "azure",
+          source: "data/dynamic-catalog.json",
+        },
+        {
+          label: "Upstream Cloud Correlation",
+          value: cloudCorrelation.overallCorrelationSummary.slice(0, 240),
+          category: "azure",
+          source: "azure.status.microsoft + githubstatus.com",
+        },
+      ],
+      requester: custom.ticket.requester ?? null,
+      priority: custom.ticket.priority ?? null,
+      contract: null,
+      infrastructureSpec: null,
+      timeline: [
+        {
+          at: custom.createdAt,
+          actor: customer,
+          note: `Unscripted ticket triaged via muse-spark-1.3 gatekeeper -> muse-wonder-1.0 synthesized ${missingNames}`,
+        },
+      ],
+      attachments: drop?.attachments ?? [],
+    };
+  }
+
   const cards = new Set(custom.components);
   const baseFiltered = base.steps.filter((s) => cards.has(s.target));
   const inheritedSteps = [...baseFiltered, ...extraDomainSteps(cards, baseFiltered)];
   const x = custom.extraction;
   const matched = x.entities.filter((e) => e.resolvedTo);
-  const drop = custom.origin === "erp-drop" ? custom.erpDrop : undefined;
-  const displayId = displayScenarioId(custom.scenarioId);
   const how = drop ? `ERP ticket ${displayId} dropped into input/tickets/${drop.folder}/ and triaged live` : "Unscripted ticket triaged live";
-  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "no intent keywords"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`;
+  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "live tenant correlation"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern. ${base.summary}`;
   const summary = cleanTruncate(rawSummary, 700);
-  const customer = custom.ticket.customerName ?? ctx.erp.tenant.displayName;
   const timeline = drop
     ? [
         { at: custom.createdAt, actor: custom.ticket.requester?.displayName ?? customer, note: `Ticket ${displayId} opened in the ERP${custom.ticket.priority ? ` (priority ${custom.ticket.priority})` : ""}` },
@@ -521,6 +606,8 @@ function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "ti
     steps: inheritedSteps.length ? inheritedSteps : base.steps.slice(0, 1),
     entities: customEntities(ctx),
     extraction: x,
+    elementRouting: routing,
+    cloudStatusCorrelation: cloudCorrelation,
     title: custom.ticket.title,
     status: drop ? "New" : "Open",
     openedAt: custom.createdAt,
@@ -530,8 +617,11 @@ function buildCustomBrief(ctx: CorrelationContext, base: Omit<ScenarioBrief, "ti
       ...(drop
         ? [{ label: "ERP file drop", value: `${drop.folder}/ticketbody.json${drop.attachments.length ? ` + ${drop.attachments.map((a) => a.fileName).join(", ")}` : ""} · ingested ${drop.ingestedAt.slice(11, 19)}Z`, category: "azure" as const, source: `fs.watch + 1 s scan · ${drop.folder}` }]
         : []),
-      { label: "Entity & intent extraction", value: `${plural(x.entities.length, "entity")} found, ${matched.length} resolved live · intents: ${x.intents.join(", ") || "none"}`, category: "identity", source: "mcp-msgraph · users, policies, devices · mcp-azure-iac · NSG" },
-      { label: "Base pattern", value: x.rationale, category: "identity", source: `scenario ${ctx.scenarioId}` },
+      ...(matched.length > 0 && x.intents.length > 0
+        ? [
+            { label: "Entity & intent extraction", value: `${plural(x.entities.length, "entity")} found, ${matched.length} resolved live · intents: ${x.intents.join(", ")}`, category: "identity" as const, source: "mcp-msgraph · users, policies, devices · mcp-azure-iac · NSG" },
+          ]
+        : []),
     ],
     requester: custom.ticket.requester ?? null,
     priority: custom.ticket.priority ?? null,

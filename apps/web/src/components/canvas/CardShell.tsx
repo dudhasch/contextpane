@@ -36,6 +36,7 @@ function useExpanded(type: CanvasComponentType): boolean {
   return useWorkbench((s) => {
     const explicit = s.expanded[type];
     if (explicit !== undefined) return explicit;
+    if (type === "SynthesizedDynamicCard") return true;
     return (s.layout?.components.filter((c) => c.type !== "HoverDiagnosticPopover" && c.type !== "ActionApprovalDrawer").length ?? 0) === 1;
   });
 }

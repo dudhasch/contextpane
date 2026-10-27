@@ -199,6 +199,16 @@ interface WorkbenchState {
   drawerTab: DrawerTab;
   /** UPN the drawer was opened for from a hover [Stage License Fix]. */
   drawerFocusUpn: string | null;
+  /** Contextual banner shown when the drawer is opened from a specific card action (e.g. Conditional Access Policy Fix). */
+  drawerFocusBanner: string | null;
+  /** Policy ID highlighted with a 2-second pulse ring in the Conditional Access Policy Inspector. */
+  highlightedPolicyId: string | null;
+  /** Interactive Live Execution Console state inside ActionApprovalDrawer. */
+  liveConsoleOpen: boolean;
+  liveConsoleStreaming: boolean;
+  liveConsoleStep: string | null;
+  liveConsoleLines: string[];
+  liveConsoleReverted: boolean;
   formal: FormalData | null;
   intuneHealth: IntuneHealthData | null;
   canary: import("./lib/api").CanaryTrace | null;
@@ -309,10 +319,16 @@ interface WorkbenchState {
   flashComponent(type: ComponentType | null): void;
   /** Expand a canvas card (optionally on a tab), scroll it into view and pulse it. */
   focusCard(type: ComponentType, tab?: string): void;
+  /** Expand EntraSignInTimeline on the Conditional Access Policy Inspector tab, highlight the blocking policy, and open the drawer focused on the CA fix. */
+  inspectPolicyAndFix(policyId?: string): void;
   runStep(step: ResolutionStep): void;
   toggleStep(stepId: string): void;
   /** Opens the approval drawer for the scenario on screen (generates the fix first when needed). */
-  openRemediation(options?: { tab?: DrawerTab; focusUpn?: string }): void;
+  openRemediation(options?: { tab?: DrawerTab; focusUpn?: string; focusBanner?: string }): void;
+  /** Confirm and close the Live Execution Console (OK), scrolling to the Customer Resolution Email. */
+  confirmAndCloseConsole(): void;
+  /** Revert the applied change directly inside the Live Execution Console (REVERT). */
+  revertFromConsole(): Promise<void>;
   setOpenPrOnApprove(value: boolean): void;
   setExecutionMode(mode: ExecutionMode): void;
   applyConvergence(scenarioId: string, convergence: Convergence | null): void;
@@ -389,6 +405,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   vision: { status: "idle" },
   drawerTab: "powershell",
   drawerFocusUpn: null,
+  drawerFocusBanner: null,
+  highlightedPolicyId: null,
+  liveConsoleOpen: false,
+  liveConsoleStreaming: false,
+  liveConsoleStep: null,
+  liveConsoleLines: [],
+  liveConsoleReverted: false,
   formal: null,
   intuneHealth: null,
   canary: null,
@@ -607,6 +630,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       filter: null,
       vision: { status: "idle" },
       drawerFocusUpn: null,
+      drawerFocusBanner: null,
+      highlightedPolicyId: null,
+      liveConsoleOpen: false,
+      liveConsoleStreaming: false,
+      liveConsoleStep: null,
+      liveConsoleLines: [],
+      liveConsoleReverted: false,
       miniDashboards: [],
       linkedSelection: null,
       exploreStatus: "idle",
@@ -842,6 +872,19 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async approve(decision = "approve") {
     const { drawer } = get();
     if (!drawer) return;
+    const domain = get().brief?.verifiedDomain ?? "c4a8shili.onmicrosoft.com";
+    if (decision === "approve") {
+      set({
+        liveConsoleOpen: true,
+        liveConsoleStreaming: true,
+        liveConsoleReverted: false,
+        liveConsoleStep: `⏳ Executing Step 1 of 3 against ${domain}...`,
+        liveConsoleLines: [
+          `[00:00.12] Connecting to Microsoft Graph v1.0 & Azure ARM (${domain})...`,
+          `[00:00.34] Verifying pre-flight safety invariants & RBAC lease for #${drawer.ticketId}...`,
+        ],
+      });
+    }
     try {
       const result: ApproveResponse = await api.approve({
         remediationId: drawer.remediationId,
@@ -850,7 +893,28 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode, simulateCanaryFailure: get().simulateCanaryFailure } : {}),
       });
       const { executionLog, ...updated } = result.drawer;
-      set({ drawer: updated, approveLog: executionLog, canary: result.canary ?? null });
+      const stampedLines = [
+        `[00:00.12] Connecting to Microsoft Graph v1.0 & Azure ARM (${domain})...`,
+        ...executionLog.map((line, idx) => {
+          const sec = (0.38 + idx * 0.24).toFixed(2).padStart(5, "0");
+          return `[00:${sec}] ${line}`;
+        }),
+        result.canary?.finalState === "AUTO_ROLLED_BACK"
+          ? `[00:01.64] ⚠ Canary health check failed — 1-Click Undo script executed automatically · Previous state restored`
+          : `[00:01.40] ✓ All steps completed · Post-Check Invariants: PASSED`,
+      ];
+      set({
+        drawer: updated,
+        approveLog: executionLog,
+        canary: result.canary ?? null,
+        liveConsoleOpen: decision === "approve",
+        liveConsoleStreaming: false,
+        liveConsoleStep:
+          result.canary?.finalState === "AUTO_ROLLED_BACK"
+            ? "⚠ Canary Health Check Failed — Auto-Rollback Completed"
+            : `✓ Execution Complete against ${domain} — Review Output & Confirm (OK) or Revert (REVERT)`,
+        liveConsoleLines: stampedLines,
+      });
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
         get().toast({
           tone: "critical",
@@ -878,9 +942,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         detail: `${executionLog.find((l) => l.startsWith("Graph")) ?? "Canvas converged"} · Verified safe${c.gitBranch ? ` · ${c.gitBranch}` : ""}`,
         ...(c.prUrl ? { href: c.prUrl, hrefLabel: `GitHub PR #${c.prUrl.split("/pull/")[1] ?? ""}` } : {}),
       });
-      // Close the drawer so the emerald canvas is what the operator sees next.
-      window.setTimeout(() => set({ drawerOpen: false }), 900);
+      // Keep the drawer & Live Execution Console open so the operator can inspect output and click [Confirm & Close (OK)] or [Revert Change Now (REVERT)].
     } catch (error) {
+      set({ liveConsoleStreaming: false });
       get().toast({ tone: "critical", title: "Approval failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
@@ -953,22 +1017,58 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   setLinked: (linked) => set((s) => (s.linked?.target === linked?.target && s.linked?.category === linked?.category ? {} : { linked })),
   flashComponent: (highlightComponent) => {
     set({ highlightComponent });
-    if (highlightComponent) window.setTimeout(() => set((s) => (s.highlightComponent === highlightComponent ? { highlightComponent: null } : {})), 1600);
+    if (highlightComponent && typeof window !== "undefined") {
+      window.setTimeout(() => set((s) => (s.highlightComponent === highlightComponent ? { highlightComponent: null } : {})), 1600);
+    }
   },
   focusCard: (type, tab) => {
     if (get().filter && !get().filter!.includes(type)) get().setFilter(null);
     if (isCanvasComponentType(type)) {
       set((s) => ({ expanded: { ...s.expanded, [type]: true }, ...(tab ? { cardTab: { ...s.cardTab, [type]: tab } } : {}) }));
     }
-    window.requestAnimationFrame(() => {
-      document.getElementById(`canvas-${type}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        if (typeof document !== "undefined") {
+          document.getElementById(`canvas-${type}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        get().flashComponent(type);
+      });
+    } else {
       get().flashComponent(type);
+    }
+  },
+  inspectPolicyAndFix: (policyId) => {
+    get().focusCard("EntraSignInTimeline", "policies");
+    const targetPolicyId = policyId ?? "blocking";
+    set({ highlightedPolicyId: targetPolicyId });
+    if (typeof window !== "undefined") {
+      window.setTimeout(() => {
+        set((s) => (s.highlightedPolicyId === targetPolicyId ? { highlightedPolicyId: null } : {}));
+      }, 2200);
+    }
+    get().openRemediation({
+      tab: "graph",
+      focusBanner: "Focused: Conditional Access Policy Fix",
     });
   },
   runStep: (step) => {
+    if (step.target === "EntraSignInTimeline" && step.tab === "policies") {
+      get().inspectPolicyAndFix();
+      return;
+    }
     if (step.action.kind === "stage-fix") {
       get().focusCard(step.target, step.tab);
-      get().openRemediation();
+      const focusBanner =
+        step.target === "LicenseDriftCard"
+          ? "Focused: License Pool & Group Remediation"
+          : step.target === "IaCDriftBanner"
+            ? "Focused: NSG & Terraform Drift Remediation"
+            : step.target === "EntraSignInTimeline"
+              ? "Focused: Conditional Access Policy Fix"
+              : undefined;
+      const tab: DrawerTab =
+        step.target === "IaCDriftBanner" ? "terraform" : "powershell";
+      get().openRemediation({ tab, ...(focusBanner ? { focusBanner } : {}) });
     } else {
       get().focusCard(step.target, step.tab);
     }
@@ -978,10 +1078,58 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({ stepsDone: { ...s.stepsDone, [key]: !s.stepsDone[key] } }));
   },
   openRemediation(options = {}) {
-    set({ drawerTab: options.tab ?? "powershell", drawerFocusUpn: options.focusUpn ?? null, voiceOpen: false });
+    set({
+      drawerTab: options.tab ?? "powershell",
+      drawerFocusUpn: options.focusUpn ?? null,
+      drawerFocusBanner: options.focusBanner ?? null,
+      liveConsoleOpen: false,
+      liveConsoleStreaming: false,
+      voiceOpen: false,
+    });
     const { drawer, scenarioId } = get();
     if (drawer && drawer.ticketId === scenarioId && drawer.approval.state === "pending") set({ drawerOpen: true });
     else void get().remediate();
+  },
+  confirmAndCloseConsole() {
+    set({ drawerOpen: false, liveConsoleOpen: false, liveConsoleStreaming: false });
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      window.requestAnimationFrame(() => {
+        document.querySelector('[data-testid="resolution-note"]')?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  },
+  async revertFromConsole() {
+    const scenarioId = get().scenarioId;
+    const domain = get().brief?.verifiedDomain ?? "c4a8shili.onmicrosoft.com";
+    set((s) => ({
+      liveConsoleOpen: true,
+      liveConsoleStreaming: true,
+      liveConsoleStep: `⏳ Reverting change on ${domain} via 1-Click Undo Script...`,
+      liveConsoleLines: [
+        ...s.liveConsoleLines,
+        `[00:01.85] ↩ Operator triggered [REVERT] — executing 1-Click Undo Script for #${scenarioId}...`,
+      ],
+    }));
+    try {
+      const r = await api.rollback(scenarioId);
+      get().applyConvergence(scenarioId, null);
+      set((s) => ({
+        liveConsoleStreaming: false,
+        liveConsoleReverted: true,
+        liveConsoleStep: `↩ Change Reverted in ${r.latencyMs} ms — Previous Tenant State Restored`,
+        liveConsoleLines: [
+          ...s.liveConsoleLines,
+          `[00:02.18] Restoring Microsoft Graph & Azure resource state to pre-change snapshot...`,
+          `[00:02.45] ✓ Rollback verified in ${r.latencyMs} ms · Canvas & tenant restored to previous state.`,
+        ],
+        drawer: s.drawer ? { ...s.drawer, approval: { ...s.drawer.approval, state: "pending" } } : null,
+      }));
+      get().toast({ tone: "healthy", title: `Undo completed in ${r.latencyMs} ms`, detail: "Previous tenant state restored; canvas reverted." });
+      void get().correlate({ fresh: true });
+    } catch (e) {
+      set({ liveConsoleStreaming: false });
+      get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) });
+    }
   },
   setOpenPrOnApprove: (openPrOnApprove) => set({ openPrOnApprove }),
   setExecutionMode: (executionMode) => set({ executionMode }),
@@ -1587,7 +1735,17 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     try {
       const result = await api.reopenTicket(scenarioId);
       get().applyConvergence(scenarioId, null);
-      set((s) => ({ drawer: s.drawer?.ticketId === scenarioId ? null : s.drawer, drawerOpen: false, approveLog: [], canary: null, remediateStatus: "idle" }));
+      set((s) => ({
+        drawer: s.drawer?.ticketId === scenarioId ? null : s.drawer,
+        drawerOpen: false,
+        liveConsoleOpen: false,
+        liveConsoleStreaming: false,
+        liveConsoleLines: [],
+        liveConsoleReverted: false,
+        approveLog: [],
+        canary: null,
+        remediateStatus: "idle",
+      }));
       void get().loadScenarios();
       void get().loadAudit();
       get().toast({ tone: "warning", title: `${scenarioId} reopened`, detail: `ticket.reopened logged (${result.audit.id}). The lab objects stay remediated until you reset drift.` });

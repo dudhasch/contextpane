@@ -8,6 +8,7 @@ import { ContextualMiniDashboardCard } from "./ContextualMiniDashboard";
 import { LicenseDriftCardView } from "./LicenseDriftCard";
 import { ProgressRail } from "./ProgressRail";
 import { RowFilterPill } from "./TableFilter";
+import { SynthesizedDynamicCard } from "../cards/SynthesizedDynamicCard";
 
 /**
  * Right pane. Mounts only catalog components the orchestrator returned and Zod
@@ -198,6 +199,8 @@ function Component({ component }: { component: LayoutComponent }) {
       return <IntuneDriftCardView props={component.props} triggeredBy={component.triggeredBy} />;
     case "IaCDriftBanner":
       return <IaCDriftBannerCard props={component.props} triggeredBy={component.triggeredBy} />;
+    case "SynthesizedDynamicCard":
+      return <SynthesizedDynamicCard props={component.props} triggeredBy={component.triggeredBy} />;
     default:
       return null;
   }

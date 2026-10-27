@@ -1,4 +1,4 @@
-import { baseScenarioOf, isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { baseScenarioOf, getCustomScenario, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import {
   SHADOW_ADMIN_SCENARIO_ID,
   SHADOW_ADMIN_USER_UPN,
@@ -716,6 +716,17 @@ export const CONTOSO_USER_OBJECT_IDS: Record<string, string> = {
 
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
 export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBundle {
+  const customEntry = getCustomScenario(String(scenarioId));
+  if (customEntry?.customRemediation) {
+    return {
+      scenarioId,
+      powershellScript: customEntry.customRemediation.rollbackScript,
+      terraformDiff: customEntry.customRemediation.terraformDiff,
+      hcl: "",
+      graphPatch: customEntry.customRemediation.graphPatch,
+      restores: customEntry.customRemediation.affectedEntities.map((e) => `${e.id}: ${e.change}`),
+    };
+  }
   const effectiveId = String(scenarioId).startsWith("CUSTOM-") || String(scenarioId).startsWith("ERP-")
     ? baseScenarioOf(String(scenarioId))
     : scenarioId;

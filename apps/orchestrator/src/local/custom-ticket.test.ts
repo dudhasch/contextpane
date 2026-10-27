@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { getScenarioEntry, isAnyScenarioId, isCustomScenarioId } from "@contextpane/catalog";
+import { existsSync, readFileSync } from "node:fs";
+import { findRolePermissionsInText, getScenarioEntry, isAnyScenarioId, isCustomScenarioId, lookupRoleOrPermission } from "@contextpane/catalog";
 
 process.env.LIVE_CLOUD_MODE = "false";
 process.env.CTX_FORCE_LOCAL = "true";
 const { SAMPLE_UNSCRIPTED_TICKETS, extractTicket, registerCustomTicket } = await import("./custom-ticket.ts");
+const { loadDynamicCatalog } = await import("./dynamic-catalog.ts");
+const { extractIncidentTimestampWindow } = await import("./cloud-status-correlator.ts");
 const { gatherContext } = await import("../mcp/context.ts");
 const { buildScenarioBrief } = await import("./brief.ts");
 const { publishDataPlane, resolveDataPtr } = await import("./dataplane.ts");
@@ -183,5 +186,87 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const day = (e: { timestamp: string }) => e.timestamp.slice(0, 10);
     const today = props.events.find((e) => e.appDisplayName === "Microsoft Graph")!;
     expect(props.events.filter((e) => /scope audit|Access review/.test(e.appDisplayName)).every((e) => day(e) < day(today))).toBe(true);
+  });
+
+  test("N+k Generative UI Engine: unscripted Azure VM westeurope deployment failure synthesizes AzureVmDeploymentQuotaAndPolicyCard, persists to data/dynamic-catalog.json, correlates cloud status, and never leaks INC-4092 Finance E5 text", async () => {
+    const vmTicket = {
+      title: "Azure VM deployment failed in westeurope",
+      body: "help my azure subscription wont let me deploy azure vm in westeurope. it says deployment failed since 08:00 UTC.",
+      customerName: "Contoso Finance",
+    };
+
+    const entry = registerCustomTicket(vmTicket);
+    expect(entry.components).toContain("SynthesizedDynamicCard");
+    expect(entry.elementRouting).toBeDefined();
+    expect(entry.elementRouting?.matchedExistingElements).toEqual([]);
+    expect(entry.elementRouting?.missingElements[0]?.status).toBe("element_not_existent");
+    expect(entry.elementRouting?.missingElements[0]?.elementId).toBe("AzureVmDeploymentQuotaAndPolicyCard");
+
+    // Verify persistence on disk
+    const dynCatalog = loadDynamicCatalog();
+    const persisted = dynCatalog.dynamicElements.find((e) => e.elementId === "AzureVmDeploymentQuotaAndPolicyCard");
+    expect(persisted).toBeDefined();
+    const tsxFullPath = `${process.cwd()}/${persisted!.tsxStubPath}`;
+    expect(existsSync(persisted!.tsxStubPath) || existsSync(tsxFullPath) || existsSync(`../../${persisted!.tsxStubPath}`)).toBe(true);
+
+    // Verify brief & layout have zero INC-4092 Finance leakage and include Upstream Cloud Status correlation
+    const ctx = await gatherContext(entry.scenarioId, { fresh: true });
+    const brief = buildScenarioBrief(ctx);
+    expect(brief.summary).toContain("westeurope");
+    expect(brief.summary).not.toContain("SPE_E3");
+    expect(brief.summary).not.toContain("SG-Contoso-Finance-AVD");
+    expect(brief.summary).not.toContain("inheriting the INC-4092 pattern");
+    expect(brief.cloudStatusCorrelation).not.toBeNull();
+    expect(brief.cloudStatusCorrelation?.primaryRegion).toBe("westeurope");
+    expect(brief.cloudStatusCorrelation?.advisories.some((a) => a.id === "AZ-WEU-CAP-409")).toBe(true);
+    expect(brief.cloudStatusCorrelation?.webSearchCitations.length).toBeGreaterThan(0);
+
+    const layout = buildLayout(ctx, { tier: "Tier 0", provider: "local", modelId: "deterministic", latencyMs: 0, tokensUsed: 0, fallbackChain: [], validated: true, repaired: [] });
+    const synthCard = layout.components.find((c) => c.type === "SynthesizedDynamicCard");
+    expect(synthCard).toBeDefined();
+    if (synthCard?.type === "SynthesizedDynamicCard") {
+      expect(synthCard.props.elementId).toBe("AzureVmDeploymentQuotaAndPolicyCard");
+      expect(synthCard.props.blocks.map((b) => b.kind)).toEqual(
+        expect.arrayContaining(["quota-gauges", "policy-chain", "config-diff", "event-stream"]),
+      );
+    }
+
+    // Verify remediation plan synthesizes Azure VM quota & policy scripts (zero INC-4092 Finance scripts)
+    const plan = buildRemediationPlan(ctx);
+    expect(plan.bundle.powershellScript).toContain("Get-AzVMUsage");
+    expect(plan.bundle.powershellScript).toContain("germanywestcentral");
+    expect(plan.bundle.powershellScript).not.toContain("SG-Contoso-Finance-AVD");
+    expect(plan.bundle.powershellScript).not.toContain("SPE_E3");
+  });
+
+  test("extractIncidentTimestampWindow parses explicit UTC times, relative expressions, and defaults cleanly", () => {
+    const w1 = extractIncidentTimestampWindow("Deployment failed at 14:20 UTC in westeurope", "2026-10-27T16:00:00Z");
+    expect(w1.extractedTimeExpression).toContain("14:20");
+    expect(w1.correlatedAtLabel).toContain("14:20");
+
+    const w2 = extractIncidentTimestampWindow("Users blocked since 2 hours ago", "2026-10-27T16:00:00Z");
+    expect(w2.extractedTimeExpression).toContain("2 hours ago");
+  });
+
+  test("Role & Permission Hover Dictionary resolves Graph scopes, Entra ID roles, and Azure RBAC roles with GUIDs and reference URLs", () => {
+    const dirRw = lookupRoleOrPermission("Directory.ReadWrite.All");
+    expect(dirRw).not.toBeNull();
+    expect(dirRw?.guid).toBe("19dbc75e-c2e2-444c-a770-ec69d8559fc7");
+    expect(dirRw?.riskTier).toBe("Critical Tier-0");
+    expect(dirRw?.referenceUrl).toContain("graphpermissions.merill.net");
+
+    const globalAdmin = lookupRoleOrPermission("Global & Security Admins (Role)");
+    expect(globalAdmin).not.toBeNull();
+    expect(globalAdmin?.guid).toBe("62e90394-69f5-4237-9190-012177145e10");
+    expect(globalAdmin?.referenceUrl).toContain("azadvertizer.net");
+
+    const vmContrib = lookupRoleOrPermission("Virtual Machine Contributor");
+    expect(vmContrib).not.toBeNull();
+    expect(vmContrib?.guid).toBe("9980e02c-c2be-4d73-94e8-173b1dc7cf3c");
+
+    const inText = findRolePermissionsInText("Replace Directory.ReadWrite.All and Sites.FullControl.All with Sites.Selected");
+    expect(inText.map((m) => m.id)).toEqual(
+      expect.arrayContaining(["Directory.ReadWrite.All", "Sites.FullControl.All", "Sites.Selected"]),
+    );
   });
 });

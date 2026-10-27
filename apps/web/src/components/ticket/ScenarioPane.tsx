@@ -1,6 +1,6 @@
-import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
+import { AlertOctagon, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Cloud, ExternalLink, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { CATEGORY_META, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief } from "@contextpane/catalog";
+import { CATEGORY_META, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief, type UpstreamCloudStatusCorrelation } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
 import { fmtDateTimeUtc } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
@@ -10,7 +10,6 @@ import { Button } from "../ui/Button";
 import { Pill } from "../ui/Pill";
 import { EntityPill } from "./EntityPill";
 import { ResolutionNoteBox } from "./ResolutionNote";
-import { SelectionTrigger } from "./SelectionTrigger";
 
 /**
  * Left pane. In three seconds: what the issue is (summary), what MCP enriched
@@ -30,6 +29,7 @@ export function ScenarioPane() {
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-4" data-testid="scenario-pane">
       <ScenarioHeader brief={brief} />
+      {brief.cloudStatusCorrelation && <UpstreamCloudStatusBanner correlation={brief.cloudStatusCorrelation} />}
       <SummaryPlan brief={brief} />
       <ScenarioText brief={brief} />
       <div className="space-y-1.5">
@@ -95,7 +95,10 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
         </Pill>
         {unscripted && (
           <Pill tone="primary" icon={drop ? <FolderInput /> : <Sparkles />} title={brief.extraction?.rationale}>
-            {drop ? "triaged from drop" : "unscripted"} · base {brief.extraction?.baseScenarioId}
+            {drop ? "triaged from drop" : "unscripted"} ·{" "}
+            {brief.elementRouting?.missingElements[0]
+              ? `dynamic UI (${brief.elementRouting.missingElements[0].elementId})`
+              : `base ${brief.extraction?.baseScenarioId}`}
           </Pill>
         )}
         <span className="truncate text-[11px] text-faint">{brief.origin}</span>
@@ -114,6 +117,117 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
         {brief.priority && <span className="font-mono">priority {brief.priority}</span>}
       </div>
     </header>
+  );
+}
+
+/** Temporal Upstream Cloud Status & Web Search Outage Correlation banner. */
+function UpstreamCloudStatusBanner({ correlation }: { correlation: UpstreamCloudStatusCorrelation }) {
+  const hasAdvisory = correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational");
+  const [expanded, setExpanded] = useState(hasAdvisory);
+
+  return (
+    <section
+      className={`rounded-lg border px-2.5 py-2 text-[11.5px] transition-colors ${
+        hasAdvisory
+          ? "border-amber-500/45 bg-amber-500/8"
+          : "border-border-subtle bg-surface/80"
+      }`}
+      data-testid="upstream-cloud-status-banner"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Cloud className={`size-3.5 shrink-0 ${hasAdvisory ? "text-amber-400" : "text-emerald-400"}`} />
+        <span className="font-semibold text-text">Upstream Cloud Status</span>
+        <span className="rounded border border-border-subtle bg-canvas/70 px-1.5 py-0.2 font-mono text-[10px] text-muted">
+          Correlated at Incident Time: {correlation.correlatedAtLabel}
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {correlation.services.map((p) => {
+            const dot =
+              p.status === "outage"
+                ? "bg-rose-400"
+                : p.status === "degraded" || p.status === "advisory"
+                  ? "bg-amber-400"
+                  : "bg-emerald-400";
+            const border =
+              p.status === "outage"
+                ? "border-rose-500/40 bg-rose-500/12 text-rose-300"
+                : p.status === "degraded" || p.status === "advisory"
+                  ? "border-amber-500/40 bg-amber-500/12 text-amber-300"
+                  : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
+            const shortLabel =
+              p.serviceId === "azure-regional"
+                ? `Azure (${correlation.primaryRegion})`
+                : p.serviceId === "entra-id"
+                  ? "Entra ID"
+                  : p.serviceId === "intune"
+                    ? "Intune"
+                    : "GitHub";
+            return (
+              <span
+                key={p.serviceId}
+                title={`${p.label}: ${p.summary}`}
+                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${border}`}
+              >
+                <span className={`size-1.5 rounded-full ${dot}`} />
+                <span>{shortLabel}</span>
+              </span>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="ml-0.5 rounded px-1 py-0.5 font-mono text-[10px] text-muted hover:bg-elevated hover:text-text"
+          >
+            {expanded ? "Hide ▴" : "Details ▾"}
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-2 space-y-1.5 border-t border-border-subtle/80 pt-2">
+          <p className="text-[11px] leading-snug text-text">{correlation.overallCorrelationSummary}</p>
+          {correlation.advisories.map((adv) => (
+            <div
+              key={adv.id}
+              className="rounded border border-amber-500/35 bg-canvas/75 px-2 py-1.5 text-[11px]"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <span className="font-semibold text-amber-300">
+                  [{adv.id}] {adv.title} ({adv.region})
+                </span>
+                <a
+                  href={adv.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-400 hover:underline"
+                >
+                  Status Feed <ExternalLink className="size-2.5" />
+                </a>
+              </div>
+              <p className="mt-0.5 text-muted">{adv.summary}</p>
+            </div>
+          ))}
+          {correlation.webSearchCitations.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[10px] font-semibold tracking-wider text-muted uppercase">Docs &amp; Runbooks:</span>
+              {correlation.webSearchCitations.map((doc) => (
+                <a
+                  key={doc.url}
+                  href={doc.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={doc.snippet}
+                  className="inline-flex items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-300 hover:bg-sky-500/20"
+                >
+                  <span>{doc.title}</span>
+                  <ExternalLink className="size-2.5 shrink-0" />
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -146,22 +260,18 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
           </>
         )}
       </div>
-      <SelectionTrigger>
-        <p className="text-[13px] leading-relaxed text-text" data-testid="summary-text">
-          <EnrichedText text={brief.summary} entities={NO_ENTITIES} selections={selections} />
-        </p>
-      </SelectionTrigger>
+      <p className="text-[13px] leading-relaxed text-text" data-testid="summary-text">
+        <EnrichedText text={brief.summary} entities={NO_ENTITIES} selections={selections} />
+      </p>
       <div className="mt-2.5 mb-1 flex items-center gap-1.5 text-[11px] text-muted">
         <ListChecks className="size-3.5" />
         Steps to resolve
       </div>
-      <SelectionTrigger>
-        <ol className="space-y-1">
-          {brief.steps.map((step, i) => (
-            <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} />
-          ))}
-        </ol>
-      </SelectionTrigger>
+      <ol className="space-y-1">
+        {brief.steps.map((step, i) => (
+          <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} />
+        ))}
+      </ol>
       <FleetPill />
       {resolved && <ResolutionNoteBox />}
     </section>
@@ -274,15 +384,13 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
     <section className="card">
       <div className="mb-1.5 flex flex-wrap items-center gap-2">
         <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
-        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10.5px] font-medium text-selection" title="Highlight 3-120 characters of the text, then click the pill to spawn a live mini-dashboard">
-          <Wand2 className="size-3 text-selection" /> ✨ Select any ticket text to generate Context UI
+        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10.5px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to spawn a live mini-dashboard">
+          <Wand2 className="size-3 text-selection" /> ✨ Select any text on screen to generate Context UI
         </span>
       </div>
-      <SelectionTrigger>
-        <p className="text-[12.5px] leading-relaxed text-text" data-testid="scenario-body">
-          <EnrichedText text={brief.body} entities={brief.entities} selections={selections} />
-        </p>
-      </SelectionTrigger>
+      <p className="text-[12.5px] leading-relaxed text-text" data-testid="scenario-body">
+        <EnrichedText text={brief.body} entities={brief.entities} selections={selections} />
+      </p>
       {brief.signals.length > 0 && (
         <ul className="mt-2.5 space-y-1">
           {brief.signals.map((sig) => (

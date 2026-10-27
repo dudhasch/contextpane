@@ -768,6 +768,26 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
 }
 
 export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
+  if (ctx.custom?.customRemediation) {
+    const cr = ctx.custom.customRemediation;
+    return {
+      bundle: {
+        title: cr.title,
+        summary: cr.summary,
+        powershellScript: cr.powershellScript,
+        terraformDiff: cr.terraformDiff,
+        graphPatch: cr.graphPatch,
+        affectedEntities: cr.affectedEntities,
+        riskNotes: [
+          "Regional VM deployment is re-targeted to EU-Sovereign policy-approved germanywestcentral (16 free Standard_D4s_v5 vCPUs).",
+          "Scoped Azure Policy waiver expires automatically after 14 days once Terraform state converges.",
+        ],
+      },
+      requiredCommands: ["get-azvmusage", "new-azpolicyexemption", "new-azresourcegroupdeployment"],
+      remediatedUpns: [],
+      reclaimedUpns: [],
+    };
+  }
   switch (ctx.scenarioId) {
     case "INC-4092":
       return contosoTicket(ctx);

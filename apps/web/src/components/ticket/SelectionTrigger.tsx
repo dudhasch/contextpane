@@ -17,7 +17,7 @@ interface Pending {
  * - Middle: auto-focused inline refinement input (e.g. "other apps with the same owner") — press Enter to generate
  * - Right: 4 VectorCraft SVG view-mode icons (Dashboard, Full Card, Quick Comparison, Blast Radius) — press Tab to cycle
  */
-export function SelectionTrigger({ children }: { children: ReactNode }) {
+export function SelectionTrigger({ children, className }: { children: ReactNode; className?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -37,6 +37,10 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
   });
 
   const readSelection = useCallback(() => {
+    const activeEl = document.activeElement;
+    if (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement || activeEl?.getAttribute("contenteditable") === "true") {
+      return;
+    }
     const sel = window.getSelection();
     const container = containerRef.current;
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !container) return;
@@ -58,6 +62,10 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
       if (debounceRef.current !== null) {
         window.clearTimeout(debounceRef.current);
         debounceRef.current = null;
+      }
+      const activeEl = document.activeElement;
+      if (activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement || activeEl?.getAttribute("contenteditable") === "true") {
+        return;
       }
       const sel = window.getSelection();
       const container = containerRef.current;
@@ -177,6 +185,7 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
         onMouseUp={readSelection}
         onKeyUp={(e) => (e.shiftKey ? readSelection() : undefined)}
         data-testid="selection-surface"
+        className={className}
       >
         {children}
       </div>

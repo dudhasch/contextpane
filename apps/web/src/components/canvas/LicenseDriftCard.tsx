@@ -162,7 +162,13 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       summary={<div className="text-[12.5px] leading-snug">{props.headline}</div>}
       primaryAction={
         open.length > 0 && (
-          <Button size="xs" variant="meta" icon={<Wrench />} loading={remediateStatus === "loading"} onClick={() => openRemediation({ tab: "powershell" })}>
+          <Button
+            size="xs"
+            variant="meta"
+            icon={<Wrench />}
+            loading={remediateStatus === "loading"}
+            onClick={() => openRemediation({ tab: "powershell", focusBanner: "Focused: License Pool & Group Remediation" })}
+          >
             Stage License Remediation
           </Button>
         )

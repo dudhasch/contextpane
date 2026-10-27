@@ -1,4 +1,4 @@
-import { lookupAadsts, type EntityType, type Fact, type HoverDiagnosticArgs, type QuickAction } from "@contextpane/catalog";
+import { lookupAadsts, lookupRoleOrPermission, type EntityType, type Fact, type HoverDiagnosticArgs, type QuickAction } from "@contextpane/catalog";
 import type { CorrelationContext } from "../mcp/context.ts";
 
 /**
@@ -461,6 +461,9 @@ function hoverPolicy(ctx: CorrelationContext, nameOrId: string): HoverDiagnostic
       quickActions: ctx.intune && !ctx.intune.data.resolved ? [{ id: "stage-intune-fix", label: "Stage Intune Fix", kind: "stage-intune-fix", destructive: false }] : [],
     };
   }
+  if (lookupRoleOrPermission(nameOrId)) {
+    return hoverGeneric(ctx, { entityId: nameOrId, entityType: "policy" });
+  }
   return { entityId: nameOrId, entityType: "policy", status: "unknown", headline: "Policy not found in this scenario's tenant data", errorCodeTranslation: null, facts: [], quickActions: [] };
 }
 
@@ -485,6 +488,26 @@ function hoverResource(ctx: CorrelationContext, resourceName: string): HoverDiag
     };
   }
   if (!d || d.resourceName.toLowerCase() !== resourceName.toLowerCase()) {
+    const rLow = resourceName.toLowerCase();
+    if (rLow === "westeurope" || rLow === "germanywestcentral" || rLow === "northeurope") {
+      const isBlocked = rLow === "westeurope";
+      return {
+        entityId: resourceName,
+        entityType: "resource",
+        status: isBlocked ? "critical" : "healthy",
+        headline: isBlocked
+          ? `${resourceName}: Standard_D4s_v5 quota 20/20 (100% Full) · Denied by Allowed-Locations-EU-Sovereign`.slice(0, 120)
+          : `${resourceName}: 4/20 Standard_D4s_v5 vCPUs used · Allowed by EU-Sovereign Policy`.slice(0, 120),
+        errorCodeTranslation: null,
+        facts: [
+          fact("Subscription", "sub-contoso-prod-01 (20505597-043c-4742-a884-42dc3f621aef)", true),
+          fact("StandardDSv5Family Quota", isBlocked ? "20 / 20 vCPUs (QuotaExceeded)" : "4 / 20 vCPUs (16 Free)", true, isBlocked ? "critical" : "healthy"),
+          fact("Allowed Locations Policy", isBlocked ? "Denied (RequestDisallowedByPolicy)" : "Allowed (EU Sovereign)", false, isBlocked ? "critical" : "healthy"),
+          fact("Upstream Cloud Status", isBlocked ? "Advisory AZ-WEU-CAP-409 (Dv5 constrained)" : "Operational (3 AZs Available)", false, isBlocked ? "warning" : "healthy"),
+        ],
+        quickActions: [{ id: "generate-fix", label: "Generate Fix & Stage PR", kind: "generate-fix", targetEntityId: resourceName, destructive: false }],
+      };
+    }
     return {
       entityId: resourceName,
       entityType: "resource",
@@ -516,6 +539,22 @@ function hoverResource(ctx: CorrelationContext, resourceName: string): HoverDiag
 }
 
 function hoverSku(ctx: CorrelationContext, sku: string): HoverDiagnosticArgs {
+  if (sku.toLowerCase().includes("standard_d4s_v5") || sku.toLowerCase().includes("standarddsv5")) {
+    return {
+      entityId: sku,
+      entityType: "sku",
+      status: "critical",
+      headline: `${sku} (StandardDSv5Family): 20/20 vCPUs in westeurope (QuotaExceeded) · 16 free in germanywestcentral`.slice(0, 120),
+      errorCodeTranslation: null,
+      facts: [
+        fact("VM Family", "StandardDSv5Family (4 vCPUs, 16 GiB RAM)", true),
+        fact("westeurope Quota", "20 / 20 vCPUs (100% Full — QuotaExceeded)", true, "critical"),
+        fact("germanywestcentral Quota", "4 / 20 vCPUs (16 vCPUs Available)", true, "healthy"),
+        fact("northeurope Quota", "6 / 20 vCPUs (14 vCPUs Available)", true, "healthy"),
+      ],
+      quickActions: [{ id: "generate-fix", label: "Generate Fix & Stage PR", kind: "generate-fix", targetEntityId: sku, destructive: false }],
+    };
+  }
   const inv = ctx.license?.data;
   const pool = inv?.skuPools.find((p) => p.skuPartNumber.toLowerCase() === sku.toLowerCase());
   const holders = inv?.users.filter((u) => u.currentSku.toLowerCase().includes(sku.toLowerCase())) ?? [];
@@ -568,6 +607,25 @@ function hoverIntuneItem(ctx: CorrelationContext, target: HoverTarget): HoverDia
 }
 
 function hoverGeneric(ctx: CorrelationContext, target: HoverTarget): HoverDiagnosticArgs {
+  const rolePerm = lookupRoleOrPermission(target.entityId);
+  if (rolePerm) {
+    return {
+      entityId: target.entityId,
+      entityType: target.entityType,
+      status: rolePerm.riskTier === "Critical Tier-0" ? "critical" : rolePerm.riskTier === "High" ? "warning" : "healthy",
+      headline: `${rolePerm.displayName} (${rolePerm.riskTier}) · ${rolePerm.summary}`.slice(0, 120),
+      errorCodeTranslation: null,
+      facts: [
+        fact("Role / Scope GUID", rolePerm.guid, true),
+        fact("Category", `${rolePerm.category} (${rolePerm.grantType})`, false),
+        fact("Privilege Risk Tier", rolePerm.riskTier, true, rolePerm.riskTier === "Critical Tier-0" ? "critical" : rolePerm.riskTier === "High" ? "warning" : "healthy"),
+        fact("Allowed Actions", rolePerm.allowedActions.slice(0, 2).join(" · "), true),
+        fact("Least-Privilege Alt", rolePerm.leastPrivilegeAlternative, false, "healthy"),
+        fact("Reference", rolePerm.referenceUrl, true),
+      ],
+      quickActions: [],
+    };
+  }
   return {
     entityId: target.entityId,
     entityType: target.entityType,

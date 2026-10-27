@@ -24,6 +24,14 @@ import {
 } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import { config } from "../config.ts";
+import { correlateUpstreamCloudStatus, correlateUpstreamCloudStatusSync } from "./cloud-status-correlator.ts";
+import {
+  assessTicketElementNeeds,
+  buildCustomTicketRemediationTemplate,
+  buildDeterministicRoutingDecision,
+  synthesizeAndPersistMissingElements,
+  synthesizeAndPersistMissingElementsSync,
+} from "./dynamic-catalog.ts";
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 
 /**
@@ -360,22 +368,73 @@ export function loadCustomScenarios(): number {
 export function registerCustomTicket(input: CustomTicketRequest, options: RegisterOptions = {}): CustomScenarioEntry {
   const title = input.title.trim().slice(0, 140);
   const body = input.body.trim().slice(0, 6000);
+  const createdAt = options.createdAt ?? new Date().toISOString();
   // The requester is evidence too: an ERP ticket names them in a field, not in the prose.
   const probe = input.requester ? `${body}\n${input.requester.displayName} ${input.requester.upn}` : body;
-  const extraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
+  const rawExtraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
   const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
-  const base = SCENARIO_REGISTRY[extraction.baseScenarioId];
+  const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
+
+  const routingDecision = buildDeterministicRoutingDecision({
+    title,
+    body: probe,
+    matchedSeededComponents: rawExtraction.components,
+  });
+
+  const hasMissingElements = routingDecision.missingElements.length > 0;
+  const finalComponents: CanvasComponentType[] = hasMissingElements
+    ? ["SynthesizedDynamicCard"]
+    : rawExtraction.components;
+
+  const extraction: TicketExtraction = hasMissingElements
+    ? {
+        ...rawExtraction,
+        components: finalComponents,
+        entities: routingDecision.extractedEntities.map((e) => ({
+          id: e.id,
+          label: e.label,
+          type: e.type === "setting" ? "keyword" : (e.type as ExtractedEntity["type"]),
+          category: e.category,
+          resolvedTo: e.id,
+          source: "muse-spark-1.3 · N+k Catalog Gatekeeper",
+          confidence: 1,
+        })),
+        rationale: `Stage-1 muse-spark-1.3 flagged element_not_existent (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+      }
+    : rawExtraction;
+
+  const synthesizedElements = hasMissingElements
+    ? synthesizeAndPersistMissingElementsSync({
+        ticketId: id,
+        ticketPrompt: `${title}\n${body}`,
+        decision: routingDecision,
+      })
+    : undefined;
+
+  const cloudStatusCorrelation = correlateUpstreamCloudStatusSync({
+    ticketText: `${title}\n${body}`,
+    createdAt,
+  });
+
+  const customRemediation = hasMissingElements
+    ? buildCustomTicketRemediationTemplate({
+        scenarioId: id,
+        ticketTitle: title,
+        ticketBody: body,
+      })
+    : undefined;
+
   const entry = registerCustomScenario({
     scenarioId: id,
     kind: "ticket",
     origin: options.origin ?? "unscripted",
     tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
     title,
-    remediationScope: base.remediationScope,
-    components: extraction.components,
+    remediationScope: hasMissingElements ? "Azure VM regional quota & policy blocker" : base.remediationScope,
+    components: finalComponents,
     baseScenarioId: extraction.baseScenarioId,
     shortHash: id.slice(id.indexOf("-") + 1),
-    createdAt: options.createdAt ?? new Date().toISOString(),
+    createdAt,
     ticket: {
       title,
       body,
@@ -384,6 +443,105 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       ...(input.priority ? { priority: input.priority.slice(0, 12) } : {}),
     },
     extraction,
+    elementRouting: routingDecision,
+    ...(synthesizedElements ? { synthesizedElements } : {}),
+    cloudStatusCorrelation,
+    ...(customRemediation ? { customRemediation } : {}),
+    ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
+  });
+  save();
+  return entry;
+}
+
+/**
+ * Full async Two-Stage N+k Triage (`muse-spark-1.3` -> `muse-wonder-1.0`) + Live Upstream Cloud Status Correlation.
+ */
+export async function triageCustomTicketAsync(
+  input: CustomTicketRequest,
+  options: RegisterOptions = {},
+): Promise<CustomScenarioEntry> {
+  const title = input.title.trim().slice(0, 140);
+  const body = input.body.trim().slice(0, 6000);
+  const createdAt = options.createdAt ?? new Date().toISOString();
+  const probe = input.requester ? `${body}\n${input.requester.displayName} ${input.requester.upn}` : body;
+  const rawExtraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
+  const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
+  const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
+
+  const [{ decision: routingDecision, modelUsed: gatekeeperModel }, cloudStatusCorrelation] = await Promise.all([
+    assessTicketElementNeeds({
+      title,
+      body: probe,
+      matchedSeededComponents: rawExtraction.components,
+    }),
+    correlateUpstreamCloudStatus({
+      ticketText: `${title}\n${body}`,
+      createdAt,
+    }),
+  ]);
+
+  const hasMissingElements = routingDecision.missingElements.length > 0;
+  const finalComponents: CanvasComponentType[] = hasMissingElements
+    ? ["SynthesizedDynamicCard"]
+    : rawExtraction.components;
+
+  const synthesizedElements = hasMissingElements
+    ? await synthesizeAndPersistMissingElements({
+        ticketId: id,
+        ticketPrompt: `${title}\n${body}`,
+        decision: routingDecision,
+        gatekeeperModel,
+      })
+    : undefined;
+
+  const customRemediation = hasMissingElements
+    ? buildCustomTicketRemediationTemplate({
+        scenarioId: id,
+        ticketTitle: title,
+        ticketBody: body,
+      })
+    : undefined;
+
+  const extraction: TicketExtraction = hasMissingElements
+    ? {
+        ...rawExtraction,
+        components: finalComponents,
+        entities: routingDecision.extractedEntities.map((e) => ({
+          id: e.id,
+          label: e.label,
+          type: e.type === "setting" ? "keyword" : (e.type as ExtractedEntity["type"]),
+          category: e.category,
+          resolvedTo: e.id,
+          source: `${gatekeeperModel} · N+k Catalog Gatekeeper`,
+          confidence: 1,
+        })),
+        rationale: `Stage-1 ${gatekeeperModel} flagged element_not_existent (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+      }
+    : rawExtraction;
+
+  const entry = registerCustomScenario({
+    scenarioId: id,
+    kind: "ticket",
+    origin: options.origin ?? "unscripted",
+    tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
+    title,
+    remediationScope: hasMissingElements ? "Azure VM regional quota & policy blocker" : base.remediationScope,
+    components: finalComponents,
+    baseScenarioId: extraction.baseScenarioId,
+    shortHash: id.slice(id.indexOf("-") + 1),
+    createdAt,
+    ticket: {
+      title,
+      body,
+      ...(input.customerName ? { customerName: input.customerName.trim().slice(0, 80) } : {}),
+      ...(input.requester ? { requester: input.requester } : {}),
+      ...(input.priority ? { priority: input.priority.slice(0, 12) } : {}),
+    },
+    extraction,
+    elementRouting: routingDecision,
+    ...(synthesizedElements ? { synthesizedElements } : {}),
+    cloudStatusCorrelation,
+    ...(customRemediation ? { customRemediation } : {}),
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
   });
   save();

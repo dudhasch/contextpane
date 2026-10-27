@@ -6,6 +6,7 @@ import {
   IaCDriftBannerSchema,
   IntuneDriftCardSchema,
   LicenseDriftCardSchema,
+  SynthesizedDynamicCardSchema,
 } from "./components.ts";
 import { DataPtrSchema, IsoTimestampSchema, ProviderIdSchema, RouterTierSchema } from "./primitives.ts";
 
@@ -18,14 +19,15 @@ export const COMPONENT_TYPES = [
   "EntraSignInTimeline",
   "IntuneDriftCard",
   "IaCDriftBanner",
+  "SynthesizedDynamicCard",
   "HoverDiagnosticPopover",
   "ActionApprovalDrawer",
 ] as const;
 export const ComponentTypeSchema = z.enum(COMPONENT_TYPES);
 export type ComponentType = z.infer<typeof ComponentTypeSchema>;
 
-/** The four cards a layout can pin to the canvas (the popover and the drawer come from their own tiers). */
-export const CANVAS_COMPONENT_TYPES = ["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner"] as const;
+/** The cards a layout can pin to the canvas (the popover and the drawer come from their own tiers). */
+export const CANVAS_COMPONENT_TYPES = ["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner", "SynthesizedDynamicCard"] as const;
 export type CanvasComponentType = (typeof CANVAS_COMPONENT_TYPES)[number];
 
 export function isCanvasComponentType(value: unknown): value is CanvasComponentType {
@@ -48,6 +50,7 @@ export const LayoutComponentSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("EntraSignInTimeline"), id: componentId, triggeredBy, dataPtrs, props: EntraSignInTimelineSchema }),
   z.object({ type: z.literal("IntuneDriftCard"), id: componentId, triggeredBy, dataPtrs, props: IntuneDriftCardSchema }),
   z.object({ type: z.literal("IaCDriftBanner"), id: componentId, triggeredBy, dataPtrs, props: IaCDriftBannerSchema }),
+  z.object({ type: z.literal("SynthesizedDynamicCard"), id: componentId, triggeredBy, dataPtrs, props: SynthesizedDynamicCardSchema }),
   z.object({ type: z.literal("HoverDiagnosticPopover"), id: componentId, triggeredBy, dataPtrs, props: HoverDiagnosticPopoverSchema }),
   z.object({ type: z.literal("ActionApprovalDrawer"), id: componentId, triggeredBy, dataPtrs, props: ActionApprovalDrawerSchema }),
 ]);

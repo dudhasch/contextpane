@@ -26,6 +26,7 @@ import type { CaPolicySummary, SignInSummary } from "@contextpane/mcp-msgraph";
 import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { triggeredBy } from "./brief.ts";
+import { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElementsSync } from "./dynamic-catalog.ts";
 
 /**
  * Deterministic AST hydration. This is both the Tier 0 engine (recipes) and the
@@ -393,6 +394,42 @@ export function buildComponent(type: ComponentType, ctx: CorrelationContext): La
       const props = buildIaCDriftBanner(ctx);
       return props ? { type, id, triggeredBy: trigger, dataPtrs, props } : null;
     }
+    case "SynthesizedDynamicCard": {
+      const existing = ctx.custom?.synthesizedElements?.[0];
+      if (existing) {
+        return {
+          type: "SynthesizedDynamicCard",
+          id: `${existing.elementId.replace(/[A-Z]/g, (c, i) => (i ? "-" : "") + c.toLowerCase())}-${ctx.ticketId.toLowerCase()}`,
+          triggeredBy: trigger,
+          dataPtrs: {},
+          props: existing,
+        };
+      }
+      if (ctx.custom) {
+        const routing =
+          ctx.custom.elementRouting ??
+          buildDeterministicRoutingDecision({
+            title: ctx.custom.ticket.title,
+            body: ctx.custom.ticket.body,
+            matchedSeededComponents: [],
+          });
+        const synthesized = synthesizeAndPersistMissingElementsSync({
+          ticketId: ctx.ticketId,
+          ticketPrompt: `${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}`,
+          decision: routing,
+        });
+        if (synthesized[0]) {
+          return {
+            type: "SynthesizedDynamicCard",
+            id: `${synthesized[0].elementId.replace(/[A-Z]/g, (c, i) => (i ? "-" : "") + c.toLowerCase())}-${ctx.ticketId.toLowerCase()}`,
+            triggeredBy: trigger,
+            dataPtrs: {},
+            props: synthesized[0],
+          };
+        }
+      }
+      return null;
+    }
   }
 }
 
@@ -421,6 +458,7 @@ export function overallHealth(layout: Layout): HealthState {
         case "EntraSignInTimeline":
         case "IntuneDriftCard":
         case "IaCDriftBanner":
+        case "SynthesizedDynamicCard":
           return c.props.state;
         case "HoverDiagnosticPopover":
           return c.props.status;

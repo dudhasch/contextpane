@@ -5,6 +5,7 @@ import { fmtSignInTime, fmtTimeUtc } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Dot, Pill, type Tone } from "../ui/Pill";
+import { TextWithRolePermissionHovers } from "../ui/RolePermissionHoverPopover";
 import { CardShell, DataTable } from "./CardShell";
 import { FilterChips, IdentityCell, rowHighlightClass, useStatusFilter, type RowStatus } from "./TableFilter";
 
@@ -33,7 +34,7 @@ export function shouldRenderCaBlockedBadge(row: { status: string; errorCode?: nu
 
 /** User Sign-In History & Conditional Access card (rose), or Workload Identity & OAuth Grants for ANOM-APP-401. */
 export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
-  const focusCard = useWorkbench((s) => s.focusCard);
+  const inspectPolicyAndFix = useWorkbench((s) => s.inspectPolicyAndFix);
   const openRemediation = useWorkbench((s) => s.openRemediation);
   const drifted = props.policies.filter((p) => p.drift.length || p.role === "blocking");
   const isWorkloadIdentity =
@@ -56,11 +57,29 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
       primaryAction={
         drifted.length > 0 && (
           <>
-            <Button size="xs" variant="meta" icon={<ShieldBan />} onClick={() => focusCard("EntraSignInTimeline", "policies")}>
+            <Button
+              size="xs"
+              variant="meta"
+              icon={<ShieldBan />}
+              onClick={() => inspectPolicyAndFix(drifted[0]?.id ?? "blocking")}
+              data-testid="inspect-policy-and-fix"
+            >
               {isWorkloadIdentity ? "Inspect App Grants & Fix" : "Inspect Policy & Fix"}
             </Button>
             {props.microActions.some((a) => a.kind === "generate-fix") && (
-              <Button size="xs" variant="outline" icon={<Wrench />} onClick={() => openRemediation({ tab: "powershell" })}>
+              <Button
+                size="xs"
+                variant="outline"
+                icon={<Wrench />}
+                onClick={() =>
+                  openRemediation({
+                    tab: "powershell",
+                    focusBanner: isWorkloadIdentity
+                      ? "Focused: Workload Identity & OAuth Grants Fix"
+                      : "Focused: Conditional Access Policy Fix",
+                  })
+                }
+              >
                 {isWorkloadIdentity ? "Stage Workload Identity Fix" : "Stage CA Fix"}
               </Button>
             )}
@@ -187,6 +206,7 @@ function formatPrincipalList(items: string[]): string {
 
 /** Included / excluded groups, target apps, grant controls and the drift against the golden baseline, per policy. */
 function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
+  const highlightedPolicyId = useWorkbench((s) => s.highlightedPolicyId);
   return (
     <div className="space-y-2" data-testid="policy-inspector">
       {policies.map((p) => {
@@ -198,10 +218,22 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
               : "Block / Policy-specific control";
         const includeText = formatPrincipalList(p.includeGroups) || "—";
         const excludeText = formatPrincipalList(p.excludeGroups) || "(none)";
+        const isOffending = Boolean(p.drift.length || p.role === "blocking");
+        const isHighlighted =
+          highlightedPolicyId !== null &&
+          (highlightedPolicyId === p.id ||
+            highlightedPolicyId === p.displayName ||
+            (highlightedPolicyId === "blocking" && isOffending));
         return (
-          <div key={p.id} className={`rounded-md border p-2 ${p.drift.length || p.role === "blocking" ? "border-critical/40 bg-critical/5" : "border-border-subtle bg-surface"}`}>
+          <div
+            key={p.id}
+            data-policy-id={p.id}
+            className={`rounded-md border p-2 transition-all duration-300 ${
+              isOffending ? "border-critical/40 bg-critical/5" : "border-border-subtle bg-surface"
+            } ${isHighlighted ? "animate-pulse ring-2 ring-rose-500 shadow-[0_0_18px_rgba(244,63,94,0.35)]" : ""}`}
+          >
             <div className="flex items-center gap-2 text-[12px]">
-              <ShieldBan className={`size-3.5 shrink-0 ${p.drift.length || p.role === "blocking" ? "text-critical" : "text-muted"}`} />
+              <ShieldBan className={`size-3.5 shrink-0 ${isOffending ? "text-critical" : "text-muted"}`} />
               <span className="truncate font-medium" title={p.displayName}>
                 {p.displayName}
               </span>
@@ -210,9 +242,13 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
             </div>
             <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
               <dt className="text-faint">Include</dt>
-              <dd className="font-mono" title={p.includeGroups.join(", ")}>{includeText}</dd>
+              <dd className="font-mono" title={p.includeGroups.join(", ")}>
+                <TextWithRolePermissionHovers text={includeText} />
+              </dd>
               <dt className="text-faint">Exclude</dt>
-              <dd className={`font-mono ${p.excludeGroups.length ? "" : "text-critical"}`} title={p.excludeGroups.join(", ")}>{excludeText}</dd>
+              <dd className={`font-mono ${p.excludeGroups.length ? "" : "text-critical"}`} title={p.excludeGroups.join(", ")}>
+                <TextWithRolePermissionHovers text={excludeText} />
+              </dd>
               <dt className="text-faint">Target apps</dt>
               <dd>{p.targetApps.join(", ")}</dd>
               {p.clientAppTypes.length > 0 && (
@@ -222,7 +258,9 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
                 </>
               )}
               <dt className="text-faint">Grant</dt>
-              <dd className="font-medium text-text">{grantText}</dd>
+              <dd className="font-medium text-text">
+                <TextWithRolePermissionHovers text={grantText} />
+              </dd>
             </dl>
             {p.drift.length > 0 && (
               <DataTable
@@ -230,8 +268,12 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
                 head={["Drift", "Golden baseline", "Live tenant"]}
                 rows={p.drift.map((d) => [
                   <span className="font-mono">{d.field}</span>,
-                  <span className="font-mono text-healthy">{d.expected}</span>,
-                  <span className="font-mono text-critical">{d.actual}</span>,
+                  <span className="font-mono text-healthy">
+                    <TextWithRolePermissionHovers text={d.expected} />
+                  </span>,
+                  <span className="font-mono text-critical">
+                    <TextWithRolePermissionHovers text={d.actual} />
+                  </span>,
                 ])}
               />
             )}

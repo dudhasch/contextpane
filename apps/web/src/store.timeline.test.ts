@@ -248,4 +248,28 @@ describe("applyTimelineSliceToLayout sign-in timestamp & badge honesty", () => {
     expect(Object.keys(useWorkbench.getState().speculativeSelectionCache)).toHaveLength(0);
     expect(useWorkbench.getState().speculativeBuffer).toHaveLength(0);
   });
+
+  test("inspectPolicyAndFix expands EntraSignInTimeline on policies tab, sets highlightedPolicyId, and opens remediation drawer focused on Conditional Access Policy Fix", () => {
+    useWorkbench.getState().inspectPolicyAndFix("ca-contoso-avd-legacy-01");
+    const st = useWorkbench.getState();
+    expect(st.expanded.EntraSignInTimeline).toBe(true);
+    expect(st.cardTab.EntraSignInTimeline).toBe("policies");
+    expect(st.highlightedPolicyId).toBe("ca-contoso-avd-legacy-01");
+    expect(st.drawerTab).toBe("graph");
+    expect(st.drawerFocusBanner).toBe("Focused: Conditional Access Policy Fix");
+  });
+
+  test("confirmAndCloseConsole closes the Live Execution Console and drawer upon operator [OK] sign-off", () => {
+    useWorkbench.setState({
+      drawerOpen: true,
+      liveConsoleOpen: true,
+      liveConsoleStreaming: false,
+      liveConsoleLines: ["[00:00.12] Connecting...", "[00:01.40] ✓ All steps completed · Post-Check Invariants: PASSED"],
+    });
+    useWorkbench.getState().confirmAndCloseConsole();
+    const st = useWorkbench.getState();
+    expect(st.drawerOpen).toBe(false);
+    expect(st.liveConsoleOpen).toBe(false);
+    expect(st.liveConsoleStreaming).toBe(false);
+  });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SynthesizedDomainSchema, SynthesizedDynamicCardSchema, SynthesizedPrimitiveKindSchema, type SynthesizedDynamicCard } from "./schemas/components.ts";
 import { CANVAS_COMPONENT_TYPES, type CanvasComponentType } from "./schemas/layout.ts";
 import { EntityTypeSchema, ProvenanceCategorySchema, type ProvenanceCategory } from "./schemas/primitives.ts";
 import type { TenantId } from "./tenants.ts";
@@ -197,6 +198,16 @@ export interface ErpDropSource {
   attachments: TicketAttachment[];
 }
 
+export interface CustomRemediationTemplate {
+  title: string;
+  summary: string;
+  powershellScript: string;
+  terraformDiff: string;
+  graphPatch: string;
+  rollbackScript: string;
+  affectedEntities: Array<{ type: z.infer<typeof EntityTypeSchema>; id: string; change: string }>;
+}
+
 export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenarioId"> {
   scenarioId: CustomScenarioId;
   kind: "ticket";
@@ -208,6 +219,14 @@ export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenar
   ticket: CustomTicketInput;
   extraction: TicketExtraction;
   erpDrop?: ErpDropSource;
+  /** Stage 1 (muse-spark-1.3) N+k element routing decision. */
+  elementRouting?: ElementRoutingDecision;
+  /** Stage 2 (muse-wonder-1.0) synthesized dynamic card instances for this ticket. */
+  synthesizedElements?: SynthesizedDynamicCard[];
+  /** Temporal upstream cloud status API & web search outage correlation. */
+  cloudStatusCorrelation?: UpstreamCloudStatusCorrelation;
+  /** Custom remediation script/diff/patch tailored to this unscripted ticket. */
+  customRemediation?: CustomRemediationTemplate;
 }
 
 export type AnyScenarioEntry = ScenarioRegistryEntry | CustomScenarioEntry;
@@ -315,6 +334,7 @@ export const COMPONENT_CATEGORY: Record<CanvasComponentType, ProvenanceCategory>
   EntraSignInTimeline: "identity",
   IntuneDriftCard: "intune",
   IaCDriftBanner: "azure",
+  SynthesizedDynamicCard: "azure",
 };
 
 /* -------------------------------------------------------------------------- */
@@ -336,6 +356,87 @@ export const EnrichedEntitySchema = z.object({
   hoverable: z.boolean().default(true),
 });
 export type EnrichedEntity = z.infer<typeof EnrichedEntitySchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Part 1: Self-Expanding N+k Element Routing Decision                         */
+/* -------------------------------------------------------------------------- */
+
+export const MissingElementSpecSchema = z.object({
+  status: z.literal("element_not_existent"),
+  elementId: z.string(),
+  title: z.string(),
+  domain: SynthesizedDomainSchema,
+  reason: z.string(),
+  requiredPrimitives: z.array(SynthesizedPrimitiveKindSchema).min(1),
+});
+export type MissingElementSpec = z.infer<typeof MissingElementSpecSchema>;
+
+export const ElementRoutingDecisionSchema = z.object({
+  matchedExistingElements: z.array(z.string()),
+  missingElements: z.array(MissingElementSpecSchema),
+  extractedEntities: z.array(EnrichedEntitySchema),
+  customBrief: z.object({
+    summary: z.string(),
+    steps: z.array(
+      z.object({
+        title: z.string(),
+        detail: z.string(),
+        category: ProvenanceCategorySchema,
+        actionLabel: z.string(),
+      }),
+    ),
+  }),
+});
+export type ElementRoutingDecision = z.infer<typeof ElementRoutingDecisionSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Part 2: Temporal Upstream Cloud Status & Web Search Outage Correlation      */
+/* -------------------------------------------------------------------------- */
+
+export const UpstreamServiceHealthSchema = z.object({
+  serviceId: z.enum(["azure-regional", "entra-id", "intune", "github-actions"]),
+  label: z.string(),
+  status: z.enum(["operational", "advisory", "degraded", "outage"]),
+  statusLabel: z.string(),
+  summary: z.string(),
+  sourceUrl: z.string(),
+  probeSource: z.enum(["live-status-api", "web-search-fallback", "seeded-status-feed"]),
+  latencyMs: z.number().int().nonnegative(),
+});
+export type UpstreamServiceHealth = z.infer<typeof UpstreamServiceHealthSchema>;
+
+export const UpstreamAdvisorySchema = z.object({
+  id: z.string(),
+  provider: z.enum(["Azure", "Microsoft 365 / Entra", "GitHub", "Web Search Correlation"]),
+  title: z.string(),
+  severity: z.enum(["advisory", "warning", "critical", "info"]),
+  region: z.string(),
+  timestamp: z.string(),
+  summary: z.string(),
+  url: z.string(),
+});
+export type UpstreamAdvisory = z.infer<typeof UpstreamAdvisorySchema>;
+
+export const WebSearchOutageCitationSchema = z.object({
+  title: z.string(),
+  snippet: z.string(),
+  url: z.string(),
+  source: z.string(),
+});
+export type WebSearchOutageCitation = z.infer<typeof WebSearchOutageCitationSchema>;
+
+export const UpstreamCloudStatusCorrelationSchema = z.object({
+  windowStart: z.string(),
+  windowEnd: z.string(),
+  correlatedAtLabel: z.string(),
+  extractedTimeExpression: z.string().nullable().default(null),
+  primaryRegion: z.string().default("westeurope"),
+  services: z.array(UpstreamServiceHealthSchema),
+  advisories: z.array(UpstreamAdvisorySchema).default([]),
+  webSearchCitations: z.array(WebSearchOutageCitationSchema).default([]),
+  overallCorrelationSummary: z.string(),
+});
+export type UpstreamCloudStatusCorrelation = z.infer<typeof UpstreamCloudStatusCorrelationSchema>;
 
 export const ResolutionStepSchema = z.object({
   id: z.string(),
@@ -392,6 +493,10 @@ export const ScenarioBriefSchema = z.object({
   sources: z.record(z.string(), z.string()),
   /** Unscripted tickets: what the entity & intent extractor found and the base pattern it inherited. */
   extraction: TicketExtractionSchema.nullable().default(null),
+  /** Self-expanding N+k element routing decision (muse-spark-1.3 -> muse-wonder-1.0). */
+  elementRouting: ElementRoutingDecisionSchema.nullable().default(null),
+  /** Temporal upstream cloud status API & web search outage correlation. */
+  cloudStatusCorrelation: UpstreamCloudStatusCorrelationSchema.nullable().default(null),
   /** The origin badge: psa | anomaly | erp-drop | unscripted. */
   originKind: WorkItemOriginSchema.default("psa"),
   /** `#2026323` for an ERP drop; `#<scenarioId>` otherwise. */

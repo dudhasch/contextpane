@@ -50,7 +50,9 @@ import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skil
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
-import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket } from "./local/custom-ticket.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, registerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
+import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
+import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
 import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
@@ -237,7 +239,7 @@ const TriageBodySchema = z.object({
 app.post("/api/tickets/triage-custom", async (c) => {
   const started = performance.now();
   const body = TriageBodySchema.parse(await c.req.json());
-  const entry = registerCustomTicket(body);
+  const entry = await triageCustomTicketAsync(body);
   invalidateContext(entry.scenarioId);
   const ctx = await gatherContext(entry.scenarioId, { fresh: true });
   const brief = buildScenarioBrief(ctx);
@@ -246,12 +248,13 @@ app.post("/api/tickets/triage-custom", async (c) => {
   const idempotency = verifyIdempotency(entry.baseScenarioId);
   const timeline = getTimeline(entry.baseScenarioId);
   const latencyMs = Math.round(performance.now() - started);
+  const hasSynthesized = Boolean(entry.elementRouting && entry.elementRouting.missingElements.length > 0);
   const event = telemetry.record({
     requestId: telemetry.nextRequestId("t0"),
     endpoint: "/api/tickets/triage-custom",
-    tier: "Tier 0",
-    provider: "local",
-    modelId: "deterministic-entity-extractor",
+    tier: hasSynthesized ? "Tier 2" : "Tier 0",
+    provider: hasSynthesized && providers.meta.hasKey && !config.forceLocal ? "meta" : "local",
+    modelId: hasSynthesized ? "muse-spark-1.3 -> muse-wonder-1.0" : "deterministic-entity-extractor",
     latencyMs,
     tokensUsed: { ...ZERO_USAGE },
     fallbackChain: [],
@@ -263,6 +266,9 @@ app.post("/api/tickets/triage-custom", async (c) => {
       scenario: customScenarioListItem(entry, false),
       brief,
       extraction: entry.extraction,
+      elementRouting: entry.elementRouting ?? null,
+      synthesizedElements: entry.synthesizedElements ?? [],
+      cloudStatusCorrelation: entry.cloudStatusCorrelation ?? null,
       dataPtrs: snapshot.descriptors.map((d) => d.ptr),
       dataPlane: { datasets: snapshot.descriptors.length, bytes: snapshot.bytes, piiMetrics: snapshot.piiMetrics },
       verification: {
@@ -276,6 +282,41 @@ app.post("/api/tickets/triage-custom", async (c) => {
     },
     201,
   );
+});
+
+app.get("/api/dynamic-catalog", (c) => {
+  const catalog = loadDynamicCatalog();
+  const auditLog = loadSynthesizedElementsLog();
+  return c.json({
+    catalog,
+    dynamicCount: catalog.dynamicElements.length,
+    builtInCount: catalog.builtInElements.length,
+    auditLog,
+  });
+});
+
+app.post("/api/dynamic-catalog/clear", (c) => {
+  const res = clearSynthesizedElements();
+  const catalog = loadDynamicCatalog();
+  const auditLog = loadSynthesizedElementsLog();
+  return c.json({
+    ok: true,
+    ...res,
+    catalog,
+    dynamicCount: catalog.dynamicElements.length,
+    auditLog,
+  });
+});
+
+app.post("/api/cloud-status/correlate", async (c) => {
+  const body = z
+    .object({
+      ticketText: z.string().min(3),
+      createdAt: z.string().optional(),
+    })
+    .parse(await c.req.json());
+  const correlation = await correlateUpstreamCloudStatus(body);
+  return c.json(correlation);
 });
 
 app.get("/api/tickets/samples", (c) => c.json({ samples: SAMPLE_UNSCRIPTED_TICKETS }));

@@ -10,7 +10,8 @@ const SEV_TONE: Record<string, Tone> = { critical: "critical", high: "critical",
 
 /** AVD Host Pool, NSG & Azure Policy card (teal). */
 export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
-  const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
+  const focusCard = useWorkbench((s) => s.focusCard);
+  const openRemediation = useWorkbench((s) => s.openRemediation);
   const drift = props.driftState === "drift-detected";
   const pool = props.hostPool;
   const critical = props.rogueSecurityRules.filter((r) => r.severity === "critical");
@@ -32,7 +33,15 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
       summary={<div className="text-[12.5px] leading-snug">{props.summary.replace(/^State:\s*/i, "")}</div>}
       primaryAction={
         drift && (
-          <Button size="xs" variant="meta" icon={<GitCompareArrows />} onClick={() => setDiffOpen(true, "IaCDriftBanner")}>
+          <Button
+            size="xs"
+            variant="meta"
+            icon={<GitCompareArrows />}
+            onClick={() => {
+              focusCard("IaCDriftBanner", "nsg");
+              openRemediation({ tab: "terraform", focusBanner: "Focused: NSG & Terraform Drift Remediation" });
+            }}
+          >
             Open Terraform Diff &amp; Fix
           </Button>
         )

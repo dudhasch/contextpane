@@ -14,13 +14,14 @@ import {
 } from "@floating-ui/react";
 import { AlertTriangle, Cloud, Cpu, ExternalLink, Hash, Laptop, ShieldBan, SlidersHorizontal, Sparkles, UserRound, Users, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import type { EnrichedEntity, EntityType, QuickAction } from "@contextpane/catalog";
+import { lookupRoleOrPermission, type EnrichedEntity, type EntityType, type QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
 import { healthTone } from "@/lib/format";
 import { CAT_CHIP, catStyle } from "@/lib/provenance";
 import { selectActiveTimelineSlice, selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
+import { RolePermissionCardContent } from "../ui/RolePermissionHoverPopover";
 
 const ICON: Partial<Record<EntityType, ReactNode>> = {
   upn: <UserRound />,
@@ -140,7 +141,7 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
             ref={refs.setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className="z-[9999] w-[288px] max-w-[300px] animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-2.5 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
+            className={`z-[9999] ${lookupRoleOrPermission(entity.id) ? "w-[340px] max-w-[360px]" : "w-[288px] max-w-[300px]"} animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-2.5 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md`}
           >
             <HoverPopoverBody entityId={entity.id} tone={tone} onClose={() => setOpen(false)} />
           </div>
@@ -152,6 +153,21 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
 
 function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone: Tone; onClose: () => void }) {
   const entry = useWorkbench((s) => selectHover(s, entityId));
+  const rolePerm = lookupRoleOrPermission(entityId);
+  if (rolePerm) {
+    return (
+      <div className="space-y-2">
+        <RolePermissionCardContent entry={rolePerm} />
+        {entry?.popover && entry.popover.quickActions.length > 0 && (
+          <div className="flex flex-wrap gap-1 border-t border-border-subtle pt-1.5">
+            {entry.popover.quickActions.map((a) => (
+              <QuickActionButton key={a.id} action={a} onDone={onClose} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   if (!entry || entry.status === "loading") {
     return (
       <div className="space-y-2">
@@ -238,21 +254,25 @@ function QuickActionButton({ action, onDone }: { action: QuickAction; onDone: ()
     const state = useWorkbench.getState();
     switch (action.kind) {
       case "inspect-policy":
-        // The Conditional Access inspector is the policies tab of the sign-in card.
-        state.focusCard("EntraSignInTimeline", "policies");
+        // Expand Sign-In History & Conditional Access on the Policy Inspector tab, highlight the blocking policy, and open the drawer focused on the CA fix.
+        state.inspectPolicyAndFix(action.targetEntityId);
         break;
       case "stage-license-fix":
         // HITL: the license change only ever runs from the approval drawer, opened on its PowerShell tab.
         state.focusCard("LicenseDriftCard", "users");
-        state.openRemediation({ tab: "powershell", ...(action.targetEntityId?.includes("@") ? { focusUpn: action.targetEntityId } : {}) });
+        state.openRemediation({
+          tab: "powershell",
+          focusBanner: "Focused: License Pool & Group Remediation",
+          ...(action.targetEntityId?.includes("@") ? { focusUpn: action.targetEntityId } : {}),
+        });
         break;
       case "stage-intune-fix":
         state.focusCard("IntuneDriftCard", "settings");
-        state.openRemediation({ tab: "powershell" });
+        state.openRemediation({ tab: "powershell", focusBanner: "Focused: Intune Policy & Endpoint Remediation" });
         break;
       case "view-diff":
         state.focusCard("IaCDriftBanner", "nsg");
-        state.setDiffOpen(true);
+        state.openRemediation({ tab: "terraform", focusBanner: "Focused: NSG & Terraform Drift Remediation" });
         break;
       case "generate-fix":
         state.openRemediation();

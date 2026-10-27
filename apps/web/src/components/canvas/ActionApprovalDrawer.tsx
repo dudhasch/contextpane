@@ -57,6 +57,14 @@ export function ActionApprovalDrawerSheet() {
   const rawTab = useWorkbench((s) => s.drawerTab);
   const setTab = useWorkbench((s) => s.setDrawerTab);
   const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
+  const focusBanner = useWorkbench((s) => s.drawerFocusBanner);
+  const liveConsoleOpen = useWorkbench((s) => s.liveConsoleOpen);
+  const liveConsoleStreaming = useWorkbench((s) => s.liveConsoleStreaming);
+  const liveConsoleStep = useWorkbench((s) => s.liveConsoleStep);
+  const liveConsoleLines = useWorkbench((s) => s.liveConsoleLines);
+  const liveConsoleReverted = useWorkbench((s) => s.liveConsoleReverted);
+  const confirmAndCloseConsole = useWorkbench((s) => s.confirmAndCloseConsole);
+  const revertFromConsole = useWorkbench((s) => s.revertFromConsole);
   const toast = useWorkbench((s) => s.toast);
   const mode = useWorkbench((s) => s.executionMode);
   const simulateCanaryFailure = useWorkbench((s) => s.simulateCanaryFailure);
@@ -173,53 +181,107 @@ export function ActionApprovalDrawerSheet() {
               aria-label="Remediation sections"
             >
               <TabButton
-                active={mainTab === "scripts"}
-                onClick={() => setTab("powershell")}
+                active={!liveConsoleOpen && mainTab === "scripts"}
+                onClick={() => {
+                  useWorkbench.setState({ liveConsoleOpen: false });
+                  setTab("powershell");
+                }}
                 icon={<Terminal />}
                 label="Scripts & Changes"
               />
               <TabButton
-                active={mainTab === "safety"}
-                onClick={() => setTab("formal")}
+                active={!liveConsoleOpen && mainTab === "safety"}
+                onClick={() => {
+                  useWorkbench.setState({ liveConsoleOpen: false });
+                  setTab("formal");
+                }}
                 icon={<ShieldCheck />}
                 label="Safety Checks & Undo"
               />
               <TabButton
-                active={mainTab === "clients"}
-                onClick={() => setTab("fleet")}
+                active={!liveConsoleOpen && mainTab === "clients"}
+                onClick={() => {
+                  useWorkbench.setState({ liveConsoleOpen: false });
+                  setTab("fleet");
+                }}
                 icon={<Users />}
                 label={`Other Clients (${peerCount})`}
               />
               <TabButton
-                active={mainTab === "docs"}
-                onClick={() => setTab("runbook")}
+                active={!liveConsoleOpen && mainTab === "docs"}
+                onClick={() => {
+                  useWorkbench.setState({ liveConsoleOpen: false });
+                  setTab("runbook");
+                }}
                 icon={<BookOpen />}
                 label="Customer Note & Docs"
               />
+              {(liveConsoleOpen || liveConsoleLines.length > 0) && (
+                <button
+                  type="button"
+                  onClick={() => useWorkbench.setState({ liveConsoleOpen: true })}
+                  data-testid="live-console-tab"
+                  className={`ml-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[11px] font-semibold whitespace-nowrap transition-colors ${
+                    liveConsoleOpen
+                      ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300"
+                      : "border-slate-700 bg-slate-900 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-300"
+                  }`}
+                >
+                  <Terminal className="size-3.5" />
+                  <span>&gt;_ Live Execution Output</span>
+                </button>
+              )}
             </div>
 
-            {/* Tab Viewport */}
-            <div className="flex min-h-[380px] flex-1 flex-col overflow-y-auto p-4" data-testid="drawer-scroll-viewport">
-              {mainTab === "scripts" && (
-                <ScriptsAndChangesTab
-                  drawer={drawer}
-                  subTab={scriptSubTab}
-                  onSelectSubTab={(t) => setTab(t)}
-                  hasIntune={hasIntune}
-                  focusUpn={focusUpn}
-                  onCopy={copy}
-                />
-              )}
-              {mainTab === "safety" && <SafetyAndUndoTab drawer={drawer} onCopy={copy} />}
-              {mainTab === "clients" && <OtherClientsTab onCopy={copy} />}
-              {mainTab === "docs" && <CustomerNoteAndDocsTab drawer={drawer} onCopy={copy} />}
+            {focusBanner && !liveConsoleOpen && (
+              <div
+                className="flex shrink-0 items-center justify-between gap-2 border-b border-primary/35 bg-primary/10 px-4 py-1.5 text-[11.5px]"
+                data-testid="drawer-focus-banner"
+              >
+                <span className="inline-flex items-center gap-1.5 font-semibold text-primary">
+                  <Sparkles className="size-3.5 shrink-0" />
+                  {focusBanner}
+                </span>
+                <span className="font-mono text-[10.5px] text-muted">
+                  Opened directly on {scriptSubTab === "graph" ? "Graph API JSON" : scriptSubTab === "terraform" ? "Terraform Diff" : "PowerShell"}
+                </span>
+              </div>
+            )}
 
-              {approveLog.length > 0 && (
-                <div className="mt-3 rounded-md border border-border-subtle bg-canvas p-2.5 font-mono text-[11px] text-muted">
-                  {approveLog.map((l, i) => (
-                    <div key={i}>{l}</div>
-                  ))}
-                </div>
+            {/* Tab Viewport or Live Execution Console */}
+            <div className="flex min-h-[380px] flex-1 flex-col overflow-y-auto p-4" data-testid="drawer-scroll-viewport">
+              {liveConsoleOpen ? (
+                <LiveExecutionConsole
+                  stepHeader={liveConsoleStep}
+                  lines={liveConsoleLines}
+                  streaming={liveConsoleStreaming}
+                  reverted={liveConsoleReverted}
+                  onCopy={() => void copy(liveConsoleLines.join("\n"), "Live execution console output")}
+                />
+              ) : (
+                <>
+                  {mainTab === "scripts" && (
+                    <ScriptsAndChangesTab
+                      drawer={drawer}
+                      subTab={scriptSubTab}
+                      onSelectSubTab={(t) => setTab(t)}
+                      hasIntune={hasIntune}
+                      focusUpn={focusUpn}
+                      onCopy={copy}
+                    />
+                  )}
+                  {mainTab === "safety" && <SafetyAndUndoTab drawer={drawer} onCopy={copy} />}
+                  {mainTab === "clients" && <OtherClientsTab onCopy={copy} />}
+                  {mainTab === "docs" && <CustomerNoteAndDocsTab drawer={drawer} onCopy={copy} />}
+
+                  {approveLog.length > 0 && (
+                    <div className="mt-3 rounded-md border border-border-subtle bg-canvas p-2.5 font-mono text-[11px] text-muted">
+                      {approveLog.map((l, i) => (
+                        <div key={i}>{l}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -254,8 +316,33 @@ export function ActionApprovalDrawerSheet() {
 
               <CanaryTraceBanner />
 
-              {/* Row 2: Primary CTA */}
-              {drawer.approval.state === "pending" && resolved ? (
+              {/* Row 2: Primary CTA or Live Console [OK] / [REVERT] Operator Sign-Off */}
+              {liveConsoleOpen && !liveConsoleReverted ? (
+                <div className="flex items-center gap-2.5" data-testid="live-console-actions">
+                  <Button
+                    variant="danger"
+                    size="md"
+                    icon={<Undo2 />}
+                    disabled={liveConsoleStreaming}
+                    onClick={() => void revertFromConsole()}
+                    data-testid="console-revert-button"
+                    className="font-semibold"
+                  >
+                    ↩ Revert Change Now (REVERT)
+                  </Button>
+                  <Button
+                    variant="healthy"
+                    size="md"
+                    icon={<Check />}
+                    disabled={liveConsoleStreaming}
+                    onClick={() => confirmAndCloseConsole()}
+                    data-testid="console-confirm-ok-button"
+                    className="flex-1 font-semibold"
+                  >
+                    ✓ Confirm &amp; Close (OK)
+                  </Button>
+                </div>
+              ) : drawer.approval.state === "pending" && resolved ? (
                 <div className="flex gap-2" data-testid="already-resolved">
                   <Button variant="outline" size="md" icon={<Check />} className="flex-1" disabled title="Reopen the ticket or reset drift to run this fix again">
                     {closed ? "Already Resolved & Closed" : "Already Resolved & Verified"}
@@ -288,17 +375,36 @@ export function ActionApprovalDrawerSheet() {
                   </Button>
                 </div>
               ) : drawer.approval.state === "rolled-back" ? (
-                <Button variant="danger" size="md" icon={<RotateCcw />} className="w-full" disabled>
-                  Auto-Rollback Completed — Previous State Restored
-                </Button>
+                <div className="flex items-center gap-2.5">
+                  <Button variant="danger" size="md" icon={<RotateCcw />} className="flex-1" disabled>
+                    Auto-Rollback Completed — Previous State Restored
+                  </Button>
+                  <Button variant="outline" size="md" onClick={() => confirmAndCloseConsole()}>
+                    Close
+                  </Button>
+                </div>
               ) : (
-                <Button variant="outline" size="md" icon={<Check />} className="w-full" disabled>
-                  {drawer.approval.state === "rejected"
-                    ? "Fix Cancelled"
-                    : drawer.approval.state === "staged"
-                      ? "Pull Request Staged for Pipeline"
-                      : "Fix Applied & Verified"}
-                </Button>
+                <div className="flex items-center gap-2.5">
+                  <Button
+                    variant="danger"
+                    size="md"
+                    icon={<Undo2 />}
+                    onClick={() => void revertFromConsole()}
+                    data-testid="console-revert-button"
+                  >
+                    ↩ Revert Change Now (REVERT)
+                  </Button>
+                  <Button
+                    variant="healthy"
+                    size="md"
+                    icon={<Check />}
+                    className="flex-1 font-semibold"
+                    onClick={() => confirmAndCloseConsole()}
+                    data-testid="console-confirm-ok-button"
+                  >
+                    ✓ Confirm &amp; Close (OK)
+                  </Button>
+                </div>
               )}
             </footer>
           </>
@@ -1118,5 +1224,93 @@ function SegmentButton({ active, onClick, icon, children }: { active: boolean; o
       {icon}
       {children}
     </button>
+  );
+}
+
+function LiveExecutionConsole({
+  stepHeader,
+  lines,
+  streaming,
+  reverted,
+  onCopy,
+}: {
+  stepHeader: string | null;
+  lines: string[];
+  streaming: boolean;
+  reverted: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div
+      className="flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#050811] shadow-inner"
+      data-testid="live-execution-console"
+    >
+      {/* Console Title & Live Status Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950 px-3.5 py-2.5">
+        <div className="flex items-center gap-2">
+          <span
+            className={`size-2.5 rounded-full ${
+              streaming
+                ? "animate-ping bg-amber-400"
+                : reverted
+                  ? "bg-amber-400"
+                  : "bg-emerald-400"
+            }`}
+          />
+          <span className="font-mono text-[12px] font-bold tracking-wide text-emerald-300">
+            &gt;_ Live Execution Output
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="xs" variant="outline" icon={<ClipboardCopy />} onClick={onCopy}>
+            Copy Log
+          </Button>
+        </div>
+      </div>
+
+      {/* Progress Step Header */}
+      {stepHeader && (
+        <div
+          className={`border-b px-3.5 py-2 font-mono text-[11.5px] font-medium ${
+            reverted
+              ? "border-amber-500/35 bg-amber-500/12 text-amber-200"
+              : streaming
+                ? "border-sky-500/35 bg-sky-500/12 text-sky-200"
+                : "border-emerald-500/35 bg-emerald-500/12 text-emerald-200"
+          }`}
+          data-testid="live-console-step-header"
+        >
+          {stepHeader}
+        </div>
+      )}
+
+      {/* High-Contrast Terminal Output */}
+      <div className="flex-1 space-y-1.5 overflow-y-auto p-3.5 font-mono text-[11.5px] leading-relaxed">
+        {lines.map((line, i) => {
+          const isSuccess = line.includes("✓") || line.includes("PASSED");
+          const isWarn = line.includes("⚠") || line.includes("↩") || line.includes("Rollback");
+          return (
+            <div
+              key={i}
+              className={`rounded px-2 py-1 ${
+                isSuccess
+                  ? "border border-emerald-500/30 bg-emerald-500/10 font-semibold text-emerald-300"
+                  : isWarn
+                    ? "border border-amber-500/30 bg-amber-500/10 font-semibold text-amber-300"
+                    : "text-slate-200"
+              }`}
+            >
+              {line}
+            </div>
+          );
+        })}
+        {streaming && (
+          <div className="flex items-center gap-2 px-2 py-1 text-sky-300">
+            <span className="inline-block size-2 animate-pulse rounded-full bg-sky-400" />
+            <span>Awaiting Microsoft Graph &amp; Azure ARM confirmation...</span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
