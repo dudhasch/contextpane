@@ -5,12 +5,14 @@ import {
   blastRadiusMatrix,
   buildInverseRollback,
   counterfactualReplay,
+  maxSmtSynthesis,
   postState,
   rogueRdpRule,
   synthesizeInverseRollback,
   verifyFormalInvariants,
   verifyIdempotency,
   verifyInverseRollback,
+  verifyPccBitmask,
   verifyProactiveRemediationInvariant,
   verifyShadowAdminInvariant,
 } from "./formal-verifier.ts";
@@ -160,5 +162,24 @@ describe("Tier 3C formal blast-radius prover", () => {
     expect(rb.powershellScript).not.toMatch(/-DirectoryObjectId\s+['"][^'"]*@[^'"]*['"]/);
     expect(rb.powershellScript).toContain("d09ae604-9c1e-4b9c-9a5d-000000000001");
     expect(rb.powershellScript).not.toContain("-AddLicenses @() -RemoveLicenses @()");
+  });
+
+  test("Weighted Partial MaxSMT synthesis (ΔW) & 7-bit Proof-Carrying Certificate (0x7F)", () => {
+    for (const id of ["INC-4092", "INC-4099", "ANOM-LIC-101", "ANOM-CA-204", "ANOM-INT-309", "ANOM-APP-401"] as const) {
+      const r = verifyFormalInvariants(id);
+      expect(r.invariantProofMask).toBe(0x7f);
+      expect(verifyPccBitmask(r.invariantProofMask)).toBe(true);
+      expect(r.minPerturbationCost).toBeGreaterThan(0);
+      expect(r.schemaSignature).toContain("0x7f");
+      expect(r.maxSmtSynthesis.optimal).toBe(true);
+      expect(r.maxSmtSynthesis.collateralLockouts).toBe(0);
+      expect(r.maxSmtSynthesis.hardInvariants).toHaveLength(7);
+      expect(r.maxSmtSynthesis.hardInvariants.every((h) => h.passed)).toBe(true);
+    }
+    const smt = maxSmtSynthesis("INC-4092");
+    expect(smt.invariantProofMask).toBe(0x7f);
+    expect(smt.minPerturbationCost).toBe(6.5);
+    expect(verifyPccBitmask(0x7e)).toBe(false);
+    expect(verifyPccBitmask(0x00)).toBe(false);
   });
 });

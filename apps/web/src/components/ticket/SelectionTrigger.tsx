@@ -24,7 +24,10 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
   const [refinement, setRefinement] = useState("");
   const [viewMode, setViewMode] = useState<ContextViewMode>("dashboard");
   const explore = useWorkbench((s) => s.exploreSelection);
+  const prewarmSelection = useWorkbench((s) => s.prewarmSelectionExplore);
+  const discardSpeculative = useWorkbench((s) => s.discardSpeculativeSelection);
   const status = useWorkbench((s) => s.exploreStatus);
+  const debounceRef = useRef<number | null>(null);
 
   const { refs, floatingStyles } = useFloating({
     open: Boolean(pending),
@@ -46,7 +49,48 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
     setPending({ text, rect });
     setRefinement("");
     setViewMode("dashboard");
-  }, []);
+    void prewarmSelection(text, { viewMode: "dashboard" });
+  }, [prewarmSelection]);
+
+  // Silent kinematic pre-fetch on selectionchange (debounced 90ms when 3-120 chars are highlighted)
+  useEffect(() => {
+    const onSelectionChange = () => {
+      if (debounceRef.current !== null) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      const sel = window.getSelection();
+      const container = containerRef.current;
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !container) return;
+      const range = sel.getRangeAt(0);
+      if (!container.contains(range.commonAncestorContainer)) return;
+      const text = sel.toString().replace(/\s+/g, " ").trim();
+      if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return;
+      debounceRef.current = window.setTimeout(() => {
+        void prewarmSelection(text, {
+          viewMode,
+          ...(refinement.trim() ? { refinementText: refinement.trim() } : {}),
+        });
+      }, 90);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => {
+      if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, [prewarmSelection, viewMode, refinement]);
+
+  // Re-prewarm when viewMode or refinement changes while toolbar is open
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setTimeout(() => {
+      void prewarmSelection(pending.text, {
+        viewMode,
+        ...(refinement.trim() ? { refinementText: refinement.trim() } : {}),
+      });
+    }, 90);
+    return () => window.clearTimeout(timer);
+  }, [pending, viewMode, refinement, prewarmSelection]);
 
   useEffect(() => {
     if (!pending) return;
@@ -62,10 +106,18 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
     const onDown = (e: MouseEvent) => {
       const pill = refs.floating.current;
       if (pill && pill.contains(e.target as Node)) return;
-      setPending(null);
+      setPending((prev) => {
+        if (prev) discardSpeculative();
+        return null;
+      });
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPending(null);
+      if (e.key === "Escape") {
+        setPending((prev) => {
+          if (prev) discardSpeculative();
+          return null;
+        });
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -73,7 +125,7 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [refs.floating]);
+  }, [refs.floating, discardSpeculative]);
 
   const generate = useCallback(
     (overrideMode?: ContextViewMode) => {
@@ -111,6 +163,7 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
+      discardSpeculative();
       setPending(null);
     }
   };
@@ -133,6 +186,12 @@ export function SelectionTrigger({ children }: { children: ReactNode }) {
             ref={refs.setFloating}
             style={floatingStyles}
             onKeyDown={onBarKeyDown}
+            onPointerEnter={() =>
+              void prewarmSelection(pending.text, {
+                viewMode,
+                ...(refinement.trim() ? { refinementText: refinement.trim() } : {}),
+              })
+            }
             data-testid="selection-trigger-bar"
             className="z-50 inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-selection/65 bg-[#0B1120]/96 p-1 text-[11.5px] text-selection shadow-popover ring-1 ring-white/10 backdrop-blur-xl"
           >

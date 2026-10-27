@@ -77,6 +77,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
 
   const hasPostConvergedOrInternalText =
     !rawRootCause ||
+    rawRootCause.includes("still hold SPE_E3") ||
     rawRootCause.includes("All SG-Contoso-Finance-AVD members hold SPE_E5") ||
     rawRootCause.includes("0 Finance user") ||
     rawRootCause.includes("match the golden") ||
@@ -86,9 +87,11 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
     rawRootCause.includes("matched MCP data") ||
     rawRootCause.includes("inheriting the ");
 
-  const rootCause = hasPostConvergedOrInternalText
-    ? (FALLBACK_ROOT_CAUSE_BY_BASE[base] ?? rawRootCause)
-    : rawRootCause;
+  const rootCause = toPastTenseSummary(
+    hasPostConvergedOrInternalText
+      ? (FALLBACK_ROOT_CAUSE_BY_BASE[base] ?? rawRootCause)
+      : rawRootCause,
+  );
 
   const PAST_TENSE_RESOLUTION_BY_BASE: Record<string, string> = {
     "INC-4092": `Removed 3 users (${shortUpns.join(", ")}) from the legacy F3/E3 group (SG-Contoso-Finance-Legacy), reprocessed group-based SPE_E5 licensing in SG-Contoso-Finance-AVD, updated the Conditional Access policy 'Block AVD - Contoso Finance Legacy' to report-only excluding SG-Contoso-Finance-AVD, and removed the temporary RDP rule Allow-Temp-RDP-Diagnostic-Drift (TCP/3389 from *) on nsg-contoso-avd-hostpool-01.`,
@@ -98,36 +101,6 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
     "ANOM-INT-309": "Restored the Attack Surface Reduction LSASS credential protection rule from Audit to Block (with the verified path exclusion for ContosoErpSync.exe) and removed the duplicate Win11-Firewall-MDM profile across 11 workstations.",
     "ANOM-APP-401": "Replaced the expired client secret on spn-contoso-erp-sync with GitHub Actions OIDC workload federation, removed non-admin contractor owner alex.wilber@c4a8shili.onmicrosoft.com, and right-sized Microsoft Graph permissions to least privilege.",
   };
-
-  function toPastTenseSummary(text: string): string {
-    return text
-      .replace(/^Remediates\b/i, "Remediated")
-      .replace(/^Assigns\b/i, "Assigned")
-      .replace(/^Moves\b/i, "Moved")
-      .replace(/^Removes\b/i, "Removed")
-      .replace(/^Remove\b/i, "Removed")
-      .replace(/^Excludes\b/i, "Excluded")
-      .replace(/^Exclude\b/i, "Excluded")
-      .replace(/^Switches\b/i, "Switched")
-      .replace(/^Switch\b/i, "Switched")
-      .replace(/^Restores\b/i, "Restored")
-      .replace(/^Restore\b/i, "Restored")
-      .replace(/^Updates\b/i, "Updated")
-      .replace(/^Update\b/i, "Updated")
-      .replace(/^Reclaims\b/i, "Reclaimed")
-      .replace(/^Reclaim\b/i, "Reclaimed")
-      .replace(/^Replaces\b/i, "Replaced")
-      .replace(/^Replace\b/i, "Replaced")
-      .replace(/\bremoves\b/g, "removed")
-      .replace(/\breprocesses\b/g, "reprocessed")
-      .replace(/\bexcludes\b/g, "excluded")
-      .replace(/\bswitches\b/g, "switched")
-      .replace(/\brestores\b/g, "restored")
-      .replace(/\bdeletes\b/g, "deleted")
-      .replace(/\bsets\b/g, "set")
-      .replace(/inverse rollback f(?:⁻¹|\^-1)/gi, "verified 1-click undo script")
-      .replace(/f⁻¹|f\^-1/g, "1-click undo script");
-  }
 
   const rawDrawerSummary =
     drawer?.summary && !drawer.summary.includes("0 drifted member") && !drawer.summary.startsWith("Remediates ")
@@ -139,7 +112,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
     : `${rawDrawerSummary} The staged remediation was approved and ${live ? "applied to the tenant" : "recorded"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`;
   const affectedUsers = remediatedUpns.length + convergence.reclaimedUpns.length;
   const userListDetail = shortUpns.length ? ` (${shortUpns.join(", ")})` : "";
-  const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"}${userListDetail} ${convergence.reclaimedUpns.length && !remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, and a verified 1-click undo script is archived should anything regress.`;
+  const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"}${userListDetail} ${convergence.reclaimedUpns.length && !remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, with a verified 1-click undo script archived should anything regress.`;
 
   const trail: string[] = [
     `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency check (safe to re-run) ${idempotency.passed ? "passed" : "FAILED"}`,
@@ -191,4 +164,53 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
 
 function flag(v: boolean | null | undefined): string {
   return v === null || v === undefined ? "skipped" : v ? "pass" : "FAIL";
+}
+
+export function toPastTenseSummary(text: string): string {
+  return text
+    .replace(/\buser\(s\)/gi, "users")
+    .replace(/\bmember\(s\)/gi, "members")
+    .replace(/\brule\(s\)/gi, "rules")
+    .replace(/\btag\(s\)/gi, "tags")
+    .replace(/^Remediates\b/i, "Remediated")
+    .replace(/^Remediate\b/i, "Remediated")
+    .replace(/^Assigns\b/i, "Assigned")
+    .replace(/^Assign\b/i, "Assigned")
+    .replace(/^Moves\b/i, "Moved")
+    .replace(/^Move\b/i, "Moved")
+    .replace(/^Removes\b/i, "Removed")
+    .replace(/^Remove\b/i, "Removed")
+    .replace(/^Excludes\b/i, "Excluded")
+    .replace(/^Exclude\b/i, "Excluded")
+    .replace(/^Switches\b/i, "Switched")
+    .replace(/^Switch\b/i, "Switched")
+    .replace(/^Restores\b/i, "Restored")
+    .replace(/^Restore\b/i, "Restored")
+    .replace(/^Updates\b/i, "Updated")
+    .replace(/^Update\b/i, "Updated")
+    .replace(/^Reclaims\b/i, "Reclaimed")
+    .replace(/^Reclaim\b/i, "Reclaimed")
+    .replace(/^Replaces\b/i, "Replaced")
+    .replace(/^Replace\b/i, "Replaced")
+    .replace(/\bstill hold\b/gi, "held")
+    .replace(/\bremain in\b/gi, "remained in")
+    .replace(/\bare blocked\b/gi, "were blocked")
+    .replace(/\brejects\b/gi, "rejected")
+    .replace(/\bfails\b/gi, "failed")
+    .replace(/\bexposes\b/gi, "exposed")
+    .replace(/\bhas tag drift\b/gi, "had tag drift")
+    .replace(/\bremoves\b/g, "removed")
+    .replace(/\bremove\b/g, "removed")
+    .replace(/\breprocesses\b/g, "reprocessed")
+    .replace(/\breprocess\b/g, "reprocessed")
+    .replace(/\bexcludes\b/g, "excluded")
+    .replace(/\bexclude\b/g, "excluded")
+    .replace(/\bswitches\b/g, "switched")
+    .replace(/\bswitch\b/g, "switched")
+    .replace(/\brestores\b/g, "restored")
+    .replace(/\brestore\b/g, "restored")
+    .replace(/\bdeletes\b/g, "deleted")
+    .replace(/\bsets\b/g, "set")
+    .replace(/inverse rollback f(?:⁻¹|\^-1)\s*(?:archived)?/gi, "verified 1-click undo script archived")
+    .replace(/f⁻¹|f\^-1/g, "verified 1-click undo script archived");
 }

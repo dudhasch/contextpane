@@ -172,11 +172,15 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
 function FleetPill() {
   const fleet = useWorkbench((s) => s.fleet);
   const openRemediation = useWorkbench((s) => s.openRemediation);
+  const prewarmRemediation = useWorkbench((s) => s.prewarmRemediation);
   if (!fleet || fleet.affectedCount === 0) return null;
   return (
     <button
       type="button"
       onClick={() => openRemediation({ tab: "fleet" })}
+      onPointerEnter={() => {
+        window.setTimeout(() => void prewarmRemediation(), 60);
+      }}
       className="mt-2.5 inline-flex min-h-6 items-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-2.5 py-1 text-left text-[11.5px] leading-tight whitespace-normal text-warning transition-colors hover:bg-warning/20"
       title={`Review ${fleet.affectedCount} other client tenants with this same misconfiguration`}
       data-testid="fleet-pill"
@@ -197,6 +201,7 @@ function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep;
   const checked = useWorkbench((s) => Boolean(s.stepsDone[`${scenarioId}:${step.id}`])) || resolved;
   const toggle = useWorkbench((s) => s.toggleStep);
   const runStep = useWorkbench((s) => s.runStep);
+  const prewarmRemediation = useWorkbench((s) => s.prewarmRemediation);
   const setLinked = useWorkbench((s) => s.setLinked);
   const focusCard = useWorkbench((s) => s.focusCard);
   const allSameCategory = steps.length > 1 && steps.every((s) => s.category === steps[0]?.category);
@@ -205,7 +210,12 @@ function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep;
     <li
       style={catStyle(effectiveCategory)}
       className="group flex items-start gap-2 rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-[color-mix(in_oklab,var(--cat)_40%,transparent)] hover:bg-[color-mix(in_oklab,var(--cat)_8%,transparent)]"
-      onMouseEnter={() => setLinked({ target: step.target, category: effectiveCategory })}
+      onMouseEnter={() => {
+        setLinked({ target: step.target, category: effectiveCategory });
+        if (step.action.kind === "stage-fix") {
+          window.setTimeout(() => void prewarmRemediation(), 60);
+        }
+      }}
       onMouseLeave={() => setLinked(null)}
     >
       <button

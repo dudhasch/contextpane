@@ -177,7 +177,22 @@ app.get("/api/scenarios/:scenarioId/brief", async (c) => {
 app.get("/api/dataplane/:scenarioId", async (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
   const snapshot = publishDataPlane(await gatherContext(scenarioId));
-  return c.json({ scenarioId, gatheredAt: snapshot.gatheredAt, bytes: snapshot.bytes, datasets: snapshot.descriptors, piiMetrics: snapshot.piiMetrics, vaultMetrics: snapshot.piiMetrics, pii: snapshot.piiMetrics });
+  return c.json({
+    scenarioId,
+    tenantId: snapshot.tenantId,
+    epoch: snapshot.epoch,
+    generation: snapshot.generation,
+    fence: { tenantId: snapshot.tenantId, epoch: snapshot.epoch, generation: snapshot.generation },
+    columnarScanNs: snapshot.columnarScanNs,
+    gatheredAt: snapshot.gatheredAt,
+    bytes: snapshot.bytes,
+    datasets: snapshot.descriptors,
+    piiMetrics: snapshot.piiMetrics,
+    vaultMetrics: snapshot.piiMetrics,
+    pii: snapshot.piiMetrics,
+    evidenceGraph: snapshot.evidenceGraph,
+    informationBottleneck: snapshot.informationBottleneck,
+  });
 });
 
 /* ------------- Live agency: highlight → Generate Context UI, unscripted tickets ------------- */

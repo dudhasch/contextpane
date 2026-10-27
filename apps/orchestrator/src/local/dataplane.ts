@@ -1,29 +1,76 @@
 import {
   DATASETS,
+  HUMAN_FOVEAL_CAPACITY_BITS,
   PII_FIELDS,
   applyPtrQuery,
   baseDataPtr,
+  buildColumnarIndex,
+  bumpDataPlaneEpoch,
+  computeBurstiness,
+  computeLog2RowBucket,
   createPiiVault,
   dataPtr,
   datasetsFor,
+  fencedDataPtr,
+  getDataPlaneEpoch,
+  getDataPlaneGeneration,
+  getRegisteredDataset,
+  isMachineOrNonPersonalPii,
   isPiiField,
   parseDataPtr,
   parseSelectionPtr,
   pseudonymizeForLlm as catalogPseudonymizeForLlm,
+  registerDataset,
   resolvePointer,
+  scoreInformationBottleneck,
   sessionPiiVault,
+  verifyPointerFence,
   type CanvasComponentType,
+  type ColumnarTableView,
   type DataPtr,
   type DatasetDescriptor,
   type DatasetKey,
+  type InformationBottleneckReport,
   type PiiVault,
   type PiiVaultMetrics,
+  type PointerFence,
+  type PointerFenceVerification,
   type ScenarioId,
 } from "@contextpane/catalog";
 
-export { PII_FIELDS, createPiiVault, createPseudonymVault, getPiiVaultMetrics, isPiiField, PII_FIELD_NAMES, sessionPiiVault } from "@contextpane/catalog";
-export type { PiiVault, PiiVaultMetrics } from "@contextpane/catalog";
+export {
+  HUMAN_FOVEAL_CAPACITY_BITS,
+  PII_FIELDS,
+  PII_FIELD_NAMES,
+  buildColumnarIndex,
+  bumpDataPlaneEpoch,
+  computeBurstiness,
+  computeLog2RowBucket,
+  createPiiVault,
+  createPseudonymVault,
+  fencedDataPtr,
+  getDataPlaneEpoch,
+  getDataPlaneGeneration,
+  getPiiVaultMetrics,
+  getRegisteredDataset,
+  isMachineOrNonPersonalPii,
+  isPiiField,
+  registerDataset,
+  scoreInformationBottleneck,
+  sessionPiiVault,
+  verifyPointerFence,
+} from "@contextpane/catalog";
+export type {
+  ColumnarTableView,
+  InformationBottleneckReport,
+  PiiVault,
+  PiiVaultMetrics,
+  PointerFence,
+  PointerFenceVerification,
+} from "@contextpane/catalog";
 import type { CorrelationContext } from "../mcp/context.ts";
+import { buildEvidenceGraph, type EntityEvidenceGraph } from "./evidence-graph.ts";
+export { buildEvidenceGraph, type EntityEvidenceGraph } from "./evidence-graph.ts";
 import { buildComponent, scenarioComponents } from "./hydrate.ts";
 
 /**
@@ -36,6 +83,9 @@ import { buildComponent, scenarioComponents } from "./hydrate.ts";
 export interface DataPlaneSnapshot {
   /** Workbench id the pointers are published under: ptr://<scenarioId>/... */
   scenarioId: string;
+  tenantId: string;
+  epoch: number;
+  generation: number;
   gatheredAt: string;
   descriptors: DatasetDescriptor[];
   rows: Map<DataPtr, unknown>;
@@ -44,6 +94,9 @@ export interface DataPlaneSnapshot {
   piiVault: PiiVault;
   piiMetrics: PiiVaultMetrics;
   vaultMetrics: PiiVaultMetrics;
+  columnarScanNs: number;
+  evidenceGraph: EntityEvidenceGraph;
+  informationBottleneck: InformationBottleneckReport;
 }
 
 const byContext = new WeakMap<CorrelationContext, DataPlaneSnapshot>();
@@ -51,11 +104,15 @@ const byContext = new WeakMap<CorrelationContext, DataPlaneSnapshot>();
 const latest = new Map<string, DataPlaneSnapshot>();
 
 /** Publishes (once per gathered context) every dataset the scenario's cards are bound from. */
-export function publishDataPlane(ctx: CorrelationContext): DataPlaneSnapshot {
+export function publishDataPlane(ctx: CorrelationContext, options?: { epoch?: number }): DataPlaneSnapshot {
   const hit = byContext.get(ctx);
-  if (hit) return hit;
+  if (hit && (options?.epoch === undefined || hit.epoch === options.epoch)) return hit;
+  const epoch = options?.epoch ?? getDataPlaneEpoch();
   const rows = new Map<DataPtr, unknown>();
   const descriptors: DatasetDescriptor[] = [];
+  let totalColumnarScanNs = 0;
+  let lastGeneration = getDataPlaneGeneration();
+
   for (const type of scenarioComponents(ctx)) {
     const component = buildComponent(type, ctx);
     if (!component) continue;
@@ -64,14 +121,22 @@ export function publishDataPlane(ctx: CorrelationContext): DataPlaneSnapshot {
       const ptr = dataPtr(ctx.ticketId, key);
       const value = props[DATASETS[key].prop];
       rows.set(ptr, value);
-      descriptors.push(describeDataset(ptr, key, value));
+      const reg = registerDataset(ptr, value, { tenantId: ctx.tenantId, epoch });
+      lastGeneration = reg.fence.generation;
+      const scanNs = reg.columnar?.builtInNs ?? 50;
+      totalColumnarScanNs += scanNs;
+      descriptors.push(describeDataset(ptr, key, value, reg.fence, scanNs));
     }
   }
-  const piiVault = createPiiVault();
+  const piiVault = createPiiVault(epoch);
   for (const value of rows.values()) piiVault.pseudonymize(value);
   const piiMetrics = piiVault.metrics();
+  const evidenceGraph = buildEvidenceGraph(ctx, descriptors);
   const snapshot: DataPlaneSnapshot = {
     scenarioId: ctx.ticketId,
+    tenantId: ctx.tenantId,
+    epoch,
+    generation: lastGeneration,
     gatheredAt: ctx.gatheredAt,
     descriptors,
     rows,
@@ -79,6 +144,9 @@ export function publishDataPlane(ctx: CorrelationContext): DataPlaneSnapshot {
     piiVault,
     piiMetrics,
     vaultMetrics: piiMetrics,
+    columnarScanNs: totalColumnarScanNs,
+    evidenceGraph,
+    informationBottleneck: evidenceGraph.informationBottleneck,
   };
   byContext.set(ctx, snapshot);
   latest.set(ctx.ticketId, snapshot);
@@ -110,7 +178,7 @@ const selections = new Map<string, SelectionPublication>();
  * the client gets the rows bound from here.
  */
 export function publishSelection(input: { ptr: string; scenarioId: string; selectedText: string; sourceQuery: string; rows: Record<string, unknown>[] }): SelectionPublication {
-  const piiVault = createPiiVault();
+  const piiVault = createPiiVault(getDataPlaneEpoch());
   piiVault.pseudonymize(input.rows);
   const base = describeSelectionRows(input.ptr, input.rows);
   const publication: SelectionPublication = {
@@ -135,6 +203,7 @@ function describeSelectionRows(ptr: string, rows: Record<string, unknown>[]): Da
   const cols = columnsOf(rows);
   const piiFields = cols.filter((c) => isPiiField(c));
   const bytes = Buffer.byteLength(JSON.stringify(rows));
+  const kAnonymitySuppressed = rows.length > 0 && rows.length < 2;
   return {
     ptr: ptr as DataPtr,
     component: "ContextualMiniDashboard",
@@ -142,13 +211,30 @@ function describeSelectionRows(ptr: string, rows: Record<string, unknown>[]): Da
     kind: rows.length ? "rows" : "empty",
     rowCount: rows.length,
     columns: cols,
-    aggregates: enumCounts(rows),
+    aggregates: kAnonymitySuppressed ? {} : enumCounts(rows),
     bytes,
+    burstiness: computeBurstiness(rows),
+    log2RowBucket: computeLog2RowBucket(rows.length),
+    kAnonymitySuppressed,
     ...(piiFields.length ? { piiFields, piiAnnotations: Object.fromEntries(piiFields.map((f) => [f, PII_FIELDS[f as keyof typeof PII_FIELDS].annotation])) } : {}),
   };
 }
 
-export interface ResolvedDataPtr { found: boolean; value?: unknown; rows?: unknown; descriptor?: DatasetDescriptor; error?: string; query?: unknown; piiMetrics: PiiVaultMetrics; vaultMetrics: PiiVaultMetrics; pii: PiiVaultMetrics; pseudonymizedValue?: unknown; llmSafeValue?: unknown }
+export interface ResolvedDataPtr {
+  found: boolean;
+  value?: unknown;
+  rows?: unknown;
+  descriptor?: DatasetDescriptor;
+  error?: string;
+  query?: unknown;
+  piiMetrics: PiiVaultMetrics;
+  vaultMetrics: PiiVaultMetrics;
+  pii: PiiVaultMetrics;
+  pseudonymizedValue?: unknown;
+  llmSafeValue?: unknown;
+  fence?: PointerFence;
+  columnarScanNs?: number;
+}
 
 /** LLM-prompt-facing serialization: PII fields become deterministic vault tokens, never raw. */
 export function pseudonymizeForLlm(value: unknown, vault?: PiiVault): unknown {
@@ -167,8 +253,11 @@ export const depseudonymizeForLlm = unvaultForLlm;
 export function vaultPii(value: unknown, vault?: PiiVault): unknown { return pseudonymizeForLlm(value, vault); }
 export function unvaultPii(value: unknown, vault?: PiiVault): unknown { return unvaultForLlm(value, vault); }
 
-/** Rows behind a pointer (plain or ptr:// v2 relational query), from the latest snapshot of its scenario. */
-export function resolveDataPtr(ptr: string): ResolvedDataPtr {
+/** Rows behind a pointer (plain or ptr:// v2/v3 relational query), from the latest snapshot of its scenario. */
+export function resolveDataPtr(
+  ptr: string,
+  options?: { expectedTenantId?: string; expectedEpoch?: number },
+): ResolvedDataPtr {
   const emptyMetrics = createPiiVault().metrics();
   const selection = parseSelectionPtr(ptr) ? resolveSelectionPtr(ptr) : null;
   if (selection) {
@@ -181,19 +270,67 @@ export function resolveDataPtr(ptr: string): ResolvedDataPtr {
   const snapshot = [...latest.values()].find((s) => s.scenarioId.toLowerCase() === parsed.scenario);
   const base = (parsed.basePtr ?? baseDataPtr(ptr)) as DataPtr;
   if (!snapshot?.rows.has(base)) return { found: false, value: [], rows: [], error: `'${ptr}' is not published`, piiMetrics: emptyMetrics, vaultMetrics: emptyMetrics, pii: emptyMetrics };
+
+  // Enforce Generation & Tenant Fence when options or embedded fence are provided
+  if (options?.expectedTenantId !== undefined || options?.expectedEpoch !== undefined || parsed.fence) {
+    const check = verifyPointerFence(
+      ptr,
+      options?.expectedTenantId ?? snapshot.tenantId,
+      options?.expectedEpoch ?? snapshot.epoch,
+    );
+    if (!check.valid) {
+      return {
+        found: false,
+        value: [],
+        rows: [],
+        error: `pointer fence failed: ${check.reason}`,
+        piiMetrics: emptyMetrics,
+        vaultMetrics: emptyMetrics,
+        pii: emptyMetrics,
+        fence: check.fence ?? undefined,
+      };
+    }
+  }
+
   const descriptor = snapshot.descriptors.find((d) => d.ptr === base)!;
   const metrics = snapshot.piiVault ? snapshot.piiVault.metrics() : snapshot.piiMetrics;
   const raw = snapshot.rows.get(base);
+  const registered = getRegisteredDataset(base);
   if (!parsed.query) {
     const llmSafeValue = snapshot.piiVault.pseudonymize(raw);
     const m2 = snapshot.piiVault.metrics();
-    return { found: true, value: raw, rows: raw, descriptor, piiMetrics: m2, vaultMetrics: m2, pii: m2, pseudonymizedValue: llmSafeValue, llmSafeValue };
+    return {
+      found: true,
+      value: raw,
+      rows: raw,
+      descriptor,
+      piiMetrics: m2,
+      vaultMetrics: m2,
+      pii: m2,
+      pseudonymizedValue: llmSafeValue,
+      llmSafeValue,
+      fence: descriptor.fence ?? registered?.fence,
+      columnarScanNs: descriptor.columnarScanNs ?? registered?.columnar?.builtInNs ?? 50,
+    };
   }
   const resolved = resolvePointer(ptr, raw);
   if (!resolved.found) return { found: false, value: [], rows: [], descriptor, error: resolved.error ?? "invalid ptr query", query: parsed.query, piiMetrics: metrics, vaultMetrics: metrics, pii: metrics };
   const llmSafeValue = snapshot.piiVault.pseudonymize(resolved.value);
   const m2 = snapshot.piiVault.metrics();
-  return { found: true, value: resolved.value, rows: resolved.value, descriptor, query: parsed.query, piiMetrics: m2, vaultMetrics: m2, pii: m2, pseudonymizedValue: llmSafeValue, llmSafeValue };
+  return {
+    found: true,
+    value: resolved.value,
+    rows: resolved.value,
+    descriptor,
+    query: parsed.query,
+    piiMetrics: m2,
+    vaultMetrics: m2,
+    pii: m2,
+    pseudonymizedValue: llmSafeValue,
+    llmSafeValue,
+    fence: resolved.fence ?? descriptor.fence,
+    columnarScanNs: resolved.columnarScanNs,
+  };
 }
 export const resolvePointerFn = resolveDataPtr;
 export { resolvePointer };
@@ -210,10 +347,16 @@ const PERSONAL_COLUMNS = new Set(["upn", "displayName", "objectId", "id", "jobTi
  * counts for the low-cardinality columns (states, error codes, policy names), which is
  * what a headline needs. Unique columns such as UPNs or device names are left out.
  */
-export function describeDataset(ptr: DataPtr, key: DatasetKey, value: unknown): DatasetDescriptor {
+export function describeDataset(
+  ptr: DataPtr,
+  key: DatasetKey,
+  value: unknown,
+  fence?: PointerFence,
+  columnarScanNs?: number,
+): DatasetDescriptor {
   const { component, prop } = DATASETS[key];
   const bytes = value === undefined || value === null ? 0 : Buffer.byteLength(typeof value === "string" ? value : JSON.stringify(value));
-  const base = { ptr, component, prop, bytes };
+  const base = { ptr, component, prop, bytes, ...(fence ? { fence } : {}), ...(columnarScanNs !== undefined ? { columnarScanNs } : {}) };
   if (typeof value === "string") {
     const lines = value ? value.split("\n") : [];
     return {
@@ -229,13 +372,27 @@ export function describeDataset(ptr: DataPtr, key: DatasetKey, value: unknown): 
             removed: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length,
           }
         : {},
+      burstiness: 0,
+      log2RowBucket: computeLog2RowBucket(lines.length),
+      kAnonymitySuppressed: false,
     };
   }
   if (Array.isArray(value)) {
     const rows = value.filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === "object");
     const cols = columnsOf(rows);
     const piiFields = cols.filter((c) => isPiiField(c));
-    return { ...base, kind: rows.length ? "rows" : "empty", rowCount: rows.length, columns: cols, aggregates: enumCounts(rows), ...(piiFields.length ? { piiFields, piiAnnotations: Object.fromEntries(piiFields.map((f) => [f, PII_FIELDS[f as keyof typeof PII_FIELDS].annotation])) } : {}) };
+    const kAnonymitySuppressed = rows.length > 0 && rows.length < 2;
+    return {
+      ...base,
+      kind: rows.length ? "rows" : "empty",
+      rowCount: rows.length,
+      columns: cols,
+      aggregates: kAnonymitySuppressed ? {} : enumCounts(rows),
+      burstiness: computeBurstiness(rows),
+      log2RowBucket: computeLog2RowBucket(rows.length),
+      kAnonymitySuppressed,
+      ...(piiFields.length ? { piiFields, piiAnnotations: Object.fromEntries(piiFields.map((f) => [f, PII_FIELDS[f as keyof typeof PII_FIELDS].annotation])) } : {}),
+    };
   }
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
@@ -243,9 +400,28 @@ export function describeDataset(ptr: DataPtr, key: DatasetKey, value: unknown): 
     const scalars = Object.fromEntries(
       Object.entries(obj).filter(([, v]) => ["string", "number", "boolean"].includes(typeof v) && String(v).length <= ENUM_VALUE_MAX),
     ) as Record<string, string | number | boolean>;
-    return { ...base, kind: "object", rowCount: nested?.length ?? 1, columns: Object.keys(obj), aggregates: scalars };
+    const rc = nested?.length ?? 1;
+    return {
+      ...base,
+      kind: "object",
+      rowCount: rc,
+      columns: Object.keys(obj),
+      aggregates: scalars,
+      burstiness: 0,
+      log2RowBucket: computeLog2RowBucket(rc),
+      kAnonymitySuppressed: false,
+    };
   }
-  return { ...base, kind: "empty", rowCount: 0, columns: [], aggregates: {} };
+  return {
+    ...base,
+    kind: "empty",
+    rowCount: 0,
+    columns: [],
+    aggregates: {},
+    burstiness: 0,
+    log2RowBucket: 0,
+    kAnonymitySuppressed: false,
+  };
 }
 
 function columnsOf(rows: Record<string, unknown>[]): string[] {

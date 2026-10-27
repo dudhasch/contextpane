@@ -76,5 +76,8 @@ describe("Tier3->Tier0 skill compiler (unit, POST-compile logic)", () => {
     const again = await compileSkill("INC-4092");
     expect(again.id).toBe(skill.id);
     expect(again.signature).toEqual(skill.signature);
+    expect(skill.invariantProofMask).toBe(0x7f);
+    expect(skill.minPerturbationCost).toBeGreaterThan(0);
+    expect(skill.schemaSignature).toContain("0x7f");
   });
 });

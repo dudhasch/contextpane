@@ -41,6 +41,9 @@
       "cases": 100,
       "passed": 100
     },
+    "invariantProofMask": 127,
+    "minPerturbationCost": 5.5,
+    "schemaSignature": "pcc-v3-anom-app-401-0x7f",
     "createdAt": "2026-10-27T14:33:47.719Z",
     "version": 1
   },
@@ -90,12 +93,15 @@
     },
     "tier": 0,
     "tokenCost": 0,
-    "latencyMs": 0.026,
+    "latencyMs": 0.034,
     "fuzz": {
       "cases": 100,
       "passed": 100
     },
-    "createdAt": "2026-10-27T20:26:20.302Z",
+    "invariantProofMask": 127,
+    "minPerturbationCost": 6.5,
+    "schemaSignature": "pcc-v3-inc-4092-0x7f-h3dbc0763",
+    "createdAt": "2026-10-27T21:23:32.168Z",
     "version": 1
   },
   {
@@ -144,6 +150,9 @@
       "cases": 100,
       "passed": 100
     },
+    "invariantProofMask": 127,
+    "minPerturbationCost": 9.5,
+    "schemaSignature": "pcc-v3-inc-4099-0x7f",
     "createdAt": "2026-10-27T12:05:25.019Z",
     "version": 1
   },
@@ -184,6 +193,9 @@
       "cases": 100,
       "passed": 100
     },
+    "invariantProofMask": 127,
+    "minPerturbationCost": 6.5,
+    "schemaSignature": "pcc-v3-anom-lic-101-0x7f",
     "createdAt": "2026-10-27T12:05:25.024Z",
     "version": 1
   },
@@ -224,6 +236,9 @@
       "cases": 100,
       "passed": 100
     },
+    "invariantProofMask": 127,
+    "minPerturbationCost": 4.5,
+    "schemaSignature": "pcc-v3-anom-ca-204-0x7f",
     "createdAt": "2026-10-27T12:05:25.026Z",
     "version": 1
   },
@@ -268,6 +283,9 @@
       "cases": 100,
       "passed": 100
     },
+    "invariantProofMask": 127,
+    "minPerturbationCost": 7.5,
+    "schemaSignature": "pcc-v3-anom-int-309-0x7f",
     "createdAt": "2026-10-27T12:05:25.027Z",
     "version": 1
   }

@@ -390,26 +390,26 @@ function ScriptsAndChangesTab({
           {subTab === "powershell" && (
             <CodeBlock
               code={drawer.powershellScript}
-              maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+              maxHeight="flex-1 min-h-[380px] max-h-[calc(100vh-260px)] overflow-y-auto"
               hideToolbar
             />
           )}
           {subTab === "graph" && (
             <CodeBlock
               code={drawer.graphPatch || "[]"}
-              maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+              maxHeight="flex-1 min-h-[380px] max-h-[calc(100vh-260px)] overflow-y-auto"
               hideToolbar
             />
           )}
           {subTab === "terraform" && drawer.terraformDiff && (
             <CodeBlock
               code={drawer.terraformDiff}
-              maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+              maxHeight="flex-1 min-h-[380px] max-h-[calc(100vh-260px)] overflow-y-auto"
               hideToolbar
               render={(wrap) => (
                 <DiffView
                   diff={drawer.terraformDiff}
-                  maxHeight="flex-1 min-h-[360px] max-h-[calc(100vh-270px)] overflow-y-auto"
+                  maxHeight="flex-1 min-h-[380px] max-h-[calc(100vh-260px)] overflow-y-auto"
                   wrap={wrap}
                 />
               )}
@@ -671,34 +671,70 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
 /* Tab 3: Other Clients (3)                                                   */
 /* -------------------------------------------------------------------------- */
 
-const PEER_TENANT_META: Record<string, { id: string; name: string; domain: string; branchPrefix: string }> = {
-  "Contoso Finance": { id: "tenant-contoso-01", name: "Contoso Finance", domain: "c4a8shili.onmicrosoft.com", branchPrefix: "fleet/contoso-finance" },
-  "Fabrikam Legal": { id: "tenant-fabrikam-02", name: "Fabrikam Legal", domain: "fabrikamlegal.onmicrosoft.com", branchPrefix: "fleet/fabrikam-legal" },
-  "Northwind Traders": { id: "tenant-northwind-03", name: "Northwind Traders", domain: "northwindtraders.onmicrosoft.com", branchPrefix: "fleet/northwind-traders" },
-  "Tailspin Aerospace": { id: "tenant-tailspin-04", name: "Tailspin Aerospace", domain: "tailspinaerospace.onmicrosoft.com", branchPrefix: "fleet/tailspin-aerospace" },
-  "Woodgrove Bank": { id: "tenant-woodgrove-05", name: "Woodgrove Bank", domain: "woodgrovebank.onmicrosoft.com", branchPrefix: "fleet/woodgrove-bank" },
+export const PEER_TENANT_META: Record<string, { id: string; name: string; slug: string; domain: string; branchPrefix: string }> = {
+  "Contoso Finance": { id: "tenant-contoso-01", name: "Contoso Finance", slug: "contoso-finance", domain: "c4a8shili.onmicrosoft.com", branchPrefix: "fleet/contoso-finance" },
+  "Fabrikam Legal": { id: "tenant-fabrikam-02", name: "Fabrikam Legal", slug: "fabrikam-legal", domain: "fabrikamlegal.onmicrosoft.com", branchPrefix: "fleet/fabrikam-legal" },
+  "Northwind Traders": { id: "tenant-northwind-03", name: "Northwind Traders", slug: "northwind-traders", domain: "northwindtraders.onmicrosoft.com", branchPrefix: "fleet/northwind-traders" },
+  "Tailspin Aerospace": { id: "tenant-tailspin-04", name: "Tailspin Aerospace", slug: "tailspin-aerospace", domain: "tailspinaerospace.onmicrosoft.com", branchPrefix: "fleet/tailspin-aerospace" },
+  "Woodgrove Bank": { id: "tenant-woodgrove-05", name: "Woodgrove Bank", slug: "woodgrove-bank", domain: "woodgrovebank.onmicrosoft.com", branchPrefix: "fleet/woodgrove-bank" },
 };
+
+export function resolveOtherAffectedClients(
+  fleet: { signature: string; tenants: Array<{ tenant: string; affected: boolean }> } | null | undefined,
+  activeTenantName: string,
+  affectedTenantIds?: string[],
+): Array<{ id: string; name: string; slug: string; domain: string; branchPrefix: string; badge: string }> {
+  const fromIds = affectedTenantIds
+    ? affectedTenantIds
+        .map((raw) => {
+          const byName = PEER_TENANT_META[raw];
+          if (byName) return byName;
+          const byId = Object.values(PEER_TENANT_META).find((m) => m.id === raw || m.slug === raw);
+          if (byId) return byId;
+          const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+          return { id: `tenant-${slug}`, name: raw, slug, domain: `${slug.replace(/-/g, "")}.onmicrosoft.com`, branchPrefix: `fleet/${slug}` };
+        })
+        .filter((m) => m.name !== activeTenantName && m.id !== activeTenantName)
+    : null;
+
+  const baseList =
+    fromIds ??
+    (fleet?.tenants ?? [])
+      .filter((t) => {
+        const name = t.tenant ?? (t as { tenantName?: string }).tenantName ?? "";
+        return t.affected && name !== "" && name !== activeTenantName;
+      })
+      .map((t) => {
+        const name = t.tenant ?? (t as { tenantName?: string }).tenantName ?? "";
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        return (
+          PEER_TENANT_META[name] ?? {
+            id: `tenant-${slug}`,
+            name,
+            slug,
+            domain: `${name.toLowerCase().replace(/[^a-z0-9]/g, "")}.onmicrosoft.com`,
+            branchPrefix: `fleet/${slug}`,
+          }
+        );
+      });
+
+  return baseList.map((t) => ({
+    ...t,
+    badge: "1 issue · ✓ Safety Check Ready",
+  }));
+}
 
 function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => Promise<void> }) {
   const [subView, setSubView] = useState<"clients" | "terraform">("clients");
   const fleet = useWorkbench((s) => s.fleet);
   const activeTenantName = useWorkbench((s) => {
+    if (s.brief?.tenantName) return s.brief.tenantName;
     const active = s.scenarios.find((sc) => sc.scenarioId === s.scenarioId);
-    return active?.tenantName ?? (s.scenarioId === "INC-4099" ? "Fabrikam Legal" : "Contoso Finance");
+    return active?.tenantName ?? (s.scenarioId === "INC-4099" || s.scenarioId === "ANOM-INT-309" ? "Fabrikam Legal" : "Contoso Finance");
   });
   const rev = useWorkbench((s) => s.reverseResult);
   const stage = useWorkbench((s) => s.stageCampaign);
-  const affectedPeers = (fleet?.tenants ?? [])
-    .filter((t) => t.affected && t.tenant !== activeTenantName)
-    .map(
-      (t) =>
-        PEER_TENANT_META[t.tenant] ?? {
-          id: `tenant-${t.tenant.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-          name: t.tenant,
-          domain: `${t.tenant.toLowerCase().replace(/[^a-z0-9]/g, "")}.onmicrosoft.com`,
-          branchPrefix: `fleet/${t.tenant.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-        },
-    );
+  const affectedPeers = resolveOtherAffectedClients(fleet, activeTenantName);
   const count = affectedPeers.length;
 
   return (
@@ -744,7 +780,7 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
                   </thead>
                   <tbody>
                     {affectedPeers.map((t) => {
-                      const branch = `${t.branchPrefix}/${fleet.signature}`;
+                      const branch = `fleet/${fleet.signature}/${t.slug}`;
                       return (
                         <tr key={t.id} className="border-t border-slate-800/80">
                           <td className="px-3 py-2">
@@ -752,13 +788,13 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
                             <div className="font-mono text-[10.5px] text-faint">{t.domain}</div>
                           </td>
                           <td className="px-3 py-2">
-                            <div className="max-w-[175px] truncate font-mono text-[11px] text-primary" title={branch}>
+                            <div className="max-w-[260px] truncate font-mono text-[11px] text-primary" title={branch}>
                               {branch}
                             </div>
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             <Pill tone="healthy" mono={false}>
-                              1 issue · ✓ Safety Check Ready
+                              {t.badge}
                             </Pill>
                           </td>
                         </tr>
@@ -813,6 +849,25 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
 /* Tab 4: Customer Note & Docs                                                */
 /* -------------------------------------------------------------------------- */
 
+function formatFriendlyEntityList(drawer: Drawer): string {
+  const friendly: string[] = [];
+  let hasNsg = false;
+  for (const e of drawer.affectedEntities) {
+    const raw = e.id.trim();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(raw)) {
+      friendly.push("Conditional Access policy exclusion");
+    } else if (raw.includes("/tags/") || raw.startsWith("nsg-")) {
+      if (!hasNsg) {
+        hasNsg = true;
+        friendly.push(`${raw.split("/")[0]} (port 3389 closed & baseline tags restored)`);
+      }
+    } else {
+      friendly.push(raw.split("@")[0] ?? raw);
+    }
+  }
+  return [...new Set(friendly)].join(", ");
+}
+
 function buildCustomerEmail(drawer: Drawer, customerSummary?: string): string {
   if (customerSummary) {
     return [
@@ -843,7 +898,7 @@ function buildCustomerEmail(drawer: Drawer, customerSummary?: string): string {
     `${drawer.summary}`,
     "",
     "Impact & Safety:",
-    `• Affected items repaired: ${drawer.affectedEntities.map((e) => e.id.split("@")[0]).join(", ")}`,
+    `• Affected items repaired: ${formatFriendlyEntityList(drawer)}`,
     "• 0 other users or emergency admin accounts are affected.",
     "• A 1-click undo script is saved in case we need to roll back immediately.",
     "",

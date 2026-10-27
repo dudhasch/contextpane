@@ -47,6 +47,7 @@ interface EntityPillProps {
 export function EntityPill({ entity, inline = false }: EntityPillProps) {
   const [open, setOpen] = useState(false);
   const hover = useWorkbench((s) => s.hover);
+  const prewarmHover = useWorkbench((s) => s.prewarmEntityHover);
   const setLinked = useWorkbench((s) => s.setLinked);
   const focusCard = useWorkbench((s) => s.focusCard);
   const entry = useWorkbench((s) => selectHover(s, entity.id));
@@ -115,7 +116,12 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
         type="button"
         style={catStyle(entity.category)}
         {...getReferenceProps({
-          onMouseEnter: () => setLinked({ target: entity.target, category: entity.category }),
+          onMouseEnter: () => {
+            setLinked({ target: entity.target, category: entity.category });
+            if (hoverable) {
+              window.setTimeout(() => void prewarmHover(entity.id, entity.type), 60);
+            }
+          },
           onMouseLeave: () => setLinked(null),
           onClick: () => focusCard(entity.target, entity.tab),
         })}

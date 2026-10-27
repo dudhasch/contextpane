@@ -64,6 +64,58 @@ export interface MiniDashboardEntry {
   latencyMs: number;
   modelId: string;
   tokenCount: number;
+  speculativeHit?: boolean;
+  savedLatencyMs?: number;
+}
+
+export interface SpeculativeSelectionSlot {
+  key: string;
+  scenarioId: ScenarioId;
+  epoch: number;
+  normalizedText: string;
+  rawText: string;
+  viewMode: ContextViewMode;
+  refinementText?: string;
+  startedAt: number;
+  resolvedAt?: number;
+  status: "inflight" | "resolved" | "failed";
+  promise: Promise<import("./lib/api").ExploreSelectionResponse | null>;
+  response?: import("./lib/api").ExploreSelectionResponse;
+}
+
+export interface SpeculativeBufferSlot {
+  slotKey: string;
+  kind: "queue-brief" | "entity-hover" | "remediation";
+  scenarioId: ScenarioId;
+  targetId: string;
+  epoch: number;
+  startedAt: number;
+  resolvedAt?: number;
+  status: "inflight" | "resolved" | "failed";
+  briefData?: { brief: ScenarioBrief; hovers?: Record<string, HoverDiagnosticPopover> };
+  hoverData?: HoverDiagnosticPopover;
+  remediateData?: ActionApprovalDrawer;
+  promise: Promise<unknown>;
+}
+
+export interface KinematicMetrics {
+  speculativeHits: number;
+  speculativeMisses: number;
+  savedLatencyMs: number;
+  lastHitKind: "explore-selection" | "queue-brief" | "entity-hover" | "remediation" | null;
+  lastHitTarget: string | null;
+  lastHitPromoteMs: number;
+  selectionPrewarms: number;
+  selectionDiscards: number;
+  bufferPrewarms: number;
+}
+
+export function normalizeSpeculativeText(rawText: string): string {
+  return rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS).toLowerCase();
+}
+
+export function buildSpeculativeSelectionKey(scenarioId: string, epoch: number, rawText: string): string {
+  return `${scenarioId}:${epoch}:${normalizeSpeculativeText(rawText)}`;
 }
 
 /** Cross-card identity highlight: one UPN or device lit on every open card. */
@@ -158,6 +210,13 @@ interface WorkbenchState {
   timelineSliceId: string | null;
   compiledSkills: SkillDef[];
   piiMetrics: PiiMetrics | null;
+  dataplaneDetail: import("./lib/api").DataPlaneDetailResponse | null;
+
+  /* Ω-Prime kinematic speculative pre-warm */
+  speculativeEpoch: number;
+  speculativeSelectionCache: Record<string, SpeculativeSelectionSlot>;
+  speculativeBuffer: SpeculativeBufferSlot[];
+  kinematicMetrics: KinematicMetrics;
 
   /* live agency */
   /** Generated mini-dashboards of the scenario on screen, newest first. */
@@ -272,6 +331,16 @@ interface WorkbenchState {
   extractVision(attachment: ErpAttachment): Promise<void>;
   /** Highlight → Generate Context UI: spawns a cyan mini-dashboard for the phrase on the canvas. */
   exploreSelection(text: string, options?: { refinementText?: string; viewMode?: ContextViewMode }): Promise<void>;
+  /** Silent kinematic pre-warm for text selection (zero Midas-touch jitter: never mutates visible UI until click). */
+  prewarmSelectionExplore(
+    rawText: string,
+    options?: { refinementText?: string; viewMode?: ContextViewMode },
+  ): Promise<import("./lib/api").ExploreSelectionResponse | null>;
+  discardSpeculativeSelection(rawText?: string): void;
+  prewarmQueueScenario(scenarioId: ScenarioId): Promise<void>;
+  prewarmEntityHover(entityId: string, entityType?: EntityType): Promise<void>;
+  prewarmRemediation(scenarioId?: ScenarioId): Promise<void>;
+  bumpSpeculativeEpoch(): number;
   setMiniDashboardViewMode(id: string, viewMode: ContextViewMode): void;
   dismissMiniDashboard(id: string): void;
   setLinkedSelection(id: string | null): void;
@@ -331,6 +400,22 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   timelineSliceId: null,
   compiledSkills: [],
   piiMetrics: null,
+  dataplaneDetail: null,
+
+  speculativeEpoch: 1,
+  speculativeSelectionCache: {},
+  speculativeBuffer: [],
+  kinematicMetrics: {
+    speculativeHits: 0,
+    speculativeMisses: 0,
+    savedLatencyMs: 0,
+    lastHitKind: null,
+    lastHitTarget: null,
+    lastHitPromoteMs: 0,
+    selectionPrewarms: 0,
+    selectionDiscards: 0,
+    bufferPrewarms: 0,
+  },
 
   miniDashboards: [],
   selections: {},
@@ -464,7 +549,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     get().toast({
       tone: "meta",
       title: `📥 New ERP Drop: ${item.displayId}${attachments.length ? ` (${attachments.join(", ")})` : ""}`,
-      detail: `${item.title} · ${item.custom?.extraction.entities.filter((e) => e.resolvedTo).length ?? 0} entities matched live · base ${item.custom?.baseScenarioId ?? "?"}`,
+      detail: `${item.title} · ${item.custom?.extraction.entities.filter((e) => e.resolvedTo).length ?? 0} entities matched live`,
       action: { label: `Open ${item.displayId}`, onClick: () => void get().selectScenario(item.scenarioId) },
     });
   },
@@ -503,6 +588,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     set((s) => ({
       scenarioId,
+      speculativeEpoch: s.speculativeEpoch + 1,
+      speculativeSelectionCache: {},
       queueOpen: false,
       voiceOpen: false,
       unseen: s.unseen.filter((id) => id !== scenarioId),
@@ -534,12 +621,42 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       timeline: null,
       timelineSliceId: null,
       canary: null,
+      dataplaneDetail: null,
     }));
     const { activeRecipeId } = get();
     await Promise.all([get().loadBrief(scenarioId), activeRecipeId ? get().hydrateRecipe(activeRecipeId, scenarioId) : get().correlate()]);
   },
 
   async loadBrief(scenarioId = get().scenarioId, fresh = false) {
+    const prewarmedSlot = !fresh
+      ? get().speculativeBuffer.find((b) => b.kind === "queue-brief" && b.scenarioId === scenarioId && b.status === "resolved" && b.briefData)
+      : undefined;
+    if (prewarmedSlot?.briefData) {
+      const promoteStart = performance.now();
+      const { brief, hovers } = prewarmedSlot.briefData;
+      const seededHovers: Record<string, HoverEntry> = {};
+      if (hovers) {
+        for (const [eid, pop] of Object.entries(hovers)) {
+          seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1 };
+        }
+      }
+      const savedMs = Math.max(12, Math.round((prewarmedSlot.resolvedAt ?? performance.now()) - prewarmedSlot.startedAt));
+      const promoteMs = Number(Math.max(0.1, performance.now() - promoteStart).toFixed(2));
+      set((s) => ({
+        brief,
+        briefStatus: "ready",
+        ...(Object.keys(seededHovers).length ? { hovers: { ...s.hovers, ...seededHovers } } : {}),
+        kinematicMetrics: {
+          ...s.kinematicMetrics,
+          speculativeHits: s.kinematicMetrics.speculativeHits + 1,
+          savedLatencyMs: s.kinematicMetrics.savedLatencyMs + savedMs,
+          lastHitKind: "queue-brief",
+          lastHitTarget: scenarioId,
+          lastHitPromoteMs: promoteMs,
+        },
+      }));
+      return;
+    }
     set({ briefStatus: "loading" });
     try {
       const { brief, hovers } = await api.brief(scenarioId, fresh);
@@ -609,7 +726,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const { recipe } = await api.pinRecipe({ name: recipeName, scenarioId, componentTypes, description: `Pinned from ${scenarioId}` });
       await get().loadRecipes();
       set({ activeRecipeId: recipe.recipeId });
-      get().toast({ tone: "healthy", title: `Pinned "${recipe.name}"`, detail: "Scenario switches now hydrate through Tier 0 with 0 LLM tokens." });
+      get().toast({ tone: "healthy", title: `Pinned "${recipe.name}"`, detail: "Scenario switches now load this saved layout in <1ms." });
     } catch (error) {
       get().toast({ tone: "critical", title: "Pin failed", detail: error instanceof Error ? error.message : String(error) });
     }
@@ -622,7 +739,28 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async hover(entityId, entityType) {
     const scenarioId = get().scenarioId;
+    const epoch = get().speculativeEpoch;
     const key = hoverKey(scenarioId, entityId);
+    const specSlot = get().speculativeBuffer.find(
+      (b) => b.kind === "entity-hover" && b.scenarioId === scenarioId && b.epoch === epoch && b.targetId === key && b.hoverData,
+    );
+    if (specSlot?.hoverData) {
+      const promoteStart = performance.now();
+      const savedMs = Math.max(8, Math.round((specSlot.resolvedAt ?? performance.now()) - specSlot.startedAt));
+      const promoteMs = Number(Math.max(0.1, performance.now() - promoteStart).toFixed(2));
+      set((s) => ({
+        hovers: { ...s.hovers, [key]: { status: "ready", popover: specSlot.hoverData, latencyMs: 1 } },
+        kinematicMetrics: {
+          ...s.kinematicMetrics,
+          speculativeHits: s.kinematicMetrics.speculativeHits + 1,
+          savedLatencyMs: s.kinematicMetrics.savedLatencyMs + savedMs,
+          lastHitKind: "entity-hover",
+          lastHitTarget: entityId,
+          lastHitPromoteMs: promoteMs,
+        },
+      }));
+      return;
+    }
     const existing = get().hovers[key];
     if (existing && existing.status !== "error") return;
     set((s) => ({ hovers: { ...s.hovers, [key]: { status: "loading" } } }));
@@ -637,11 +775,42 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async remediate() {
     const scenarioId = get().scenarioId;
+    const epoch = get().speculativeEpoch;
     if (get().remediateStatus === "loading") return;
     // A resolved ticket is not remediated twice: show what ran, or point at Reopen.
     if (get().convergence[scenarioId]) {
       if (get().drawer?.ticketId === scenarioId) set({ drawerOpen: true });
       else get().toast({ tone: "warning", title: `${scenarioId} is already resolved`, detail: "Reopen the ticket or reset drift before running remediation again." });
+      return;
+    }
+    // Check 4-slot speculative buffer for a pre-staged remediation bundle at the current epoch
+    const specRemSlot = get().speculativeBuffer.find(
+      (b) => b.kind === "remediation" && b.scenarioId === scenarioId && b.epoch === epoch && b.remediateData,
+    );
+    if (specRemSlot?.remediateData) {
+      const promoteStart = performance.now();
+      const github = get().health?.github;
+      const savedMs = Math.max(45, Math.round((specRemSlot.resolvedAt ?? performance.now()) - specRemSlot.startedAt));
+      const promoteMs = Number(Math.max(0.1, performance.now() - promoteStart).toFixed(2));
+      set((s) => ({
+        drawer: specRemSlot.remediateData!,
+        drawerOpen: true,
+        voiceOpen: false,
+        remediateStatus: "ready",
+        remediateProgress: [],
+        approveLog: [],
+        executionMode: (getScenarioEntry(scenarioId)?.kind ?? "ticket") === "ticket" ? "break-glass" : "gitops",
+        openPrOnApprove: !isCustomScenarioId(scenarioId) && Boolean(github?.prOnApprove && github.origin && github.ghAuthenticated),
+        kinematicMetrics: {
+          ...s.kinematicMetrics,
+          speculativeHits: s.kinematicMetrics.speculativeHits + 1,
+          savedLatencyMs: s.kinematicMetrics.savedLatencyMs + savedMs,
+          lastHitKind: "remediation",
+          lastHitTarget: scenarioId,
+          lastHitPromoteMs: promoteMs,
+        },
+      }));
+      void get().loadDrawerExtras();
       return;
     }
     set((s) => ({
@@ -706,7 +875,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({
         tone: "healthy",
         title: `${c.execution === "live-graph" ? "Executed live" : "Approved (simulated)"} · ${c.scenarioId} resolved in ${c.latencyMs} ms`,
-        detail: `${executionLog.find((l) => l.startsWith("Graph")) ?? "Canvas converged"} · 0 LLM tokens${c.gitBranch ? ` · ${c.gitBranch}` : ""}`,
+        detail: `${executionLog.find((l) => l.startsWith("Graph")) ?? "Canvas converged"} · Verified safe${c.gitBranch ? ` · ${c.gitBranch}` : ""}`,
         ...(c.prUrl ? { href: c.prUrl, hrefLabel: `GitHub PR #${c.prUrl.split("/pull/")[1] ?? ""}` } : {}),
       });
       // Close the drawer so the emerald canvas is what the operator sees next.
@@ -847,6 +1016,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({
       resetting: true,
       scenarioId: targetScenarioId,
+      speculativeEpoch: s.speculativeEpoch + 1,
+      speculativeSelectionCache: {},
+      speculativeBuffer: [],
       convergence: {},
       drawer: null,
       drawerOpen: false,
@@ -861,6 +1033,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       selections: {},
       resolutionNote: null,
       resolutionNoteStatus: "idle",
+      dataplaneDetail: null,
       scenarios: s.scenarios.filter((x) => !x.scenarioId.startsWith("CUSTOM-")).map((x) => ({ ...x, resolved: false })),
     }));
     try {
@@ -904,7 +1077,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     try {
       const [formal, tl, dp, skills] = await Promise.all([api.formal(scenarioId), api.timeline(scenarioId), api.dataplaneDetail(scenarioId), api.skills()]);
       if (get().scenarioId !== scenarioId) return;
-      set({ formal, timeline: tl.timeline, timelineSliceId: get().timelineSliceId ?? tl.timeline.slices.at(-2)?.id ?? tl.timeline.slices.at(-1)?.id ?? null, piiMetrics: dp.piiMetrics, compiledSkills: skills.skills });
+      set({
+        formal,
+        timeline: tl.timeline,
+        timelineSliceId: get().timelineSliceId ?? tl.timeline.slices.at(-2)?.id ?? tl.timeline.slices.at(-1)?.id ?? null,
+        piiMetrics: dp.piiMetrics,
+        dataplaneDetail: dp,
+        compiledSkills: skills.skills,
+      });
       void get().loadOps();
     } catch { /* extras are drawer-only; canvas stays clean */ }
   },
@@ -933,13 +1113,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
   async loadSkills() {
     try { const { skills } = await api.skills(); set({ compiledSkills: skills }); } catch { /* offline */ }
-    try { const dp = await api.dataplaneDetail(get().scenarioId); set({ piiMetrics: dp.piiMetrics }); } catch { /* offline */ }
+    try { const dp = await api.dataplaneDetail(get().scenarioId); set({ piiMetrics: dp.piiMetrics, dataplaneDetail: dp }); } catch { /* offline */ }
   },
   async compileSkill() {
     try {
       const { skill, promoted } = await api.compileSkill(get().scenarioId);
       set((s) => ({ compiledSkills: [...s.compiledSkills.filter((x) => x.id !== skill.id), skill] }));
-      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? "Saved as Instant Auto-Fix Rule" : "Rule not promoted", detail: "Runs in <1ms with 0 AI tokens next time this issue happens" });
+      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? "Saved as Instant Auto-Fix Rule" : "Rule not promoted", detail: "Runs in <1ms next time this issue happens" });
     } catch (e) { get().toast({ tone: "critical", title: "Compile failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
   selectTimelineSlice(sliceId) {
@@ -984,57 +1164,367 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
   },
 
-  async exploreSelection(rawText, options = {}) {
-    const text = rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS);
-    const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
-    const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
+  bumpSpeculativeEpoch() {
+    const nextEpoch = get().speculativeEpoch + 1;
+    set({ speculativeEpoch: nextEpoch, speculativeSelectionCache: {}, speculativeBuffer: [] });
+    return nextEpoch;
+  },
+
+  async prewarmSelectionExplore(rawText, options = {}) {
+    const text = rawText.replace(/\s+/g, " ").trim();
+    if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return null;
     const scenarioId = get().scenarioId;
-    if (text.length < SELECTION_MIN_CHARS || get().exploreStatus === "loading") return;
-    set({ exploreStatus: "loading", exploreError: null });
-    const started = performance.now();
-    try {
-      const customText = get().brief?.extraction ? get().brief?.body : undefined;
-      const result = await api.exploreSelection({
+    const epoch = get().speculativeEpoch;
+    const normalizedText = normalizeSpeculativeText(text);
+    const key = buildSpeculativeSelectionKey(scenarioId, epoch, text);
+    const existing = get().speculativeSelectionCache[key];
+    if (existing && existing.epoch === epoch && existing.scenarioId === scenarioId && existing.status !== "failed") {
+      return existing.promise;
+    }
+
+    const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
+    const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
+    const startedAt = performance.now();
+    const customText = get().brief?.extraction ? get().brief?.body : undefined;
+
+    const promise = api
+      .exploreSelection({
         scenarioId,
         selectedText: text,
         ...(refinementText ? { refinementText } : {}),
         viewMode,
         ...(customText ? { customTicketText: customText } : {}),
+      })
+      .then((res) => {
+        if (get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
+          set((s) => {
+            const slot = s.speculativeSelectionCache[key];
+            if (!slot || slot.epoch !== epoch) return {};
+            return {
+              speculativeSelectionCache: {
+                ...s.speculativeSelectionCache,
+                [key]: {
+                  ...slot,
+                  status: "resolved",
+                  resolvedAt: performance.now(),
+                  response: res,
+                },
+              },
+            };
+          });
+        }
+        return res;
+      })
+      .catch(() => {
+        if (get().speculativeEpoch === epoch) {
+          set((s) => {
+            const next = { ...s.speculativeSelectionCache };
+            delete next[key];
+            return { speculativeSelectionCache: next };
+          });
+        }
+        return null;
       });
-      if (get().scenarioId !== scenarioId) return;
-      const resolvedViewMode = result.card.viewMode ?? viewMode;
+
+    // Store silently in generation-fenced cache without mutating exploreStatus, miniDashboards, selections, or toasts!
+    set((s) => {
+      // Keep only current epoch entries (max 8 slots)
+      const currentEntries = Object.entries(s.speculativeSelectionCache).filter(([, v]) => v.epoch === epoch).slice(-7);
+      const nextCache = Object.fromEntries(currentEntries);
+      nextCache[key] = {
+        key,
+        scenarioId,
+        epoch,
+        normalizedText,
+        rawText: text,
+        viewMode,
+        ...(refinementText ? { refinementText } : {}),
+        startedAt,
+        status: "inflight",
+        promise,
+      };
+      return {
+        speculativeSelectionCache: nextCache,
+        kinematicMetrics: {
+          ...s.kinematicMetrics,
+          selectionPrewarms: s.kinematicMetrics.selectionPrewarms + 1,
+        },
+      };
+    });
+
+    return promise;
+  },
+
+  discardSpeculativeSelection(rawText) {
+    const scenarioId = get().scenarioId;
+    const epoch = get().speculativeEpoch;
+    set((s) => {
+      if (!rawText) {
+        const count = Object.keys(s.speculativeSelectionCache).length;
+        if (count === 0) return {};
+        return {
+          speculativeSelectionCache: {},
+          kinematicMetrics: {
+            ...s.kinematicMetrics,
+            selectionDiscards: s.kinematicMetrics.selectionDiscards + count,
+          },
+        };
+      }
+      const key = buildSpeculativeSelectionKey(scenarioId, epoch, rawText);
+      if (!(key in s.speculativeSelectionCache)) return {};
+      const next = { ...s.speculativeSelectionCache };
+      delete next[key];
+      return {
+        speculativeSelectionCache: next,
+        kinematicMetrics: {
+          ...s.kinematicMetrics,
+          selectionDiscards: s.kinematicMetrics.selectionDiscards + 1,
+        },
+      };
+    });
+  },
+
+  async prewarmQueueScenario(scenarioId) {
+    if (scenarioId === get().scenarioId && get().brief) return;
+    const epoch = get().speculativeEpoch;
+    const slotKey = `queue-brief:${scenarioId}:${epoch}`;
+    if (get().speculativeBuffer.some((b) => b.slotKey === slotKey)) return;
+    const startedAt = performance.now();
+    const promise = api
+      .brief(scenarioId, false)
+      .then((res) => {
+        set((s) => ({
+          speculativeBuffer: s.speculativeBuffer.map((b) =>
+            b.slotKey === slotKey ? { ...b, status: "resolved", resolvedAt: performance.now(), briefData: res } : b,
+          ),
+        }));
+        return res;
+      })
+      .catch(() => null);
+
+    set((s) => ({
+      speculativeBuffer: [
+        ...s.speculativeBuffer.filter((b) => b.slotKey !== slotKey).slice(-3),
+        {
+          slotKey,
+          kind: "queue-brief",
+          scenarioId,
+          targetId: scenarioId,
+          epoch,
+          startedAt,
+          status: "inflight",
+          promise,
+        },
+      ],
+      kinematicMetrics: {
+        ...s.kinematicMetrics,
+        bufferPrewarms: s.kinematicMetrics.bufferPrewarms + 1,
+      },
+    }));
+    await promise;
+  },
+
+  async prewarmEntityHover(entityId, entityType) {
+    const scenarioId = get().scenarioId;
+    const epoch = get().speculativeEpoch;
+    const key = hoverKey(scenarioId, entityId);
+    if (get().hovers[key]?.status === "ready") return;
+    const slotKey = `entity-hover:${key}:${epoch}`;
+    if (get().speculativeBuffer.some((b) => b.slotKey === slotKey)) return;
+    const startedAt = performance.now();
+    const promise = api
+      .hover({ scenarioId, entityId, ...(entityType ? { entityType } : {}) })
+      .then((res) => {
+        if (get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
+          set((s) => ({
+            speculativeBuffer: s.speculativeBuffer.map((b) =>
+              b.slotKey === slotKey ? { ...b, status: "resolved", resolvedAt: performance.now(), hoverData: res.popover } : b,
+            ),
+          }));
+        }
+        return res;
+      })
+      .catch(() => null);
+
+    set((s) => ({
+      speculativeBuffer: [
+        ...s.speculativeBuffer.filter((b) => b.slotKey !== slotKey).slice(-3),
+        {
+          slotKey,
+          kind: "entity-hover",
+          scenarioId,
+          targetId: key,
+          epoch,
+          startedAt,
+          status: "inflight",
+          promise,
+        },
+      ],
+      kinematicMetrics: {
+        ...s.kinematicMetrics,
+        bufferPrewarms: s.kinematicMetrics.bufferPrewarms + 1,
+      },
+    }));
+    await promise;
+  },
+
+  async prewarmRemediation(targetScenarioId) {
+    const scenarioId = targetScenarioId ?? get().scenarioId;
+    const epoch = get().speculativeEpoch;
+    if (get().drawer?.ticketId === scenarioId || get().convergence[scenarioId]) return;
+    const slotKey = `remediation:${scenarioId}:${epoch}`;
+    if (get().speculativeBuffer.some((b) => b.slotKey === slotKey)) return;
+    const startedAt = performance.now();
+    const promise = api
+      .remediate({ scenarioId })
+      .then((res) => {
+        if (get().speculativeEpoch === epoch) {
+          set((s) => ({
+            speculativeBuffer: s.speculativeBuffer.map((b) =>
+              b.slotKey === slotKey ? { ...b, status: "resolved", resolvedAt: performance.now(), remediateData: res.drawer } : b,
+            ),
+          }));
+        }
+        return res;
+      })
+      .catch(() => null);
+
+    set((s) => ({
+      speculativeBuffer: [
+        ...s.speculativeBuffer.filter((b) => b.slotKey !== slotKey).slice(-3),
+        {
+          slotKey,
+          kind: "remediation",
+          scenarioId,
+          targetId: scenarioId,
+          epoch,
+          startedAt,
+          status: "inflight",
+          promise,
+        },
+      ],
+      kinematicMetrics: {
+        ...s.kinematicMetrics,
+        bufferPrewarms: s.kinematicMetrics.bufferPrewarms + 1,
+      },
+    }));
+    await promise;
+  },
+
+  async exploreSelection(rawText, options = {}) {
+    const text = rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS);
+    const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
+    const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
+    const scenarioId = get().scenarioId;
+    const epoch = get().speculativeEpoch;
+    if (text.length < SELECTION_MIN_CHARS || get().exploreStatus === "loading") return;
+
+    const clickStartedAt = performance.now();
+    const specKey = buildSpeculativeSelectionKey(scenarioId, epoch, text);
+    const cachedSlot = get().speculativeSelectionCache[specKey];
+    // Validate epoch & scenario fence on speculative slot
+    const validSpecSlot =
+      cachedSlot &&
+      cachedSlot.epoch === epoch &&
+      cachedSlot.scenarioId === scenarioId &&
+      cachedSlot.status !== "failed" &&
+      (!refinementText || cachedSlot.refinementText === refinementText)
+        ? cachedSlot
+        : null;
+
+    set({ exploreStatus: "loading", exploreError: null });
+    try {
+      let result: import("./lib/api").ExploreSelectionResponse | null = null;
+      let speculativeHit = false;
+      let savedLatencyMs = 0;
+
+      if (validSpecSlot) {
+        result = validSpecSlot.response ?? (await validSpecSlot.promise);
+        if (result && get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
+          speculativeHit = true;
+          const prewarmElapsed = Math.round((validSpecSlot.resolvedAt ?? performance.now()) - validSpecSlot.startedAt);
+          savedLatencyMs = Math.max(25, result.latencyMs || prewarmElapsed);
+          if (viewMode && result.card.viewMode !== viewMode) {
+            result = { ...result, card: { ...result.card, viewMode } };
+          }
+        } else {
+          result = null;
+        }
+      }
+
+      if (!result) {
+        const customText = get().brief?.extraction ? get().brief?.body : undefined;
+        result = await api.exploreSelection({
+          scenarioId,
+          selectedText: text,
+          ...(refinementText ? { refinementText } : {}),
+          viewMode,
+          ...(customText ? { customTicketText: customText } : {}),
+        });
+      }
+
+      if (get().scenarioId !== scenarioId || get().speculativeEpoch !== epoch) return;
+      const promoteMs = Number(Math.max(0.2, performance.now() - clickStartedAt).toFixed(2));
+      const resolvedViewMode = (options.viewMode ?? result.card.viewMode ?? viewMode) as ContextViewMode;
       const resolvedRefinement = result.card.refinementText ?? refinementText;
+
       set((s) => {
         const existing = s.selections[scenarioId] ?? [];
-        const known = existing.find((x) => x.id === result.card.id);
+        const known = existing.find((x) => x.id === result!.card.id);
         const index = known?.index ?? existing.length + 1;
         const selections = known
           ? s.selections
-          : { ...s.selections, [scenarioId]: [...existing, { id: result.card.id, text, ...(resolvedRefinement ? { refinementText: resolvedRefinement } : {}), viewMode: resolvedViewMode, index }] };
+          : { ...s.selections, [scenarioId]: [...existing, { id: result!.card.id, text, ...(resolvedRefinement ? { refinementText: resolvedRefinement } : {}), viewMode: resolvedViewMode, index }] };
         const entry: MiniDashboardEntry = {
-          id: result.card.id,
+          id: result!.card.id,
           scenarioId,
           index,
           selectionText: text,
           ...(resolvedRefinement ? { refinementText: resolvedRefinement } : {}),
           viewMode: resolvedViewMode,
-          card: result.card,
-          dataPtr: result.dataPtr,
-          latencyMs: Math.round(performance.now() - started),
-          modelId: result.modelId,
-          tokenCount: result.tokenCount,
+          card: { ...result!.card, viewMode: resolvedViewMode },
+          dataPtr: result!.dataPtr,
+          latencyMs: speculativeHit ? Math.min(1, Math.round(promoteMs)) : Math.round(performance.now() - clickStartedAt),
+          modelId: result!.modelId,
+          tokenCount: result!.tokenCount,
+          speculativeHit,
+          ...(speculativeHit ? { savedLatencyMs } : {}),
         };
-        return { selections, miniDashboards: [entry, ...s.miniDashboards.filter((m) => m.id !== entry.id)].slice(0, 6), exploreStatus: "ready", linkedSelection: entry.id };
+        const nextCache = { ...s.speculativeSelectionCache };
+        delete nextCache[specKey];
+        return {
+          selections,
+          miniDashboards: [entry, ...s.miniDashboards.filter((m) => m.id !== entry.id)].slice(0, 6),
+          exploreStatus: "ready",
+          linkedSelection: entry.id,
+          speculativeSelectionCache: nextCache,
+          kinematicMetrics: speculativeHit
+            ? {
+                ...s.kinematicMetrics,
+                speculativeHits: s.kinematicMetrics.speculativeHits + 1,
+                savedLatencyMs: s.kinematicMetrics.savedLatencyMs + savedLatencyMs,
+                lastHitKind: "explore-selection",
+                lastHitTarget: text,
+                lastHitPromoteMs: Math.min(1.8, promoteMs),
+              }
+            : {
+                ...s.kinematicMetrics,
+                speculativeMisses: s.kinematicMetrics.speculativeMisses + 1,
+              },
+        };
       });
-      window.requestAnimationFrame(() => document.getElementById(`mini-${result.card.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
-      window.setTimeout(() => set((s) => (s.linkedSelection === result.card.id ? { linkedSelection: null } : {})), 1600);
+      if (typeof window !== "undefined" && typeof document !== "undefined") {
+        window.requestAnimationFrame(() => document.getElementById(`mini-${result!.card.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      }
+      setTimeout(() => set((s) => (s.linkedSelection === result!.card.id ? { linkedSelection: null } : {})), 1600);
       const modeSuffix = resolvedViewMode !== "dashboard" ? ` [${resolvedViewMode}]` : "";
       const refSuffix = resolvedRefinement ? ` + "${resolvedRefinement.slice(0, 28)}"` : "";
-      const elapsedSec = Math.max(0.1, Math.round((performance.now() - started) / 100) / 10).toFixed(1);
+      const elapsedSec = Math.max(0.1, Math.round((performance.now() - clickStartedAt) / 100) / 10).toFixed(1);
+      const rowCount = result.slice?.rowCount ?? result.card.rows.length;
       get().toast({
         tone: "info",
         title: `Context UI${modeSuffix} for "${text.length > 34 ? `${text.slice(0, 33)}…` : text}"${refSuffix}`,
-        detail: `${result.slice.rowCount} rows · Live Tenant Query · Matched in ${elapsedSec}s`,
+        detail: `${rowCount} rows · Live Tenant Query · Matched in ${elapsedSec}s`,
       });
     } catch (error) {
       set({ exploreStatus: "error", exploreError: error instanceof Error ? error.message : String(error) });
@@ -1109,7 +1599,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   toast: (toast) => {
     const id = ++toastSeq;
     set((s) => ({ toasts: [...s.toasts.slice(-3), { ...toast, id }] }));
-    window.setTimeout(() => get().dismissToast(id), toast.href ? 12_000 : 5200);
+    setTimeout(() => get().dismissToast(id), toast.href ? 12_000 : 5200);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));

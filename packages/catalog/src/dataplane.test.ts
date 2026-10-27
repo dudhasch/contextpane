@@ -1,5 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { PII_FIELDS, applyPtrQuery, createPiiVault, dataPtr, datasetsFor, formatSourceRef, getHydrateLayoutToolDefinition, locateJsonPath, parseDataPtr, parsePtrQuery, pseudonymizeForLlm, resolvePointer } from "./index.ts";
+import {
+  HUMAN_FOVEAL_CAPACITY_BITS,
+  PII_FIELDS,
+  applyPtrQuery,
+  buildColumnarIndex,
+  bumpDataPlaneEpoch,
+  computeBurstiness,
+  computeLog2RowBucket,
+  createPiiVault,
+  dataPtr,
+  datasetsFor,
+  fencedDataPtr,
+  formatSourceRef,
+  getDataPlaneEpoch,
+  getHydrateLayoutToolDefinition,
+  isMachineOrNonPersonalPii,
+  locateJsonPath,
+  parseDataPtr,
+  parsePtrQuery,
+  pseudonymizeForLlm,
+  registerDataset,
+  resolvePointer,
+  scoreInformationBottleneck,
+  verifyPointerFence,
+} from "./index.ts";
 
 describe("ptr:// data-plane pointers", () => {
   test("pointers are deterministic per scenario and dataset, and parse back", () => {
@@ -126,5 +150,111 @@ describe("JSON line provenance", () => {
   test("formats a CodeLens label", () => {
     expect(formatSourceRef({ file: "demo-iac/main.tf", startLine: 43, endLine: 84 })).toBe("demo-iac/main.tf:L43-L84");
     expect(formatSourceRef({ file: "a.json", startLine: 7, endLine: 7 })).toBe("a.json:L7");
+  });
+});
+
+describe("ptr:// v3 generation fencing, columnar bitmap index, order-preserving HMAC & IB scorer", () => {
+  test("generation & tenant fence fails closed on stale epochs and cross-tenant pointers", () => {
+    const epochBefore = getDataPlaneEpoch();
+    const rows = [
+      { upn: "lynne@contoso.com", status: "drifted", assignedSku: "E3" },
+      { upn: "diego@contoso.com", status: "drifted", assignedSku: "E3" },
+    ];
+    const reg = registerDataset("INC-4092", "entra/users", rows, {
+      tenantId: "tenant-contoso-01",
+      epoch: epochBefore,
+    });
+    expect(reg.fence.tenantId).toBe("tenant-contoso-01");
+    expect(reg.fence.epoch).toBe(epochBefore);
+    expect(reg.fence.generation).toBeGreaterThanOrEqual(1);
+
+    const fenced = fencedDataPtr("INC-4092", "entra/users", reg.fence);
+    expect(verifyPointerFence(fenced, "tenant-contoso-01", epochBefore).valid).toBe(true);
+    expect(verifyPointerFence(fenced, "tenant-fabrikam-02", epochBefore).valid).toBe(false);
+    expect(verifyPointerFence(fenced, "tenant-fabrikam-02", epochBefore).reason).toBe("cross-tenant");
+
+    const nextEpoch = bumpDataPlaneEpoch();
+    expect(verifyPointerFence(fenced, "tenant-contoso-01", nextEpoch).valid).toBe(false);
+    expect(verifyPointerFence(fenced, "tenant-contoso-01", nextEpoch).reason).toBe("stale-epoch");
+  });
+
+  test("ColumnarTableView executes bitmap filtering & pre-sorted index permutation and records columnarScanNs", () => {
+    const rows = [
+      { upn: "zoe@contoso.com", status: "drifted", sku: "E3" },
+      { upn: "amy@contoso.com", status: "compliant", sku: "E5" },
+      { upn: "bob@contoso.com", status: "drifted", sku: "E3" },
+    ];
+    const view = buildColumnarIndex(rows);
+    expect(view).not.toBeNull();
+    expect(view!.rowCount).toBe(3);
+    expect([...view!.columns.keys()]).toEqual(["upn", "status", "sku"]);
+    const res = applyPtrQuery(
+      rows,
+      {
+        where: [{ field: "status", operator: "eq", value: "drifted" }],
+        select: ["upn", "sku"],
+        order: { field: "upn", direction: "asc" },
+      },
+      view,
+    );
+    expect(res.error).toBeUndefined();
+    expect(res.columnarScanNs).toBeGreaterThanOrEqual(0);
+    expect(res.rows).toEqual([
+      { upn: "bob@contoso.com", sku: "E3" },
+      { upn: "zoe@contoso.com", sku: "E3" },
+    ]);
+  });
+
+  test("order-preserving PII vault tokens preserve order=upn sort equivalence and protect human svc-admin@contoso.com", () => {
+    // Human UPN with svc- prefix must NEVER be exempted from GDPR vaulting
+    expect(isMachineOrNonPersonalPii("upn", "svc-admin@contoso.com", { upn: "svc-admin@contoso.com" })).toBe(false);
+    // Attested machine SPN without @ is exempted
+    expect(isMachineOrNonPersonalPii("upn", "spn-contoso-erp-sync", { upn: "spn-contoso-erp-sync", clientApp: "GitHub Actions" })).toBe(true);
+
+    const cleartext = [
+      { upn: "zoe.admin@contoso.com", status: "drifted" },
+      { upn: "alice.fin@contoso.com", status: "drifted" },
+      { upn: "svc-admin@contoso.com", status: "drifted" },
+      { upn: "bob.ops@contoso.com", status: "drifted" },
+    ];
+    const vault = createPiiVault();
+    const vaulted = vault.pseudonymize(cleartext) as typeof cleartext;
+
+    // Ensure svc-admin@contoso.com is vaulted
+    expect(JSON.stringify(vaulted)).not.toContain("svc-admin@contoso.com");
+
+    // Sort cleartext vs sort vaulted by upn and depseudonymize
+    const sortedCleartextUpns = resolvePointer("ptr://inc-4092/entra/users?order=upn", cleartext).rows.map((r) => String(r.upn));
+    const sortedVaultedRows = resolvePointer("ptr://inc-4092/entra/users?order=upn", vaulted).rows;
+    const unvaultedSortedUpns = (vault.depseudonymize(sortedVaultedRows) as typeof cleartext).map((r) => String(r.upn));
+    expect(unvaultedSortedUpns).toEqual(sortedCleartextUpns);
+  });
+
+  test("Honest Blind Structural Sketches compute burstiness B in [-1, 1] and log2RowBucket", () => {
+    const burstyRows = [
+      { timestamp: "2026-10-26T08:00:00Z" },
+      { timestamp: "2026-10-26T08:00:01Z" },
+      { timestamp: "2026-10-26T08:00:02Z" },
+      { timestamp: "2026-10-26T08:30:00Z" },
+    ];
+    const b = computeBurstiness(burstyRows);
+    expect(b).toBeGreaterThanOrEqual(-1);
+    expect(b).toBeLessThanOrEqual(1);
+    expect(b).toBeGreaterThan(0); // bursty arrivals have sigma > mu -> B > 0
+    expect(computeLog2RowBucket(0)).toBe(0);
+    expect(computeLog2RowBucket(6)).toBe(3);
+  });
+
+  test("Information Bottleneck scorer enforces viewportEntropyBits <= 42.0 bits", () => {
+    const report = scoreInformationBottleneck([
+      { id: "LicenseDriftCard", rowCount: 15, columns: ["upn", "sku", "status", "group", "error"], aggregates: { "status:drifted": 3 } },
+      { id: "EntraSignInTimeline", rowCount: 24, columns: ["timestamp", "upn", "status", "errorCode", "policy"], aggregates: { "status:failure": 6 } },
+      { id: "IaCDriftBanner", rowCount: 8, columns: ["ruleName", "port", "source", "access"], aggregates: { "severity:critical": 1 } },
+    ]);
+    expect(report.humanCapacityBits).toBe(HUMAN_FOVEAL_CAPACITY_BITS);
+    expect(report.viewportEntropyBits).toBeLessThanOrEqual(HUMAN_FOVEAL_CAPACITY_BITS);
+    expect(report.uncollapsedEntropyBits).toBeGreaterThan(report.viewportEntropyBits);
+    expect(report.withinBudget).toBe(true);
+    expect(report.mutualInfoScore).toBeGreaterThan(0.5);
   });
 });

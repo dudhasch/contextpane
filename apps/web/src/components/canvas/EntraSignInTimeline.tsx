@@ -26,6 +26,11 @@ function collapseEvents(events: SignInEvent[], pinned: string | null): SignInEve
 const STATE_LABEL: Record<CaPolicyInspector["state"], string> = { enabled: "On", disabled: "Off", enabledForReportingButNotEnforced: "Report-Only" };
 const short = (name: string) => name.replace("[ContextPane-Demo] ", "");
 
+export function shouldRenderCaBlockedBadge(row: { status: string; errorCode?: number; errorCodeLabel?: string }): boolean {
+  if (row.status === "success") return false;
+  return Boolean(row.errorCode || row.errorCodeLabel);
+}
+
 /** User Sign-In History & Conditional Access card (rose), or Workload Identity & OAuth Grants for ANOM-APP-401. */
 export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
   const focusCard = useWorkbench((s) => s.focusCard);
@@ -138,7 +143,7 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                         vision match
                       </Pill>
                     )}
-                    {e.status === "success" ? (
+                    {!shouldRenderCaBlockedBadge(e) ? (
                       <Pill tone="healthy" icon={<ShieldCheck />} mono={false}>
                         {e.errorCodeLabel && !/blocked|53003|failure|error|7000222/i.test(e.errorCodeLabel)
                           ? e.errorCodeLabel
@@ -153,7 +158,7 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                     )}
                   </span>
                 </div>
-                {e.isHighlighted && e.blockingPolicyName && <div className="mt-0.5 truncate text-[10.5px] text-critical">CA: {short(e.blockingPolicyName)} · device {e.deviceCompliant === false ? "NonCompliant" : "compliant"}</div>}
+                {e.status !== "success" && e.isHighlighted && e.blockingPolicyName && <div className="mt-0.5 truncate text-[10.5px] text-critical">CA: {short(e.blockingPolicyName)} · device {e.deviceCompliant === false ? "NonCompliant" : "compliant"}</div>}
               </div>
             </li>
           );

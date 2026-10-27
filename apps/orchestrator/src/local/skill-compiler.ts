@@ -12,6 +12,9 @@ import {
   type ScenarioId,
 } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
+import { PCC_FULL_BITMASK, maxSmtSynthesis, verifyPccBitmask } from "./formal-verifier.ts";
+
+export { PCC_FULL_BITMASK, verifyPccBitmask } from "./formal-verifier.ts";
 
 /**
  * Place 2 — Tier3 -> Tier0 Skill Compiler.
@@ -57,6 +60,9 @@ export interface CompiledSkillDef {
   id: string; scenarioId: ScenarioId; signature: SymptomSignature;
   tier: 0; tokenCost: 0; latencyMs: number;
   fuzz: { cases: number; passed: number };
+  invariantProofMask: number;
+  minPerturbationCost: number;
+  schemaSignature: string;
   createdAt: string; version: 1;
 }
 
@@ -291,14 +297,24 @@ function signatureMatches(sig: SymptomSignature, q: SignatureQuery): boolean {
 }
 
 function makeSkill(def: CompiledSkillDef): CompiledSkill {
+  const mask = def.invariantProofMask ?? PCC_FULL_BITMASK;
   return {
     ...def,
-    match: (q) => signatureMatches(def.signature, q),
+    invariantProofMask: mask,
+    minPerturbationCost: def.minPerturbationCost ?? 6.5,
+    schemaSignature: def.schemaSignature ?? `pcc-v3-${def.scenarioId.toLowerCase()}-0x${mask.toString(16).padStart(2, "0")}`,
+    match: (q) => ((mask & PCC_FULL_BITMASK) === PCC_FULL_BITMASK) && signatureMatches(def.signature, q),
     hydrate: (params) => {
+      if ((mask & PCC_FULL_BITMASK) !== PCC_FULL_BITMASK) {
+        throw new Error(`Tier 0 PCC bitwise guard failed: invariantProofMask 0x${mask.toString(16)} !== 0x7f`);
+      }
       const fuzz = fuzzParamsFor(1);
       return buildFuzzLayout(def.signature, { ...fuzz, tenantId: def.signature.tenantId, groupName: def.signature.groupNames[0] ?? fuzz.groupName, policyId: def.signature.policyIds[0] ?? fuzz.policyId, ...params });
     },
     remediate: (params) => {
+      if ((mask & PCC_FULL_BITMASK) !== PCC_FULL_BITMASK) {
+        throw new Error(`Tier 0 PCC bitwise guard failed: invariantProofMask 0x${mask.toString(16)} !== 0x7f`);
+      }
       const fuzz = fuzzParamsFor(1);
       const sig = def.signature;
       const p = { ...fuzz, groupName: sig.groupNames[0] ?? fuzz.groupName, policyId: sig.policyIds[0] ?? fuzz.policyId, ...params };
@@ -348,8 +364,19 @@ export function loadRegistry(): CompiledSkillDef[] {
     const raw = JSON.parse(readFileSync(REGISTRY_PATH, "utf8")) as CompiledSkillDef[];
     if (!Array.isArray(raw)) return [];
     // Skills compiled before signatures were per-scenario carry another scenario's fields: drop them, a recompile replaces them.
-    for (const d of raw) if (d && isScenarioId(d.scenarioId) && Array.isArray(d.signature?.requiredEntities)) memory.set(d.id, makeSkill(d));
-    return raw;
+    for (const d of raw) {
+      if (d && isScenarioId(d.scenarioId) && Array.isArray(d.signature?.requiredEntities)) {
+        const smt = maxSmtSynthesis(d.scenarioId);
+        const enriched: CompiledSkillDef = {
+          ...d,
+          invariantProofMask: d.invariantProofMask ?? smt.invariantProofMask,
+          minPerturbationCost: d.minPerturbationCost ?? smt.minPerturbationCost,
+          schemaSignature: d.schemaSignature ?? smt.schemaSignature,
+        };
+        memory.set(d.id, makeSkill(enriched));
+      }
+    }
+    return [...memory.values()].map(({ match: _m, hydrate: _h, remediate: _r, ...d }) => d as CompiledSkillDef);
   } catch { return []; }
 }
 
@@ -362,6 +389,9 @@ export function saveRegistry(defs?: CompiledSkillDef[]): void {
 
 export function promoteSkill(skill: CompiledSkill): CompiledSkill {
   if (skill.fuzz.passed !== skill.fuzz.cases) throw new Error(`Promotion refused: fuzz ${skill.fuzz.passed}/${skill.fuzz.cases}`);
+  if (!verifyPccBitmask(skill.invariantProofMask)) {
+    throw new Error(`Promotion refused: PCC invariantProofMask 0x${(skill.invariantProofMask ?? 0).toString(16)} !== 0x7f`);
+  }
   loadRegistryIfNeeded();
   memory.set(skill.id, skill);
   saveRegistry();
@@ -372,10 +402,15 @@ function loadRegistryIfNeeded() { if (!registryLoaded) { loadRegistry(); registr
 
 export function listCompiledSkills(): CompiledSkill[] { loadRegistryIfNeeded(); return [...memory.values()]; }
 
-export function lookupTier0Skill(signature: SignatureQuery): { skill: CompiledSkill; latencyMs: number } | null {
+export function lookupTier0Skill(signature: SignatureQuery): { skill: CompiledSkill; latencyMs: number; pccVerified: boolean } | null {
   loadRegistryIfNeeded();
   const t0 = performance.now();
-  for (const s of memory.values()) if (s.match(signature)) return { skill: s, latencyMs: performance.now() - t0 };
+  for (const s of memory.values()) {
+    // <0.01ms bitwise Proof-Carrying Certificate guard
+    if ((s.invariantProofMask & PCC_FULL_BITMASK) === PCC_FULL_BITMASK && s.match(signature)) {
+      return { skill: s, latencyMs: performance.now() - t0, pccVerified: true };
+    }
+  }
   return null;
 }
 export function matchCompiledSkill(signature: SignatureQuery): CompiledSkill | null {
@@ -388,16 +423,20 @@ export async function compileFromTrace(trace: unknown): Promise<CompiledSkill> {
   const t = trace as CapturedTrace;
   const started = performance.now();
   const fuzz = await runPropertyFuzzer(t.scenarioId, 100);
+  const smt = maxSmtSynthesis(t.scenarioId);
   const latencyMs = Math.max(0.001, Math.round((performance.now() - started) / 100) / 10);
   const def: CompiledSkillDef = {
     id: `skill-${t.scenarioId.toLowerCase()}-tier0`, scenarioId: t.scenarioId, signature: t.signature,
     tier: 0, tokenCost: 0, latencyMs, fuzz: { cases: fuzz.cases, passed: fuzz.passed },
+    invariantProofMask: smt.invariantProofMask,
+    minPerturbationCost: smt.minPerturbationCost,
+    schemaSignature: smt.schemaSignature,
     createdAt: new Date().toISOString(), version: 1,
   };
   const skill = makeSkill(def);
   // Honest match latency: measure an actual lookup-style match.
   const m0 = performance.now(); skill.match(t.signature); skill.latencyMs = Math.round((performance.now() - m0) * 1000) / 1000;
-  if (fuzz.passed === fuzz.cases) promoteSkill(skill);
+  if (fuzz.passed === fuzz.cases && verifyPccBitmask(skill.invariantProofMask)) promoteSkill(skill);
   return skill;
 }
 

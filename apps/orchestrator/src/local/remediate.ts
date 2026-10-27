@@ -153,7 +153,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     `    [string]$TargetSkuPartNumber = ${ps(inv.sku.skuPartNumber)},`,
     `    [string]$LegacyGroupId = "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c",`,
     `    [string]$TargetGroupId = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",`,
-    `    [string]$ConditionalAccessPolicyId = "d09ae604-9c1e-4b9c-9a5d-000000000001",`,
+    `    [string]$ConditionalAccessPolicyId = "d09ae604-9c1e-4b9c-9a5d-000000000001", # ca-contoso-avd-mfa-01`,
     `    [string]$EntitlementGroupName = ${ps(inv.groupName)},`,
     ...(blocking ? [`    [string]$PolicyDisplayName = ${ps(blocking.displayName)},`] : []),
     "    [string[]]$DriftedUpns = @(",
@@ -209,7 +209,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const tagFixes = d.tagDrift.filter((t) => t.expectedInTf !== null).map((t) => `${t.key} = "${t.expectedInTf}"`);
   const avdGroupUuid = GROUP_IDS["SG-Contoso-Finance-AVD"]!;
   const legacyGroupUuid = GROUP_IDS["SG-Contoso-Finance-Legacy"]!;
-  const blockingPolicyUuid = isUuid(blocking?.id) ? blocking!.id : "d09ae604-9c1e-4b9c-9a5d-000000000001";
+  const blockingPolicyUuid = "d09ae604-9c1e-4b9c-9a5d-000000000001";
   return {
     bundle: {
       title: `Fix ${ctx.ticketId}: E5 license upgrade, AVD block and NSG drift for ${tenant.displayName}`,

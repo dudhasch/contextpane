@@ -1,5 +1,6 @@
 import {
   SCENARIO_REGISTRY,
+  bumpDataPlaneEpoch,
   getCustomScenario,
   isAnyScenarioId,
   isCustomScenarioId,
@@ -69,6 +70,7 @@ export function resolveScenarioId(value: string | undefined | null): WorkbenchSc
 
 /** Drops the cached context of one scenario (a custom ticket drops its base too), every scenario of a tenant, or everything. */
 export function invalidateContext(key?: string) {
+  bumpDataPlaneEpoch();
   if (!key) return cache.clear();
   if (isScenarioId(key)) {
     cache.delete(key);

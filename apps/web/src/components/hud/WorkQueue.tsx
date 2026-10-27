@@ -156,8 +156,8 @@ export function WorkQueue() {
               <Button variant="meta" icon={<Dices />} loading={dropStatus === "loading"} onClick={() => void simulateDrop()} title="Write a random #2026xxx/ticketbody.json + attachment1.png into input/tickets/ and let the inbox watcher ingest it (g)" data-testid="drop-erp-button">
                 🎲 Drop Random ERP Ticket
               </Button>
-              <span className="ml-auto text-[10.5px] text-faint">
-                <Kbd>1</Kbd>–<Kbd>9</Kbd> open by position · <Kbd>j</Kbd> <Kbd>k</Kbd> step · <Kbd>Esc</Kbd> close
+              <span className="ml-auto shrink-0 whitespace-nowrap text-[10.5px] text-faint">
+                <Kbd>1</Kbd>–<Kbd>9</Kbd> open · <Kbd>j</Kbd> <Kbd>k</Kbd> step · <Kbd>Esc</Kbd> close
               </span>
             </div>
           </div>
@@ -178,6 +178,7 @@ const TONE_CLASS: Record<Tone, string> = {
 };
 
 function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: ScenarioListItem; active: boolean; index: number; unseen: boolean; closed: boolean; onSelect: () => void }) {
+  const prewarmQueue = useWorkbench((s) => s.prewarmQueueScenario);
   const meta = ORIGIN_META[item.origin];
   const status = statusOf(item, closed);
   const attachments = item.custom?.erpDrop?.attachments.length ?? 0;
@@ -188,6 +189,11 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
         role="option"
         aria-selected={active}
         onClick={onSelect}
+        onMouseEnter={() => {
+          if (!active) {
+            window.setTimeout(() => void prewarmQueue(item.scenarioId), 60);
+          }
+        }}
         data-work-item={item.scenarioId}
         className={`grid w-full grid-cols-[18px_18px_auto_1fr_auto_auto] items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-elevated ${active ? "bg-primary/8" : ""}`}
       >
@@ -204,7 +210,6 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
           <span className="block truncate text-[10.5px] text-faint">
             {meta.label} · {item.tenantName}
             {item.custom?.ticket.requester ? ` · ${item.custom.ticket.requester.displayName}` : ""}
-            {item.custom?.baseScenarioId ? ` · base ${item.custom.baseScenarioId}` : ""}
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-faint">

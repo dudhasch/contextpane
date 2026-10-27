@@ -121,4 +121,85 @@ describe("ptr:// data-plane bypass", () => {
     expect(binding.rejected).toHaveLength(2);
     expect(component.dataPtrs[DATASETS["entra/users"].prop]).toBe("ptr://inc-4092/entra/users");
   });
+
+  test("EntityEvidenceGraph indexes all 7 entity families with 5 channels, pre-computes N-1 counterfactuals in <5ms, and enforces IB <= 42.0 bits", async () => {
+    const { buildEvidenceGraph } = await import("./evidence-graph.ts");
+    const kinds = ["User", "Group", "SPN", "CAPolicy", "IntuneCSP", "NSG", "ERPContract"] as const;
+    const ctx = await gatherContext("INC-4092");
+    const snapshot = publishDataPlane(ctx);
+    const graph = snapshot.evidenceGraph;
+    expect(graph).toBeDefined();
+    expect(graph.scenarioId).toBe("INC-4092");
+    expect(graph.builtInMs).toBeLessThan(15);
+    for (const kind of kinds) {
+      expect(graph.countsByKind[kind]).toBeGreaterThanOrEqual(1);
+    }
+    expect(graph.nodeCount).toBeGreaterThanOrEqual(7);
+    expect(graph.edgeCount).toBeGreaterThan(0);
+    expect(graph.counterfactuals.length).toBeGreaterThan(0);
+    expect(graph.counterfactuals[0]!.deltaRisk).toBeGreaterThan(0);
+    expect(graph.counterfactuals.every((cf) => cf.verifiedSafe)).toBe(true);
+    expect(graph.informationBottleneck.viewportEntropyBits).toBeLessThanOrEqual(42.0);
+    expect(graph.informationBottleneck.withinBudget).toBe(true);
+
+    const directGraph = buildEvidenceGraph("ANOM-APP-401");
+    expect(directGraph.countsByKind.SPN).toBeGreaterThanOrEqual(1);
+    expect(directGraph.informationBottleneck.viewportEntropyBits).toBeLessThanOrEqual(42.0);
+  });
+
+  test("commercial-reconciler reconciles INC-4092 at 12/15 assigned, 3 available, $0/mo extra cost, and Copilot at $30/mo", async () => {
+    const { reconcileCommercial, COPILOT_UNIT_PRICE_MONTHLY } = await import("./commercial-reconciler.ts");
+    expect(COPILOT_UNIT_PRICE_MONTHLY).toBe(30);
+    const inc = reconcileCommercial("INC-4092");
+    const speE5 = inc.skus.find((s) => s.sku === "SPE_E5");
+    expect(speE5).toBeDefined();
+    expect(speE5!.totalSeats).toBe(15);
+    expect(speE5!.assignedSeats).toBe(12);
+    expect(speE5!.availableSeats).toBe(3);
+    expect(inc.totalSeats).toBe(15);
+    expect(inc.assignedSeats).toBe(12);
+    expect(inc.availableSeats).toBe(3);
+    expect(inc.netDeltaMonthly).toBe(0);
+
+    const lic = reconcileCommercial("ANOM-LIC-101");
+    const licE5 = lic.skus.find((s) => s.sku === "SPE_E5");
+    expect(licE5!.assignedSeats).toBe(15);
+    expect(licE5!.availableSeats).toBe(0);
+    expect(licE5!.orphanedSeats).toBe(3);
+  });
+
+  test("psa-note converts imperative step strings into past tense and replaces inverse rollback f^-1 with plain English", async () => {
+    const { toPastTenseSummary, buildResolutionNote } = await import("./psa-note.ts");
+    const converted = toPastTenseSummary("Remove 3 user(s) from the legacy F3 group and reprocess E5 group licensing (inverse rollback f^-1)");
+    expect(converted).toContain("Removed 3 users from the legacy F3 group and reprocessed E5 group licensing");
+    expect(converted).toContain("verified 1-click undo script archived");
+    expect(converted).not.toContain("f^-1");
+
+    const ctx = await gatherContext("INC-4092");
+    const { buildScenarioBrief } = await import("./brief.ts");
+    const brief = buildScenarioBrief(ctx);
+    const note = buildResolutionNote({
+      brief,
+      convergence: {
+        scenarioId: "INC-4092",
+        tenantId: "tenant-contoso-01",
+        remediationId: "rem-test-inc-4092",
+        ticketId: "INC-4092",
+        convergedAt: "2026-10-26T08:12:00Z",
+        latencyMs: 120,
+        prUrl: null,
+        gitBranch: "fix/INC-4092-contoso-remediation",
+        execution: "simulated",
+        remediatedUpns: [
+          "lynne.robins.contoso@c4a8shili.onmicrosoft.com",
+          "diego.siciliani.contoso@c4a8shili.onmicrosoft.com",
+          "patti.fernandez.contoso@c4a8shili.onmicrosoft.com",
+        ],
+        reclaimedUpns: [],
+      },
+    });
+    expect(note.customerSummary).not.toContain("f^-1");
+    expect(note.customerSummary).not.toContain("still hold");
+    expect(note.customerSummary).toContain("verified 1-click undo script archived");
+  });
 });

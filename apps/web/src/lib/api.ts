@@ -122,7 +122,30 @@ export interface VoiceResponse {
 }
 
 export interface AsrBlast { executions: number; workstations: number; binary: string; exclusionStaged: boolean; detail: string }
-export interface FormalResponse { scenarioId: string; formal: { passed: boolean; latencyMs: number; invariants: Array<{ id: string; statement: string; passed: boolean; checked: number; evidence: string[]; counterexamples: unknown[] }>; asrBlast?: AsrBlast | null }; blastRadius: { targetBlockedToAllowed: number; breakGlassAllowedToAllowed: number; collateralChanges: number; rows: Array<{ cohort: string; entities: string[]; before: string; after: string; attempts: number }> }; rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[] }; idempotency: { passed: boolean; idempotent: boolean }; asrBlast?: AsrBlast | null }
+export interface FormalResponse {
+  scenarioId: string;
+  formal: {
+    passed: boolean;
+    latencyMs: number;
+    invariantProofMask?: number;
+    minPerturbationCost?: number;
+    schemaSignature?: string;
+    maxSmtSynthesis?: {
+      optimal: boolean;
+      invariantProofMask: number;
+      minPerturbationCost: number;
+      collateralLockouts: number;
+      schemaSignature: string;
+      hardInvariants: Array<{ bit: number; mask: number; id: string; passed: boolean; statement: string }>;
+    };
+    invariants: Array<{ id: string; statement: string; passed: boolean; checked: number; evidence: string[]; counterexamples: unknown[] }>;
+    asrBlast?: AsrBlast | null;
+  };
+  blastRadius: { targetBlockedToAllowed: number; breakGlassAllowedToAllowed: number; collateralChanges: number; rows: Array<{ cohort: string; entities: string[]; before: string; after: string; attempts: number }> };
+  rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[] };
+  idempotency: { passed: boolean; idempotent: boolean };
+  asrBlast?: AsrBlast | null;
+}
 export interface IntuneHealthCsp { settingName: string; cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean }
 export interface IntuneHealthScript { scenarioId: string; detect: string; remediate: string; verification: { passed: boolean; detectReadOnly: boolean; proof: string }; csp: IntuneHealthCsp[]; asrBlast: AsrBlast | null }
 export type IntuneHealthScriptResponse = IntuneHealthScript;
@@ -151,8 +174,66 @@ export interface TimelineResponse {
     slices: TimelineSliceItem[];
   };
 }
-export interface SkillDef { id: string; scenarioId: string; tier: number; tokenCost: number; latencyMs: number; fuzz: { cases: number; passed: number }; badge: string }
+export interface SkillDef {
+  id: string;
+  scenarioId: string;
+  tier: number;
+  tokenCost: number;
+  latencyMs: number;
+  fuzz: { cases: number; passed: number };
+  invariantProofMask?: number;
+  minPerturbationCost?: number;
+  schemaSignature?: string;
+  badge: string;
+}
 export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
+export interface DataPlaneDetailResponse {
+  scenarioId?: string;
+  tenantId?: string;
+  epoch?: number;
+  generation?: number;
+  fence?: { tenantId: string; epoch: number; generation: number };
+  columnarScanNs?: number;
+  bytes?: number;
+  datasets?: Array<{
+    ptr: string;
+    component: string;
+    prop: string;
+    rowCount: number;
+    bytes: number;
+    burstiness?: number;
+    log2RowBucket?: number;
+    kAnonymitySuppressed?: boolean;
+    columnarScanNs?: number;
+  }>;
+  piiMetrics: PiiMetrics;
+  evidenceGraph?: {
+    scenarioId: string;
+    tenantId: string;
+    epoch: number;
+    builtInMs: number;
+    nodeCount: number;
+    edgeCount: number;
+    driftedNodeCount: number;
+    counterfactuals: Array<{
+      removedNodeId: string;
+      removedLabel: string;
+      kind: string;
+      deltaRisk: number;
+      unblockedEntities: number;
+      wasteEliminatedUsd: number;
+      residualBlastRadiusRisk: number;
+    }>;
+  };
+  informationBottleneck?: {
+    humanCapacityBits: number;
+    viewportEntropyBits: number;
+    uncollapsedEntropyBits: number;
+    mutualInfoScore: number;
+    withinBudget: boolean;
+    compressionRatio: number;
+  };
+}
 
 export interface ExploreSelectionResponse {
   card: ContextualMiniDashboard;
@@ -296,7 +377,7 @@ export const api = {
   skills: () => request<{ skills: SkillDef[] }>("/api/skills"),
   compileSkill: (scenarioId: string) => request<{ skill: SkillDef; promoted: boolean }>("/api/skills/compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   rollback: (scenarioId: string) => request<{ ok: boolean; latencyMs: number }>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
-  dataplaneDetail: (scenarioId: string) => request<{ piiMetrics: PiiMetrics }>(`/api/dataplane/${scenarioId}`),
+  dataplaneDetail: (scenarioId: string) => request<DataPlaneDetailResponse>(`/api/dataplane/${scenarioId}`),
   commercial: (scenarioId: string) => request<{ reconciliation: Commercial }>(`/api/reconcile/commercial/${scenarioId}`),
   reverseCompile: (scenarioId: string) => request<{ result: ReverseResult }>("/api/iac/reverse-compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   fleet: (scenarioId: string) => request<{ fleet: Fleet }>(`/api/fleet/immunize/${scenarioId}`),
