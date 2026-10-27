@@ -1,0 +1,13 @@
+--- a/golden-tenant/entra/apps/spn-contoso-erp-sync.tf
++++ b/golden-tenant/entra/apps/spn-contoso-erp-sync.tf
+@@ workload identity federation @@
++resource "azuread_application_federated_identity_credential" "github_actions" {
++  application_id = "/applications/7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
++  display_name   = "github-actions-main"
++  description    = "GitHub Actions OIDC for spn-contoso-erp-sync"
++  issuer         = "https://token.actions.githubusercontent.com"
++  subject        = "repo:contoso/erp-sync:ref:refs/heads/main"
++  audiences      = ["api://AzureADTokenExchange"]
++}
+-# passwordCredential 'github-actions-erp-sync' (expired 2026-10-19T23:59:59Z)
++# no client secret: workload identity federation only
