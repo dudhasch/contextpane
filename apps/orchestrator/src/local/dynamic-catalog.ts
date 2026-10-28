@@ -20,6 +20,10 @@ const DYNAMIC_CATALOG_PATH = join(config.dataDir, "dynamic-catalog.json");
 const SYNTHESIZED_LOG_PATH = join(config.dataDir, "synthesized-elements-log.json");
 const SYNTHESIZED_TSX_DIR = join(config.dataDir, "synthesized-elements");
 const STATIC_BUILT_IN_CARDS = ["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner"] as const;
+/** The catalog, its log and the .tsx stubs are tracked files: tests never rewrite them unless asked to. */
+const PERSIST_CATALOG = process.env.NODE_ENV !== "test" || process.env.CTX_PERSIST_CATALOG === "true";
+/** synthesizerModel of a card built from the deterministic template, without a model call. */
+export const TEMPLATE_SYNTHESIZER = "deterministic-template";
 
 function ensureDataDirs(): void {
   mkdirSync(config.dataDir, { recursive: true });
@@ -36,11 +40,12 @@ export function loadDynamicCatalog(): DynamicCatalogStore {
     } catch { /* recreate below */ }
   }
   const initial: DynamicCatalogStore = { version: "1.0", builtInElements: [...STATIC_BUILT_IN_CARDS], dynamicElements: [] };
-  writeFileSync(DYNAMIC_CATALOG_PATH, `${JSON.stringify(initial, null, 2)}\n`, "utf8");
+  if (PERSIST_CATALOG) writeFileSync(DYNAMIC_CATALOG_PATH, `${JSON.stringify(initial, null, 2)}\n`, "utf8");
   return initial;
 }
 
 export function saveDynamicCatalog(store: DynamicCatalogStore): void {
+  if (!PERSIST_CATALOG) return;
   ensureDataDirs();
   writeFileSync(DYNAMIC_CATALOG_PATH, `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
@@ -57,6 +62,7 @@ export function loadSynthesizedElementsLog(): SynthesizedElementAuditRecord[] {
 }
 
 export function appendSynthesizedElementLog(record: SynthesizedElementAuditRecord): void {
+  if (!PERSIST_CATALOG) return;
   const current = loadSynthesizedElementsLog();
   current.unshift(record);
   writeFileSync(SYNTHESIZED_LOG_PATH, `${JSON.stringify(current.slice(0, 100), null, 2)}\n`, "utf8");
@@ -78,9 +84,10 @@ export function generateTsxStubSource(card: SynthesizedDynamicCard): string {
 }
 
 function writeTsxStub(card: SynthesizedDynamicCard): string {
-  ensureDataDirs();
   const fileName = `${card.elementId.replace(/[^A-Za-z0-9_-]/g, "") || "SynthesizedCard"}.tsx`;
   const relPath = `data/synthesized-elements/${fileName}`;
+  if (!PERSIST_CATALOG) return relPath;
+  ensureDataDirs();
   writeFileSync(join(SYNTHESIZED_TSX_DIR, fileName), generateTsxStubSource(card), "utf8");
   return relPath;
 }
@@ -223,26 +230,49 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
       { kind: "event-stream", title: `${missing.title} · Activity & Audit Log`, events: [{ id: "ev1", timestamp: nowIso, operation: missing.elementId, status: "Warning", code: "DiagnosticEvent", caller: "ControlPlane", detail: missing.reason.slice(0, 160) }] },
     ],
     recommendedActions: [{ id: "stage-fix", label: "Stage Remediation Fix", description: missing.reason.slice(0, 140), command: "Get-AzResource -WhatIf", kind: "stage-fix" }],
-    synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath, synthesizedAt: nowIso },
+    synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath, synthesizedAt: nowIso, source: "fallback" },
     sourceRef: { file: tsxStubPath, startLine: 1, endLine: 12, ref: "dynamic-catalog" },
   };
 }
 
+/** Template cards for first paint, built in memory: no model call, nothing written. */
+export function buildTemplateCards(decision: ElementRoutingDecision, gatekeeperModel = "deterministic-router"): SynthesizedDynamicCard[] {
+  return decision.missingElements.map((m) => {
+    const started = performance.now();
+    return buildMinimalFallbackCard(m, gatekeeperModel, TEMPLATE_SYNTHESIZER, Math.max(1, Math.round(performance.now() - started)));
+  });
+}
+
+/**
+ * The deterministic triage path: template cards, labelled as such (L-03), upserted by
+ * elementId so a re-registered ticket does not append another copy.
+ */
 export function synthesizeAndPersistMissingElementsSync(input: { ticketId: string; ticketPrompt: string; decision: ElementRoutingDecision; gatekeeperModel?: string }): SynthesizedDynamicCard[] {
   const started = performance.now();
+  const gatekeeperModel = input.gatekeeperModel ?? "deterministic-router";
   const store = loadDynamicCatalog();
   const nowIso = new Date().toISOString();
-  const cards = input.decision.missingElements.map((m) => {
-    const tCard = performance.now();
-    const card = buildMinimalFallbackCard(m, input.gatekeeperModel ?? models.metaCatalog, models.metaWonder, Math.max(1, Math.round(performance.now() - tCard)));
+  const cards = buildTemplateCards(input.decision, gatekeeperModel).map((card) => {
     const tsxPath = writeTsxStub(card);
     card.synthesisMeta.tsxStubPath = tsxPath;
     card.synthesisMeta.latencyMs = Math.max(1, Math.round(performance.now() - started));
-    store.dynamicElements.push({ elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: nowIso, lastUsedAt: nowIso, reuseCount: 1, gatekeeperModel: input.gatekeeperModel ?? models.metaCatalog, synthesizerModel: models.metaWonder, tsxStubPath: tsxPath, cardTemplate: card });
+    upsertCatalogEntry(store, { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: nowIso, lastUsedAt: nowIso, reuseCount: 1, gatekeeperModel, synthesizerModel: TEMPLATE_SYNTHESIZER, tsxStubPath: tsxPath, cardTemplate: card });
     return card;
   });
   saveDynamicCatalog(store);
   return cards;
+}
+
+function upsertCatalogEntry(store: DynamicCatalogStore, entry: DynamicCatalogEntry): DynamicCatalogEntry {
+  const existingIdx = store.dynamicElements.findIndex((e) => e.elementId === entry.elementId);
+  if (existingIdx < 0) {
+    store.dynamicElements.push(entry);
+    return entry;
+  }
+  const existing = store.dynamicElements[existingIdx]!;
+  const merged = { ...entry, createdAt: existing.createdAt, reuseCount: existing.reuseCount + 1 };
+  store.dynamicElements[existingIdx] = merged;
+  return merged;
 }
 
 export async function synthesizeAndPersistMissingElements(input: {
@@ -312,15 +342,12 @@ export async function synthesizeAndPersistMissingElements(input: {
     }
     const latencyMs = Math.max(1, Math.round(performance.now() - started));
     const source = card ? "llm" : "fallback";
-    const cardModel = card ? synthesizerModel : "deterministic-template";
+    const cardModel = card ? synthesizerModel : TEMPLATE_SYNTHESIZER;
     if (!card) card = buildMinimalFallbackCard(missing, input.gatekeeperModel, cardModel, latencyMs);
     const tsxPath = writeTsxStub(card);
     const nowIso = new Date().toISOString();
     card.synthesisMeta = { gatekeeperModel: input.gatekeeperModel, synthesizerModel: cardModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: tsxPath, synthesizedAt: nowIso, source };
-    const existingIdx = store.dynamicElements.findIndex((e) => e.elementId === card!.elementId);
-    const entry: DynamicCatalogEntry = { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: existingIdx >= 0 ? store.dynamicElements[existingIdx]!.createdAt : nowIso, lastUsedAt: nowIso, reuseCount: existingIdx >= 0 ? store.dynamicElements[existingIdx]!.reuseCount + 1 : 1, gatekeeperModel: input.gatekeeperModel, synthesizerModel: cardModel, tsxStubPath: tsxPath, cardTemplate: card };
-    if (existingIdx >= 0) store.dynamicElements[existingIdx] = entry;
-    else store.dynamicElements.push(entry);
+    const entry = upsertCatalogEntry(store, { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: nowIso, lastUsedAt: nowIso, reuseCount: 1, gatekeeperModel: input.gatekeeperModel, synthesizerModel: cardModel, tsxStubPath: tsxPath, cardTemplate: card });
     saveDynamicCatalog(store);
     appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: card.elementId, title: card.title, domain: card.domain, gatekeeperModel: input.gatekeeperModel, modelUsed: cardModel, latencyMs, tokens, reusedFromCatalog: false, reuseCount: entry.reuseCount, tsxStubPath: tsxPath, schemaSpec: { requiredPrimitives: card.requiredPrimitives, blockKinds: card.blocks.map((b) => b.kind) } });
     results.push(card);

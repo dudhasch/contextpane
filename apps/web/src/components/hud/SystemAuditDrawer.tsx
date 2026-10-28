@@ -60,7 +60,7 @@ export function SystemAuditDrawer() {
           {tab === "providers" && <ProvidersBody />}
           {tab === "skills" && <SkillsPiiBody />}
           <SynthesizedElementsLedgerSection catalog={catalog} onRefresh={loadCatalog} />
-          <OmegaPrimeTelemetrySection catalogCount={elements.length} />
+          <OmegaPrimeTelemetrySection catalogCount={elements.filter((el) => el.synthesizerModel !== "deterministic-template").length} />
         </div>
       </aside>
     </div>
@@ -95,13 +95,19 @@ function SynthesizedElementsLedgerSection({
   };
 
   const elements = catalog?.catalog?.dynamicElements ?? [];
+  // A template card was built without a model call; only the rest are syntheses (L-03).
+  const isTemplate = (el: { synthesizerModel: string }) => el.synthesizerModel === "deterministic-template";
+  const synthesizedCount = elements.filter((el) => !isTemplate(el)).length;
 
   return (
     <section className="rounded-md border border-border-subtle bg-canvas/50 p-3 text-[11.5px]" data-testid="synthesized-elements-ledger">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <Sparkles className="size-3.5 text-primary" />
-          <span className="section-label">Synthesized UI Elements (N+k Catalog · k={elements.length})</span>
+          <span className="section-label">
+            Synthesized UI Elements (N+k Catalog · k={synthesizedCount}
+            {elements.length > synthesizedCount ? ` · ${elements.length - synthesizedCount} template` : ""})
+          </span>
         </div>
         {elements.length > 0 && (
           <button
@@ -117,8 +123,7 @@ function SynthesizedElementsLedgerSection({
         )}
       </div>
       <div className="mb-2 text-[10.5px] text-muted">
-        Gatekeeper: <span className="font-mono text-text">muse-spark-1.3</span> → Synthesizer:{" "}
-        <span className="font-mono text-primary">muse-wonder-1.0</span> · Persisted in{" "}
+        Gatekeeper → Synthesizer per element (a <span className="font-mono text-text">deterministic-template</span> entry made no model call) · Persisted in{" "}
         <span className="font-mono text-text">data/dynamic-catalog.json</span>
       </div>
       {elements.length === 0 ? (
@@ -132,8 +137,10 @@ function SynthesizedElementsLedgerSection({
               <div className="flex flex-wrap items-center justify-between gap-1">
                 <span className="font-mono text-[11.5px] font-semibold text-primary">&lt;{el.elementId} /&gt;</span>
                 <div className="flex items-center gap-1">
-                  <Pill tone="meta">{el.synthesizerModel}</Pill>
-                  <Pill tone="healthy">reused {el.reuseCount}×</Pill>
+                  <Pill tone={isTemplate(el) ? "muted" : "meta"} title={`gatekeeper: ${el.gatekeeperModel}`}>
+                    {isTemplate(el) ? "template · no model call" : el.synthesizerModel}
+                  </Pill>
+                  <Pill tone="muted">used {el.reuseCount}×</Pill>
                 </div>
               </div>
               <div className="mt-0.5 text-[11px] font-medium text-text">{el.title}</div>

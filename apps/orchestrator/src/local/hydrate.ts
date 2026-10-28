@@ -26,7 +26,7 @@ import type { CaPolicySummary, SignInSummary } from "@contextpane/mcp-msgraph";
 import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { triggeredBy } from "./brief.ts";
-import { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElementsSync } from "./dynamic-catalog.ts";
+import { buildDeterministicRoutingDecision, buildTemplateCards } from "./dynamic-catalog.ts";
 
 /**
  * Deterministic AST hydration. This is both the Tier 0 engine (recipes) and the
@@ -422,11 +422,8 @@ export function buildComponent(type: ComponentType, ctx: CorrelationContext): La
             body: ctx.custom.ticket.body,
             matchedSeededComponents: [],
           });
-        const synthesized = synthesizeAndPersistMissingElementsSync({
-          ticketId: ctx.ticketId,
-          ticketPrompt: `${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}`,
-          decision: routing,
-        });
+        // First paint only: a template card in memory, never written to the catalog (L-03).
+        const synthesized = buildTemplateCards(routing);
         if (synthesized[0]) {
           return {
             type: "SynthesizedDynamicCard",

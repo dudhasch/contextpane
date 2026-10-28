@@ -194,7 +194,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(props.events.filter((e) => /scope audit|Access review/.test(e.appDisplayName)).every((e) => day(e) < day(today))).toBe(true);
   });
 
-  test("N+k Generative UI Engine: unscripted Azure VM westeurope deployment failure synthesizes a dynamic card, persists to data/dynamic-catalog.json, correlates cloud status, and never leaks INC-4092 Finance E5 text", async () => {
+  test("N+k Generative UI Engine: unscripted Azure VM westeurope deployment failure synthesizes a dynamic card, labels it a template, correlates cloud status, and never leaks INC-4092 Finance E5 text", async () => {
     const vmTicket = {
       title: "Azure VM deployment failed in westeurope",
       body: "help my azure subscription wont let me deploy azure vm in westeurope. it says deployment failed since 08:00 UTC.",
@@ -209,12 +209,12 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const elementId = entry.elementRouting?.missingElements[0]?.elementId ?? "";
     expect(elementId.length).toBeGreaterThan(3);
 
-    // Verify persistence on disk
-    const dynCatalog = loadDynamicCatalog();
-    const persisted = dynCatalog.dynamicElements.find((e) => e.elementId === elementId);
-    expect(persisted).toBeDefined();
-    const tsxFullPath = `${process.cwd()}/${persisted!.tsxStubPath}`;
-    expect(existsSync(persisted!.tsxStubPath) || existsSync(tsxFullPath) || existsSync(`../../${persisted!.tsxStubPath}`)).toBe(true);
+    // The offline card is the deterministic template, labelled as such; tests never write the tracked catalog (L-03).
+    const card = entry.synthesizedElements?.[0];
+    expect(card?.elementId).toBe(elementId);
+    expect(card?.synthesisMeta.synthesizerModel).toBe("deterministic-template");
+    expect(card?.synthesisMeta.tsxStubPath).toBe(`data/synthesized-elements/${elementId}.tsx`);
+    expect(loadDynamicCatalog().dynamicElements.some((e) => e.elementId === elementId && e.synthesizerModel !== "deterministic-template")).toBe(false);
 
     // Verify brief & layout have zero INC-4092 Finance leakage and include Upstream Cloud Status correlation
     const ctx = await gatherContext(entry.scenarioId, { fresh: true });
@@ -477,5 +477,19 @@ describe("sub-agent pipeline sequencing (L-05, L-07)", () => {
       statusSpy.mockRestore();
       if (scenarioId) removeCustomTicket(scenarioId);
     }
+  });
+});
+
+describe("dynamic catalog honesty (L-03)", () => {
+  test("the deterministic path labels its card a template and writes nothing in tests", async () => {
+    const { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElementsSync, TEMPLATE_SYNTHESIZER } = await import("./dynamic-catalog.ts");
+    const before = loadDynamicCatalog().dynamicElements.length;
+    const decision = buildDeterministicRoutingDecision({ title: "Template provenance probe", body: "probe", matchedSeededComponents: [] });
+    const [card] = synthesizeAndPersistMissingElementsSync({ ticketId: "CUSTOM-PROBE1", ticketPrompt: "probe", decision });
+    expect(card?.synthesisMeta.synthesizerModel).toBe(TEMPLATE_SYNTHESIZER);
+    expect(card?.synthesisMeta.gatekeeperModel).toBe("deterministic-router");
+    expect(card?.synthesisMeta.source).toBe("fallback");
+    expect(loadDynamicCatalog().dynamicElements.length).toBe(before);
+    expect(existsSync("../../data/synthesized-elements/TemplateProvenanceProbeCard.tsx")).toBe(false);
   });
 });
