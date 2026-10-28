@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, Eye, LogIn, ShieldBan, ShieldCheck, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { CaPolicyInspector, EntraSignInTimeline as Props, SignInEvent } from "@contextpane/catalog";
-import { fmtSignInTime, fmtTimeUtc } from "@/lib/format";
+import { fmtSignInTime, fmtTimeUtc, humanizeSlug, humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Dot, Pill, type Tone } from "../ui/Pill";
@@ -165,7 +165,7 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                   </IdentityCell>
                   <span className="text-muted">→</span>
                   <span className="truncate font-mono">{e.appDisplayName}</span>
-                  <span className="hidden truncate text-[10.5px] text-faint xl:inline">
+                  <span className="hidden truncate text-[11px] text-faint xl:inline">
                     {e.clientApp} · {e.location}
                     {e.deviceName ? ` · ${e.deviceName}` : ""}
                   </span>
@@ -192,7 +192,7 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                     )}
                   </span>
                 </div>
-                {e.status !== "success" && e.isHighlighted && e.blockingPolicyName && <div className="mt-0.5 truncate text-[10.5px] text-critical">CA: {short(e.blockingPolicyName)} · device {e.deviceCompliant === false ? "NonCompliant" : "compliant"}</div>}
+                {e.status !== "success" && e.isHighlighted && e.blockingPolicyName && <div className="mt-0.5 truncate text-[11px] text-critical">CA: {short(e.blockingPolicyName)} · device {e.deviceCompliant === false ? "NonCompliant" : "compliant"}</div>}
               </div>
             </li>
           );
@@ -253,7 +253,7 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
                 {p.displayName}
               </span>
               <Pill tone={p.state === "enabled" ? (p.role === "blocking" ? "critical" : "healthy") : "warning"}>{STATE_LABEL[p.state]}</Pill>
-              <span className="ml-auto font-mono text-[10px] text-faint">{p.role}</span>
+              <span className="ml-auto text-[10px] text-faint">{humanizeStatus(p.role)}</span>
             </div>
             <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
               <dt className="text-faint">Include</dt>
@@ -269,7 +269,7 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
               {p.clientAppTypes.length > 0 && (
                 <>
                   <dt className="text-faint">Client apps</dt>
-                  <dd className="font-mono">{p.clientAppTypes.join(", ")}</dd>
+                  <dd>{p.clientAppTypes.map(humanizeStatus).join(", ")}</dd>
                 </>
               )}
               <dt className="text-faint">Grant</dt>
@@ -282,7 +282,7 @@ function PolicyInspector({ policies }: { policies: CaPolicyInspector[] }) {
                 className="mt-1.5"
                 head={["Drift", "Golden baseline", "Live tenant"]}
                 rows={p.drift.map((d) => [
-                  <span className="font-mono">{d.field}</span>,
+                  <span title={d.field}>{humanizeSlug(d.field)}</span>,
                   <span className="font-mono text-healthy">
                     <TextWithRolePermissionHovers text={d.expected} />
                   </span>,

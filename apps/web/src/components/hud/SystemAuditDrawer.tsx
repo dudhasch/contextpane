@@ -109,14 +109,14 @@ function SynthesizedElementsLedgerSection({
             disabled={clearing}
             onClick={() => void handleClear()}
             data-testid="clear-synthesized-elements"
-            className="inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10.5px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
           >
             <Trash2 className="size-3" />
             Clear Synthesized Elements
           </button>
         )}
       </div>
-      <div className="mb-2 text-[10.5px] text-muted">
+      <div className="mb-2 text-[11px] text-muted">
         Gatekeeper: <span className="font-mono text-text">muse-spark-1.3</span> → Synthesizer:{" "}
         <span className="font-mono text-primary">muse-wonder-1.0</span> · Persisted in{" "}
         <span className="font-mono text-text">data/dynamic-catalog.json</span>
@@ -137,7 +137,7 @@ function SynthesizedElementsLedgerSection({
                 </div>
               </div>
               <div className="mt-0.5 text-[11px] font-medium text-text">{el.title}</div>
-              <div className="mt-0.5 text-[10.5px] text-muted">{el.reason}</div>
+              <div className="mt-0.5 text-[11px] text-muted">{el.reason}</div>
               <div className="mt-1 font-mono text-[10px] text-faint">Stub: {el.tsxStubPath}</div>
             </div>
           ))}
@@ -188,7 +188,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
       <div className="rounded border border-border-subtle bg-surface p-2.5" data-testid="subagent-task-telemetry">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[10px] font-semibold tracking-wider text-faint uppercase">Sub-Agent Task Telemetry (5-Stage Pipeline)</div>
-          <span className="font-mono text-[10.5px] text-healthy">
+          <span className="font-mono text-[11px] text-healthy">
             {subAgents.length}/5 stages active
           </span>
         </div>
@@ -198,7 +198,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
               <div className="flex min-w-0 items-center gap-1.5">
                 <span className="shrink-0 font-mono text-[10px] text-faint">{agent.stepIndex}.</span>
                 <span className="shrink-0 font-semibold whitespace-nowrap text-text">{agent.agentName}</span>
-                <span className="truncate text-[10px] text-muted">· {agent.role}</span>
+                <span className="truncate text-[11px] text-muted">· {agent.role}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10px]">
                 <span className="text-primary">{agent.modelId}</span>
@@ -215,7 +215,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           <div className="mt-0.5 font-mono text-[12px] text-selection">
             {kinematic.speculativeHits} hits · {kinematic.savedLatencyMs} ms saved
           </div>
-          <div className="mt-0.5 text-[10px] text-muted">
+          <div className="mt-0.5 text-[11px] text-muted">
             Buffer {speculativeBuffer.length}/4 · {kinematic.selectionPrewarms} selection pre-warms
           </div>
         </div>
@@ -225,7 +225,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           <div className="mt-0.5 font-mono text-[12px] text-primary">
             6 built-in + k={synthesizedCount} dynamic
           </div>
-          <div className="mt-0.5 text-[10px] text-muted">
+          <div className="mt-0.5 text-[11px] text-muted">
             muse-spark-1.3 gatekeeper → muse-wonder-1.0
           </div>
         </div>
@@ -235,7 +235,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           <div className="mt-0.5 font-mono text-[12px] text-healthy">
             {vaultedFields} fields vaulted · 0 raw PII
           </div>
-          <div className="mt-0.5 text-[10px] text-muted">
+          <div className="mt-0.5 text-[11px] text-muted">
             @pii(EU-GDPR-Personal) · 100% stripped pre-LLM
           </div>
         </div>
@@ -280,7 +280,7 @@ function SkillsPiiBody() {
         >
           Save as Instant Auto-Fix Rule
         </button>
-        <div className="mb-2 text-[10.5px] text-muted">Runs in &lt;1ms with 0 AI tokens next time this issue happens</div>
+        <div className="mb-2 text-[11px] text-muted">Runs in &lt;1ms with 0 AI tokens next time this issue happens</div>
         {skills.length === 0 && <div className="text-muted">No compiled auto-fix rule yet.</div>}
         {skills.map((s) => <div key={s.id} className="mb-1 flex flex-wrap gap-1.5"><Pill tone="healthy">{s.badge}</Pill><Pill tone="muted">{s.id} · {s.latencyMs} ms · 0 tok</Pill></div>)}
       </section>
@@ -289,7 +289,7 @@ function SkillsPiiBody() {
         {pii ? (
           <div className="space-y-1.5">
             <div className="flex flex-wrap gap-1.5"><Pill tone="healthy">{pii.piiFieldsVaulted} PII fields vaulted</Pill><Pill tone={pii.zeroRawPiiInLlmPrompt ? "healthy" : "critical"}>zeroRawPiiInLlmPrompt: {String(pii.zeroRawPiiInLlmPrompt)}</Pill></div>
-            <div className="rounded-md border border-border-subtle p-2 font-mono text-[10.5px] text-muted">{Object.entries(pii.sampleMappings ?? {}).slice(0, 6).map(([k, v]) => <div key={k}>{k} ↔ {v}</div>)}</div>
+            <div className="rounded-md border border-border-subtle p-2 font-mono text-[11px] text-muted">{Object.entries(pii.sampleMappings ?? {}).slice(0, 6).map(([k, v]) => <div key={k}>{k} ↔ {v}</div>)}</div>
           </div>
         ) : <div className="text-muted">Open a scenario to populate the vault.</div>}
       </section>
@@ -367,7 +367,7 @@ function ProvidersBody() {
             <Pill tone="muted" icon={<Gauge />}>
               {fmtMs(telemetry.latencyMs)} · {fmtTokens(telemetry.tokensUsed.total)} tok
             </Pill>
-            <span className="font-mono text-[10.5px] text-faint">{telemetry.endpoint}</span>
+            <span className="font-mono text-[11px] text-faint">{telemetry.endpoint}</span>
           </div>
         ) : (
           <div className="text-muted">No request yet.</div>
@@ -418,7 +418,7 @@ function ProvidersBody() {
             </li>
           ))}
         </ul>
-        <div className="mt-1 text-[10.5px] text-faint">The open-weight Muse Glimmer GPU is scale-to-zero and only woken by an explicit hover refresh; cached answers are served without it.</div>
+        <div className="mt-1 text-[11px] text-faint">The open-weight Muse Glimmer GPU is scale-to-zero and only woken by an explicit hover refresh; cached answers are served without it.</div>
         {health?.openWeightInference && (
           <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="glimmer-config">
             <Pill tone="healthy">grammarConstrained: {String(health.openWeightInference.grammarConstrained)}</Pill>

@@ -1,7 +1,7 @@
 import { MonitorCog, Wrench } from "lucide-react";
 import { useCallback } from "react";
 import type { IntuneDevice, IntuneDriftCard as Props } from "@contextpane/catalog";
-import { fmtTimeUtc } from "@/lib/format";
+import { fmtTimeUtc, humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, type Tone } from "../ui/Pill";
@@ -28,7 +28,7 @@ function DevicesTable({ devices }: { devices: IntuneDevice[] }) {
             <span className="font-mono whitespace-nowrap">{d.deviceName}</span>
           </IdentityCell>,
           <IdentityCell kind="upn" value={d.upn}>
-            <span className="font-mono text-[10.5px] whitespace-nowrap text-muted">{d.upn.split("@")[0]}</span>
+            <span className="font-mono text-[11px] whitespace-nowrap text-muted">{d.upn.split("@")[0]}</span>
           </IdentityCell>,
           <Pill tone={COMPLIANCE_TONE[d.complianceState]}>{d.complianceState}</Pill>,
           <span className="font-mono whitespace-nowrap text-faint">{fmtTimeUtc(d.lastCheckIn)}</span>,
@@ -117,7 +117,7 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
                 </div>,
                 <span className="font-mono text-[11px] font-medium text-healthy">{s.golden}</span>,
                 <span className={`font-mono text-[11px] font-medium ${s.status === "in-sync" ? "text-healthy" : "text-critical"}`}>{s.live}</span>,
-                <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{s.status}</Pill>,
+                <Pill tone={s.status === "in-sync" ? "healthy" : s.status === "conflict" ? "critical" : "warning"}>{humanizeStatus(s.status)}</Pill>,
                 <div className="min-w-0 space-y-1.5">
                   {csp.cspUri && <SmartTechPath path={csp.cspUri} />}
                   {csp.registryPath && (

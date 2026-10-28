@@ -57,7 +57,7 @@ export function DiffModal() {
             <Pill tone={props.state === "critical" ? "critical" : "warning"} icon={<GitCompareArrows />}>
               {props.driftState === "drift-detected" ? "DRIFT DETECTED" : "IN SYNC"}
             </Pill>
-            <span className="hidden font-mono text-[10.5px] text-faint lg:inline">{props.summary.replace(/^State: /, "")}</span>
+            <span className="hidden font-mono text-[11px] text-faint lg:inline">{props.summary.replace(/^State: /, "")}</span>
             <Button size="sm" variant="meta" icon={<Wrench />} className="ml-auto" onClick={() => { setOpen(false); void remediate(); }}>
               Generate Fix &amp; Stage PR
             </Button>
@@ -70,7 +70,7 @@ export function DiffModal() {
               <div key={r.ruleName} className="flex items-start gap-2 text-[12px] leading-snug">
                 <ShieldAlert className="mt-0.5 size-4 shrink-0 text-critical" />
                 <span className="font-mono text-critical">{exposureCallout(r)}</span>
-                <span className="ml-auto hidden shrink-0 font-mono text-[10.5px] text-faint xl:inline">
+                <span className="ml-auto hidden shrink-0 font-mono text-[11px] text-faint xl:inline">
                   p{r.priority} · {r.reason}
                 </span>
               </div>
@@ -136,7 +136,7 @@ function BaselineDiffModal({ card }: { card: "EntraSignInTimeline" | "IntuneDrif
                 <span className="shrink-0 font-mono text-critical">{r.live}</span>
                 <span className="shrink-0 text-faint">≠</span>
                 <span className="shrink-0 font-mono text-healthy">{r.golden}</span>
-                {r.ref && <span className="ml-auto shrink-0 font-mono text-[10.5px] text-faint" title={r.ref.file}>{formatSourceRef({ ...r.ref, file: r.ref.file.split("/").pop()! })}</span>}
+                {r.ref && <span className="ml-auto shrink-0 font-mono text-[11px] text-faint" title={r.ref.file}>{formatSourceRef({ ...r.ref, file: r.ref.file.split("/").pop()! })}</span>}
               </li>
             ))}
           </ul>

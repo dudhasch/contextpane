@@ -8,11 +8,15 @@ export function Toasts() {
   const toasts = useWorkbench((s) => s.toasts);
   const dismiss = useWorkbench((s) => s.dismissToast);
   const drawerOpen = useWorkbench((s) => s.drawerOpen);
+  const systemOpen = useWorkbench((s) => s.systemOpen);
   if (!toasts.length) return null;
+  // The approval drawer (680 px) and the System & Audit drawer (600 px) are right-anchored on their own;
+  // with one of them open, centre the stack in the free left area. With both open (System moves left) stay centred.
+  const shifted = drawerOpen !== systemOpen;
   return (
     <div
       className={`pointer-events-none fixed bottom-4 z-[10000] flex w-80 max-w-sm -translate-x-1/2 flex-col gap-2 transition-[left] duration-150 ${
-        drawerOpen ? "left-[360px]" : "left-1/2"
+        shifted ? "left-[360px]" : "left-1/2"
       }`}
       data-testid="toast-container"
     >

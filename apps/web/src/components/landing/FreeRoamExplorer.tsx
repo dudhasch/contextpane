@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { ContextViewMode } from "@contextpane/catalog";
+import { humanizeSource, SOURCE_LABEL } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { CONTEXT_MODE_LIST, ContextModeIcon } from "../ui/ContextModeIcons";
@@ -117,7 +118,7 @@ export function FreeRoamExplorer() {
               <h1 className="text-[13px] font-semibold tracking-tight text-text">
                 Free-Roam Startpage · Knowledge &amp; Tenant Explorer
               </h1>
-              <p className="text-[10.5px] text-muted">
+              <p className="text-[11px] text-muted">
                 Spawn any dashboard across live MCP tenant telemetry or cloud architecture knowledge without opening a ticket
               </p>
             </div>
@@ -130,7 +131,7 @@ export function FreeRoamExplorer() {
               onClick={() => void setDataMode(dataMode === "real-tenant" ? "simulated-lab" : "real-tenant")}
               data-testid="freeroam-datamode-toggle"
               title="Toggle MCP Data Mode between Strict Real Tenant (zero mock fallback) and Simulated Lab"
-              className={`inline-flex h-6 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[10.5px] font-semibold transition-colors ${
+              className={`inline-flex h-6 items-center gap-1.5 rounded-pill border px-2.5 font-mono text-[11px] font-semibold transition-colors ${
                 dataMode === "real-tenant"
                   ? "border-healthy/50 bg-healthy/15 text-healthy hover:bg-healthy/25"
                   : "border-primary/40 bg-primary/12 text-primary hover:bg-primary/20"
@@ -179,7 +180,7 @@ export function FreeRoamExplorer() {
 
           {/* Scope + ViewMode Bar */}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="inline-flex items-center gap-0.5 rounded-md border border-border-subtle bg-canvas/70 p-0.5 text-[10.5px]">
+            <div className="inline-flex items-center gap-0.5 rounded-md border border-border-subtle bg-canvas/70 p-0.5 text-[11px]">
               {(
                 [
                   { id: "hybrid", label: "Hybrid (MCP + AI)" },
@@ -264,12 +265,12 @@ export function FreeRoamExplorer() {
         {/* 1-Click Quick-Spawn Chips: Live Tenant Posture */}
         <section className="rounded-lg border border-border-subtle bg-surface/60 p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-faint uppercase">
               <Layers className="size-3 text-primary" />
               1-Click Live Tenant Posture Dashboards (via MCP)
             </span>
             <span className="font-mono text-[10px] text-muted">
-              {dataMode === "real-tenant" ? "live-graph / live-azure" : "simulated-lab"}
+              {dataMode === "real-tenant" ? "Live Graph & ARM" : SOURCE_LABEL["simulated-lab"]}
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -295,7 +296,7 @@ export function FreeRoamExplorer() {
         {/* 1-Click Quick-Spawn Chips: Cloud & Security Knowledge */}
         <section className="rounded-lg border border-border-subtle bg-surface/60 p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-faint uppercase">
               <BookOpen className="size-3 text-meta" />
               Cloud, Identity &amp; Security Reference Matrices
             </span>
@@ -347,19 +348,19 @@ export function FreeRoamExplorer() {
           {inventory && (
             <div className="mb-2 grid grid-cols-4 gap-1.5">
               <div className="rounded border border-border-subtle bg-canvas/60 px-2 py-1">
-                <div className="text-[9.5px] text-faint uppercase">Users</div>
+                <div className="text-[10px] text-faint uppercase">Users</div>
                 <div className="font-mono text-[12px] font-semibold text-text">{inventory.summary.users}</div>
               </div>
               <div className="rounded border border-border-subtle bg-canvas/60 px-2 py-1">
-                <div className="text-[9.5px] text-faint uppercase">CA Policies</div>
+                <div className="text-[10px] text-faint uppercase">CA Policies</div>
                 <div className="font-mono text-[12px] font-semibold text-text">{inventory.summary.caPolicies}</div>
               </div>
               <div className="rounded border border-border-subtle bg-canvas/60 px-2 py-1">
-                <div className="text-[9.5px] text-faint uppercase">SKU Pools</div>
+                <div className="text-[10px] text-faint uppercase">SKU Pools</div>
                 <div className="font-mono text-[12px] font-semibold text-text">{inventory.summary.skuPools}</div>
               </div>
               <div className="rounded border border-border-subtle bg-canvas/60 px-2 py-1">
-                <div className="text-[9.5px] text-faint uppercase">ARM Objects</div>
+                <div className="text-[10px] text-faint uppercase">ARM Objects</div>
                 <div className="font-mono text-[12px] font-semibold text-text">
                   {inventory.summary.azureResources + inventory.summary.azurePolicies}
                 </div>
@@ -390,14 +391,14 @@ export function FreeRoamExplorer() {
                       </span>
                     </div>
                     <Pill tone={isLiveSource ? "healthy" : "muted"}>
-                      {cat.source === "seeded-manifest" ? "simulated-lab" : cat.source}
+                      {cat.source === "seeded-manifest" ? SOURCE_LABEL["simulated-lab"] : humanizeSource(cat.source)}
                     </Pill>
                   </button>
                   {isOpen && (
                     <div className="max-h-48 divide-y divide-border-subtle overflow-y-auto border-t border-border-subtle bg-surface/80">
                       {cat.items.length === 0 ? (
                         <div className="px-3 py-2 text-[11px] text-faint">
-                          No objects returned by MCP in {dataMode} mode.
+                          No objects returned by MCP in {humanizeSource(dataMode)} mode.
                         </div>
                       ) : (
                         cat.items.map((item) => (
@@ -431,7 +432,7 @@ export function FreeRoamExplorer() {
         {/* Saved Free-Roam Boards */}
         <section className="rounded-lg border border-border-subtle bg-surface/60 p-2.5" data-testid="free-roam-saved-boards">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-faint uppercase">
               <FolderKanban className="size-3 text-selection" />
               Saved Multi-Dashboard Boards ({savedBoards.length})
             </span>

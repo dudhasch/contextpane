@@ -40,7 +40,7 @@ export function FilterChips({ chip, counts, onChange, testId }: { chip: StatusCh
           aria-pressed={chip === c}
           onClick={() => onChange(c)}
           data-chip={c}
-          className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[10.5px] transition-colors ${chip === c ? (c === "bad" ? "border-critical/50 bg-critical/12 text-critical" : c === "good" ? "border-healthy/50 bg-healthy/12 text-healthy" : "border-primary/50 bg-primary/12 text-primary") : "border-border text-faint hover:text-text"}`}
+          className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[11px] transition-colors ${chip === c ? (c === "bad" ? "border-critical/50 bg-critical/12 text-critical" : c === "good" ? "border-healthy/50 bg-healthy/12 text-healthy" : "border-primary/50 bg-primary/12 text-primary") : "border-border text-faint hover:text-text"}`}
         >
           {CHIP_LABEL[c]} <span className="opacity-80">({counts[c]})</span>
         </button>
@@ -94,7 +94,7 @@ export function RowFilterPill() {
   const setRowFilter = useWorkbench((s) => s.setRowFilter);
   if (!filter) return null;
   return (
-    <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-selection/45 bg-selection/12 pr-0.5 pl-1.5 font-mono text-[10.5px] text-selection" data-testid="row-filter-pill">
+    <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-selection/45 bg-selection/12 pr-0.5 pl-1.5 font-mono text-[11px] text-selection" data-testid="row-filter-pill">
       Filtered by: {identityLabel(filter)}
       <button type="button" onClick={() => setRowFilter(null)} aria-label="Clear identity filter" className="grid size-4 place-items-center rounded hover:bg-selection/25">
         <X className="size-3" />

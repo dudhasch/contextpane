@@ -1,6 +1,7 @@
-import { BookOpen, Braces, Check, ClipboardCopy, ExternalLink, FileCode2, GitMerge, GitPullRequest, HeartPulse, Mail, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, X, Zap } from "lucide-react";
-import { useState } from "react";
+import { BookOpen, Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitMerge, GitPullRequest, HeartPulse, Lightbulb, Mail, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, Wrench, X, Zap } from "lucide-react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { CodeBlock } from "../ui/CodeBlock";
@@ -80,6 +81,9 @@ export function ActionApprovalDrawerSheet() {
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.drawer && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const reopenTicket = useWorkbench((s) => s.reopenTicket);
+  const panelRef = useRef<HTMLElement>(null);
+  const closeDrawer = useCallback(() => setOpen(false), [setOpen]);
+  useFocusTrap(panelRef, open, closeDrawer);
 
   if (!open) return null;
 
@@ -235,7 +239,12 @@ export function ActionApprovalDrawerSheet() {
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/75 backdrop-blur-sm" onClick={() => setOpen(false)}>
       <aside
-        className="flex h-full w-full max-w-[680px] animate-slide-in-right flex-col border-l border-slate-800 bg-surface shadow-popover"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="approval-drawer-title"
+        tabIndex={-1}
+        className="flex h-full w-full max-w-[680px] animate-slide-in-right flex-col border-l border-slate-800 bg-surface shadow-popover focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Zone 1: Clean 2-Line Header (~64px total) */}
@@ -243,7 +252,7 @@ export function ActionApprovalDrawerSheet() {
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
               <Sparkles className="size-3.5 shrink-0 text-primary" />
-              <span className="text-[13px] font-semibold whitespace-nowrap text-text">
+              <span id="approval-drawer-title" className="text-[13px] font-semibold whitespace-nowrap text-text">
                 Review &amp; Approve Fix{drawer ? ` · #${drawer.ticketId}` : ""}
               </span>
             </div>
@@ -254,7 +263,7 @@ export function ActionApprovalDrawerSheet() {
                   href={drawer.staging.prUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex h-5 items-center gap-1 rounded-pill border border-healthy/40 bg-healthy/12 px-2 font-mono text-[10.5px] leading-none whitespace-nowrap text-healthy hover:bg-healthy/20"
+                  className="inline-flex h-5 items-center gap-1 rounded-pill border border-healthy/40 bg-healthy/12 px-2 font-mono text-[11px] leading-none whitespace-nowrap text-healthy hover:bg-healthy/20"
                   title={drawer.staging.prUrl}
                 >
                   <GitPullRequest className="size-3" />
@@ -353,20 +362,22 @@ export function ActionApprovalDrawerSheet() {
                   <Button
                     size="xs"
                     variant="healthy"
+                    icon={<Wrench />}
                     onClick={handleAutoFixPreflight}
                     data-testid="preflight-autofix-button"
                     className="font-semibold"
                   >
-                    🔧 Auto-Fix Script to Pass Check
+                    Auto-Fix Script to Pass Check
                   </Button>
                   <Button
                     size="xs"
                     variant="outline"
+                    icon={<ShieldAlert />}
                     onClick={handleAdminOverridePreflight}
                     data-testid="preflight-override-button"
                     className="border-amber-500/50 text-amber-300 hover:bg-amber-500/15"
                   >
-                    ⚠️ Override with Admin Justification
+                    Override with Admin Justification
                   </Button>
                 </div>
               </div>
@@ -381,7 +392,7 @@ export function ActionApprovalDrawerSheet() {
                   <Sparkles className="size-3.5 shrink-0" />
                   {focusBanner}
                 </span>
-                <span className="font-mono text-[10.5px] text-muted">
+                <span className="font-mono text-[11px] text-muted">
                   Opened directly on {scriptSubTab === "graph" ? "Graph API JSON" : scriptSubTab === "terraform" ? "Terraform Diff" : "PowerShell"}
                 </span>
               </div>
@@ -448,7 +459,7 @@ export function ActionApprovalDrawerSheet() {
                         disabled={!prPossible || !drawer.staging || drawer.approval.state !== "pending"}
                         onChange={(e) => setOpenPr(e.target.checked)}
                       />
-                      <span>+ Sync Audit PR</span>
+                      <span>Sync Audit PR</span>
                     </label>
                   )}
                   <CanaryCheckbox />
@@ -469,8 +480,9 @@ export function ActionApprovalDrawerSheet() {
                       void approve("approve");
                     }}
                     data-testid="reapply-fix-button"
+                    icon={<Zap />}
                   >
-                    ⚡ Re-Apply Fix Now
+                    Re-Apply Fix Now
                   </Button>
                   <Button
                     variant="outline"
@@ -530,12 +542,13 @@ export function ActionApprovalDrawerSheet() {
                     }`}
                     disabled={drawer.verificationStatus.verdict === "Verification Failed" || formalPassed === false}
                     onClick={() => void approve("approve")}
+                    icon={simulateCanaryFailure ? <FlaskConical /> : mode === "break-glass" ? <Zap /> : <GitPullRequest />}
                   >
                     {simulateCanaryFailure
-                      ? "🧪 Run Rollback Simulation (Test Auto-Undo)"
+                      ? "Run Rollback Simulation (Test Auto-Undo)"
                       : mode === "break-glass"
-                        ? "⚡ Apply Fix Now"
-                        : "🔀 Create Pull Request"}
+                        ? "Apply Fix Now"
+                        : "Create Pull Request"}
                   </Button>
                 </div>
               ) : (
@@ -743,12 +756,13 @@ function CommercialCallout({ ticketId }: { ticketId: string }) {
       data-testid="commercial-reconciler"
     >
       <span>
-        💡 <span className="font-semibold text-healthy">License &amp; Cost Impact:</span>{" "}
+        <Lightbulb className="mr-1 inline size-3.5 align-[-2px] text-healthy" aria-hidden="true" />
+        <span className="font-semibold text-healthy">License &amp; Cost Impact:</span>{" "}
         {isLicenseTicket
           ? `$0/mo — uses ${rec?.neededSeats ?? 3} unassigned E5 seats already paid for in your contract${rec ? ` (#${rec.contractId} · saves $${rec.pathA.wasteEliminatedMonthly}/mo in unused seats)` : ""}`
           : "$0/mo — configuration change only, no extra licenses needed"}
       </span>
-      <span className="shrink-0 font-mono text-[10.5px] text-healthy">Contract vs. Billed vs. Active Seats</span>
+      <span className="shrink-0 font-mono text-[11px] text-healthy">Contract vs. Billed vs. Active Seats</span>
     </div>
   );
 }
@@ -1098,7 +1112,7 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
                         <tr key={t.id} className="border-t border-slate-800/80">
                           <td className="px-3 py-2">
                             <div className="font-medium text-text">{t.name}</div>
-                            <div className="font-mono text-[10.5px] text-faint">{t.domain}</div>
+                            <div className="font-mono text-[11px] text-faint">{t.domain}</div>
                           </td>
                           <td className="px-3 py-2">
                             <div className="max-w-[260px] truncate font-mono text-[11px] text-primary" title={branch}>
@@ -1312,7 +1326,7 @@ function CanaryCheckbox() {
         checked={simulate}
         onChange={(e) => setSimulate(e.target.checked)}
       />
-      <span>{simulate ? "🧪 Auto-Rollback Drill On" : "Test Auto-Rollback"}</span>
+      <span>{simulate ? "Auto-Rollback Drill On" : "Test Auto-Rollback"}</span>
     </label>
   );
 }
@@ -1322,7 +1336,7 @@ function CanaryTraceBanner() {
   const reverted = useWorkbench((s) => s.liveConsoleReverted || s.drawer?.approval.state === "rolled-back");
   if (!canary) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-800 bg-surface/60 px-2.5 py-1.5 font-mono text-[10.5px]" data-testid="canary-trace">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-800 bg-surface/60 px-2.5 py-1.5 font-mono text-[11px]" data-testid="canary-trace">
       <span className="font-sans text-[11px] font-medium text-muted">Health Check:</span>
       {reverted ? (
         <span className="rounded border border-amber-500/45 bg-amber-500/12 px-1.5 py-0.5 font-semibold text-amber-300">
@@ -1353,9 +1367,9 @@ function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
   const setMode = useWorkbench((s) => s.setExecutionMode);
   const locked = drawer.approval.state !== "pending" && drawer.approval.state !== "rolled-back";
   const current = locked ? (drawer.approval.mode ?? selected) : selected;
-  const options: Array<{ id: ExecutionMode; label: string }> = [
-    { id: "break-glass", label: "⚡ Apply Live Now" },
-    { id: "gitops", label: "🔀 Stage GitHub PR Only" },
+  const options: Array<{ id: ExecutionMode; label: string; icon: ReactNode }> = [
+    { id: "break-glass", label: "Apply Live Now", icon: <Zap className="size-3" aria-hidden="true" /> },
+    { id: "gitops", label: "Stage GitHub PR Only", icon: <GitPullRequest className="size-3" aria-hidden="true" /> },
   ];
   return (
     <div
@@ -1381,8 +1395,9 @@ function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
                   ? "bg-healthy/15 font-semibold text-healthy"
                   : "bg-primary/15 font-semibold text-primary"
                 : "text-muted hover:text-text"
-            } disabled:cursor-default ${locked && !active ? "opacity-40" : ""}`}
+            } inline-flex items-center gap-1 disabled:cursor-default ${locked && !active ? "opacity-40" : ""}`}
           >
+            {o.icon}
             {o.label}
           </button>
         );

@@ -16,7 +16,7 @@ import { AlertTriangle, Cloud, Cpu, ExternalLink, Hash, Laptop, ShieldBan, Slide
 import { useEffect, useState, type ReactNode } from "react";
 import { lookupRoleOrPermission, type EnrichedEntity, type EntityType, type QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
-import { healthTone } from "@/lib/format";
+import { healthTone, humanizeStatus } from "@/lib/format";
 import { CAT_CHIP, catStyle } from "@/lib/provenance";
 import { selectActiveTimelineSlice, selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -231,7 +231,7 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
         <span className="truncate font-mono text-[11px] text-muted" title={p.entityId}>
           {p.entityId}
         </span>
-        <Pill tone={tone}>{p.status}</Pill>
+        <Pill tone={tone}>{humanizeStatus(p.status)}</Pill>
       </div>
       <div className="text-[13px] font-medium leading-snug">{p.headline}</div>
       {p.errorCodeTranslation && (
@@ -260,7 +260,7 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
           ))}
         </div>
       )}
-      <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[10px] text-faint">
+      <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[11px] text-faint">
         <span className="inline-flex items-center gap-1">
           <Cpu className="size-3" />
           Live Entra &amp; Azure Context · &lt;1ms

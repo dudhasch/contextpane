@@ -81,7 +81,7 @@ export function RouterSavingsBody() {
       <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-surface">
         <div className="h-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-1 text-[10px] text-faint">share of requests answered without a model</div>
+      <div className="mt-1 text-[11px] text-faint">share of requests answered without a model</div>
 
       <table className="mt-3 w-full text-[11px]">
         <thead className="text-faint">
@@ -156,7 +156,7 @@ function Stat({ label, value, sub, tone, title }: { label: string; value: string
     <div className="rounded-md border border-border-subtle bg-surface p-2" title={title}>
       <div className="truncate text-[10px] uppercase tracking-wider text-faint">{label}</div>
       <div className={`truncate font-mono text-lg leading-tight ${TONE_TEXT[tone]}`}>{value}</div>
-      <div className="truncate text-[10px] text-muted">{sub}</div>
+      <div className="truncate text-[11px] text-muted">{sub}</div>
     </div>
   );
 }

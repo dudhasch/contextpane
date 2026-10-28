@@ -599,12 +599,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       .catch(() => set({ health: null }));
     void get().loadScenarios();
     void get().loadFreeRoamInventory();
-    if (get().freeRoamDashboards.length === 0) {
-      void get().spawnFreeRoamDashboard("Live Tenant Identity, Licensing, Conditional Access & Infrastructure Posture Overview", {
-        scope: "hybrid",
-        viewMode: "dashboard",
-      });
-    }
+    // No lens is spawned at boot: the posture overview costs a Wonder call, so it waits for the
+    // operator's first interaction (the empty-state button or any explorer query).
     await Promise.all([get().loadRecipes(), get().loadBrief()]);
     await get().correlate();
   },
@@ -613,12 +609,6 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ freeRoamOpen: true, queueOpen: false, voiceOpen: false });
     if (!get().freeRoamInventory) {
       void get().loadFreeRoamInventory();
-    }
-    if (get().freeRoamDashboards.length === 0 && get().exploreStatus !== "loading") {
-      void get().spawnFreeRoamDashboard("Live Tenant Identity, Licensing, Conditional Access & Infrastructure Posture Overview", {
-        scope: "hybrid",
-        viewMode: "dashboard",
-      });
     }
   },
 
@@ -2156,7 +2146,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   toast: (toast) => {
     const id = ++toastSeq;
-    set((s) => ({ toasts: [...s.toasts.slice(-3), { ...toast, id }] }));
+    // Dedupe by title: a repeated toast ("Copied", "Pinned …") replaces its predecessor instead of stacking.
+    set((s) => ({ toasts: [...s.toasts.filter((t) => t.title !== toast.title).slice(-3), { ...toast, id }] }));
     setTimeout(() => get().dismissToast(id), toast.href ? 12_000 : 5200);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),

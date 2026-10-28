@@ -1,5 +1,6 @@
 import { Cloud, GitBranch, GitCompareArrows, Wrench } from "lucide-react";
 import type { IaCDriftBanner as Props } from "@contextpane/catalog";
+import { humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Mono, Pill, type Tone } from "../ui/Pill";
@@ -76,7 +77,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
                   <Pill tone={h.status === "Available" ? "healthy" : "warning"}>{h.status}</Pill>,
                   <span className="font-mono">{h.sessions}</span>,
                   <span className="font-mono text-[11px] text-muted">{pool.vmSize} · {pool.poolType}</span>,
-                  <span className="font-mono text-[10.5px] text-faint">FSLogix {pool.fslogix.status} · v{h.agentVersion ?? "—"}</span>,
+                  <span className="font-mono text-[11px] text-faint">FSLogix {humanizeStatus(pool.fslogix.status)} · v{h.agentVersion ?? "—"}</span>,
                 ])}
               />
             </div>
@@ -107,7 +108,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
                     {props.rogueSecurityRules.map((r) => (
                       <li key={r.ruleName} className="px-2.5 py-1.5 text-[11px]">
                         <div className="flex items-center gap-2">
-                          <Pill tone={SEV_TONE[r.severity] ?? "muted"}>{r.severity}</Pill>
+                          <Pill tone={SEV_TONE[r.severity] ?? "muted"}>{humanizeStatus(r.severity)}</Pill>
                           <span className="font-mono">{r.ruleName}</span>
                           <span className="ml-auto font-mono text-faint">p{r.priority}</span>
                         </div>

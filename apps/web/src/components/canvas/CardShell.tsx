@@ -165,7 +165,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
           {children(tab)}
 
           {(codeLens || source || footerMeta || triggeredBy.length > 0) && (
-            <footer className="mt-2 flex items-center justify-between gap-2 overflow-hidden whitespace-nowrap border-t border-border-subtle/70 pt-1.5 text-[10.5px] text-faint" data-testid="card-footer">
+            <footer className="mt-2 flex items-center justify-between gap-2 overflow-hidden whitespace-nowrap border-t border-border-subtle/70 pt-1.5 text-[11px] text-faint" data-testid="card-footer">
               <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap">
                 {codeLens && (
                   <button
@@ -180,7 +180,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
                   </button>
                 )}
                 {source && <span className="shrink-0 font-mono text-[10px] text-faint">{source}</span>}
-                {footerMeta && <span className="min-w-0 truncate text-[10.5px] text-muted">{footerMeta}</span>}
+                {footerMeta && <span className="min-w-0 truncate text-[11px] text-muted">{footerMeta}</span>}
               </div>
               {triggeredBy.length > 0 && (
                 <span
@@ -236,7 +236,7 @@ export function SmartTechPath({ path, badge }: { path: string; badge?: ReactNode
   return (
     <div className="min-w-0 leading-tight" title={path} data-testid="smart-tech-path">
       {compactPrefix && (
-        <div className="truncate font-mono text-[9.5px] leading-tight whitespace-nowrap text-faint" data-testid="smart-tech-prefix">
+        <div className="truncate font-mono text-[10px] leading-tight whitespace-nowrap text-faint" data-testid="smart-tech-prefix">
           {compactPrefix}
         </div>
       )}

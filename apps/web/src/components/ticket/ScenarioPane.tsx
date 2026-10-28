@@ -1,8 +1,8 @@
-import { AlertOctagon, Bot, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Cloud, ExternalLink, Eye, FileCode2, FileText, FolderInput, ImageIcon, Inbox, Layers, ListChecks, MessageSquare, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
+import { AlertOctagon, Bot, Check, ChevronRight, CircleCheckBig, ClipboardList, Clock3, Cloud, ExternalLink, Eye, FileCode2, FileText, FolderInput, Globe, ImageIcon, Inbox, Layers, ListChecks, MessageSquare, RotateCcw, ScanEye, Sparkles, UserRound, Wand2 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CATEGORY_META, type ClarifyingQuestion, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief, type SubAgentTaskRecord, type UpstreamCloudStatusCorrelation } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
-import { fmtDateTimeUtc } from "@/lib/format";
+import { fmtDateTimeUtc, fmtMs, SOURCE_LABEL } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
 import { selectConvergence, useWorkbench } from "@/store";
 import { OriginBadge } from "../hud/WorkQueue";
@@ -136,13 +136,25 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
   );
 }
 
-const FALLBACK_LIVE_TASKS: SubAgentTaskRecord[] = [
-  { stepIndex: 1, task: "scope-and-questions", agentName: "1. Scope Check", role: "Target Scope & Parameters", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Analyzing ticket parameters...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 2, task: "telemetry-and-status", agentName: "2. Live Telemetry", role: "Live Graph & ARM Status Check", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Correlating upstream cloud status...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 3, task: "ui-element-synthesis", agentName: "3. View Layout", role: "Diagnostic View Layout", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Building diagnostic card layout...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 4, task: "script-and-iac-synthesis", agentName: "4. Remediation Plan", role: "PowerShell 7 & Terraform Patch", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Preparing idempotent remediation...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Pre-Flight Safety", role: "AST, -WhatIf & 1-Click Undo", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Verifying pre-flight invariants...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-];
+/**
+ * A stage counts as run only when it completed from its real source: the model
+ * stages (1, 3, 4) from an LLM call, stage 2 from the MCP probe, stage 5 from the
+ * verifier. `fallback` / `fallback-on-error` / a missing source never turn the pill green.
+ */
+function taskRanForReal(t: SubAgentTaskRecord): boolean {
+  if (t.status !== "completed" || !t.source || t.source === "fallback-on-error") return false;
+  return t.stepIndex === 2 || t.stepIndex === 5 ? true : t.source === "llm";
+}
+
+function cloudServiceLabel(serviceId: string, primaryRegion: string | null | undefined): string {
+  if (serviceId === "azure-regional") {
+    return !primaryRegion || primaryRegion === "Global" ? "Azure ARM / Global" : `Azure (${primaryRegion})`;
+  }
+  if (serviceId === "entra-id") return "Entra ID";
+  if (serviceId === "intune") return "Intune";
+  if (serviceId === "github-actions") return "GitHub";
+  return serviceId;
+}
 
 const STAGE_DISPLAY_META: Record<number, { name: string; role: string }> = {
   1: { name: "1. Scope Check", role: "Target Scope & Parameters" },
@@ -168,10 +180,11 @@ function UnifiedStatusAndAgentBar({
   const triageStatus = useWorkbench((s) => s.triageStatus);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const isBusy = triageStatus === "loading" || refiningGoal;
-  const displayTasks = tasks.length > 0 ? tasks : FALLBACK_LIVE_TASKS;
-  const completedCount = displayTasks.filter((t) => t.status === "completed").length;
+  const displayTasks = tasks;
+  const completedCount = displayTasks.filter(taskRanForReal).length;
+  const allReal = displayTasks.length > 0 && completedCount === displayTasks.length;
   const totalLatencyMs = useMemo(
-    () => displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0) || 42,
+    () => displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0),
     [displayTasks],
   );
   const hasAdvisory = Boolean(
@@ -210,10 +223,17 @@ function UnifiedStatusAndAgentBar({
           title="Click to inspect the 5 automated triage & safety checks"
         >
           <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
-          <span className="font-mono text-[10.5px] font-semibold text-emerald-300">
+          <span
+            className={`font-mono text-[11px] font-semibold ${isBusy || allReal ? "text-emerald-300" : "text-amber-300"}`}
+            data-testid="subagent-strip-summary"
+          >
             {isBusy
-              ? "● Running 5/5 Triage Checks..."
-              : `✓ ${completedCount}/${displayTasks.length} Triage Checks (${totalLatencyMs}ms)`}
+              ? "● Running Triage Checks…"
+              : displayTasks.length === 0
+                ? "Triage pipeline not run"
+                : `${allReal ? "✓" : "⚠"} ${completedCount}/${displayTasks.length} Triage Checks${
+                    allReal ? "" : ` · ${displayTasks.length - completedCount} fallback`
+                  }${totalLatencyMs > 0 ? ` (${fmtMs(totalLatencyMs)})` : ""}`}
           </span>
           <span className="font-mono text-[10px] text-muted">{agentsExpanded || isBusy ? "▴" : "▾"}</span>
         </button>
@@ -230,10 +250,12 @@ function UnifiedStatusAndAgentBar({
             >
               <Cloud className={`size-3.5 shrink-0 ${hasAdvisory ? "text-amber-400" : "text-emerald-400"}`} />
               <span className={`size-1.5 rounded-full ${hasAdvisory ? "bg-amber-400" : "bg-emerald-400"}`} />
-              <span className="text-[10.5px] font-medium text-text">
+              <span className="text-[11px] font-medium text-text">
                 {hasAdvisory
                   ? `Cloud Status: ${correlation.advisories[0]?.region ?? correlation.primaryRegion ?? "Regional"} Advisory`
-                  : "Cloud Status: Azure, Entra, Intune, GitHub OK"}
+                  : correlation.services.length > 0
+                    ? `Cloud Status: ${correlation.services.map((p) => cloudServiceLabel(p.serviceId, correlation.primaryRegion)).join(", ")} OK`
+                    : "Cloud Status: no services correlated"}
               </span>
               <span className="font-mono text-[10px] text-muted">{cloudExpanded ? "▴" : "▾"}</span>
             </button>
@@ -261,10 +283,12 @@ function UnifiedStatusAndAgentBar({
                         ? "animate-pulse border-primary/60 bg-primary/20 font-semibold text-primary"
                         : isSelected
                           ? "border-primary bg-primary/20 font-semibold text-primary"
-                          : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                          : taskRanForReal(t)
+                            ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                            : "border-amber-500/40 bg-amber-500/10 text-amber-300 hover:border-primary/50 hover:text-text"
                     }`}
                   >
-                    <span>{isBusy ? "●" : "✓"} {stageName}</span>
+                    <span>{isBusy ? "●" : taskRanForReal(t) ? "✓" : "⚠"} {stageName}</span>
                   </button>
                   {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
                 </Fragment>
@@ -282,10 +306,10 @@ function UnifiedStatusAndAgentBar({
                   {STAGE_DISPLAY_META[activeTask.stepIndex]?.name ?? activeTask.agentName} · {STAGE_DISPLAY_META[activeTask.stepIndex]?.role ?? activeTask.role}
                 </span>
                 <span className="font-mono text-[10px] text-muted">
-                  {activeTask.latencyMs} ms · Verified
+                  {activeTask.latencyMs} ms · {SOURCE_LABEL[activeTask.source ?? "not-attempted"] ?? activeTask.source}
                 </span>
               </div>
-              <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">
+              <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
                 <span className="font-mono text-faint">Input:</span>
                 <span className="text-muted">{cleanInlineSlugs(activeTask.inputSummary)}</span>
                 <span className="font-mono text-faint">Output:</span>
@@ -316,16 +340,7 @@ function UnifiedStatusAndAgentBar({
                     : p.status === "degraded" || p.status === "advisory"
                       ? "border-amber-500/40 bg-amber-500/12 text-amber-300"
                       : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
-                const shortLabel =
-                  p.serviceId === "azure-regional"
-                    ? !correlation.primaryRegion || correlation.primaryRegion === "Global"
-                      ? "Azure ARM / Global"
-                      : `Azure (${correlation.primaryRegion})`
-                    : p.serviceId === "entra-id"
-                      ? "Entra ID"
-                      : p.serviceId === "intune"
-                        ? "Intune"
-                        : "GitHub";
+                const shortLabel = cloudServiceLabel(p.serviceId, correlation.primaryRegion);
                 return (
                   <span
                     key={p.serviceId}
@@ -573,7 +588,7 @@ function ProjectGoalClarifierCard({
                         onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
                         placeholder={q.customHint ?? "Or type custom parameter…"}
                         data-testid={`clarifier-input-${q.id}`}
-                        className="h-6 min-w-[140px] flex-1 rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                        className="h-6 min-w-[140px] flex-1 rounded border border-border-subtle bg-surface px-2 font-sans text-[11px] text-text focus:outline-1 focus:outline-primary"
                       />
                     </div>
                   </div>
@@ -582,16 +597,16 @@ function ProjectGoalClarifierCard({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
               {refiningGoal ? (
-                <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-primary">
+                <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-primary">
                   <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   Updating diagnostic view &amp; remediation scripts...
                 </span>
               ) : lastRefinedAt ? (
-                <span className="font-mono text-[10.5px] text-emerald-300">
+                <span className="font-mono text-[11px] text-emerald-300">
                   ✓ Plan, Diagnostic View &amp; Remediation updated at {lastRefinedAt}
                 </span>
               ) : (
-                <span className="text-[10.5px] text-muted">
+                <span className="text-[11px] text-muted">
                   Click any option or type custom parameters to update plan &amp; scripts.
                 </span>
               )}
@@ -606,7 +621,7 @@ function ProjectGoalClarifierCard({
                 }}
                 data-testid="refine-goal-submit"
               >
-                ↻ Update Plan &amp; Regenerate
+                Update Plan &amp; Regenerate
               </Button>
             </div>
           </div>
@@ -628,14 +643,14 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
         <span className="text-[11.5px] font-semibold tracking-wide uppercase">Summary &amp; Resolution Plan</span>
         {resolved && (
           <>
-            <span className="ml-auto inline-flex h-5 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[10.5px] text-healthy">
+            <span className="ml-auto inline-flex h-5 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[11px] text-healthy">
               <CircleCheckBig className="size-3" />
               Resolved
             </span>
             <button
               type="button"
               onClick={() => void reopenTicket()}
-              className="inline-flex h-5 items-center gap-1 rounded border border-border px-1.5 text-[10.5px] text-muted hover:text-text"
+              className="inline-flex h-5 items-center gap-1 rounded border border-border px-1.5 text-[11px] text-muted hover:text-text"
               title="Clear the resolved state so the remediation can run again"
               data-testid="reopen-ticket"
             >
@@ -648,7 +663,7 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
       <p className="text-[12.5px] leading-snug text-text" data-testid="summary-text">
         <EnrichedText text={cleanInlineSlugs(brief.summary)} entities={NO_ENTITIES} selections={selections} />
       </p>
-      <div className="mt-1.5 mb-0.5 flex items-center gap-1.5 text-[10.5px] text-muted">
+      <div className="mt-1.5 mb-0.5 flex items-center gap-1.5 text-[11px] text-muted">
         <ListChecks className="size-3.5" />
         Steps to resolve
       </div>
@@ -680,7 +695,8 @@ function FleetPill() {
       title={`Review ${fleet.affectedCount} other client tenants with this same misconfiguration`}
       data-testid="fleet-pill"
     >
-      <span>🌐 {fleet.affectedCount} other client tenants have this same misconfiguration ·</span>
+      <Globe className="size-3 shrink-0" aria-hidden="true" />
+      <span>{fleet.affectedCount} other client tenants have this same misconfiguration ·</span>
       <span className="font-semibold underline decoration-warning/60 underline-offset-2">[Review &amp; Fix All {fleet.affectedCount} →]</span>
     </button>
   );
@@ -770,7 +786,7 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
         <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to spawn a live mini-dashboard">
-          <Wand2 className="size-3 text-selection" /> ✨ Select any text on screen to generate Context UI
+          <Wand2 className="size-3 text-selection" /> Select any text on screen to generate Context UI
         </span>
       </div>
       <p className="text-[12px] leading-snug text-text" data-testid="scenario-body">
@@ -824,7 +840,7 @@ function EnrichedContext({ entities }: { entities: EnrichedEntity[] }) {
         <div className="space-y-2 border-t border-border-subtle px-2.5 py-2">
           {groups.map((g) => (
             <div key={g.category} style={catStyle(g.category)}>
-              <div className={`mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase ${CAT_TEXT}`}>
+              <div className={`mb-1 flex items-center gap-1.5 text-[11px] font-semibold tracking-wider uppercase ${CAT_TEXT}`}>
                 <span className={`size-2 rounded-full ${CAT_DOT}`} />
                 {CATEGORY_META[g.category].label}
               </div>
@@ -873,7 +889,7 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
           <div className="flex items-center gap-1.5 text-[11px]">
             <ImageIcon className="size-3 shrink-0 text-muted" />
             <span className="truncate font-mono">{attachment.fileName}</span>
-            <span className="text-[10px] text-faint">
+            <span className="text-[11px] text-faint">
               ({attachment.uploadedBy} · {Math.round(attachment.sizeBytes / 1024)} KB)
             </span>
           </div>
@@ -967,7 +983,7 @@ function SelectionBadge({ selection, text }: { selection: SelectionItem; text: s
     >
       <Sparkles className="size-3 shrink-0" />
       <span className="truncate">{text}</span>
-      <span className="shrink-0 font-sans text-[9.5px] opacity-80">#{selection.index}</span>
+      <span className="shrink-0 font-sans text-[10px] opacity-80">#{selection.index}</span>
     </button>
   );
 }

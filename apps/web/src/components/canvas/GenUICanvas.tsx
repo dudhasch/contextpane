@@ -21,6 +21,7 @@ export function GenUICanvas() {
   const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
   const freeRoamDashboards = useWorkbench((s) => s.freeRoamDashboards);
   const clearFreeRoamDashboards = useWorkbench((s) => s.clearFreeRoamDashboards);
+  const spawnFreeRoamDashboard = useWorkbench((s) => s.spawnFreeRoamDashboard);
   const dataMode = useWorkbench((s) => s.dataMode);
   const inventory = useWorkbench((s) => s.freeRoamInventory);
   const openRemediation = useWorkbench((s) => s.openRemediation);
@@ -109,6 +110,20 @@ export function GenUICanvas() {
               <p className="max-w-md text-[11.5px] text-muted">
                 Type any cloud architecture question, error code, or tenant query in the left explorer—or click any entity in the live MCP tenant tree—to dynamically spawn interactive dashboards. Highlight any text on any card to recursively drill down.
               </p>
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<Sparkles />}
+                onClick={() =>
+                  void spawnFreeRoamDashboard("Live Tenant Identity, Licensing, Conditional Access & Infrastructure Posture Overview", {
+                    scope: "hybrid",
+                    viewMode: "dashboard",
+                  })
+                }
+                data-testid="free-roam-spawn-overview"
+              >
+                Open Tenant Posture Overview
+              </Button>
             </div>
           )}
         </div>
@@ -134,7 +149,9 @@ export function GenUICanvas() {
         {miniDashboards.map((m) => (
           <ContextualMiniDashboardCard key={m.id} entry={m} />
         ))}
-        {status === "loading" && !layout && <ProgressRail events={progress} title="Correlating scenario" busy />}
+        {!layout && status !== "error" && (
+          <ProgressRail events={progress} title={status === "ready" ? "No layout for this scenario" : "Correlating scenario"} busy={status !== "ready"} />
+        )}
         {status === "error" && <div className="card border-critical/40 text-sm text-critical">Canvas error: {error}</div>}
         {layout && components.map((c) => <Component key={c.id} component={c} />)}
         {layout && components.length === 0 && status === "ready" && <div className="card text-sm text-muted">No components match the current filter.</div>}
@@ -180,7 +197,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
           </span>
         </div>
         <span
-          className="inline-flex items-center gap-1.5 rounded-pill border border-primary/45 bg-primary/15 px-2 py-0.5 font-mono text-[10.5px] font-semibold text-primary"
+          className="inline-flex items-center gap-1.5 rounded-pill border border-primary/45 bg-primary/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-primary"
           data-testid="synthesis-elapsed-timer"
         >
           <Sparkles className="size-3 animate-pulse" />
@@ -199,7 +216,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
           return (
             <div
               key={st.step}
-              className={`rounded-md border p-2 text-[10.5px] transition-all ${
+              className={`rounded-md border p-2 text-[11px] transition-all ${
                 done
                   ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
                   : active
@@ -212,8 +229,8 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
                   {done ? "✓" : active ? "●" : st.step} {st.name}
                 </span>
               </div>
-              <div className="mt-0.5 truncate text-[10px] opacity-85">{st.role}</div>
-              <div className="mt-1 font-mono text-[9.5px] text-primary/90">{st.source}</div>
+              <div className="mt-0.5 truncate text-[11px] opacity-85">{st.role}</div>
+              <div className="mt-1 font-mono text-[10px] text-primary/90">{st.source}</div>
             </div>
           );
         })}
@@ -264,7 +281,7 @@ function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }
             Analyzing live tenant context for &quot;{selectionText}&quot;...
           </span>
         </div>
-        <span className="rounded-pill border border-selection/40 bg-selection/12 px-2 py-0.5 font-mono text-[10.5px]">
+        <span className="rounded-pill border border-selection/40 bg-selection/12 px-2 py-0.5 font-mono text-[11px]">
           {elapsedSec}s elapsed · Live Query
         </span>
       </div>
@@ -309,7 +326,7 @@ function HistoricalSnapshotBanner() {
           type="button"
           onClick={() => select(nowSlice.id)}
           data-testid="return-to-now-button"
-          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-amber-400/50 bg-amber-500/20 px-2 font-mono text-[10.5px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/30"
+          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-amber-400/50 bg-amber-500/20 px-2 font-mono text-[11px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/30"
         >
           <Check className="size-3" />
           Return to Now
@@ -363,7 +380,8 @@ function TimeTravelScrubber() {
         className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[11px] text-faint hover:text-text"
         data-testid="timeline-scrubber"
       >
-        <span>🕒 Incident Timeline…</span>
+        <Clock3 className="size-3.5" aria-hidden="true" />
+        <span>Incident Timeline…</span>
       </button>
     );
   }
@@ -371,7 +389,9 @@ function TimeTravelScrubber() {
   return (
     <div className="flex h-8 shrink-0 items-center justify-between gap-1.5 border-b border-border bg-surface/30 px-3" data-testid="timeline-scrubber">
       <div className="flex min-w-0 items-center gap-1">
-        <span className="shrink-0 text-[10.5px] font-medium whitespace-nowrap text-muted">🕒 Timeline:</span>
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium whitespace-nowrap text-muted">
+          <Clock3 className="size-3.5" aria-hidden="true" /> Timeline:
+        </span>
         <div className="flex shrink-0 items-center gap-0.5">
           {timeline.slices.map((s, idx) => {
             const isSelected = s.id === sliceId;
@@ -383,7 +403,7 @@ function TimeTravelScrubber() {
                   type="button"
                   onClick={() => select(s.id)}
                   title={s.state.summary}
-                  className={`h-5 shrink-0 rounded border px-1.5 py-0.5 text-[10.5px] whitespace-nowrap transition-colors ${
+                  className={`h-5 shrink-0 rounded border px-1.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
                     isSelected
                       ? "border-primary/60 bg-primary/15 font-semibold text-primary"
                       : "border-border-subtle bg-surface text-muted hover:border-border hover:text-text"
@@ -397,13 +417,13 @@ function TimeTravelScrubber() {
         </div>
       </div>
       {active && !convergence && (
-        <span className="min-w-0 truncate text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId, cardCount)}</span>
+        <span className="min-w-0 truncate text-[11px] text-muted">{formatTimelineStepDescription(active, scenarioId, cardCount)}</span>
       )}
       {convergence && (
         <button
           type="button"
           onClick={() => void rollbackNow()}
-          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-2 text-[10.5px] font-medium whitespace-nowrap text-healthy hover:bg-healthy/20"
+          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-2 text-[11px] font-medium whitespace-nowrap text-healthy hover:bg-healthy/20"
           data-testid="rollback-button"
         >
           <Undo2 className="size-3 shrink-0" /> Undo Change (Restore Previous State)
@@ -442,14 +462,14 @@ function TenantBreadcrumb({ cards, customCards = 0 }: { cards: number; customCar
       </span>
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
         {recipe && (
-          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 text-[10.5px] text-primary" title={recipe.description}>
+          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 text-[11px] text-primary" title={recipe.description}>
             <Pin className="size-3" />
             {recipe.name} · Pinned
           </span>
         )}
         <RowFilterPill />
         {filter && (
-          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-meta/40 bg-meta/12 pr-0.5 pl-1.5 font-mono text-[10.5px] text-meta">
+          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-meta/40 bg-meta/12 pr-0.5 pl-1.5 font-mono text-[11px] text-meta">
             voice filter: {filter.join(", ")}
             <button type="button" onClick={() => setFilter(null)} aria-label="Clear voice filter" className="grid size-4 place-items-center rounded hover:bg-meta/25">
               <X className="size-3" />
@@ -457,7 +477,7 @@ function TenantBreadcrumb({ cards, customCards = 0 }: { cards: number; customCar
           </span>
         )}
         {brief && (
-          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[10.5px] text-faint" title={Object.entries(brief.sources).map(([k, v]) => `${k}: ${v}`).join("\n")}>
+          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-faint" title={Object.entries(brief.sources).map(([k, v]) => `${k}: ${v}`).join("\n")}>
             <Database className="size-3" />
             {live}/{total} live
           </span>

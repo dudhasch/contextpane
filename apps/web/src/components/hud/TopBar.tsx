@@ -50,7 +50,7 @@ export function TopBar() {
           Free-Roam Startpage
         </Button>
         <WorkQueue />
-        <span className="shrink-0 font-mono text-[10.5px] text-faint" title="Open work items in the queue" data-testid="queue-open-count">
+        <span className="shrink-0 font-mono text-[11px] text-faint" title="Open work items in the queue" data-testid="queue-open-count">
           {openCount} open
         </span>
         <Button
@@ -60,7 +60,7 @@ export function TopBar() {
           title="Paste any unscripted support ticket or outline a cloud engineering project/goal (n)"
           data-testid="topbar-new-ticket-button"
         >
-          + New Ticket / Outline Project Goal
+          New Ticket / Outline Project Goal
         </Button>
       </div>
 

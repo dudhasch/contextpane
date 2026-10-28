@@ -86,6 +86,15 @@ export function WorkQueue() {
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") return setOpen(false);
+    // The search input owns focus, so the advertised 1–9 hotkeys are handled here while the query is empty.
+    if (query === "" && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const item = queue[Number(e.key) - 1];
+      if (item) {
+        e.preventDefault();
+        void select(item.scenarioId);
+      }
+      return;
+    }
     if (e.key === "Enter" && rows[0]) {
       e.preventDefault();
       void select(rows[0].scenarioId);
@@ -125,7 +134,7 @@ export function WorkQueue() {
           </span>
         )}
         <ChevronDown className="size-3.5 shrink-0 text-muted" />
-        {unseen.length > 0 && <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-meta font-mono text-[9.5px] font-semibold text-canvas" title={`${unseen.length} new ERP drop(s)`} data-testid="queue-unseen">{unseen.length}</span>}
+        {unseen.length > 0 && <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-meta font-mono text-[10px] font-semibold text-canvas" title={`${unseen.length} new ERP drop(s)`} data-testid="queue-unseen">{unseen.length}</span>}
       </button>
 
       {open && (
@@ -144,7 +153,7 @@ export function WorkQueue() {
                   type="button"
                   onClick={() => setFilter(f.id)}
                   data-queue-filter={f.id}
-                  className={`inline-flex h-5 items-center gap-1.5 rounded-pill border px-2 font-mono text-[10.5px] transition-colors ${filter === f.id ? "border-primary/50 bg-primary/15 text-primary" : "border-border text-muted hover:text-text"}`}
+                  className={`inline-flex h-5 items-center gap-1.5 rounded-pill border px-2 font-mono text-[11px] transition-colors ${filter === f.id ? "border-primary/50 bg-primary/15 text-primary" : "border-border text-muted hover:text-text"}`}
                 >
                   {f.label} <span className={`rounded px-1 text-[10px] font-semibold ${filter === f.id ? "bg-primary/20 text-primary" : "bg-elevated text-text/90"}`}>{counts[f.id] ?? 0}</span>
                 </button>
@@ -164,7 +173,7 @@ export function WorkQueue() {
             </ul>
             <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle px-3 py-2">
               <Button variant="outline" icon={<FilePlus2 />} onClick={() => { setOpen(false); setComposerOpen(true); }} title="Paste any support ticket and triage it live (n)" data-testid="new-ticket-button">
-                + Triage Unscripted Ticket
+                Triage Unscripted Ticket
               </Button>
               <Button
                 variant="primary"
@@ -178,7 +187,7 @@ export function WorkQueue() {
               </Button>
               {dataMode !== "real-tenant" && (
                 <Button variant="meta" icon={<Dices />} loading={dropStatus === "loading"} onClick={() => void simulateDrop()} title="Write a random #2026xxx/ticketbody.json + attachment1.png into input/tickets/ and let the inbox watcher ingest it (g)" data-testid="drop-erp-button">
-                  🎲 Drop Random ERP Ticket
+                  Drop Random ERP Ticket
                 </Button>
               )}
               <Button
@@ -190,7 +199,7 @@ export function WorkQueue() {
               >
                 Free-Roam Startpage
               </Button>
-              <span className="ml-auto shrink-0 whitespace-nowrap text-[10.5px] text-faint">
+              <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-faint">
                 <Kbd>1</Kbd>–<Kbd>9</Kbd> open · <Kbd>j</Kbd> <Kbd>k</Kbd> step · <Kbd>Esc</Kbd> close
               </span>
             </div>
@@ -241,12 +250,12 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
         </span>
         <span className="min-w-0">
           <span className="block truncate">{item.title}</span>
-          <span className="block truncate text-[10.5px] text-faint">
+          <span className="block truncate text-[11px] text-faint">
             {meta.label} · {item.tenantName}
             {item.custom?.ticket.requester ? ` · ${item.custom.ticket.requester.displayName}` : ""}
           </span>
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-faint">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-faint">
           {active && (
             <span className="rounded-pill border border-primary/40 bg-primary/15 px-1.5 font-mono text-[10px] font-medium text-primary">
               Current

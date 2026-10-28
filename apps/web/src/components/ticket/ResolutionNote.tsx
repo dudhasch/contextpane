@@ -1,6 +1,6 @@
 import { CheckCheck, ChevronRight, ClipboardCopy, FileCheck2 } from "lucide-react";
 import { useState } from "react";
-import { fmtDateTimeUtc } from "@/lib/format";
+import { fmtDateTimeUtc, humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill } from "../ui/Pill";
@@ -42,7 +42,7 @@ export function ResolutionNoteBox() {
         <span className="font-semibold">Customer &amp; PSA Resolution Note</span>
         <span className="truncate text-[11px] text-muted">{closed ? "· Closed in PSA" : "· Ready to Close Ticket"}</span>
         <Pill tone={closed ? "healthy" : "primary"} className="ml-auto">
-          {note.status}
+          {humanizeStatus(note.status)}
         </Pill>
       </button>
       {open && (
@@ -50,7 +50,7 @@ export function ResolutionNoteBox() {
           <div className="section-label mb-1">For the customer</div>
           <p className="text-[12px] leading-relaxed text-text">{note.customerSummary}</p>
           <div className="section-label mt-2 mb-1">Technical audit trail</div>
-          <ul className="space-y-0.5 font-mono text-[10.5px] leading-snug text-muted">
+          <ul className="space-y-0.5 font-mono text-[11px] leading-snug text-muted">
             {note.technicalAuditTrail.map((line) => (
               <li key={line} className="flex gap-1.5">
                 <CheckCheck className="mt-0.5 size-3 shrink-0 text-healthy" />
@@ -66,7 +66,7 @@ export function ResolutionNoteBox() {
               {closed ? "Ticket Closed in PSA" : "Mark Ticket Closed in PSA"}
             </Button>
             <span className="ml-auto font-mono text-[10px] text-faint">
-              {closed && note.closed ? `closed ${fmtDateTimeUtc(note.closed.closedAt)} · ${note.closed.closedBy}` : `resolved ${fmtDateTimeUtc(note.resolvedAt)} · ${note.execution}`}
+              {closed && note.closed ? `closed ${fmtDateTimeUtc(note.closed.closedAt)} · ${note.closed.closedBy}` : `resolved ${fmtDateTimeUtc(note.resolvedAt)} · ${humanizeStatus(note.execution)}`}
             </span>
           </div>
         </div>

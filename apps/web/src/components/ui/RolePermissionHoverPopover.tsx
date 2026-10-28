@@ -46,7 +46,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         <Pill tone={tone}>{entry.riskTier}</Pill>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-medium text-muted">
           {entry.category}
         </span>
@@ -61,7 +61,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">
           Allowed Actions &amp; API Calls
         </div>
-        <ul className="mt-1 space-y-0.5 font-mono text-[10.5px] text-muted">
+        <ul className="mt-1 space-y-0.5 font-mono text-[11px] text-muted">
           {entry.allowedActions.map((act) => (
             <li key={act} className="truncate" title={act}>
               • {act}
@@ -77,7 +77,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         <div className="mt-0.5 text-emerald-100/90">{entry.leastPrivilegeAlternative}</div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[10.5px]">
+      <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[11px]">
         <span className="text-faint">Role &amp; Permission Inspector</span>
         <a
           href={entry.referenceUrl}

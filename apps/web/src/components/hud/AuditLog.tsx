@@ -11,8 +11,8 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "drift-reset": { label: "Demo drift reset", tone: "muted", icon: <RotateCcw /> },
   "autonomous-rollback": { label: "Auto-rollback (previous state restored)", tone: "critical", icon: <History /> },
   "fleet-campaign": { label: "Multi-client fix PRs created", tone: "warning", icon: <Zap /> },
-  "ticket-closed": { label: "ticket.closed (PSA)", tone: "healthy", icon: <CircleCheckBig /> },
-  "ticket-reopened": { label: "ticket.reopened", tone: "warning", icon: <RotateCcw /> },
+  "ticket-closed": { label: "Ticket closed in PSA", tone: "healthy", icon: <CircleCheckBig /> },
+  "ticket-reopened": { label: "Ticket reopened", tone: "warning", icon: <RotateCcw /> },
 };
 
 function check(v: boolean | null): { text: string; className: string } {
@@ -39,7 +39,7 @@ export function AuditLogBody() {
         <Pill tone="healthy">{approvals} HITL approvals</Pill>
         <Pill tone="primary">{verified} Modal-sandbox verified</Pill>
         <Pill tone="meta">{live} live Graph executions</Pill>
-        <span className="ml-auto self-center text-[10px] text-faint">GDAP / delegated identity on every row</span>
+        <span className="ml-auto self-center text-[11px] text-faint">GDAP / delegated identity on every row</span>
       </div>
       {entries.length === 0 ? (
         <div className="py-6 text-center text-[12px] text-muted">No Tier 3 actions yet. Stage a fix, approve it or reset the drift.</div>
@@ -78,7 +78,7 @@ function AuditRow({ entry: e }: { entry: AuditEntry }) {
         <span title="Delegated (GDAP) identity the action ran as">id {e.delegatedIdentity}</span>
         {(e.actionType === "remediation-verified" || e.actionType.startsWith("hitl")) && (
           <>
-            <span className={e.modalSandboxVerified ? "text-healthy" : "text-warning"}>{e.modalSandboxVerified ? "modal-cloud-sandbox ✓" : "local pre-flight"}</span>
+            <span className={e.modalSandboxVerified ? "text-healthy" : "text-warning"}>{e.modalSandboxVerified ? "Modal sandbox ✓" : "Local pre-flight"}</span>
             <span>
               AST <span className={ast.className}>{ast.text}</span>
             </span>

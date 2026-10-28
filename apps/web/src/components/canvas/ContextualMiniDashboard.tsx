@@ -165,7 +165,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
                 onClick={() => setViewMode(entry.id, m.mode)}
                 data-testid={`mini-mode-${m.mode}`}
                 title={`${m.label}: ${m.hint}`}
-                className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] whitespace-nowrap transition-colors ${
+                className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[11px] whitespace-nowrap transition-colors ${
                   active
                     ? "border border-selection/60 bg-selection/18 font-medium text-selection"
                     : "text-muted hover:bg-elevated/60 hover:text-text"
@@ -193,7 +193,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
         </div>
       </header>
 
-      <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-faint" title={card.sourceQuery}>
+      <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-faint" title={card.sourceQuery}>
         <span className="truncate">{cleanSubtitle}</span>
         {refinementText && (
           <span className="rounded border border-selection/35 bg-selection/8 px-1.5 py-0.2 text-[10px] text-selection" data-testid="mini-refinement-pill">
@@ -210,7 +210,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="inline-flex shrink-0 items-center gap-1 rounded border border-critical/50 bg-critical/20 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-critical">
+              <span className="inline-flex shrink-0 items-center gap-1 rounded border border-critical/50 bg-critical/20 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-critical">
                 <AlertTriangle className="size-3 shrink-0" />
                 {card.errorCodeReference.code} · {card.errorCodeReference.symbolicName}
               </span>
@@ -245,9 +245,9 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
                 <div
                   key={idx}
                   data-testid={`error-code-check-${idx + 1}`}
-                  className="flex items-start gap-1.5 rounded border border-border-subtle/75 bg-surface/85 px-2 py-1 text-[10px] text-text"
+                  className="flex items-start gap-1.5 rounded border border-border-subtle/75 bg-surface/85 px-2 py-1 text-[11px] text-text"
                 >
-                  <span className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full bg-selection/20 font-mono text-[9.5px] font-bold text-selection">
+                  <span className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full bg-selection/20 font-mono text-[10px] font-bold text-selection">
                     {idx + 1}
                   </span>
                   <span className="leading-tight">{check}</span>
@@ -262,7 +262,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
       <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-4">
         {card.kpis.map((k) => (
           <div key={k.label} className="rounded-md border border-border-subtle bg-surface px-2 py-1" data-testid="mini-kpi">
-            <div className="text-[10px] tracking-wider text-faint uppercase">{k.label}</div>
+            <div className="text-[11px] tracking-wider text-faint uppercase">{k.label}</div>
             <div className={`font-mono text-[13px] font-semibold ${TONE_TEXT[k.tone]}`}>{k.value}</div>
           </div>
         ))}
@@ -350,7 +350,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
             onChange={(e) => setFollowUpText(e.target.value)}
             placeholder="+ Follow-up / refine this dashboard..."
             data-testid="mini-dashboard-followup-input"
-            className="h-6 min-w-0 flex-1 rounded border border-border-subtle bg-canvas/70 px-2 text-[10.5px] text-text placeholder:text-faint focus:border-selection focus:outline-none"
+            className="h-6 min-w-0 flex-1 rounded border border-border-subtle bg-canvas/70 px-2 text-[11px] text-text placeholder:text-faint focus:border-selection focus:outline-none"
           />
           {followUpText.trim() && (
             <Button size="xs" type="submit" variant="outline" icon={<Sparkles />}>
@@ -397,7 +397,7 @@ function DashboardModeBody({
             <span className="h-1.5 overflow-hidden rounded bg-border-subtle">
               <span className={`block h-full rounded ${TONE_BAR[b.tone]}`} style={{ width: `${Math.max(2, Math.min(100, b.pct))}%` }} />
             </span>
-            <span className="font-mono text-[10.5px] text-faint">
+            <span className="font-mono text-[11px] text-faint">
               {b.count} · {b.pct}%
             </span>
           </div>
@@ -489,9 +489,9 @@ function FullCardModeBody({
   return (
     <div className="mt-2.5 space-y-2.5" data-testid="mini-view-full-card">
       {/* Live source query & query timing bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-selection/30 bg-selection/6 px-2.5 py-1.5 font-mono text-[10.5px]">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-selection/30 bg-selection/6 px-2.5 py-1.5 font-mono text-[11px]">
         <div className="min-w-0 flex-1 truncate text-selection" title={card.sourceQuery}>
-          <span className="mr-1.5 rounded bg-selection/20 px-1 py-0.5 text-[9.5px] font-semibold uppercase">Live Source</span>
+          <span className="mr-1.5 rounded bg-selection/20 px-1 py-0.5 text-[10px] font-semibold uppercase">Live Source</span>
           {card.sourceQuery}
         </div>
         <span className="shrink-0 rounded border border-border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-faint">{latencyLabel}</span>
@@ -583,7 +583,7 @@ function FullCardModeBody({
                   return (
                     <div key={c.key} className="contents">
                       <dt className="text-faint">{c.label}</dt>
-                      <dd className={`truncate text-text ${c.mono ? "font-mono text-[10.5px]" : ""}`} title={val}>
+                      <dd className={`truncate text-text ${c.mono ? "font-mono text-[11px]" : ""}`} title={val}>
                         {val}
                       </dd>
                     </div>
@@ -597,7 +597,7 @@ function FullCardModeBody({
 
       {/* Expanded Multi-Line PowerShell / Graph Remediation Script */}
       <div className="rounded-md border border-border-subtle bg-canvas/90 p-2.5">
-        <div className="mb-1 flex items-center justify-between gap-2 text-[10.5px]">
+        <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
           <span className="font-semibold tracking-wider text-muted uppercase">Targeted Remediation Script · {card.suggestedAction.label}</span>
           <div className="flex items-center gap-1">
             <Button size="xs" variant="ghost" icon={<ClipboardCopy />} onClick={() => void copy(card.suggestedAction.scriptPreview, "PowerShell script")}>
@@ -678,7 +678,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
           <GitCompare className="size-3.5 shrink-0" />
           Side-by-Side Live Drifted State vs. Golden Target Baseline · Comparing {compareRows.length} of {card.rows.length} objects
         </span>
-        <span className="font-mono text-[10.5px] text-muted">
+        <span className="font-mono text-[11px] text-muted">
           {differingKeys.size || 1} diverging attribute{differingKeys.size === 1 ? "" : "s"} highlighted (Δ)
         </span>
       </div>
@@ -687,7 +687,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-2" data-testid="comparison-remediation-delta">
         <div className="rounded-md border border-critical/40 bg-critical/5 p-2 text-[11px]">
           <div className="mb-1 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
-            <span className="truncate font-mono text-[10.5px] font-semibold text-critical uppercase">
+            <span className="truncate font-mono text-[11px] font-semibold text-critical uppercase">
               Live Drifted State (Observed)
             </span>
             <Pill tone="critical">Drifted / Active</Pill>
@@ -701,7 +701,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
                 <div key={c.key} className="contents">
                   <dt className="text-faint">{c.label}</dt>
                   <dd
-                    className={`truncate font-mono text-[10.5px] ${isDiff ? "font-semibold text-critical" : "text-muted"}`}
+                    className={`truncate font-mono text-[11px] ${isDiff ? "font-semibold text-critical" : "text-muted"}`}
                     title={val}
                   >
                     {isDiff ? `- ${val}` : `  ${val}`}
@@ -714,7 +714,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
 
         <div className="rounded-md border border-healthy/45 bg-healthy/5 p-2 text-[11px]">
           <div className="mb-1 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
-            <span className="truncate font-mono text-[10.5px] font-semibold text-healthy uppercase">
+            <span className="truncate font-mono text-[11px] font-semibold text-healthy uppercase">
               Golden Target Baseline (Desired)
             </span>
             <Pill tone="healthy">Golden Target</Pill>
@@ -728,7 +728,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
                 <div key={c.key} className="contents">
                   <dt className="text-faint">{c.label}</dt>
                   <dd
-                    className={`truncate font-mono text-[10.5px] ${isDiff ? "font-semibold text-healthy" : "text-muted"}`}
+                    className={`truncate font-mono text-[11px] ${isDiff ? "font-semibold text-healthy" : "text-muted"}`}
                     title={targetVal}
                   >
                     {isDiff ? `+ ${targetVal}` : `  ${targetVal}`}
@@ -778,7 +778,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
                         {hasDelta && <span className="font-mono font-bold text-selection">Δ diff</span>}
                       </div>
                       <div
-                        className={`truncate ${c.mono ? "font-mono text-[10.5px]" : "text-[10.5px]"} ${
+                        className={`truncate ${c.mono ? "font-mono text-[11px]" : "text-[11px]"} ${
                           BAD.test(val) ? "font-medium text-critical" : GOOD.test(val) ? "font-medium text-healthy" : "text-text"
                         }`}
                         title={val}
@@ -797,7 +797,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
       {/* Collapsible matrix table when there are more than 3 rows */}
       {card.rows.length > 3 && (
         <details className="rounded-md border border-border-subtle bg-surface/60">
-          <summary className="cursor-pointer px-2.5 py-1 font-mono text-[10.5px] text-muted hover:text-text">
+          <summary className="cursor-pointer px-2.5 py-1 font-mono text-[11px] text-muted hover:text-text">
             View all {card.rows.length} rows in matrix table
           </summary>
           <div className="max-h-44 overflow-auto border-t border-border-subtle">
@@ -853,7 +853,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
           <ShieldAlert className="size-3.5 shrink-0" />
           Impact &amp; Dependency Blast Radius · Affected Cohorts &amp; Rollback Safety
         </span>
-        <span className="font-mono text-[10.5px] text-muted">
+        <span className="font-mono text-[11px] text-muted">
           {card.rows.length} live nodes mapped across 4 dependency hops · {badCount} impacted
         </span>
       </div>
@@ -861,28 +861,28 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
       {/* Affected Cohorts & Rollback Safety Summary Grid */}
       <div className="grid grid-cols-2 gap-1.5 lg:grid-cols-4" data-testid="blast-cohort-grid">
         <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
-          <div className="font-mono text-[9.5px] tracking-wider text-faint uppercase">Affected Cohort</div>
+          <div className="font-mono text-[10px] tracking-wider text-faint uppercase">Affected Cohort</div>
           <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-critical">
             {badCount || card.rows.length} impacted / {card.rows.length} total
           </div>
-          <div className="truncate text-[10px] text-muted">{card.title}</div>
+          <div className="truncate text-[11px] text-muted">{card.title}</div>
         </div>
         <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
-          <div className="font-mono text-[9.5px] tracking-wider text-faint uppercase">Dependency Chain</div>
+          <div className="font-mono text-[10px] tracking-wider text-faint uppercase">Dependency Chain</div>
           <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-selection">4 Hops Verified</div>
-          <div className="truncate text-[10px] text-muted">Principal → Object → Policy → Blast</div>
+          <div className="truncate text-[11px] text-muted">Principal → Object → Policy → Blast</div>
         </div>
         <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
-          <div className="font-mono text-[9.5px] tracking-wider text-faint uppercase">Healthy Peer Baseline</div>
+          <div className="font-mono text-[10px] tracking-wider text-faint uppercase">Healthy Peer Baseline</div>
           <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-healthy">{goodCount} unaffected peers</div>
-          <div className="truncate text-[10px] text-muted">Zero collateral disruption</div>
+          <div className="truncate text-[11px] text-muted">Zero collateral disruption</div>
         </div>
         <div className="rounded-md border border-healthy/40 bg-healthy/6 px-2 py-1.5 text-[11px]" data-testid="blast-rollback-safety">
-          <div className="font-mono text-[9.5px] tracking-wider text-healthy uppercase">Rollback Safety Radius</div>
+          <div className="font-mono text-[10px] tracking-wider text-healthy uppercase">Rollback Safety Radius</div>
           <div className="mt-0.5 inline-flex items-center gap-1 font-mono text-[11.5px] font-semibold text-healthy">
             <CheckCircle2 className="size-3.5 shrink-0" /> Idempotent &amp; Scoped
           </div>
-          <div className="truncate text-[10px] text-muted" title={card.suggestedAction.label}>
+          <div className="truncate text-[11px] text-muted" title={card.suggestedAction.label}>
             Action: {card.suggestedAction.label}
           </div>
         </div>
@@ -900,13 +900,13 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
                 <span className="font-mono text-[10px] font-semibold tracking-wider text-selection uppercase">
                   {idx + 1}. {stage.title}
                 </span>
-                <span className="font-mono text-[9.5px] text-faint">{stage.edgeLabel}</span>
+                <span className="font-mono text-[10px] text-faint">{stage.edgeLabel}</span>
               </div>
               <div className="space-y-1">
                 {stage.nodes.map((node, nIdx) => (
                   <div
                     key={`${node.label}-${nIdx}`}
-                    className={`rounded border px-2 py-1 text-[10.5px] ${
+                    className={`rounded border px-2 py-1 text-[11px] ${
                       node.tone === "critical"
                         ? "border-critical/45 bg-critical/10 text-text"
                         : node.tone === "warning"
@@ -917,7 +917,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1.5">
-                      <span className="truncate font-mono text-[10.5px] font-semibold" title={node.label}>
+                      <span className="truncate font-mono text-[11px] font-semibold" title={node.label}>
                         {node.label}
                       </span>
                       <span
@@ -932,7 +932,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
                         }`}
                       />
                     </div>
-                    <div className="truncate text-[9.5px] text-muted" title={node.detail}>
+                    <div className="truncate text-[11px] text-muted" title={node.detail}>
                       {node.detail}
                     </div>
                   </div>

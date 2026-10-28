@@ -1,5 +1,6 @@
 import {
   ContextualMiniDashboardSchema,
+  humanizeSku,
   selectionDataPtr,
   selectionHash,
   type ContextViewMode,
@@ -381,22 +382,22 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       focus: rows.some(open) ? rows.filter(open) : rows,
       columns: [col("displayName", "User"), col("upn", "UPN", { mono: true }), col("account", "Account", { isBadge: true }), col("currentSku", "Assigned", { mono: true }), col("expectedSku", "Expected", { mono: true }), col("assignmentState", "State", { isBadge: true })],
       sourceQuery: `GET /v1.0/groups/{${inv.groupName}}/members?$select=userPrincipalName,accountEnabled,assignedLicenses,licenseAssignmentStates`,
-      title: (m) => (m.every((r) => r.accountEnabled === false) ? `Disabled accounts still holding ${inv.sku.skuPartNumber}` : m.every(open) ? `Drifted license assignments in ${inv.groupName}` : `License assignments in ${inv.groupName}`),
+      title: (m) => (m.every((r) => r.accountEnabled === false) ? `Disabled accounts still holding ${humanizeSku(inv.sku.skuPartNumber)}` : m.every(open) ? `Drifted license assignments in ${inv.groupName}` : `License assignments in ${inv.groupName}`),
       subtitle: (m) => `Live query across users/licenseAssignmentStates · ${plural(m.length, "user")} matched`,
       kpis: (m) => [
         { label: "Matched", value: plural(m.length, "user"), tone: m.length ? "warning" : "default" },
         { label: "Drifted / error", value: String(m.filter(open).length), tone: m.filter(open).length ? "critical" : "success" },
         { label: "Disabled", value: String(m.filter((r) => r.accountEnabled === false).length), tone: m.some((r) => r.accountEnabled === false) ? "warning" : "default" },
-        { label: `${inv.sku.skuPartNumber} available`, value: target ? `${target.available}/${target.enabled}` : "n/a", tone: target && target.available <= 0 ? "critical" : "default" },
+        { label: `${humanizeSku(inv.sku.skuPartNumber)} available`, value: target ? `${target.available}/${target.enabled}` : "n/a", tone: target && target.available <= 0 ? "critical" : "default" },
       ],
       breakdown: (m) => breakdownBy(m, "assignmentState", (v) => (v === "Active" || v === "Reclaimed" ? "success" : v === "Drifted" ? "warning" : "critical")),
       action: (m) => {
         const first = m.find(open) ?? m[0];
         const orphaned = first?.assignmentState === "Orphaned";
         const sku = `$sku = Get-MgSubscribedSku -All | Where-Object SkuPartNumber -eq '${inv.sku.skuPartNumber}'`;
-        if (!first) return { label: `List ${inv.sku.skuPartNumber} holders`, scriptPreview: `${sku}\nGet-MgUser -All -Property UserPrincipalName, AccountEnabled, AssignedLicenses | Where-Object { $_.AssignedLicenses.SkuId -contains $sku.SkuId } | Select-Object UserPrincipalName, AccountEnabled` };
+        if (!first) return { label: `List ${humanizeSku(inv.sku.skuPartNumber)} holders`, scriptPreview: `${sku}\nGet-MgUser -All -Property UserPrincipalName, AccountEnabled, AssignedLicenses | Where-Object { $_.AssignedLicenses.SkuId -contains $sku.SkuId } | Select-Object UserPrincipalName, AccountEnabled` };
         return {
-          label: orphaned ? "Reclaim orphaned seats" : `Assign ${inv.sku.skuPartNumber}`,
+          label: orphaned ? "Reclaim orphaned seats" : `Assign ${humanizeSku(inv.sku.skuPartNumber)}`,
           scriptPreview: orphaned
             ? `${sku}\nSet-MgUserLicense -UserId '${first.upn}' -AddLicenses @() -RemoveLicenses @($sku.SkuId)`
             : `${sku}\nSet-MgUserLicense -UserId '${first.upn}' -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @()`,
@@ -420,7 +421,7 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
         { label: "Available", value: String(m.reduce((n, r) => n + Number(r.available), 0)), tone: m.some((r) => Number(r.available) <= 0) ? "critical" : "success" },
       ],
       breakdown: (m) => {
-        const b = m.slice(0, 5).map((r) => ({ label: String(r.skuPartNumber), count: Number(r.consumed), pct: pct(Number(r.consumed), Number(r.enabled)), tone: (Number(r.available) <= 0 ? "critical" : Number(r.available) <= 2 ? "warning" : "success") as MetricTone }));
+        const b = m.slice(0, 5).map((r) => ({ label: humanizeSku(String(r.skuPartNumber)), count: Number(r.consumed), pct: pct(Number(r.consumed), Number(r.enabled)), tone: (Number(r.available) <= 0 ? "critical" : Number(r.available) <= 2 ? "warning" : "success") as MetricTone }));
         while (b.length < 2) b.push({ label: "other", count: 0, pct: 0, tone: "default" });
         return b;
       },

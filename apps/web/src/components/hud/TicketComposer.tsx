@@ -32,7 +32,7 @@ const FEATURED_GOAL_PRESETS: Array<{ id: string; badge: string; title: string; b
 
 /**
  * `[+ New Ticket / Outline Project Goal]`: paste any MSP support ticket OR cloud engineering
- * project/goal, optionally click `[💬 Ask Clarifying Questions to Scope Goal]` to scope it with
+ * project/goal, optionally click `[Ask Clarifying Questions to Scope Goal]` to scope it with
  * Sub-Agent 1 (`muse-spark-1.3`), and watch the 5-task Sub-Agent pipeline synthesize the UI & IaC live.
  */
 export function TicketComposer() {
@@ -130,7 +130,7 @@ export function TicketComposer() {
                 className="flex flex-col items-start gap-0.5 rounded-md border border-primary/35 bg-primary/8 px-2.5 py-1.5 text-left text-[11px] leading-snug transition-colors hover:border-primary hover:bg-primary/14"
                 title={p.body}
               >
-                <span className="font-mono text-[9.5px] font-semibold tracking-wider text-primary uppercase">{p.badge}</span>
+                <span className="font-mono text-[10px] font-semibold tracking-wider text-primary uppercase">{p.badge}</span>
                 <span className="font-medium text-text">{p.title}</span>
               </button>
             ))}
@@ -139,7 +139,7 @@ export function TicketComposer() {
 
         {samples.length > 0 && (
           <div className="mt-2.5 space-y-1">
-            <span className="block text-[10.5px] font-medium text-faint">Additional lab incident samples:</span>
+            <span className="block text-[11px] font-medium text-faint">Additional lab incident samples:</span>
             <div className="grid max-h-28 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-3">
               {samples.map((s) => (
                 <button
@@ -153,7 +153,7 @@ export function TicketComposer() {
                     setQuestions([]);
                     setAnswers({});
                   }}
-                  className="flex min-h-7 items-start rounded-md border border-border bg-surface/70 px-2.5 py-1 text-left text-[10.5px] leading-snug whitespace-normal text-muted transition-colors hover:border-primary/50 hover:bg-elevated hover:text-text"
+                  className="flex min-h-7 items-start rounded-md border border-border bg-surface/70 px-2.5 py-1 text-left text-[11px] leading-snug whitespace-normal text-muted transition-colors hover:border-primary/50 hover:bg-elevated hover:text-text"
                   title={s.body}
                 >
                   {s.title}
@@ -240,7 +240,7 @@ export function TicketComposer() {
                       value={isPresetOption ? "" : currentVal}
                       onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
                       placeholder={q.customHint ?? "Or type custom parameter…"}
-                      className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                      className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-sans text-[11px] text-text focus:outline-1 focus:outline-primary"
                     />
                   </div>
                 );
@@ -268,7 +268,7 @@ export function TicketComposer() {
             onClick={() => void askClarifyingQuestions()}
             data-testid="composer-ask-questions"
           >
-            💬 Ask Clarifying Questions to Scope Goal
+            Ask Clarifying Questions to Scope Goal
           </Button>
           <Pill tone="muted">Live Graph &amp; Azure</Pill>
           <Button

@@ -56,7 +56,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
                   <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-900/90">
                     <div className={`h-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
                   </div>
-                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[10.5px]">
+                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
                     {g.errorCode && (
                       <span className="font-mono font-semibold text-text/90">{g.errorCode}</span>
                     )}
@@ -129,7 +129,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
               <Database className="size-3.5 text-sky-400" />
               {block.title}
             </span>
-            <span className="font-mono text-[10.5px] text-faint">{filteredRows.length} rows</span>
+            <span className="font-mono text-[11px] text-faint">{filteredRows.length} rows</span>
           </div>
           <DataTable
             head={block.columns.map((c) => c.label)}
@@ -191,14 +191,14 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
               "Caller & Detail",
             ]}
             rows={block.events.map((ev) => [
-              <span className="font-mono text-[10.5px] text-faint">
+              <span className="font-mono text-[11px] text-faint">
                 {ev.timestamp.replace("T", " ").replace("Z", "")}
               </span>,
               <span className="font-mono text-[11px]">{ev.operation}</span>,
               <Pill tone={statusTone(ev.status)}>{ev.status}</Pill>,
               <Mono>{ev.code}</Mono>,
               <div className="space-y-0.5 text-[11px]">
-                <div className="font-mono text-[10.5px] text-sky-300">{ev.caller}</div>
+                <div className="font-mono text-[11px] text-sky-300">{ev.caller}</div>
                 <div className="text-muted">{ev.detail}</div>
               </div>,
             ])}
@@ -282,7 +282,7 @@ export function SynthesizedDynamicCard({
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             placeholder={dynamicFilterPlaceholder}
-            className="h-6 w-[140px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[10.5px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
+            className="h-6 w-[140px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[11px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
           />
           <Button
             size="xs"

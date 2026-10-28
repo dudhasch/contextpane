@@ -112,3 +112,79 @@ export const PROVIDER_LABEL: Record<string, string> = {
 export function healthTone(state: HealthState): "healthy" | "warning" | "critical" | "muted" {
   return state === "unknown" ? "muted" : state;
 }
+
+/** Provenance of a pipeline stage, lens or card (`source` fields across the catalog). */
+export const SOURCE_LABEL: Record<string, string> = {
+  llm: "Model call",
+  "mcp-probe": "MCP probe",
+  "symbolic-verifier": "Symbolic verifier",
+  "fallback-on-error": "Fallback (model error)",
+  "not-attempted": "Not attempted",
+  "deterministic-template": "Deterministic template",
+  "deterministic-router": "Deterministic router",
+  "live-graph": "Live Graph read",
+  "live-arm": "Live ARM read",
+  "real-tenant": "Real tenant",
+  "simulated-lab": "Simulated lab",
+  symbolic: "Symbolic model",
+  simulated: "Simulated",
+  cached: "Cached",
+  seed: "Seeded",
+  fixture: "Fixture",
+};
+
+/** Raw status slugs rendered in cards, banners and the audit log. */
+export const STATUS_LABEL: Record<string, string> = {
+  "in-sync": "In sync",
+  conflict: "Conflict",
+  drift: "Drift",
+  drifted: "Drifted",
+  compliant: "Compliant",
+  noncompliant: "Non-compliant",
+  "non-compliant": "Non-compliant",
+  operational: "Operational",
+  degraded: "Degraded",
+  advisory: "Advisory",
+  outage: "Outage",
+  success: "Success",
+  failure: "Failure",
+  interrupted: "Interrupted",
+  pending: "Pending",
+  completed: "Completed",
+  running: "Running",
+  fallback: "Fallback",
+  executed: "Executed",
+  simulated: "Simulated",
+  "rolled-back": "Rolled back",
+  approved: "Approved",
+  rejected: "Rejected",
+  exchangeActiveSync: "Exchange ActiveSync",
+  browser: "Browser",
+  mobileAppsAndDesktopClients: "Mobile & desktop apps",
+};
+
+/** `in-sync` → "In sync", unknown slugs → sentence case with separators turned into spaces. */
+export function humanizeStatus(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return STATUS_LABEL[raw] ?? humanizeSlug(raw);
+}
+
+export function humanizeSource(raw: string | null | undefined): string {
+  if (!raw) return SOURCE_LABEL["not-attempted"]!;
+  return SOURCE_LABEL[raw] ?? humanizeSlug(raw);
+}
+
+/** `fallback-on-error` / `camelCaseField` / `PascalCaseCard` → "Fallback on error" / "Camel case field". */
+export function humanizeSlug(raw: string): string {
+  const spaced = raw
+    .replace(/Card$/, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  if (!spaced) return raw;
+  const lower = spaced.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/** SKU part numbers → product names; shared with the orchestrator so server-built labels match. */
+export { humanizeSku } from "@contextpane/catalog";

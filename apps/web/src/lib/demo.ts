@@ -29,10 +29,10 @@ export function onDemo(handler: (beat: DemoBeat, claim: () => boolean) => void):
 }
 
 export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> = [
-  { key: "1-9", label: "Open the work item at that position in the queue", beat: "One stream: tickets, anomalies, ERP drops, ad-hoc" },
+  { key: "1-9", label: "Open the work item at that position in the queue (inside the open queue all nine; outside it 7 runs Vision)", beat: "One stream: tickets, anomalies, ERP drops, ad-hoc" },
   { key: "Ctrl K", label: "Open the work queue (search, origin filters)", beat: "Unified selector · q also toggles it" },
   { key: "j / k", label: "Next / previous work item", beat: "Step through the queue" },
-  { key: "g", label: "🎲 Drop a random ERP ticket into input/tickets/", beat: "fs watcher → #2026xxx ingested in ~1 s" },
+  { key: "g", label: "Drop a random ERP ticket into input/tickets/", beat: "fs watcher → #2026xxx ingested in ~1 s" },
   { key: "h", label: "Hover the hero entity", beat: "Tier 1A · inline hover diagnostics" },
   { key: "e", label: "Run step 1 of the resolution plan", beat: "Left pane → card expands" },
   { key: "d", label: "Open the Terraform diff", beat: "IaC drift" },

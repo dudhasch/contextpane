@@ -124,6 +124,15 @@ const SYNTHESIZE_DYNAMIC_CARD_TOOL: OpenAIFunctionTool = {
   },
 };
 
+/** Cut at the last word boundary before `max` and mark the cut, so fallback titles never end mid-word. */
+export function truncateAtWord(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > max * 0.5 ? cut.slice(0, lastSpace) : cut).replace(/[\s,.;:·-]+$/, "")}…`;
+}
+
 function pascalIdFromTitle(title: string): string {
   const words = title.replace(/[^A-Za-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length >= 2).slice(0, 5);
   return `${words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("") || "CustomDiagnostic"}Card`;
@@ -137,9 +146,9 @@ export function buildDeterministicRoutingDecision(input: { title: string; body: 
       {
         status: "element_not_existent",
         elementId: pascalIdFromTitle(cleanTitle),
-        title: cleanTitle.slice(0, 80),
+        title: truncateAtWord(cleanTitle, 80),
         domain: "azure",
-        reason: `Ticket "${cleanTitle.slice(0, 80)}" requires a bespoke diagnostic and remediation card.`,
+        reason: `Ticket "${truncateAtWord(cleanTitle, 80)}" requires a bespoke diagnostic and remediation card.`,
         requiredPrimitives: ["policy-chain", "data-table", "config-diff", "event-stream"],
       },
     ],
@@ -216,11 +225,11 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
     state: "warning",
     requiredPrimitives: ["policy-chain", "data-table", "config-diff", "event-stream"],
     blocks: [
-      { kind: "quota-gauges", title: `${missing.title} · Resource Utilization`, gauges: [{ id: "g1", label: missing.elementId, used: 1, limit: 1, unit: "state", status: "warning" }] },
-      { kind: "policy-chain", title: `${missing.title} · Evaluation Chain`, hops: [{ step: "Step 1 · Control-Plane Check", node: missing.title, effect: "Audit", code: "DiagnosticCheck", detail: missing.reason }] },
-      { kind: "data-table", title: `${missing.title} · Posture`, columns: [{ key: "item", label: "Target", mono: true }, { key: "state", label: "Observed State", mono: false }], rows: [{ item: missing.elementId, state: missing.reason.slice(0, 120) }] },
-      { kind: "config-diff", title: `${missing.title} · Remediation Diff`, filePath: "remediation.ps1", language: "powershell", diff: "- # Current state\n+ Get-AzResource -WhatIf" },
-      { kind: "event-stream", title: `${missing.title} · Activity & Audit Log`, events: [{ id: "ev1", timestamp: nowIso, operation: missing.elementId, status: "Warning", code: "DiagnosticEvent", caller: "ControlPlane", detail: missing.reason.slice(0, 160) }] },
+      { kind: "quota-gauges", title: "Resource Utilization", gauges: [{ id: "g1", label: "Ticket state", used: 1, limit: 1, unit: "state", status: "warning" }] },
+      { kind: "policy-chain", title: "Evaluation Chain", hops: [{ step: "Step 1 · Control-Plane Check", node: truncateAtWord(missing.title, 60), effect: "Audit", code: "DiagnosticCheck", detail: missing.reason }] },
+      { kind: "data-table", title: "Posture", columns: [{ key: "item", label: "Target", mono: false }, { key: "state", label: "Observed State", mono: false }], rows: [{ item: "Control-plane check", state: truncateAtWord(missing.reason, 120) }] },
+      { kind: "config-diff", title: "Remediation Diff", filePath: "remediation.ps1", language: "powershell", diff: "- # Current state\n+ Get-AzResource -WhatIf" },
+      { kind: "event-stream", title: "Activity & Audit Log", events: [{ id: "ev1", timestamp: nowIso, operation: "Control-plane check", status: "Warning", code: "DiagnosticEvent", caller: "ControlPlane", detail: truncateAtWord(missing.reason, 160) }] },
     ],
     recommendedActions: [{ id: "stage-fix", label: "Stage Remediation Fix", description: missing.reason.slice(0, 140), command: "Get-AzResource -WhatIf", kind: "stage-fix" }],
     synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath, synthesizedAt: nowIso },

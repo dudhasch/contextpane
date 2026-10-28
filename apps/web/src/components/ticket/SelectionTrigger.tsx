@@ -311,14 +311,14 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
                     }}
                     onDoubleClick={() => generate(m.mode)}
                     title={`${m.label} — ${m.hint} (Tab to select, Enter to generate)`}
-                    className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] transition-all ${
+                    className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[11px] transition-all ${
                       active
                         ? "border border-selection/70 bg-selection/22 font-medium text-selection shadow-[0_0_8px_rgba(6,182,212,0.3)]"
                         : "border border-transparent text-muted hover:bg-elevated/70 hover:text-text"
                     }`}
                   >
                     <ContextModeIcon mode={m.mode} className="size-3.5 shrink-0" />
-                    {active && <span className="whitespace-nowrap text-[10px]">{m.shortLabel}</span>}
+                    {active && <span className="whitespace-nowrap text-[11px]">{m.shortLabel}</span>}
                   </button>
                 );
               })}
