@@ -170,7 +170,7 @@ describe("applyTimelineSliceToLayout sign-in timestamp & badge honesty", () => {
     const peers = resolveOtherAffectedClients(fleet, "Contoso Finance");
     expect(peers.map((p) => p.name)).not.toContain("Contoso Finance");
     expect(peers.map((p) => p.name)).toEqual(["Northwind Traders", "Tailspin Aerospace", "Woodgrove Bank"]);
-    expect(peers.every((p) => p.badge === "1 issue · ✓ Safety Check Ready")).toBe(true);
+    expect(peers.every((p) => p.badge === "1 issue · ✓ safety check ready")).toBe(true);
   });
 
   test("B5 speculative selection cache promotes pre-warmed explore-selection with speculativeHit: true and fails closed on epoch bump", async () => {

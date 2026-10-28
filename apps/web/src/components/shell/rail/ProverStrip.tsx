@@ -3,6 +3,15 @@ import { useState } from "react";
 import { useWorkbench } from "@/store";
 import { Button } from "../../ui/Button";
 import { Pill } from "../../ui/Pill";
+
+/** Canary trace stage ids → words; the raw id stays in the tooltip. */
+const CANARY_STAGE_LABEL: Record<string, string> = {
+  APPLIED: "Applied",
+  CANARY_RING_0: "Canary ring 0",
+  SYNTHETIC_PROBED: "Probed",
+  CONVERGED: "Converged",
+  AUTO_ROLLED_BACK: "Auto-rolled back",
+};
 import { ScriptCode } from "./ScriptCode";
 import { VERDICT_TONE, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, type Drawer } from "./shared";
 
@@ -85,8 +94,9 @@ function CanaryTrace() {
               className={`truncate ${
                 s.stage === "AUTO_ROLLED_BACK" ? "font-semibold text-critical" : s.stage === "CONVERGED" ? "font-semibold text-healthy" : "text-muted"
               }`}
+              title={s.stage}
             >
-              {s.stage}
+              {CANARY_STAGE_LABEL[s.stage] ?? s.stage}
             </span>
           </span>
         ))

@@ -52,8 +52,8 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
         </ul>
       }
       tabs={[
-        { id: "hostpool", label: "Host Pool & Session Hosts", badge: pool?.sessionHosts.length },
-        { id: "nsg", label: "NSG Rules & Terraform Drift", badge: props.rogueSecurityRules.length + props.tagDrift.length },
+        { id: "hostpool", label: "Host pool & session hosts", badge: pool?.sessionHosts.length },
+        { id: "nsg", label: "NSG rules & Terraform drift", badge: props.rogueSecurityRules.length + props.tagDrift.length },
         { id: "policies", label: "Azure Policies", badge: nonCompliant.length },
       ]}
       summary={subtitle}
@@ -68,7 +68,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
               openRemediation({ tab: "terraform", focusBanner: "Focused: NSG & Terraform Drift Remediation" });
             }}
           >
-            Terraform Diff &amp; Fix
+            Terraform diff &amp; fix
           </Button>
         )
       }

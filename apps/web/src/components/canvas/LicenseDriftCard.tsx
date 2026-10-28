@@ -1,6 +1,7 @@
 import { BadgeCheck, Wrench } from "lucide-react";
 import { useCallback } from "react";
 import type { AssignmentState, LicenseDriftCard as Props, LicenseDriftUser } from "@contextpane/catalog";
+import { humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
@@ -75,7 +76,7 @@ export function shortSku(sku: string, max = 16): string {
 function CommercialSubTab() {
   const rec = useWorkbench((s) => s.commercial);
   const loadOps = useWorkbench((s) => s.loadOps);
-  if (!rec) return <button type="button" onClick={() => void loadOps()} className="text-12 text-signal hover:underline">Load License &amp; Cost Impact…</button>;
+  if (!rec) return <button type="button" onClick={() => void loadOps()} className="text-12 text-signal hover:underline">Load license &amp; cost impact…</button>;
   const e5Sku = rec.skus?.find((s) => s.sku === "SPE_E5");
   const hasIdlePoolSeats = Boolean(e5Sku && e5Sku.available >= 3 && e5Sku.consumed === 12);
   return (
@@ -199,8 +200,8 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       }
       tabs={[
         { id: "users", label: "Assignments", badge: props.users.length },
-        { id: "pool", label: "SKU Pools", badge: props.skuPools.length },
-        { id: "commercial", label: "Billing & Seat Check" },
+        { id: "pool", label: "SKU pools", badge: props.skuPools.length },
+        { id: "commercial", label: "Billing & seat check" },
       ]}
       summary={subtitle}
       primaryAction={
@@ -212,7 +213,7 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
             loading={remediateStatus === "loading"}
             onClick={() => openRemediation({ tab: "powershell", focusBanner: "Focused: License Pool & Group Remediation" })}
           >
-            Stage License Fix
+            Stage license fix
           </Button>
         )
       }
@@ -238,7 +239,7 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
             {props.groupErrors.map((e) => (
               <div key={e.groupName + e.skuPartNumber} className="text-12">
                 <Pill variant="status" tone="critical">
-                  {e.groupName} · Error · {e.state}
+                  {e.groupName} · error · {humanizeStatus(e.state)}
                 </Pill>
                 <div className="pl-3 text-muted">{e.detail}</div>
               </div>

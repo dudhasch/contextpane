@@ -1,5 +1,6 @@
 import {
   SCENARIO_REGISTRY,
+  cleanInlineSlugs,
   displayScenarioId,
   type CanvasComponentType,
   type EnrichedEntity,
@@ -367,7 +368,29 @@ function anomalyBody(ctx: CorrelationContext): { title: string; origin: string; 
 /* Brief                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The brief every client renders. Model-written and synthesized copy (summary, plan steps, signals,
+ * extraction rationale, sub-agent summaries, scope questions) is slug-cleaned once here, at the
+ * boundary, instead of per component in the web app.
+ */
 export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
+  return cleanBriefCopy(assembleScenarioBrief(ctx));
+}
+
+/** Runs `cleanInlineSlugs` over the human-facing text of a brief; ids, bodies and machine fields stay as they are. */
+export function cleanBriefCopy(brief: ScenarioBrief): ScenarioBrief {
+  return {
+    ...brief,
+    summary: cleanInlineSlugs(brief.summary),
+    steps: brief.steps.map((s) => ({ ...s, title: cleanInlineSlugs(s.title), detail: cleanInlineSlugs(s.detail) })),
+    signals: brief.signals.map((sig) => ({ ...sig, label: cleanInlineSlugs(sig.label), value: cleanInlineSlugs(sig.value) })),
+    extraction: brief.extraction ? { ...brief.extraction, rationale: cleanInlineSlugs(brief.extraction.rationale) } : brief.extraction,
+    subAgentTasks: brief.subAgentTasks?.map((t) => ({ ...t, inputSummary: cleanInlineSlugs(t.inputSummary), outputSummary: cleanInlineSlugs(t.outputSummary) })),
+    clarifyingQuestions: brief.clarifyingQuestions?.map((q) => ({ ...q, question: cleanInlineSlugs(q.question) })),
+  };
+}
+
+function assembleScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
   const { tenant, contract, ticket } = ctx.erp;
   const { summary, steps } = summaryAndSteps(ctx);
   const scenarioTitle = ctx.custom?.title ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId);

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
+import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInlineSlugs, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool } from "../router/openai.ts";
 
@@ -172,6 +172,19 @@ export function buildDeterministicRoutingDecision(input: { title: string; body: 
   };
 }
 
+/** Slug-cleans the plan copy of a routing decision once, where the gatekeeper (or its fallback) produced it. */
+export function cleanRoutingCopy(decision: ElementRoutingDecision): ElementRoutingDecision {
+  const brief = decision.customBrief;
+  return {
+    ...decision,
+    customBrief: {
+      ...brief,
+      summary: cleanInlineSlugs(brief.summary),
+      steps: brief.steps.map((s) => ({ ...s, title: cleanInlineSlugs(s.title), detail: cleanInlineSlugs(s.detail) })),
+    },
+  };
+}
+
 export async function assessTicketElementNeeds(input: {
   title: string;
   body: string;
@@ -201,7 +214,7 @@ export async function assessTicketElementNeeds(input: {
       const parsed = ElementRoutingDecisionSchema.safeParse(parseToolArguments(res.argumentsRaw));
       if (parsed.success && parsed.data.missingElements.length > 0) {
         return {
-          decision: { ...parsed.data, matchedExistingElements: [] },
+          decision: cleanRoutingCopy({ ...parsed.data, matchedExistingElements: [] }),
           modelUsed: gatekeeperModel,
           latencyMs: Math.max(1, Math.round(performance.now() - started)),
           tokensUsed: res.usage.total,
@@ -213,7 +226,7 @@ export async function assessTicketElementNeeds(input: {
     }
   }
   return {
-    decision: fallback,
+    decision: cleanRoutingCopy(fallback),
     modelUsed: gatekeeperModel,
     latencyMs: Math.max(1, Math.round(performance.now() - started)),
     tokensUsed: 0,
@@ -226,8 +239,8 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
   const nowIso = new Date().toISOString();
   return {
     elementId: missing.elementId,
-    title: missing.title,
-    headline: missing.reason.slice(0, 220),
+    title: cleanInlineSlugs(missing.title),
+    headline: cleanInlineSlugs(missing.reason.slice(0, 220)),
     domain: missing.domain,
     reason: missing.reason.slice(0, 300),
     state: "warning",
@@ -339,6 +352,9 @@ export async function synthesizeAndPersistMissingElements(input: {
       results.push(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs));
       continue;
     }
+    // Card copy is slug-cleaned once here, before it is persisted and served (WP8).
+    card.title = cleanInlineSlugs(card.title);
+    card.headline = cleanInlineSlugs(card.headline);
     const tsxPath = writeTsxStub(card);
     const nowIso = new Date().toISOString();
     card.synthesisMeta = { gatekeeperModel: input.gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: tsxPath, synthesizedAt: nowIso, source: "llm" };

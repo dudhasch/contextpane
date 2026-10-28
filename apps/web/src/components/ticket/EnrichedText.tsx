@@ -1,6 +1,6 @@
 import { Sparkles } from "lucide-react";
 import { Fragment, useMemo } from "react";
-import type { ClarifyingQuestion, ContextViewMode, EnrichedEntity } from "@contextpane/catalog";
+import { cleanInlineSlugs, type ClarifyingQuestion, type ContextViewMode, type EnrichedEntity } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
 import { EntityPill } from "./EntityPill";
 
@@ -18,16 +18,8 @@ function formatSlugWord(w: string): string {
   return w.charAt(0).toUpperCase() + w.slice(1);
 }
 
-export function cleanInlineSlugs(text: string): string {
-  return text
-    .replace(/\belement_not_existent\b/gi, "custom diagnostic view")
-    .replace(/\b(?:data\/)?dynamic-catalog\.json\b/gi, "custom view catalog")
-    .replace(/\bmuse-(?:wonder|spark|glimmer|voice)[a-z0-9.-]*\b/gi, "live analyzer")
-    .replace(/\s*\((?:Remove-MgGroupMemberByRef|Invoke-MgLicenseUser|Set-MgUserLicense|Update-MgIdentityConditionalAccessPolicy)[^)]*\)/g, "")
-    .replace(/\b([a-z]{2,}(?:_[a-z0-9]{2,})+)\b/g, (match) =>
-      match.split("_").map(formatSlugWord).join(" "),
-    );
-}
+/** The slug cleaner now runs once at the orchestrator boundary (`@contextpane/catalog`); re-exported for local helpers. */
+export { cleanInlineSlugs };
 
 export function humanizeClarifierSlug(raw: string, q?: ClarifyingQuestion): string {
   const trimmed = raw.trim();

@@ -1,7 +1,7 @@
 import { MonitorCog, Wrench } from "lucide-react";
 import { useCallback } from "react";
 import type { IntuneDevice, IntuneDriftCard as Props } from "@contextpane/catalog";
-import { fmtTimeUtc, humanizeStatus } from "@/lib/format";
+import { fmtTimeUtc, humanizeSlug, humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { TONE_TEXT, type Tone } from "../ui/Pill";
@@ -98,15 +98,15 @@ export function IntuneDriftCardView({ props, triggeredBy }: { props: Props; trig
           <ul className="space-y-0.5 font-mono">
             {props.policies.map((p) => (
               <li key={p.id} className="truncate" title={p.name}>
-                {p.name} <span className="text-faint">· {p.kind}</span>
+                {p.name} <span className="text-faint">· {humanizeSlug(p.kind)}</span>
               </li>
             ))}
           </ul>
         </div>
       }
       tabs={[
-        { id: "settings", label: "Setting-Level Drift Diff", badge: open.length },
-        { id: "devices", label: "Affected Devices & Compliance", badge: props.affectedDeviceCount },
+        { id: "settings", label: "Setting drift", badge: open.length },
+        { id: "devices", label: "Affected devices & compliance", badge: props.affectedDeviceCount },
       ]}
       summary={subtitle}
       primaryAction={

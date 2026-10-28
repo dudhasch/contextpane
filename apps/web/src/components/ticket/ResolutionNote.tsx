@@ -39,8 +39,8 @@ export function ResolutionNoteBox() {
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-7 w-full min-w-0 items-center gap-1.5 text-left text-12 transition-colors hover:bg-raised">
         <ChevronRight className={`size-3.5 shrink-0 text-faint transition-transform ${open ? "rotate-90" : ""}`} />
         <span className="shrink-0 text-signal" aria-hidden>✦</span>
-        <span className="shrink-0 font-semibold">Customer &amp; PSA Resolution Note</span>
-        <span className="min-w-0 truncate text-11 text-faint">{closed ? "· Closed in PSA" : "· Ready to Close Ticket"}</span>
+        <span className="shrink-0 font-semibold">Customer &amp; PSA resolution note</span>
+        <span className="min-w-0 truncate text-11 text-faint">{closed ? "· Closed in PSA" : "· Ready to close"}</span>
         <Pill variant="status" tone={closed ? "healthy" : "primary"} className="ml-auto shrink-0">
           {humanizeStatus(note.status)}
         </Pill>
@@ -60,10 +60,10 @@ export function ResolutionNoteBox() {
           </ul>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <Button size="xs" variant="outline" icon={<ClipboardCopy />} onClick={() => void copy()} data-testid="copy-psa-note">
-              Copy PSA Resolution Note
+              Copy PSA note
             </Button>
             <Button size="xs" variant="healthy" icon={<CheckCheck />} onClick={() => void close()} disabled={closed} data-testid="close-ticket">
-              {closed ? "Ticket Closed in PSA" : "Mark Ticket Closed in PSA"}
+              {closed ? "Closed in PSA" : "Mark closed in PSA"}
             </Button>
             <span className="ml-auto font-mono text-11 text-faint">
               {closed && note.closed ? `closed ${fmtDateTimeUtc(note.closed.closedAt)} · ${note.closed.closedBy}` : `resolved ${fmtDateTimeUtc(note.resolvedAt)} · ${humanizeStatus(note.execution)}`}

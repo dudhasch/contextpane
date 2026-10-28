@@ -56,7 +56,7 @@ export function resolveOtherAffectedClients(
 
   return baseList.map((t) => ({
     ...t,
-    badge: "1 issue · ✓ Safety Check Ready",
+    badge: "1 issue · ✓ safety check ready",
   }));
 }
 

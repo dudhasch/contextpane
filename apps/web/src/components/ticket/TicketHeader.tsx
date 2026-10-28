@@ -2,10 +2,9 @@ import type { ScenarioBrief } from "@contextpane/catalog";
 import { fmtDateTimeUtc } from "@/lib/format";
 import { selectConvergence, useWorkbench } from "@/store";
 import { Pill, type Tone } from "../ui/Pill";
-import { cleanInlineSlugs } from "./EnrichedText";
 
 /**
- * Two lines, no box: `#INC-4099 ● OPEN  PSA ticket · Endpoint Management / Intune`, the title
+ * Two lines, no box: `#INC-4099 ● Open  PSA ticket · Endpoint Management / Intune`, the title
  * (max two lines), then tenant · requester · opened. Domain, role and priority sit in the tooltip.
  */
 export function TicketHeader({ brief }: { brief: ScenarioBrief }) {
@@ -13,9 +12,9 @@ export function TicketHeader({ brief }: { brief: ScenarioBrief }) {
   const closed = useWorkbench((s) => Boolean(s.resolutionNote?.closed && s.resolutionNote.scenarioId === brief.scenarioId));
   const ticket = brief.kind === "ticket";
   const drop = brief.originKind === "erp-drop";
-  const open = drop ? "NEW" : ticket ? "OPEN" : "ACTIVE DRIFT";
+  const open = drop ? "New" : ticket ? "Open" : "Active drift";
   const tone: Tone = closed ? "muted" : resolved ? "healthy" : drop ? "primary" : ticket ? "healthy" : "warning";
-  const rationale = brief.extraction?.rationale ? cleanInlineSlugs(brief.extraction.rationale) : undefined;
+  const rationale = brief.extraction?.rationale ? brief.extraction.rationale : undefined;
   const meta = [brief.verifiedDomain, brief.requester ? `${brief.requester.displayName} · ${brief.requester.role}` : null, brief.priority ? `priority ${brief.priority}` : null]
     .filter(Boolean)
     .join(" · ");
@@ -25,8 +24,8 @@ export function TicketHeader({ brief }: { brief: ScenarioBrief }) {
         <span className="shrink-0 font-mono text-12 font-semibold text-text" data-testid="scenario-display-id">
           {brief.displayId ?? `#${brief.scenarioId}`}
         </span>
-        <Pill variant="status" tone={tone} mono={false} className="shrink-0 font-semibold tracking-wide" flashKey={resolved ? "resolved" : "open"}>
-          {closed ? "CLOSED IN PSA" : resolved ? "RESOLVED & VERIFIED" : open}
+        <Pill variant="status" tone={tone} mono={false} className="shrink-0 font-semibold" flashKey={resolved ? "resolved" : "open"}>
+          {closed ? "Closed in PSA" : resolved ? "Resolved and verified" : open}
         </Pill>
         <span className="min-w-0 truncate text-11 text-faint" title={rationale ?? brief.origin}>
           {brief.origin}

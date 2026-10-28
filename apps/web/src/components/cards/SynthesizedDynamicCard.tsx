@@ -1,6 +1,7 @@
 import { Cloud, GitCompareArrows, Search, Wrench } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { SynthesizedBlock, SynthesizedDynamicCard as Props } from "@contextpane/catalog";
+import { humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { DataTable, Ghost, GhostLines, Section, SmartTechPath } from "../canvas/Section";
 import { DiffView } from "../canvas/DiffView";
@@ -220,7 +221,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
                 </span>
                 <span className="flex flex-col items-end gap-0.5">
                   <Ghost pending={pending} className={TONE_TEXT[statusTone(ev.status)]}>
-                    {ev.status}
+                    {humanizeStatus(ev.status)}
                   </Ghost>
                   <Ghost pending={pending} className="text-faint">
                     {ev.code}
@@ -252,7 +253,7 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
   const stageAction = props.recommendedActions.find((a) => a.kind === "stage-fix") ?? props.recommendedActions[0];
   const diffAction = props.recommendedActions.find((a) => a.kind === "view-diff");
 
-  const primaryCtaLabel = stageAction?.label ?? "Stage Remediation Fix";
+  const primaryCtaLabel = stageAction?.label ?? "Stage remediation fix";
   const diffCtaLabel = diffAction?.label ?? "Inspect Configuration & IaC Diff";
 
   const dynamicFilterPlaceholder =

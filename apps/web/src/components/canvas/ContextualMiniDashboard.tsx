@@ -1003,22 +1003,22 @@ function buildBlastRadiusStages(card: Card, refinementText?: string): BlastStage
         })),
       },
       {
-        title: "Service Principals",
+        title: "Service principals",
         edgeLabel: "grants",
         nodes: apps.slice(0, 4),
       },
       {
-        title: "Privileged Scopes",
+        title: "Privileged scopes",
         edgeLabel: "impacts",
         nodes: scopes.length
           ? scopes.slice(0, 4)
           : [{ label: "Directory.ReadWrite.All", detail: "Unused high-privilege Graph role", tone: "critical" }],
       },
       {
-        title: "Blast Radius",
+        title: "Blast radius",
         edgeLabel: "exposure",
         nodes: [
-          { label: "Tenant Directory Takeover", detail: "Non-admin owner can rotate credentials on privileged SPNs", tone: "critical" },
+          { label: "Tenant directory takeover", detail: "Non-admin owner can rotate credentials on privileged SPNs", tone: "critical" },
           { label: card.kpis[0] ? `${card.kpis[0].label}: ${card.kpis[0].value}` : "Production Sync", detail: refinementText ? `Query: "${refinementText}"` : card.subtitle, tone: "warning" },
           { label: card.suggestedAction.label, detail: "1-click remediation ready", tone: "healthy" },
         ],
@@ -1047,7 +1047,7 @@ function buildBlastRadiusStages(card: Card, refinementText?: string): BlastStage
 
   return [
     {
-      title: "Selected Anchor",
+      title: "Selected anchor",
       edgeLabel: "matches",
       nodes: [
         { label: card.selectionText, detail: refinementText ? `+ "${refinementText}"` : "Highlighted in ticket", tone: "meta" },
@@ -1055,17 +1055,17 @@ function buildBlastRadiusStages(card: Card, refinementText?: string): BlastStage
       ],
     },
     {
-      title: "Matched Objects",
+      title: "Matched objects",
       edgeLabel: "enforces",
       nodes: primaryNodes.length ? primaryNodes : [{ label: "0 objects", detail: card.subtitle, tone: "warning" }],
     },
     {
-      title: "Posture & Controls",
+      title: "Posture & controls",
       edgeLabel: "causes",
       nodes: detailNodes.length ? detailNodes : stateNodes,
     },
     {
-      title: "Blast Radius",
+      title: "Blast radius",
       edgeLabel: "mitigation",
       nodes: [
         ...stateNodes.slice(0, 2),

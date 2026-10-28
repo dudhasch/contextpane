@@ -2,6 +2,7 @@ import { FloatingPortal, autoUpdate, flip, offset, shift, useDismiss, useFloatin
 import { Check, Cloud, ExternalLink, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ClarifyingQuestion, ResolutionStep, ScenarioBrief, SubAgentTaskRecord, UpstreamCloudStatusCorrelation } from "@contextpane/catalog";
+import { useClamp } from "@/hooks/useClamp";
 import { onDemo } from "@/lib/demo";
 import { fmtMs, SOURCE_LABEL } from "@/lib/format";
 import { catStyle } from "@/lib/provenance";
@@ -9,7 +10,7 @@ import { selectConvergence, useWorkbench } from "@/store";
 import { Ghost } from "../canvas/Section";
 import { Button } from "../ui/Button";
 import { Pill, type Tone } from "../ui/Pill";
-import { cleanInlineSlugs, EnrichedText, humanizeClarifierSlug, NO_ENTITIES, NO_SELECTIONS, type SelectionItem } from "./EnrichedText";
+import { EnrichedText, humanizeClarifierSlug, NO_ENTITIES, NO_SELECTIONS, type SelectionItem } from "./EnrichedText";
 import { ResolutionNoteBox } from "./ResolutionNote";
 
 /**
@@ -64,7 +65,7 @@ export function PlanSection({ brief }: { brief: ScenarioBrief }) {
       {questions.length > 0 && <ScopeBar scope={scope} unmapped={unmapped} mappedCount={questions.length - unmapped.length} />}
       <p className="mt-0.5 text-13 text-text" data-testid="summary-text" aria-busy={briefPending || undefined}>
         <Ghost pending={briefPending}>
-          <EnrichedText text={cleanInlineSlugs(brief.summary)} entities={NO_ENTITIES} selections={selections} />
+          <EnrichedText text={brief.summary} entities={NO_ENTITIES} selections={selections} />
         </Ghost>
       </p>
       <ol className="mt-0.5 divide-y divide-hairline-2" aria-busy={briefPending || undefined}>
@@ -105,11 +106,11 @@ function cloudServiceLabel(serviceId: string, primaryRegion: string | null | und
 }
 
 const STAGE_DISPLAY_META: Record<number, { name: string; role: string }> = {
-  1: { name: "1. Scope Check", role: "Target Scope & Parameters" },
-  2: { name: "2. Live Telemetry", role: "Live Graph & ARM Status Check" },
-  3: { name: "3. View Layout", role: "Diagnostic View Layout" },
-  4: { name: "4. Remediation Plan", role: "PowerShell 7 & Terraform Patch" },
-  5: { name: "5. Pre-Flight Safety", role: "AST, -WhatIf & 1-Click Undo" },
+  1: { name: "1. Scope check", role: "Target scope and parameters" },
+  2: { name: "2. Live telemetry", role: "Live Graph and ARM status check" },
+  3: { name: "3. View layout", role: "Diagnostic view layout" },
+  4: { name: "4. Remediation plan", role: "PowerShell 7 and Terraform patch" },
+  5: { name: "5. Pre-flight safety", role: "AST, -WhatIf and 1-click undo" },
 };
 
 function compactMs(ms: number): string {
@@ -274,9 +275,9 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                 </div>
                 <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
                   <span className="font-mono text-faint">Input</span>
-                  <span className="text-muted">{cleanInlineSlugs(activeTask.inputSummary)}</span>
+                  <span className="text-muted">{activeTask.inputSummary}</span>
                   <span className="font-mono text-faint">Output</span>
-                  <span className="text-text">{cleanInlineSlugs(activeTask.outputSummary)}</span>
+                  <span className="text-text">{activeTask.outputSummary}</span>
                 </div>
               </div>
             )}
@@ -444,7 +445,7 @@ function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft 
       {/* One row: the question as a short label (full text in its tooltip), then chips that shrink and
           truncate, the selected one last (full option label and description in the chip tooltip). */}
       <div className="flex min-w-0 items-center gap-1">
-        <span className="mr-0.5 shrink-0 cursor-help text-11 text-muted" title={cleanInlineSlugs(q.question)}>
+        <span className="mr-0.5 shrink-0 cursor-help text-11 text-muted" title={q.question}>
           <span className="text-signal">✦</span> {capitalize(humanizeClarifierSlug(q.category))}
         </span>
         {q.options.map((opt) => {
@@ -548,6 +549,7 @@ function PlanStep({
   const allSameCategory = steps.length > 1 && steps.every((s) => s.category === steps[0]?.category);
   const effectiveCategory = allSameCategory ? STEP_CATEGORY_FALLBACKS[(index - 1) % STEP_CATEGORY_FALLBACKS.length]! : step.category;
   const stageDisabled = resolved && step.action.kind === "stage-fix";
+  const clamp = useClamp<HTMLDivElement>(`${step.id}:${step.detail}`);
   return (
     <li
       style={catStyle(effectiveCategory)}
@@ -560,17 +562,18 @@ function PlanStep({
       }}
       onMouseLeave={() => setLinked(null)}
     >
-      <button
-        type="button"
-        onClick={() => toggle(step.id)}
-        aria-pressed={checked}
-        aria-label={`Mark step ${index} done`}
-        title={checked ? "Done · click to clear" : "Mark done"}
-        className="mr-1.5 inline-block w-3 text-left font-mono text-11 text-faint transition-colors hover:text-text"
-      >
-        {checked ? <Check className="inline size-3 align-[-1px] text-healthy" /> : index}
-      </button>
-      <div className="contents">
+      {/* Fold (WP8): long model-written detail clamps to 3 lines and expands in place. */}
+      <div ref={clamp.ref} className={`flow-root ${clamp.expanded ? "" : "max-h-[4.35em] overflow-hidden"}`} data-testid="plan-step-body">
+        <button
+          type="button"
+          onClick={() => toggle(step.id)}
+          aria-pressed={checked}
+          aria-label={`Mark step ${index} done`}
+          title={checked ? "Done · click to clear" : "Mark done"}
+          className="mr-1.5 inline-block w-3 text-left font-mono text-11 text-faint transition-colors hover:text-text"
+        >
+          {checked ? <Check className="inline size-3 align-[-1px] text-healthy" /> : index}
+        </button>
         <Button
           size="xs"
           variant="ghost"
@@ -598,11 +601,23 @@ function PlanStep({
           title="Open the card for this step"
           data-testid="plan-step-text"
         >
-          <span className="mr-1 font-semibold text-[color:var(--cat)]">{cleanInlineSlugs(step.title)}</span>
+          <span className="mr-1 font-semibold text-[color:var(--cat)]">{step.title}</span>
           <Ghost pending={pending} className={checked ? "text-muted line-through decoration-healthy/60" : "text-text"}>
-            <EnrichedText text={cleanInlineSlugs(step.detail)} entities={NO_ENTITIES} selections={selections} />
+            <EnrichedText text={step.detail} entities={NO_ENTITIES} selections={selections} />
           </Ghost>
         </span>
+      </div>
+      {clamp.overflowing && (
+        <button
+          type="button"
+          onClick={clamp.toggle}
+          aria-expanded={clamp.expanded}
+          className="ml-[18px] text-12 text-signal hover:underline focus-visible:outline-2 focus-visible:outline-signal"
+        >
+          {clamp.expanded ? "less" : "more"}
+        </button>
+      )}
+      <div className="contents">
         {questions?.map((q) => <ScopeQuestion key={q.id} q={q} scope={scope} />)}
       </div>
     </li>
