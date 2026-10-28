@@ -9,9 +9,9 @@ import { Pill } from "../ui/Pill";
 import { EnrichedText, NO_SELECTIONS } from "./EnrichedText";
 
 /**
- * The customer's words, full width and borderless. Enriched entities are coloured underlines in
+ * The customer's words in a hairline-framed module. Enriched entities are coloured underlines in
  * their domain hue (hover → diagnostic popover, click → reveal the card); signals and attachments
- * follow as plain rows.
+ * follow as plain rows inside the same frame.
  */
 export function TicketBody({ brief }: { brief: ScenarioBrief }) {
   const selections = useWorkbench((s) => s.selections[s.scenarioId] ?? NO_SELECTIONS);
@@ -19,7 +19,7 @@ export function TicketBody({ brief }: { brief: ScenarioBrief }) {
   // Fold (WP8): the customer's words clamp to 8 lines and expand in place.
   const clamp = useClamp<HTMLParagraphElement>(`${brief.scenarioId}:${brief.body}`);
   return (
-    <section className="mt-1 border-t border-hairline pt-1.5" data-testid="customer-ticket-card" aria-label={label}>
+    <section className="rounded-md border border-hairline bg-surface px-3 pt-1.5 pb-1" data-testid="customer-ticket-card" aria-label={label}>
       <p ref={clamp.ref} className={`text-13 text-text ${clamp.expanded ? "" : "line-clamp-8"}`} data-testid="scenario-body">
         <EnrichedText text={brief.body} entities={brief.entities} selections={selections} />
       </p>
@@ -82,7 +82,7 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
           {attachment.fileName}
           <span className="text-faint"> · {Math.round(attachment.sizeBytes / 1024)} KB</span>
         </span>
-        <Button size="xs" variant="ghost" icon={<ScanEye />} className="-mr-2 ml-auto shrink-0" title="Scan the screenshot for the error code and timestamp" loading={vision.status === "loading"} onClick={() => void extract(attachment)}>
+        <Button size="xs" variant="ghost" icon={<ScanEye />} className="ml-auto shrink-0" title="Scan the screenshot for the error code and timestamp" loading={vision.status === "loading"} onClick={() => void extract(attachment)}>
           Scan for error &amp; time
         </Button>
       </div>

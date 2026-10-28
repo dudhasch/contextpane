@@ -14,10 +14,11 @@ import { EnrichedText, humanizeClarifierSlug, NO_ENTITIES, NO_SELECTIONS, type S
 import { ResolutionNoteBox } from "./ResolutionNote";
 
 /**
- * Summary & resolution plan, borderless. The header carries the agent / cloud status as one mono
- * line (click → popover with the five sub-agent stages and the upstream cloud status). Clarifier
- * questions render as scope chips inside the plan step they steer (`question.stepId`); unmapped
- * ones sit in a row under the header.
+ * Summary & resolution plan, a hairline-framed container with each numbered step as its own bordered
+ * card. The header carries the agent / cloud status as one mono line (click → popover with the five
+ * sub-agent stages and the upstream cloud status) and the scope controls. Clarifier questions render
+ * as wrapping scope chips inside the plan step they steer (`question.stepId`); unmapped ones sit in a
+ * bordered clarifier card after the steps.
  */
 export function PlanSection({ brief }: { brief: ScenarioBrief }) {
   const resolved = Boolean(useWorkbench(selectConvergence));
@@ -38,7 +39,7 @@ export function PlanSection({ brief }: { brief: ScenarioBrief }) {
   const briefPending = useWorkbench((s) => s.pendingRefine.brief);
 
   return (
-    <section className="mt-1 border-t border-hairline pt-1.5" data-testid="summary-plan">
+    <section className="rounded-md border border-hairline bg-surface px-2.5 py-2" data-testid="summary-plan">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span className="section-label">Summary &amp; resolution plan</span>
         {resolved && (
@@ -58,21 +59,28 @@ export function PlanSection({ brief }: { brief: ScenarioBrief }) {
             </button>
           </span>
         )}
-        {(hasTasks || brief.cloudStatusCorrelation) && (
-          <AgentStatusLine scenarioId={brief.scenarioId} tasks={brief.subAgentTasks ?? NO_TASKS} correlation={brief.cloudStatusCorrelation} />
+        {(hasTasks || brief.cloudStatusCorrelation || questions.length > 0) && (
+          <span className="ml-auto inline-flex min-w-0 items-center gap-2">
+            {(hasTasks || brief.cloudStatusCorrelation) && (
+              <AgentStatusLine scenarioId={brief.scenarioId} tasks={brief.subAgentTasks ?? NO_TASKS} correlation={brief.cloudStatusCorrelation} />
+            )}
+            {questions.length > 0 && <ScopeControls scope={scope} />}
+          </span>
         )}
       </div>
-      {questions.length > 0 && <ScopeBar scope={scope} unmapped={unmapped} mappedCount={questions.length - unmapped.length} />}
       <p className="mt-0.5 text-13 text-text" data-testid="summary-text" aria-busy={briefPending || undefined}>
         <Ghost pending={briefPending}>
           <EnrichedText text={brief.summary} entities={NO_ENTITIES} selections={selections} />
         </Ghost>
       </p>
-      <ol className="mt-0.5 divide-y divide-hairline-2" aria-busy={briefPending || undefined}>
+      {/* Each numbered step is its own hairline-framed card, 6px apart. */}
+      <ol className="mt-1.5 flex flex-col gap-1.5" aria-busy={briefPending || undefined}>
         {brief.steps.map((step, i) => (
           <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} questions={byStep.get(step.id)} scope={scope} pending={briefPending} />
         ))}
       </ol>
+      {/* After the steps, so the first step stays above the fold; the submit sits right under the questions. */}
+      {questions.length > 0 && <ScopeBar scope={scope} unmapped={unmapped} />}
       <FleetPill />
       {resolved && <ResolutionNoteBox />}
     </section>
@@ -166,8 +174,11 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
   // Compact so label + line share one row at 400px: "✦ 5/5 · cloud ok · 7.2s"; the long form is in the tooltip and popover.
   const agentsWord = isBusy ? "running…" : tasks.length === 0 ? "" : `${completedCount}/${tasks.length}`;
   const agentsTone = isBusy ? "text-signal" : anyFailed ? "text-critical" : tasks.length > 0 && !allReal ? "text-warning" : "text-muted";
-  const cloudWord = !correlation ? null : hasOutage ? "outage" : hasAdvisory ? "advisory" : okServices.length ? "ok" : "unprobed";
-  const cloudTone = hasOutage ? "text-critical" : hasAdvisory ? "text-warning" : okServices.length ? "text-muted" : "text-faint";
+  // Outage / advisory as they are; probed-and-operational reads "Services OK"; nothing probed shows no cloud word.
+  const cloudWord = !correlation ? null : hasOutage ? "outage" : hasAdvisory ? "advisory" : okServices.length ? "Services OK" : null;
+  const cloudOk = cloudWord === "Services OK";
+  const cloudTone = hasOutage ? "text-critical" : hasAdvisory ? "text-warning" : "text-muted";
+  const notProbedNote = correlation && !cloudWord ? " · cloud status not probed" : "";
 
   return (
     <>
@@ -184,11 +195,11 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
           data-testid="subagent-strip-toggle"
           className="inline-flex items-center gap-1 rounded-sm transition-colors hover:text-text focus-visible:outline-2 focus-visible:outline-signal"
           title={
-            tasks.length === 0
+            (tasks.length === 0
               ? "Triage pipeline not run for this ticket — click for the cloud status"
               : !allReal
                 ? `${completedCount} of ${tasks.length} triage sub-agents ran; ${tasks.length - completedCount} fell back or were not attempted — click to inspect`
-                : `${completedCount} of ${tasks.length} triage sub-agents ran — click to inspect`
+                : `${completedCount} of ${tasks.length} triage sub-agents ran — click to inspect`) + notProbedNote
           }
         >
           <span className={`text-signal ${isBusy ? "animate-pulse-dot" : ""}`}>✦</span>
@@ -210,7 +221,11 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                   : `${okServices.length ? `${okServices.join(", ")} OK` : "not probed"}${unprobed ? ` · ${unprobed} not probed` : ""} · correlated at incident time (${correlation.correlatedAtLabel}) — click for details`
               }
             >
-              <Cloud className="mr-0.5 inline size-3 align-[-2px]" aria-label="cloud" />
+              {cloudOk ? (
+                <Check className="mr-0.5 inline size-3 align-[-2px] text-healthy" aria-hidden="true" />
+              ) : (
+                <Cloud className="mr-0.5 inline size-3 align-[-2px]" aria-label="cloud" />
+              )}
               {cloudWord}
             </button>
           </>
@@ -369,44 +384,53 @@ function useScopeDraft(scenarioId: string, questions: ClarifyingQuestion[], clar
   };
 }
 
-/** Under the plan header: the scope status, the submit, and the questions no plan step claims. */
-function ScopeBar({ scope, unmapped, mappedCount }: { scope: ScopeDraft; unmapped: ClarifyingQuestion[]; mappedCount: number }) {
-  const refineGoal = useWorkbench((s) => s.refineGoal);
+/** In the plan header row: when the scope was last applied and the free-text toggle (hotkey c). */
+function ScopeControls({ scope }: { scope: ScopeDraft }) {
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const lastRefinedAt = useWorkbench((s) => s.lastRefinedAt);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-11">
+      {lastRefinedAt && !refiningGoal && (
+        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-healthy" data-testid="clarifier-refreshed-badge" title={`Plan updated ${lastRefinedAt}`}>
+          <Check className="size-3" />
+          {lastRefinedAt.slice(0, 5)}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => scope.setEditing((v) => !v)}
+        aria-pressed={scope.editing}
+        data-testid="clarifier-edit-scope"
+        title="Type custom scope answers (c)"
+        className="shrink-0 rounded-sm px-1 text-muted transition-colors hover:bg-raised hover:text-text"
+      >
+        {scope.editing ? "Done" : "Custom…"}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * Clarifier card after the plan steps, only while there is something to say: a staged scope change
+ * (with the submit), a refine in flight, free-text editing, or questions no plan step claims. Answers
+ * that sit in their steps are not summarised again here.
+ */
+function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: ClarifyingQuestion[] }) {
+  const refineGoal = useWorkbench((s) => s.refineGoal);
+  const refiningGoal = useWorkbench((s) => s.refiningGoal);
+  const active = scope.dirty || scope.editing || refiningGoal;
+  if (!active && unmapped.length === 0) return null;
   const scopedSummary = Object.values(scope.draft).filter(Boolean).join(" · ");
   return (
-    <div className="mt-1" data-testid="project-goal-clarifier-card">
-      <div className="flex h-6 items-center gap-2 text-11">
-        <span className="shrink-0 text-muted">
-          <span className="text-signal">✦</span> Scope
-        </span>
-        <span className="min-w-0 flex-1 truncate text-faint" title={scopedSummary}>
-          {refiningGoal
-            ? "Updating diagnostic view & remediation scripts…"
-            : scope.dirty
-              ? "Changed: update the plan to regenerate"
-              : mappedCount > 0
-                ? `${mappedCount} of ${scope.questions.length} answers sit in the steps below`
-                : scopedSummary}
-        </span>
-        {lastRefinedAt && !refiningGoal && (
-          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-healthy" data-testid="clarifier-refreshed-badge">
-            <Check className="size-3" />
-            {lastRefinedAt}
+    <div className="mt-1.5 rounded-md border border-hairline bg-surface px-2.5 py-1.5" data-testid="project-goal-clarifier-card">
+      {active && (
+        <div className="flex min-h-6 items-center gap-2 text-11">
+          <span className="shrink-0 text-muted">
+            <span className={`text-signal ${refiningGoal ? "animate-pulse-dot" : ""}`}>✦</span> Scope
           </span>
-        )}
-        <button
-          type="button"
-          onClick={() => scope.setEditing((v) => !v)}
-          aria-pressed={scope.editing}
-          data-testid="clarifier-edit-scope"
-          title="Type custom scope answers (c)"
-          className="shrink-0 rounded-sm px-1 text-muted transition-colors hover:bg-raised hover:text-text"
-        >
-          {scope.editing ? "Done" : "Custom…"}
-        </button>
-        {(scope.dirty || scope.editing || refiningGoal) && (
+          <span className="min-w-0 flex-1 truncate text-faint" title={scopedSummary}>
+            {refiningGoal ? "Updating diagnostic view & remediation scripts…" : scope.dirty ? "Changed: update the plan to regenerate" : "Type a custom answer, then update the plan"}
+          </span>
           <Button
             size="xs"
             variant="primary"
@@ -419,17 +443,17 @@ function ScopeBar({ scope, unmapped, mappedCount }: { scope: ScopeDraft; unmappe
           >
             Update plan
           </Button>
-        )}
-      </div>
-      {unmapped.map((q) => (
-        <ScopeQuestion key={q.id} q={q} scope={scope} />
+        </div>
+      )}
+      {unmapped.map((q, i) => (
+        <ScopeQuestion key={q.id} q={q} scope={scope} first={!active && i === 0} />
       ))}
     </div>
   );
 }
 
-/** One clarifying question: its label and a row of small chips; the free-text answer while editing. */
-function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft }) {
+/** One clarifying question: its label on its own line, then wrapping chips; the free-text answer while editing. */
+function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; scope: ScopeDraft; first?: boolean }) {
   // While a refine streams the chips keep their look but take no input (the cursor says why).
   const locked = useWorkbench((s) => s.refiningGoal);
   const rawVal = scope.draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
@@ -441,11 +465,11 @@ function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft 
       rawVal.toLowerCase() === opt.id.toLowerCase(),
   );
   return (
-    <div className="mt-1 clear-right border-t border-dashed border-hairline pt-1" data-testid={`clarifier-question-${q.id}`}>
-      {/* One row: the question as a short label (full text in its tooltip), then chips that shrink and
-          truncate, the selected one last (full option label and description in the chip tooltip). */}
-      <div className="flex min-w-0 items-center gap-1">
-        <span className="mr-0.5 shrink-0 cursor-help text-11 text-muted" title={q.question}>
+    <div className={`clear-right ${first ? "" : "mt-1 border-t border-dashed border-hairline pt-1"}`} data-testid={`clarifier-question-${q.id}`}>
+      {/* The question as a short label (full text in its tooltip), then chips that wrap and always show
+          their full label (the option description is in the chip tooltip). */}
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="shrink-0 cursor-help text-11 text-muted" title={q.question}>
           <span className="text-signal">✦</span> {capitalize(humanizeClarifierSlug(q.category))}
         </span>
         {q.options.map((opt) => {
@@ -460,17 +484,17 @@ function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft 
               disabled={locked}
               onClick={() => scope.setAnswer(q.id, cleanLabel)}
               title={opt.description ? `${cleanLabel} — ${opt.description}` : cleanLabel}
-              className={`inline-flex h-5 min-w-6 items-center overflow-hidden rounded-sm border px-1.5 text-11 transition-colors disabled:cursor-progress ${
-                active ? "shrink-[0.2] border-signal/40 bg-signal/12 text-signal-strong" : "shrink border-hairline text-muted hover:border-signal/40 hover:text-text"
+              className={`inline-flex min-h-5 max-w-full shrink-0 items-center rounded-sm border px-1.5 text-left text-11 transition-colors disabled:cursor-progress ${
+                active ? "border-signal/40 bg-signal/12 text-signal-strong" : "border-hairline text-muted hover:border-signal/40 hover:text-text"
               }`}
             >
-              <span className="min-w-0 truncate">{cleanLabel}</span>
+              {cleanLabel}
             </button>
           );
         })}
         {!isPresetOption && !scope.editing && currentVal && (
-          <span className="inline-flex h-5 min-w-6 shrink-[0.2] items-center overflow-hidden rounded-sm border border-signal/40 bg-signal/12 px-1.5 text-11 text-signal-strong" title={currentVal}>
-            <span className="min-w-0 truncate">{currentVal}</span>
+          <span className="inline-flex min-h-5 max-w-full shrink-0 items-center rounded-sm border border-signal/40 bg-signal/12 px-1.5 text-11 text-signal-strong" title={currentVal}>
+            {currentVal}
           </span>
         )}
       </div>
@@ -506,7 +530,7 @@ function FleetPill() {
       onPointerEnter={() => {
         window.setTimeout(() => void prewarmRemediation(), 60);
       }}
-      className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline-2 pt-1 text-left text-11 transition-colors hover:text-text"
+      className="mt-1.5 flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-hairline-2 pt-1 text-left text-11 transition-colors hover:text-text"
       title={`Review ${fleet.affectedCount} other client tenants with this same misconfiguration`}
       data-testid="fleet-pill"
     >
@@ -550,10 +574,20 @@ function PlanStep({
   const effectiveCategory = allSameCategory ? STEP_CATEGORY_FALLBACKS[(index - 1) % STEP_CATEGORY_FALLBACKS.length]! : step.category;
   const stageDisabled = resolved && step.action.kind === "stage-fix";
   const clamp = useClamp<HTMLDivElement>(`${step.id}:${step.detail}`);
+  // A step replaced under the pointer (refine, new routing) never gets its mouseleave: drop its link on
+  // unmount so the lens does not stay dimmed around a card nobody is hovering.
+  useEffect(
+    () => () => {
+      const current = useWorkbench.getState().linked;
+      if (current?.target === step.target && current.category === effectiveCategory) setLinked(null);
+    },
+    [step.target, effectiveCategory, setLinked],
+  );
   return (
     <li
       style={catStyle(effectiveCategory)}
-      className="group flow-root py-0.5 text-13"
+      className="group flow-root rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-13"
+      data-testid="plan-step"
       onMouseEnter={() => {
         setLinked({ target: step.target, category: effectiveCategory });
         if (step.action.kind === "stage-fix") {
@@ -577,7 +611,7 @@ function PlanStep({
         <Button
           size="xs"
           variant="ghost"
-          className="float-right -mr-1.5 ml-1 h-[18px]! px-1.5! opacity-80 group-hover:opacity-100"
+          className="float-right ml-1 h-[18px]! px-1.5! opacity-80 group-hover:opacity-100"
           disabled={stageDisabled}
           title={stageDisabled ? "Already resolved: reopen the ticket to run it again" : undefined}
           onClick={() => runStep(step)}

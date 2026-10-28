@@ -23,7 +23,7 @@ import { selectActiveTimelineSlice, useWorkbench, type MiniDashboardEntry, type 
 import { Button } from "../ui/Button";
 import { CONTEXT_MODE_LIST, CONTEXT_MODE_META, ContextModeIcon } from "../ui/ContextModeIcons";
 import { Pill, TONE_DOT, TONE_TEXT, type Tone } from "../ui/Pill";
-import { DataTable } from "./Section";
+import { AGENT_RULE, DataTable, MODULE_FRAME } from "./Section";
 import { FilterChips, IdentityCell, rowHighlightClass, useStatusFilter, type RowStatus } from "./TableFilter";
 
 const TONE: Record<MetricTone, Tone> = { default: "muted", warning: "warning", critical: "critical", success: "healthy" };
@@ -243,10 +243,8 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
   };
 
   const modeMeta = CONTEXT_MODE_META[viewMode];
-  // The section sits in the lens list's 16px / 12px gutter (incident and Free-Roam alike): the dashed
-  // agent rule covers the list's solid divider one gutter up, and tables bleed to the gutter edges.
-  const agentRule =
-    "after:pointer-events-none after:absolute after:h-px after:border-t after:border-dashed after:border-hairline after:bg-ground after:content-[''] after:-top-[13px] after:-inset-x-4";
+  // A bounded module like every lens section (incident and Free-Roam alike): hairline frame, dashed
+  // agent top edge, 16px inner gutter; tables bleed to the frame's inner edges.
   const [titleAccent, titleRest] = splitFirstWord(card.title);
   const err = card.errorCodeReference;
 
@@ -257,7 +255,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
       data-selection-index={entry.index}
       data-view-mode={viewMode}
       style={catStyle("selection", { ["--flash-color" as string]: "var(--signal)" })}
-      className={`relative scroll-mt-2 animate-fade-in bg-ground ${agentRule} ${pulsing ? "animate-pulse-ring" : ""}`}
+      className={`relative shrink-0 scroll-mt-2 animate-fade-in ${MODULE_FRAME} ${AGENT_RULE} px-4 pt-1.5 pb-3 ${pulsing ? "animate-pulse-ring" : ""}`}
     >
       <header className="flex min-h-7 min-w-0 items-center gap-2 py-0.5">
         <span aria-label="Agent-made section" title="Synthesized from your selection" className="shrink-0 text-13 leading-none text-signal" data-agent-mark="">
@@ -708,7 +706,7 @@ function FullCardModeBody({
           </button>
         }
       />
-      <pre className="max-h-36 overflow-auto rounded bg-surface p-2 font-mono text-11 leading-relaxed whitespace-pre-wrap text-text">{card.suggestedAction.scriptPreview}</pre>
+      <pre className="max-h-36 overflow-auto rounded-md border border-hairline bg-ground p-2 font-mono text-11 leading-relaxed whitespace-pre-wrap text-text">{card.suggestedAction.scriptPreview}</pre>
     </div>
   );
 }

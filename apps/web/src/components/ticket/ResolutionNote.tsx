@@ -35,7 +35,7 @@ export function ResolutionNoteBox() {
   };
   const closed = Boolean(note.closed);
   return (
-    <section className="mt-2 border-t border-dashed border-hairline" data-testid="resolution-note">
+    <section className="mt-1.5 rounded-md border border-dashed border-hairline bg-surface px-2" data-testid="resolution-note">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-7 w-full min-w-0 items-center gap-1.5 text-left text-12 transition-colors hover:bg-raised">
         <ChevronRight className={`size-3.5 shrink-0 text-faint transition-transform ${open ? "rotate-90" : ""}`} />
         <span className="shrink-0 text-signal" aria-hidden>✦</span>

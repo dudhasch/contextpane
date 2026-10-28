@@ -7,11 +7,12 @@ import { EntityPill } from "./EntityPill";
 
 /**
  * Reference material pinned to the bottom of the context zone: enriched tenant objects, contract,
- * infrastructure spec and timeline, each a collapsed 28px row that expands in place.
+ * infrastructure spec and timeline in one hairline-framed module, each a collapsed 28px row (hairline
+ * between rows) that expands in place.
  */
 export function ContextFolds({ brief }: { brief: ScenarioBrief }) {
   return (
-    <div className="mt-auto shrink-0 divide-y divide-hairline border-t border-hairline pt-0">
+    <div className="mt-auto shrink-0 divide-y divide-hairline overflow-hidden rounded-md border border-hairline bg-surface" data-testid="context-folds">
       <EnrichedContext entities={brief.entities} />
       {brief.contract && (
         <Fold title={`Contract #${brief.contract.contractId}`} hint={brief.contract.title}>
@@ -88,13 +89,13 @@ function Fold({ title, hint, children, "data-testid": testId }: { title: string;
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex h-7 w-full items-center gap-1.5 text-left text-12 text-text transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-signal"
+        className="flex h-7 w-full items-center gap-1.5 px-2 text-left text-12 text-text transition-colors hover:bg-raised focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-signal"
       >
         <ChevronRight className={`size-3.5 shrink-0 text-faint transition-transform duration-120 ${open ? "rotate-90" : ""}`} aria-hidden="true" />
         <span className="shrink-0 font-medium">{title}</span>
         {hint && !open && <span className="min-w-0 truncate text-11 text-faint">· {hint}</span>}
       </button>
-      {open && <div className="max-h-[40vh] overflow-y-auto pt-1 pb-2 pl-5">{children}</div>}
+      {open && <div className="max-h-[40vh] overflow-y-auto pt-1 pr-2 pb-2 pl-7">{children}</div>}
     </section>
   );
 }

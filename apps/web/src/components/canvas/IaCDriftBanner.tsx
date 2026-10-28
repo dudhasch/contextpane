@@ -162,7 +162,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
                 />
               )}
             </div>
-            {drift && <DiffView diff={props.hclDiff} />}
+            {drift && <DiffView diff={props.hclDiff} edges="none" className="mt-2 rounded-md border border-hairline" />}
           </div>
         );
       }}

@@ -96,18 +96,20 @@ function splitTitle(title: string, accent?: string): [string, string, string] {
   return space > 0 ? ["", title.slice(0, space), title.slice(space)] : ["", title, ""];
 }
 
-/**
- * Dashed agent rule (decision Q5): a 1px strip over the list's solid divider (the previous
- * sibling's bottom border), painted ground-first so the dash gaps hide the solid line.
- */
-export const AGENT_RULE =
-  "after:pointer-events-none after:absolute after:inset-x-0 after:-top-px after:h-px after:border-t after:border-dashed after:border-hairline after:bg-ground after:content-['']";
+/** Dashed agent rule (decision Q5): an agent-made module keeps its hairline frame, its top edge dashed. */
+export const AGENT_RULE = "[border-top-style:dashed]";
 
 /**
- * Borderless lens section (decision Q3): no box, no fill, no accent bar. One 28px title row
- * (domain word in `--cat`, status as dot + word, chevron, one action row), a summary line,
- * header count toggles, full-bleed content and one faint mono provenance line with an ⓘ popover.
- * Sections are separated by the list's hairline; `isLinked` draws a 2px `--cat` rule on the left.
+ * Bounded lens module (WP10): a 1px hairline frame on `bg-surface`, sitting on the `bg-ground` lens
+ * list with a 10px gap. Nested blocks read `--module` for sticky table heads and hover masks.
+ */
+export const MODULE_FRAME = "rounded-md border border-hairline bg-surface [--module:var(--surface)]";
+
+/**
+ * Lens section, a bounded module: one 28px title row (domain word in `--cat`, status as dot + word,
+ * chevron, one action row), a summary line, header count toggles, content that bleeds to the frame's
+ * inner edge and one faint mono provenance line with an ⓘ popover. `isLinked` draws a 2px `--cat`
+ * rule over the frame's left edge.
  */
 export function Section({
   type,
@@ -138,6 +140,13 @@ export function Section({
   const convergence = useWorkbench(selectConvergence);
   const convergeFlash = useWorkbench((s) => s.convergeFlash);
   const activeSlice = useWorkbench(selectActiveTimelineSlice);
+  // A re-correlate or scope refine keeps sections mounted: the activity is a pulse on the header mark,
+  // never a dim of the data, so a plan-step hover link does not dim the lens while it re-correlates.
+  // Neither the frame nor the data body carries an opacity animation: a `both`-filled fade replayed
+  // whenever the body remounted mid-correlate (layout swaps flip `useExpanded`) or `animate-pulse-ring`
+  // came and went, left the table at a fractional opacity on a throttled frame clock, and its fill
+  // silently overrode `opacity-55`.
+  const correlating = useWorkbench((s) => s.canvasStatus === "loading" || s.refiningGoal);
   const category = cardCategory(type);
   const converged = Boolean(convergence);
   const isTimeTravel = Boolean(activeSlice && activeSlice.relativeLabel !== "NOW");
@@ -147,7 +156,7 @@ export function Section({
   const healthy = converged || sliceHealthy;
   const tab = tabs.some((t) => t.id === activeTab) ? activeTab! : tabs[0]!.id;
   const isLinked = linked?.target === type;
-  const dimmed = Boolean(linked) && !isLinked;
+  const dimmed = Boolean(linked) && !isLinked && !correlating;
   const flashing = highlight === type || (converged && convergeFlash);
   const tone: Tone = effectiveState ? healthTone(effectiveState) : "muted";
   const [before, accent, after] = splitTitle(title, titleAccent);
@@ -163,13 +172,24 @@ export function Section({
       data-linked={isLinked || undefined}
       data-ghost={ghost || undefined}
       aria-busy={ghost || undefined}
+      data-correlating={correlating || undefined}
       style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--healthy)" : categoryColor(category) })}
-      className={`relative scroll-mt-2 bg-ground px-4 pt-1.5 pb-3 animate-fade-in transition-opacity duration-150 ${isLinked ? "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing || isLinked ? "animate-pulse-ring" : ""} ${synthesized ? AGENT_RULE : ""}`}
+      className={`relative scroll-mt-2 ${MODULE_FRAME} px-4 pt-1.5 pb-3 transition-opacity duration-150 ${isLinked ? "before:absolute before:-inset-y-px before:-left-px before:w-0.5 before:rounded-l-md before:bg-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing || isLinked ? "animate-pulse-ring" : ""} ${synthesized ? AGENT_RULE : ""}`}
     >
       <header className={`flex items-center gap-2 ${synthesized ? "min-h-7 py-0.5" : "h-7"}`}>
-        <span className={`inline-flex shrink-0 [&>svg]:size-3.5 ${healthy ? "text-healthy" : "text-[color:var(--cat)]"}`}>{icon}</span>
+        <span
+          className={`inline-flex shrink-0 [&>svg]:size-3.5 ${healthy ? "text-healthy" : "text-[color:var(--cat)]"} ${correlating && !synthesized ? "motion-safe:animate-pulse-dot" : ""}`}
+          title={correlating ? "Re-correlating: the values shown stay live until the new layout lands" : undefined}
+        >
+          {icon}
+        </span>
         {synthesized && (
-          <span aria-label="Agent-made section" title="Synthesized by the agent" className="-mr-1 shrink-0 text-13 leading-none text-signal" data-agent-mark="">
+          <span
+            aria-label="Agent-made section"
+            title="Synthesized by the agent"
+            className={`-mr-1 shrink-0 text-13 leading-none text-signal ${correlating ? "motion-safe:animate-pulse-dot" : ""}`}
+            data-agent-mark=""
+          >
             ✦
           </span>
         )}
@@ -214,7 +234,7 @@ export function Section({
       </div>
 
       {expanded && (
-        <div className="animate-fade-in">
+        <div>
           {(tabs.length > 1 || toolbar) && (
             <div className="mt-1.5 flex min-w-0 items-center gap-3">
               {tabs.length > 1 && (
@@ -535,7 +555,7 @@ export function SmartTechPath({ path, badge, title, ghost = false }: { path: str
           onClick={copy}
           aria-label={`Copy ${corePath}`}
           title="Copy full path"
-          className="absolute top-1/2 right-0 -translate-y-1/2 bg-ground pl-1 text-faint opacity-0 transition-opacity group-hover/path:opacity-100 hover:text-text focus-visible:opacity-100"
+          className="absolute top-1/2 right-0 -translate-y-1/2 bg-[var(--module,var(--ground))] pl-1 text-faint opacity-0 transition-opacity group-hover/path:opacity-100 hover:text-text focus-visible:opacity-100"
         >
           {copied ? <Check className="size-3 text-healthy" /> : <Copy className="size-3" />}
         </button>
@@ -545,9 +565,9 @@ export function SmartTechPath({ path, badge, title, ghost = false }: { path: str
 }
 
 /**
- * Data table with the lens look: no box, hairline-2 between rows, faint uppercase head.
- * `bleed` pulls the table to the section's edges (negative margin = the section's 16px padding)
- * and pads the outer cells back in, so text stays on the section's grid.
+ * Data table with the lens look: hairline-2 between rows, faint uppercase head on the enclosing
+ * module's fill (`--module`). `bleed` pulls the table to the module frame's inner edges (negative
+ * margin = the section's 16px padding) and pads the outer cells back in, so text stays on the grid.
  */
 export function DataTable({
   head,
@@ -577,7 +597,7 @@ export function DataTable({
             ))}
           </colgroup>
         )}
-        <thead className="sticky top-0 z-10 bg-ground text-11 tracking-wider text-faint uppercase">
+        <thead className="sticky top-0 z-10 bg-[var(--module,var(--ground))] text-11 tracking-wider text-faint uppercase">
           <tr>
             {head.map((h) => (
               <th key={h} className={`px-2.5 py-1 text-left font-medium whitespace-nowrap shadow-[inset_0_-1px_0_var(--hairline-2)] ${edge}`}>

@@ -8,6 +8,7 @@ import { IntuneDriftCardView } from "./IntuneDriftCard";
 import { ContextualMiniDashboardCard } from "./ContextualMiniDashboard";
 import { LicenseDriftCardView } from "./LicenseDriftCard";
 import { ProgressRail } from "./ProgressRail";
+import { MODULE_FRAME } from "./Section";
 import { RowFilterPill } from "./TableFilter";
 import { SynthesizedDynamicCard } from "../cards/SynthesizedDynamicCard";
 import { CommandLine, LensList } from "../freeroam";
@@ -35,21 +36,13 @@ export function GenUICanvas() {
   const components = visibleComponents(layout, filter);
 
   if (freeRoamOpen) {
-    // Free-Roam command deck (board D3): the command line on top, lenses in the same hairline list as an incident.
+    // Free-Roam command deck (board D3): the command line on top, lenses as the same bordered modules as an incident.
     return (
       <div className="flex h-full flex-col bg-ground" data-testid="free-roam-canvas">
         <CommandLine />
-        <div className="flex min-h-0 flex-1 flex-col divide-y divide-hairline overflow-y-auto" data-lens-list="">
-          {triageStatus === "loading" && (
-            <div className="px-4 py-3">
-              <SubAgentSynthesisSkeleton mode="triage" title={pendingTriageTitle ?? "Custom Incident / Project Goal"} />
-            </div>
-          )}
-          {exploreStatus === "loading" && (
-            <div className="px-4 py-3">
-              <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "Free-Roam Query"} />
-            </div>
-          )}
+        <div className={`${LENS_LIST} [&>div:has(>section[data-mini-dashboard])]:contents`} data-lens-list="">
+          {triageStatus === "loading" && <SubAgentSynthesisSkeleton mode="triage" title={pendingTriageTitle ?? "Custom Incident / Project Goal"} />}
+          {exploreStatus === "loading" && <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "Free-Roam Query"} />}
           <LensList />
         </div>
       </div>
@@ -60,38 +53,33 @@ export function GenUICanvas() {
     <div className="flex h-full flex-col bg-ground">
       <LensHeader cards={components.length} customCards={miniDashboards.length} />
       <HistoricalSnapshotBanner />
-      {/* Borderless sections separated by one hairline; non-section blocks get the same 16px gutter. */}
-      <div className="flex min-h-0 flex-1 flex-col divide-y divide-hairline overflow-y-auto" data-lens-list="">
+      {/* Bounded modules (hairline frame on bg-surface) on the ground, 10px apart. */}
+      <div className={LENS_LIST} data-lens-list="">
         {triageStatus === "loading" && (
-          <div className="px-4 py-3">
-            <SubAgentSynthesisSkeleton
-              mode={triageStatus === "loading" ? "triage" : "refine"}
-              title={triageStatus === "loading" ? (pendingTriageTitle ?? "Custom Incident / Project Goal") : (briefTitle ?? "Refining Scope & Plan")}
-            />
-          </div>
+          <SubAgentSynthesisSkeleton
+            mode={triageStatus === "loading" ? "triage" : "refine"}
+            title={triageStatus === "loading" ? (pendingTriageTitle ?? "Custom Incident / Project Goal") : (briefTitle ?? "Refining Scope & Plan")}
+          />
         )}
-        {exploreStatus === "loading" && (
-          <div className="px-4 py-3">
-            <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "selection"} />
-          </div>
-        )}
+        {exploreStatus === "loading" && <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "selection"} />}
         {miniDashboards.map((m) => (
-          <div key={m.id} className="px-4 py-3">
-            <ContextualMiniDashboardCard entry={m} />
-          </div>
+          <ContextualMiniDashboardCard key={m.id} entry={m} />
         ))}
         {!layout && status !== "error" && (
-          <div className="px-4 py-3">
+          <div className={`${MODULE_FRAME} px-4 py-3`}>
             <ProgressRail events={progress} title={status === "ready" ? "No layout for this scenario" : "Correlating scenario"} busy={status !== "ready"} />
           </div>
         )}
-        {status === "error" && <div className="px-4 py-3 text-13 text-critical">Canvas error: {error}</div>}
+        {status === "error" && <div className={`${MODULE_FRAME} px-4 py-3 text-13 text-critical`}>Canvas error: {error}</div>}
         {layout && components.map((c) => <Component key={c.id} component={c} />)}
-        {layout && components.length === 0 && status === "ready" && <div className="px-4 py-3 text-13 text-muted">No components match the current filter.</div>}
+        {layout && components.length === 0 && status === "ready" && <div className={`${MODULE_FRAME} px-4 py-3 text-13 text-muted`}>No components match the current filter.</div>}
       </div>
     </div>
   );
 }
+
+/** The lens list: bounded modules on the ground with a 10px gap and a 12px inset. */
+const LENS_LIST = "flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3";
 
 const SUB_AGENT_SYNTHESIS_STAGES = [
   { step: 1, name: "Scope check", role: "Target scope and clarifying options", source: "Ticket and tenant" },
@@ -116,7 +104,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
 
   return (
     <section
-      className="animate-fade-in rounded-md border border-l-4 border-hairline border-l-signal bg-surface p-3 shadow-popover"
+      className={`shrink-0 animate-fade-in ${MODULE_FRAME} px-4 py-3`}
       data-testid="subagent-synthesis-skeleton"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -204,7 +192,7 @@ function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }
 
   return (
     <div
-      className="space-y-2 rounded-md border border-l-4 border-hairline border-l-signal bg-surface p-3 text-12 text-signal"
+      className={`shrink-0 space-y-2 ${MODULE_FRAME} px-4 py-3 text-12 text-signal`}
       data-testid="mini-dashboard-loading"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
