@@ -33,6 +33,7 @@ import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from 
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { verifyAndRepairGeneratedScript } from "../local/subagent-orchestrator.ts";
 import { auditLedger } from "../store/audit.ts";
 import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
@@ -482,7 +483,7 @@ function verificationProof(drawer: ActionApprovalDrawer): Pick<AuditEntry, "tena
   return {
     tenantId: drawer.tenantId,
     ticketId: drawer.ticketId,
-    modalSandboxVerified: v.sandboxProvider === "modal-cloud-sandbox" && v.verdict !== "Verification Failed" && v.verdict !== "Pending",
+    modalSandboxVerified: v.sandboxProvider === "modal-cloud-sandbox" && v.verdict !== "Verification Failed" && v.verdict !== "Pending" && v.verdict !== "Overridden",
     astPass: v.astCheckPassed,
     tfValidatePass: v.terraformValidatePassed,
     gitBranch: drawer.staging?.branchName ?? null,
@@ -909,6 +910,66 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
 }
 
 /** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the signed-in delegated identity. */
+/**
+ * Auto-Fix (L-08): repairs the ShouldProcess guard on the server, re-runs the real pre-flight
+ * against fresh context and stores whatever verdict it returns. Nothing is marked passed
+ * that the pre-flight did not pass.
+ */
+export async function autofixRemediation(remediationId: string): Promise<ActionApprovalDrawer> {
+  const started = performance.now();
+  const drawer = remediationStore.get(remediationId);
+  if (!drawer) throw new Error(`Remediation '${remediationId}' not found`);
+  const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
+  const plan = buildRemediationPlan(ctx);
+  const repair = verifyAndRepairGeneratedScript(drawer.powershellScript, drawer.ticketId);
+  const powershellScript = repair.repairedScript;
+  const verification = await preflight({ powershellScript, terraformDiff: drawer.terraformDiff }, ctx, plan, () => {});
+  verification.findings = [
+    repair.repaired ? "Auto-Fix: wrapped the script in a SupportsShouldProcess guard, then re-ran the pre-flight" : "Auto-Fix: no guard change needed; re-ran the pre-flight",
+    ...repair.warnings,
+    ...verification.findings,
+  ].map((f) => f.slice(0, 300));
+  const updated: ActionApprovalDrawer = { ...drawer, powershellScript, verificationStatus: verification };
+  remediationStore.save(updated);
+  auditLedger.append({
+    ...verificationProof(updated),
+    actionType: "preflight-autofix",
+    delegatedIdentity: drawer.approval.requiredIdentity,
+    latencyMs: Math.round(performance.now() - started),
+    detail: `${verification.verdict} after Auto-Fix · AST ${fmt(verification.astCheckPassed)} · -WhatIf ${fmt(verification.whatIfSafe)} · ${verification.sandboxProvider}`.slice(0, 300),
+  });
+  return updated;
+}
+
+/**
+ * Override (L-08): the operator approves a bundle whose pre-flight did not pass. The checks
+ * keep their real results; the verdict becomes "Overridden" and the justification is audited.
+ */
+export function overrideRemediation(remediationId: string, justification: string, operator?: string): ActionApprovalDrawer {
+  const drawer = remediationStore.get(remediationId);
+  if (!drawer) throw new Error(`Remediation '${remediationId}' not found`);
+  const reason = justification.trim();
+  if (reason.length < 10) throw new Error("An override needs a justification of at least 10 characters");
+  const identity = operator ?? drawer.approval.requiredIdentity;
+  const updated: ActionApprovalDrawer = {
+    ...drawer,
+    verificationStatus: {
+      ...drawer.verificationStatus,
+      verdict: "Overridden",
+      findings: [...drawer.verificationStatus.findings, `Pre-flight overridden by ${identity}: ${reason}`.slice(0, 300)],
+    },
+  };
+  remediationStore.save(updated);
+  auditLedger.append({
+    ...verificationProof(updated),
+    actionType: "preflight-override",
+    delegatedIdentity: identity,
+    latencyMs: 0,
+    detail: `Override of "${drawer.verificationStatus.verdict}": ${reason}`.slice(0, 300),
+  });
+  return updated;
+}
+
 async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: boolean; log: string[] }> {
   const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
   const file = join(dir, `Invoke-Remediate-${drawer.ticketId}.ps1`);

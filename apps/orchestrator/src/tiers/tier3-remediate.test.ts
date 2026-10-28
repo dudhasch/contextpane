@@ -284,3 +284,80 @@ describe("approve() on a custom ticket (L-02)", () => {
     }
   });
 });
+
+describe("Auto-Fix and Override run on the server (L-08)", () => {
+  async function failingCustomDrawer(script: string) {
+    const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
+    const { remediationStore } = await import("../store/remediations.ts");
+    const entry = registerCustomTicket(SAMPLE_UNSCRIPTED_TICKETS[0]!);
+    const drawer = ActionApprovalDrawerSchema.parse({
+      remediationId: `rem-test-fix-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      ticketId: entry.scenarioId,
+      tenantId: entry.tenantId,
+      title: "Failing custom bundle",
+      summary: "Pre-flight did not pass",
+      synthesizedBy: { planner: "deterministic", coder: "deterministic", provider: "local" },
+      powershellScript: script,
+      terraformDiff: "",
+      graphPatch: "{}",
+      affectedEntities: [{ type: "resource", id: entry.scenarioId, change: "Grant vault access" }],
+      verificationStatus: { verdict: "Verification Failed", astCheckPassed: null, terraformFmtPassed: null, terraformValidatePassed: null, sandboxProvider: "none", validationLatencyMs: 0, whatIfSafe: null, findings: ["pre-flight not run: test"] },
+      staging: null,
+      approval: { state: "pending", requiredIdentity: "admin@test", approvedBy: null, approvedAt: null },
+      providerTelemetry: { tier: "Tier 3B", provider: "local", modelId: "deterministic", latencyMs: 1, tokensUsed: 0 },
+    });
+    remediationStore.save(drawer);
+    return { drawer, entry, remediationStore };
+  }
+
+  async function withQuietLedgerAndLocalSandbox<T>(run: () => Promise<T>): Promise<T> {
+    const { spyOn } = await import("bun:test");
+    const { auditLedger } = await import("../store/audit.ts");
+    const modal = await import("../preflight/modal.ts");
+    const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: unknown) => input) as never);
+    const modalSpy = spyOn(modal, "modalConfigured").mockReturnValue(false);
+    try {
+      return await run();
+    } finally {
+      auditSpy.mockRestore();
+      modalSpy.mockRestore();
+      clearCustomTickets("unscripted");
+    }
+  }
+
+  test("a failing bundle → Auto-Fix → re-verified by the pre-flight → approve succeeds", async () => {
+    const { autofixRemediation, approve } = await import("./tier3-remediate.ts");
+    await withQuietLedgerAndLocalSandbox(async () => {
+      const script = [
+        "param([string]$VaultName = 'kv-contoso-fin-02')",
+        "Get-AzResource -Name $VaultName | Out-Null",
+        "Set-AzKeyVaultAccessPolicy -VaultName $VaultName -UserPrincipalName 'lynne@contoso.test' -PermissionsToSecrets get",
+      ].join("\n");
+      const { drawer, remediationStore } = await failingCustomDrawer(script);
+      const fixed = await autofixRemediation(drawer.remediationId);
+      expect(fixed.verificationStatus.verdict).not.toBe("Verification Failed");
+      expect(fixed.verificationStatus.whatIfSafe).toBe(true);
+      // The param() block stays the first statement, outside the ShouldProcess guard.
+      expect(fixed.powershellScript.indexOf("param([string]$VaultName")).toBeLessThan(fixed.powershellScript.indexOf("$PSCmdlet.ShouldProcess("));
+      expect(fixed.powershellScript.match(/\bparam\s*\(/gi)?.length).toBe(1);
+      expect(remediationStore.get(drawer.remediationId)?.verificationStatus.verdict).toBe(fixed.verificationStatus.verdict);
+      const approved = await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" });
+      expect(approved.approval.state).toBe("simulated");
+      remediationStore.clear(drawer.ticketId);
+    });
+  });
+
+  test("Override keeps the real check results, records the justification, and unblocks approve", async () => {
+    const { overrideRemediation, approve } = await import("./tier3-remediate.ts");
+    await withQuietLedgerAndLocalSandbox(async () => {
+      const { drawer, remediationStore } = await failingCustomDrawer("Get-AzResource | Out-Null");
+      expect(() => overrideRemediation(drawer.remediationId, "too short")).toThrow();
+      const overridden = overrideRemediation(drawer.remediationId, "Vendor outage, CAB approved emergency change 4711");
+      expect(overridden.verificationStatus.verdict).toBe("Overridden");
+      expect(overridden.verificationStatus.astCheckPassed).toBeNull();
+      expect(overridden.verificationStatus.findings.at(-1)).toContain("CAB approved emergency change 4711");
+      await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" });
+      remediationStore.clear(drawer.ticketId);
+    });
+  });
+});

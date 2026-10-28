@@ -315,7 +315,8 @@ export type HoverDiagnosticPopover = z.infer<typeof HoverDiagnosticPopoverSchema
 /* -------------------------------------------------------------------------- */
 
 export const VerificationStatusSchema = z.object({
-  verdict: z.enum(["Verified Safe", "Verified With Warnings", "Verification Failed", "Pending"]),
+  /** "Overridden": the pre-flight did not pass and an operator approved it anyway with a recorded justification. */
+  verdict: z.enum(["Verified Safe", "Verified With Warnings", "Verification Failed", "Pending", "Overridden"]),
   astCheckPassed: z.boolean().nullable().describe("PowerShell AST parse result; null if not run"),
   terraformFmtPassed: z.boolean().nullable(),
   terraformValidatePassed: z.boolean().nullable(),

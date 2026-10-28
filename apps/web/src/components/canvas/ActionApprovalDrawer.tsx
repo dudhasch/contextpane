@@ -14,6 +14,7 @@ const VERDICT_TONE: Record<Drawer["verificationStatus"]["verdict"], Tone> = {
   "Verified With Warnings": "warning",
   "Verification Failed": "critical",
   Pending: "muted",
+  Overridden: "warning",
 };
 
 function cleanDrawerTitle(drawer: Drawer): string {
@@ -67,6 +68,10 @@ export function ActionApprovalDrawerSheet() {
   const confirmAndCloseConsole = useWorkbench((s) => s.confirmAndCloseConsole);
   const revertFromConsole = useWorkbench((s) => s.revertFromConsole);
   const toast = useWorkbench((s) => s.toast);
+  const autofixPreflight = useWorkbench((s) => s.autofixPreflight);
+  const overridePreflight = useWorkbench((s) => s.overridePreflight);
+  const [overrideJustification, setOverrideJustification] = useState("");
+  const [preflightBusy, setPreflightBusy] = useState(false);
   const mode = useWorkbench((s) => s.executionMode);
   const simulateCanaryFailure = useWorkbench((s) => s.simulateCanaryFailure);
   const formal = useWorkbench((s) => s.formal);
@@ -124,10 +129,11 @@ export function ActionApprovalDrawerSheet() {
     ? fleet.tenants.filter((t) => t.affected && t.tenant !== activeTenantName).length
     : 3;
 
+  const overridden = drawer?.verificationStatus.verdict === "Overridden";
   const preflightFailed = Boolean(
     drawer &&
       (drawer.verificationStatus.verdict === "Verification Failed" ||
-        formalPassed === false ||
+        (formalPassed === false && !overridden) ||
         status === "error"),
   );
 
@@ -154,82 +160,22 @@ export function ActionApprovalDrawerSheet() {
     failureReasons.push("Pre-flight safety verification failed: script requires a ShouldProcess (-WhatIf) guard or admin justification.");
   }
 
-  const handleAutoFixPreflight = () => {
-    useWorkbench.setState((s) => {
-      if (!s.drawer) return {};
-      const patchedPs = s.drawer.powershellScript.includes("ShouldProcess")
-        ? s.drawer.powershellScript
-        : `[CmdletBinding(SupportsShouldProcess = $true)]\nparam()\n\nif ($PSCmdlet.ShouldProcess("${s.drawer.ticketId}", "Apply verified remediation")) {\n${s.drawer.powershellScript}\n}`;
-      return {
-        remediateStatus: "ready",
-        drawer: {
-          ...s.drawer,
-          powershellScript: patchedPs,
-          verificationStatus: {
-            ...s.drawer.verificationStatus,
-            verdict: "Verified Safe",
-            astCheckPassed: true,
-            whatIfSafe: true,
-            terraformFmtPassed: true,
-            terraformValidatePassed: true,
-            findings: ["Auto-fixed PowerShell ShouldProcess guard & AST validation passed"],
-          },
-        },
-        formal: s.formal
-          ? {
-              ...s.formal,
-              formal: {
-                ...s.formal.formal,
-                passed: true,
-                invariants: s.formal.formal.invariants.map((inv) => ({ ...inv, passed: true })),
-              },
-              idempotency: {
-                ...s.formal.idempotency,
-                passed: true,
-              },
-            }
-          : s.formal,
-      };
-    });
-    toast({
-      tone: "healthy",
-      title: "Auto-fixed script to pass pre-flight check",
-      detail: "Wrapped mutating commands in ShouldProcess (-WhatIf) guard and verified AST safety.",
-    });
+  // Both run on the orchestrator (L-08): Auto-Fix re-verifies, Override is audited with a justification.
+  const handleAutoFixPreflight = async () => {
+    setPreflightBusy(true);
+    await autofixPreflight();
+    setPreflightBusy(false);
   };
 
-  const handleAdminOverridePreflight = () => {
-    useWorkbench.setState((s) => {
-      if (!s.drawer) return {};
-      return {
-        remediateStatus: "ready",
-        drawer: {
-          ...s.drawer,
-          verificationStatus: {
-            ...s.drawer.verificationStatus,
-            verdict: "Verified With Warnings",
-            findings: [
-              ...s.drawer.verificationStatus.findings,
-              "Emergency admin justification recorded — pre-flight check overridden by operator",
-            ],
-          },
-        },
-        formal: s.formal
-          ? {
-              ...s.formal,
-              formal: {
-                ...s.formal.formal,
-                passed: true,
-              },
-            }
-          : s.formal,
-      };
-    });
-    toast({
-      tone: "warning",
-      title: "Pre-flight check overridden with admin justification",
-      detail: "Verdict set to Verified With Warnings. Apply Fix Now is now enabled.",
-    });
+  const handleAdminOverridePreflight = async () => {
+    if (overrideJustification.trim().length < 10) {
+      toast({ tone: "warning", title: "Justification required", detail: "Write at least 10 characters explaining why this bundle may run anyway." });
+      return;
+    }
+    setPreflightBusy(true);
+    await overridePreflight(overrideJustification.trim());
+    setPreflightBusy(false);
+    setOverrideJustification("");
   };
 
   return (
@@ -353,16 +299,25 @@ export function ActionApprovalDrawerSheet() {
                   <Button
                     size="xs"
                     variant="healthy"
-                    onClick={handleAutoFixPreflight}
+                    onClick={() => void handleAutoFixPreflight()}
+                    disabled={preflightBusy}
                     data-testid="preflight-autofix-button"
                     className="font-semibold"
                   >
-                    🔧 Auto-Fix Script to Pass Check
+                    🔧 Auto-Fix Guard &amp; Re-Run Pre-Flight
                   </Button>
+                  <input
+                    value={overrideJustification}
+                    onChange={(e) => setOverrideJustification(e.target.value)}
+                    placeholder="Admin justification (audited)…"
+                    data-testid="preflight-override-justification"
+                    className="h-6 min-w-0 flex-1 rounded border border-amber-500/40 bg-canvas px-2 text-[11px] text-text placeholder:text-faint"
+                  />
                   <Button
                     size="xs"
                     variant="outline"
-                    onClick={handleAdminOverridePreflight}
+                    onClick={() => void handleAdminOverridePreflight()}
+                    disabled={preflightBusy}
                     data-testid="preflight-override-button"
                     className="border-amber-500/50 text-amber-300 hover:bg-amber-500/15"
                   >
@@ -528,7 +483,7 @@ export function ActionApprovalDrawerSheet() {
                         ? "!border-amber-400/50 !bg-amber-500 !text-slate-950 hover:!bg-amber-400"
                         : ""
                     }`}
-                    disabled={drawer.verificationStatus.verdict === "Verification Failed" || formalPassed === false}
+                    disabled={drawer.verificationStatus.verdict === "Verification Failed" || (formalPassed === false && !overridden)}
                     onClick={() => void approve("approve")}
                   >
                     {simulateCanaryFailure
@@ -1401,7 +1356,9 @@ function VerificationBadge({ drawer }: { drawer: Drawer }) {
         ? "✓ Pre-Flight Passed (With Warnings)"
         : v.verdict === "Verification Failed"
           ? "Pre-Flight Check Failed"
-          : "Checking…";
+          : v.verdict === "Overridden"
+            ? "⚠ Pre-Flight Overridden by Operator"
+            : "Checking…";
   return (
     <Pill tone={tone} icon={tone === "healthy" ? <ShieldCheck /> : <ShieldAlert />} mono={false} className="font-semibold" title={v.verdict}>
       {label}

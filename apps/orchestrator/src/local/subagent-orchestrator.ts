@@ -343,6 +343,18 @@ export interface SafetyVerifierResult {
  * non-empty target parameters, and absence of destructive wildcards like Remove-MgUser -All).
  * If SupportsShouldProcess is missing on an otherwise safe script, repairs it before returning.
  */
+/** Splits a script's leading param(...) block (balanced parentheses) from the statements after it. */
+function splitParamBlock(lines: string[]): { paramLines: string[]; bodyLines: string[] } {
+  const start = lines.findIndex((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+  if (start < 0 || !/^param\s*\(/i.test(lines[start]!.trim())) return { paramLines: [], bodyLines: lines };
+  let depth = 0;
+  for (let i = start; i < lines.length; i++) {
+    for (const ch of lines[i]!) depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    if (depth <= 0) return { paramLines: lines.slice(start, i + 1), bodyLines: [...lines.slice(0, start), ...lines.slice(i + 1)] };
+  }
+  return { paramLines: [], bodyLines: lines };
+}
+
 export function verifyAndRepairGeneratedScript(script: string, scenarioId: string): SafetyVerifierResult {
   const started = performance.now();
   const warnings: string[] = [];
@@ -367,15 +379,17 @@ export function verifyAndRepairGeneratedScript(script: string, scenarioId: strin
   const hasShouldProcessAttr = /SupportsShouldProcess\s*=\s*\$true/i.test(current);
   const hasShouldProcessCall = /\$PSCmdlet\.ShouldProcess\s*\(/i.test(current);
   if ((!hasShouldProcessAttr || !hasShouldProcessCall) && warnings.length === 0) {
-    const bodyLines = current
+    const lines = current
       .split(/\r?\n/)
       .filter((line) => !/^#Requires\b/i.test(line.trim()) && !/^\[CmdletBinding/i.test(line.trim()));
+    // A param() block must stay the first statement: keep it outside the ShouldProcess guard.
+    const { paramLines, bodyLines } = splitParamBlock(lines);
     current = [
       "#Requires -Version 7.0",
       "[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]",
-      `param([string]$Target = "${scenarioId}")`,
+      ...(paramLines.length ? paramLines : [`param([string]$Target = "${scenarioId}")`]),
       "$ErrorActionPreference = 'Stop'",
-      `if ($PSCmdlet.ShouldProcess($Target, "Execute verified remediation for ${scenarioId}")) {`,
+      `if ($PSCmdlet.ShouldProcess("${scenarioId}", "Execute verified remediation for ${scenarioId}")) {`,
       ...bodyLines.map((l) => `  ${l}`),
       "}",
     ].join("\n");

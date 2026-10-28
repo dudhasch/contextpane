@@ -69,7 +69,7 @@ import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
 import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
-import { approve, remediate } from "./tiers/tier3-remediate.ts";
+import { approve, autofixRemediation, overrideRemediation, remediate } from "./tiers/tier3-remediate.ts";
 import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
@@ -828,6 +828,24 @@ app.post("/api/remediate", async (c) => {
       await send("error", { error: error instanceof Error ? error.message : String(error) });
     }
   });
+});
+
+/** Auto-Fix: server-side guard repair + a real pre-flight re-run; returns the re-verified drawer. */
+app.post("/api/remediate/:remediationId/autofix", async (c) => {
+  const remediationId = c.req.param("remediationId");
+  if (!remediationStore.get(remediationId)) return c.json({ error: "not found" }, 404);
+  return c.json({ drawer: await autofixRemediation(remediationId) });
+});
+
+const OverrideBodySchema = z.object({ justification: z.string().min(10).max(500), operator: z.string().max(120).optional() });
+
+/** Override with an operator justification, recorded in the audit ledger; the verdict becomes "Overridden". */
+app.post("/api/remediate/:remediationId/override", async (c) => {
+  const remediationId = c.req.param("remediationId");
+  if (!remediationStore.get(remediationId)) return c.json({ error: "not found" }, 404);
+  const parsed = OverrideBodySchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "justification of 10-500 characters required" }, 400);
+  return c.json({ drawer: overrideRemediation(remediationId, parsed.data.justification, parsed.data.operator) });
 });
 
 app.get("/api/remediations", (c) => c.json({ remediations: remediationStore.list(c.req.query("tenantId")) }));

@@ -378,6 +378,10 @@ interface WorkbenchState {
   hover(entityId: string, entityType?: EntityType): Promise<void>;
   remediate(): Promise<void>;
   approve(decision?: "approve" | "reject"): Promise<void>;
+  /** Server-side guard repair + pre-flight re-run; the drawer shows whatever verdict comes back. */
+  autofixPreflight(): Promise<void>;
+  /** Approve-anyway with a justification the orchestrator writes to the audit ledger. */
+  overridePreflight(justification: string): Promise<void>;
   voiceSteer(input: { text?: string; audioBase64?: string; mimeType?: string }): Promise<VoiceResponse>;
   applyIntent(intent: SteerLayoutArgs): Promise<void>;
   setFilter(filter: ComponentType[] | null): void;
@@ -1206,6 +1210,35 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     } catch (error) {
       set({ remediateStatus: "error" });
       get().toast({ tone: "critical", title: "Remediation failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async autofixPreflight() {
+    const { drawer } = get();
+    if (!drawer) return;
+    try {
+      const { drawer: updated } = await api.autofixRemediation(drawer.remediationId);
+      set({ drawer: updated, remediateStatus: "ready" });
+      const v = updated.verificationStatus;
+      get().toast({
+        tone: v.verdict === "Verification Failed" ? "critical" : v.verdict === "Verified Safe" ? "healthy" : "warning",
+        title: v.verdict === "Verification Failed" ? "Auto-Fix re-ran the pre-flight: still failing" : `Auto-Fix re-verified: ${v.verdict}`,
+        detail: v.findings.slice(0, 2).join(" · "),
+      });
+    } catch (error) {
+      get().toast({ tone: "critical", title: "Auto-Fix failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async overridePreflight(justification) {
+    const { drawer } = get();
+    if (!drawer) return;
+    try {
+      const { drawer: updated } = await api.overrideRemediation(drawer.remediationId, { justification, operator: drawer.approval.requiredIdentity });
+      set({ drawer: updated, remediateStatus: "ready" });
+      get().toast({ tone: "warning", title: "Pre-flight overridden", detail: "Justification recorded in the audit ledger; the failed checks keep their results." });
+    } catch (error) {
+      get().toast({ tone: "critical", title: "Override failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
 

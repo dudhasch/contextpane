@@ -478,6 +478,10 @@ export const api = {
   hover: (body: { scenarioId: string; entityId: string; entityType?: EntityType }) => request<HoverResponse>("/api/hover", { method: "POST", body: JSON.stringify(body) }),
   correlate: (body: { scenarioId: string; fresh?: boolean }) => request<CorrelateResponse>("/api/correlate", { method: "POST", body: JSON.stringify(body) }),
   remediate: (body: { scenarioId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
+  autofixRemediation: (remediationId: string) =>
+    request<{ drawer: ActionApprovalDrawer }>(`/api/remediate/${encodeURIComponent(remediationId)}/autofix`, { method: "POST", body: "{}" }),
+  overrideRemediation: (remediationId: string, body: { justification: string; operator?: string }) =>
+    request<{ drawer: ActionApprovalDrawer }>(`/api/remediate/${encodeURIComponent(remediationId)}/override`, { method: "POST", body: JSON.stringify(body) }),
   approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean; mode?: ExecutionMode; simulateCanaryFailure?: boolean }) =>
     request<ApproveResponse>("/api/remediate/approve", { method: "POST", body: JSON.stringify(body) }),
   labState: () => request<{ convergence: Convergence[] }>("/api/lab/state"),
