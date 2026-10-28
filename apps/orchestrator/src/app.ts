@@ -676,7 +676,10 @@ app.get("/api/skills/match/:scenarioId", (c) => {
 app.get("/api/dataplane", (c) => {
   const ptr = c.req.query("ptr") ?? "";
   const hit = resolveDataPtr(ptr);
-  return hit.found ? c.json({ ptr, descriptor: hit.descriptor, rows: hit.value }) : c.json({ error: `'${ptr}' is not published; gather its scenario first` }, 404);
+  if (hit.found) return c.json({ ptr, descriptor: hit.descriptor, rows: hit.value, fence: hit.fence });
+  // A stale fence is a conflict, not a miss: the client holds rows from an older epoch or another tenant.
+  if (hit.fenceFailure) return c.json({ error: hit.error, reason: hit.fenceFailure, fence: hit.fence ?? null }, 409);
+  return c.json({ error: `'${ptr}' is not published; gather its scenario first` }, 404);
 });
 
 app.post("/api/scenarios/:scenarioId/refresh", (c) => {

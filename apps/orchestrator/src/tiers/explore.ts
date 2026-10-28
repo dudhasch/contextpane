@@ -90,7 +90,7 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
   const slice = buildSelectionSlice(ctx, selectedText, brief.steps, sliceOptions);
   const hash = selectionHash(ctx.ticketId, selectedText, refinementText, viewMode);
   const ptr = selectionDataPtr(ctx.ticketId, hash);
-  const publication = publishSelection({ ptr, scenarioId: ctx.ticketId, selectedText, sourceQuery: slice.sourceQuery, rows: slice.rows });
+  const publication = publishSelection({ ptr, scenarioId: ctx.ticketId, selectedText, sourceQuery: slice.sourceQuery, rows: slice.rows, tenantId: ctx.tenantId });
   const reference = sliceToCard(ctx, selectedText, slice, sliceOptions);
 
   let card = reference;
@@ -202,7 +202,7 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         (strictRealTenant && (slice.kind === "azure-vms" || slice.kind === "azure-resources"));
       const finalRows = sanitizedSynthRows && sanitizedSynthRows.length > 0 ? sanitizedSynthRows : slice.rows;
       if (sanitizedSynthRows && sanitizedSynthRows.length > 0) {
-        publishSelection({ ptr, scenarioId: ctx.ticketId, selectedText, sourceQuery: args.sourceQuery, rows: finalRows });
+        publishSelection({ ptr, scenarioId: ctx.ticketId, selectedText, sourceQuery: args.sourceQuery, rows: finalRows, tenantId: ctx.tenantId, epoch: publication.fence.epoch, generation: publication.fence.generation });
       }
       const composed = ContextualMiniDashboardSchema.parse({
         ...reference,

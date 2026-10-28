@@ -178,6 +178,15 @@ export function dataPlaneSnapshot(scenarioId: string): DataPlaneSnapshot | null 
   return latest.get(scenarioId) ?? null;
 }
 
+/**
+ * `invalidateContext` calls this: the snapshot gathered before the epoch bump must not keep
+ * answering `/api/dataplane?ptr=` until the scenario is gathered again. No id drops all.
+ */
+export function dropDataPlaneSnapshot(scenarioId?: string): void {
+  if (!scenarioId) return latest.clear();
+  latest.delete(scenarioId);
+}
+
 /* ------------------------- selection slices (explore) ------------------------- */
 
 export interface SelectionPublication {
@@ -188,6 +197,8 @@ export interface SelectionPublication {
   descriptor: DatasetDescriptor & { selectedText: string; sourceQuery: string };
   publishedAt: string;
   piiVault: PiiVault;
+  /** Tenant + epoch + generation the rows were read under; checked again on every resolve. */
+  fence: PointerFence;
 }
 
 const selections = new Map<string, SelectionPublication>();
@@ -197,8 +208,22 @@ const selections = new Map<string, SelectionPublication>();
  * The model only ever sees the descriptor (shape, aggregates, the pseudonymised sample);
  * the client gets the rows bound from here.
  */
-export function publishSelection(input: { ptr: string; scenarioId: string; selectedText: string; sourceQuery: string; rows: Record<string, unknown>[] }): SelectionPublication {
-  const piiVault = createPiiVault(getDataPlaneEpoch());
+export function publishSelection(input: {
+  ptr: string;
+  scenarioId: string;
+  selectedText: string;
+  sourceQuery: string;
+  rows: Record<string, unknown>[];
+  tenantId?: string;
+  epoch?: number;
+  generation?: number;
+}): SelectionPublication {
+  const fence: PointerFence = {
+    tenantId: input.tenantId ?? latest.get(input.scenarioId)?.tenantId ?? "unknown",
+    epoch: input.epoch ?? getDataPlaneEpoch(),
+    generation: input.generation ?? getDataPlaneGeneration(),
+  };
+  const piiVault = createPiiVault(fence.epoch);
   piiVault.pseudonymize(input.rows);
   const base = describeSelectionRows(input.ptr, input.rows);
   const publication: SelectionPublication = {
@@ -209,6 +234,7 @@ export function publishSelection(input: { ptr: string; scenarioId: string; selec
     descriptor: { ...base, selectedText: input.selectedText, sourceQuery: input.sourceQuery },
     publishedAt: new Date().toISOString(),
     piiVault,
+    fence,
   };
   selections.set(input.ptr, publication);
   if (selections.size > 64) selections.delete(selections.keys().next().value!);
@@ -253,7 +279,22 @@ export interface ResolvedDataPtr {
   pseudonymizedValue?: unknown;
   llmSafeValue?: unknown;
   fence?: PointerFence;
+  /** Set when the pointer resolved to rows read under another tenant or an older epoch (HTTP 409). */
+  fenceFailure?: PointerFenceVerification["reason"];
   columnarScanNs?: number;
+}
+
+/**
+ * The fence a selection must still match: its scenario's active snapshot, or the current
+ * epoch when that scenario has no snapshot (dropped by `invalidateContext`, or Free-Roam).
+ */
+function verifySelectionFence(selection: SelectionPublication, options?: { expectedTenantId?: string; expectedEpoch?: number }): PointerFenceVerification["reason"] {
+  const active = latest.get(selection.scenarioId);
+  const expectedTenantId = options?.expectedTenantId ?? active?.tenantId ?? selection.fence.tenantId;
+  const expectedEpoch = options?.expectedEpoch ?? active?.epoch ?? getDataPlaneEpoch();
+  if (selection.fence.tenantId !== expectedTenantId) return "cross-tenant";
+  if (selection.fence.epoch !== expectedEpoch) return "stale-epoch";
+  return "valid";
 }
 
 /** LLM-prompt-facing serialization: PII fields become deterministic vault tokens, never raw. */
@@ -279,8 +320,12 @@ export function resolveDataPtr(
   options?: { expectedTenantId?: string; expectedEpoch?: number },
 ): ResolvedDataPtr {
   const emptyMetrics = createPiiVault().metrics();
-  const selection = parseSelectionPtr(ptr) ? resolveSelectionPtr(ptr) : null;
+  const selection = parseSelectionPtr(ptr.split("#")[0]!) ? resolveSelectionPtr(ptr.split("#")[0]!) : null;
   if (selection) {
+    const reason = verifySelectionFence(selection, options);
+    if (reason !== "valid") {
+      return { found: false, value: [], rows: [], error: `pointer fence failed: ${reason}`, fenceFailure: reason, fence: selection.fence, piiMetrics: emptyMetrics, vaultMetrics: emptyMetrics, pii: emptyMetrics };
+    }
     const llmSafeValue = selection.piiVault.pseudonymize(selection.rows);
     const m = selection.piiVault.metrics();
     return { found: true, value: selection.rows, rows: selection.rows, descriptor: selection.descriptor, piiMetrics: m, vaultMetrics: m, pii: m, pseudonymizedValue: llmSafeValue, llmSafeValue };
@@ -291,8 +336,8 @@ export function resolveDataPtr(
   const base = (parsed.basePtr ?? baseDataPtr(ptr)) as DataPtr;
   if (!snapshot?.rows.has(base)) return { found: false, value: [], rows: [], error: `'${ptr}' is not published`, piiMetrics: emptyMetrics, vaultMetrics: emptyMetrics, pii: emptyMetrics };
 
-  // Enforce Generation & Tenant Fence when options or embedded fence are provided
-  if (options?.expectedTenantId !== undefined || options?.expectedEpoch !== undefined || parsed.fence) {
+  // Always fenced against the active snapshot: an embedded fence from an older epoch or another tenant is a 409.
+  {
     const check = verifyPointerFence(
       ptr,
       options?.expectedTenantId ?? snapshot.tenantId,
@@ -304,6 +349,7 @@ export function resolveDataPtr(
         value: [],
         rows: [],
         error: `pointer fence failed: ${check.reason}`,
+        fenceFailure: check.reason,
         piiMetrics: emptyMetrics,
         vaultMetrics: emptyMetrics,
         pii: emptyMetrics,

@@ -28,6 +28,7 @@ import type {
 } from "@contextpane/mcp-msgraph";
 import { CA_POSTURE, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { DatasetDescriptor } from "@contextpane/catalog";
+import { dropDataPlaneSnapshot } from "../local/dataplane.ts";
 import { sources, type McpDataSources, type ResourceInventory } from "./clients.ts";
 
 /**
@@ -91,19 +92,27 @@ export function resolveScenarioId(value: string | undefined | null): WorkbenchSc
 /** Drops the cached context of one scenario (a custom ticket drops its base too), every scenario of a tenant, or everything. */
 export function invalidateContext(key?: string) {
   bumpDataPlaneEpoch();
-  if (!key) return cache.clear();
+  // The context and its dataplane snapshot go together: the old snapshot's rows are from the previous epoch.
+  const drop = (id: string) => {
+    cache.delete(id);
+    dropDataPlaneSnapshot(id);
+  };
+  if (!key) {
+    cache.clear();
+    return dropDataPlaneSnapshot();
+  }
   if (isScenarioId(key)) {
-    cache.delete(key);
-    for (const id of cache.keys()) if (isCustomScenarioId(id) && getCustomScenario(id)?.baseScenarioId === key) cache.delete(id);
+    drop(key);
+    for (const id of [...cache.keys()]) if (isCustomScenarioId(id) && getCustomScenario(id)?.baseScenarioId === key) drop(id);
     return;
   }
   if (isCustomScenarioId(key)) {
-    cache.delete(key);
+    drop(key);
     const base = getCustomScenario(key)?.baseScenarioId;
-    if (base) cache.delete(base);
+    if (base) drop(base);
     return;
   }
-  for (const id of cache.keys()) if (isScenarioId(id) && SCENARIO_REGISTRY[id].tenantId === key) cache.delete(id);
+  for (const id of [...cache.keys()]) if (isScenarioId(id) && SCENARIO_REGISTRY[id].tenantId === key) drop(id);
 }
 
 export async function gatherContext(scenarioOrTenant: string, options: { fresh?: boolean } = {}): Promise<CorrelationContext> {
