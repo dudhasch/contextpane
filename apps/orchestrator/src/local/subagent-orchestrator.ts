@@ -240,7 +240,7 @@ export function buildCustomTicketRemediationSync(input: { scenarioId: string; ti
     affectedEntities: [{ type: "resource", id: input.scenarioId, change: `Apply clarified remediation (${scopeText})`.slice(0, 180) }],
     requiredCommands: ["get-azresource"],
     riskNotes: ["All mutating cmdlets are wrapped in $PSCmdlet.ShouldProcess (-WhatIf safe)."],
-    executionSteps: [`[Step 1/2] Inspecting live state for ${input.scenarioId} (${scopeText})...`, `[Step 2/2] Applying verified PowerShell 7 remediation -> Succeeded`],
+    executionSteps: [`[Step 1/2] Inspect live state for ${input.scenarioId} (${scopeText})`, `[Step 2/2] Run the approved PowerShell 7 remediation`],
   };
 }
 

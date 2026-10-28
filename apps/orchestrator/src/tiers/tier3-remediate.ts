@@ -762,31 +762,31 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   if (mode === "break-glass") {
     log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
     if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
-      const customSteps =
-        before.custom.customRemediation.executionSteps && before.custom.customRemediation.executionSteps.length > 0
-          ? before.custom.customRemediation.executionSteps
-          : drawer.affectedEntities.map(
-              (e, i) => `[Step ${i + 1}/${drawer.affectedEntities.length}] Applied ${e.id}: ${e.change} (HTTP 200 OK)`,
-            );
-      log.push(...customSteps);
-      writeSummary = drawer.title;
-      write = {
-        source: config.liveCloudMode ? "live-graph" : "simulated",
-        latencyMs: 38,
-        summary: drawer.title,
-        results: drawer.affectedEntities.map((e) => ({
-          id: e.id,
-          ok: true,
-          status: 200,
-        })),
-      };
-      if (config.liveCloudMode) {
+      // A custom bundle has no lab write behind it: it is only executed when the approved script really runs.
+      const plannedSteps = before.custom.customRemediation.executionSteps ?? [];
+      log.push(...plannedSteps.map((s) => `Planned: ${s}`));
+      let scriptRan: { ok: boolean; log: string[]; latencyMs: number } | null = null;
+      if (config.liveCloudMode && config.allowExecute) {
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
+        const scriptStarted = performance.now();
+        const script = await runApprovedScript(drawer);
+        scriptRan = { ...script, latencyMs: Math.round(performance.now() - scriptStarted) };
+        log.push(...script.log);
+      }
+      if (scriptRan?.ok) {
+        writeSummary = `${drawer.title} (approved script exited 0)`;
+        write = { source: "live-graph", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: [] };
         state = "executed";
         execution = "live-graph";
+        invalidateContext(scenarioId);
       } else {
+        const fallbackReason = scriptRan ? "approved script failed; nothing reported as executed" : "custom bundles are staged, not executed";
+        writeSummary = `${drawer.title} · staged, not executed`;
+        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
         state = "simulated";
+        execution = "simulated";
+        log.push(`No Graph or ARM write: ${fallbackReason}. The ticket stays open.`);
       }
-      invalidateContext(scenarioId);
     } else if (config.liveCloudMode && labScenarioId) {
       if (config.allowExecute) {
         log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
@@ -863,8 +863,10 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   remediationStore.save(updated);
   const latencyMs = Math.round(performance.now() - started);
   // Only a live write converges the canvas; a staged GitOps patch leaves the drift visible until the pipeline runs.
+  // A custom bundle that was staged but not executed changed nothing, so its ticket stays open (L-02).
+  const stagedCustomOnly = isCustomScenarioId(drawer.ticketId) && state !== "executed";
   const convergence: Convergence | null =
-    mode === "break-glass"
+    mode === "break-glass" && !stagedCustomOnly
       ? {
           scenarioId,
           tenantId: updated.tenantId,

@@ -233,3 +233,54 @@ describe("remediate() unexpected-error path (L-01)", () => {
     }
   });
 });
+
+describe("approve() on a custom ticket (L-02)", () => {
+  test("break-glass with LIVE_CLOUD_MODE records a staged, simulated execution and no convergence", async () => {
+    const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
+    const { config } = await import("../config.ts");
+    const { remediationStore } = await import("../store/remediations.ts");
+    const { auditLedger } = await import("../store/audit.ts");
+    const { approve } = await import("./tier3-remediate.ts");
+    const entry = registerCustomTicket(SAMPLE_UNSCRIPTED_TICKETS[0]!);
+    const mutableConfig = config as { liveCloudMode: boolean; allowExecute: boolean };
+    const previous = { liveCloudMode: mutableConfig.liveCloudMode, allowExecute: mutableConfig.allowExecute };
+    mutableConfig.liveCloudMode = true;
+    mutableConfig.allowExecute = false;
+    try {
+      const drawer = ActionApprovalDrawerSchema.parse({
+        remediationId: `rem-test-custom-${Date.now().toString(36)}`,
+        ticketId: entry.scenarioId,
+        tenantId: entry.tenantId,
+        title: "Custom remediation under test",
+        summary: "Staged custom bundle",
+        synthesizedBy: { planner: "deterministic", coder: "deterministic", provider: "local" },
+        powershellScript: "[CmdletBinding(SupportsShouldProcess)]\nparam()\n",
+        terraformDiff: "",
+        graphPatch: "{}",
+        affectedEntities: [{ type: "resource", id: entry.scenarioId, change: "Apply clarified remediation" }],
+        verificationStatus: { verdict: "Verified Safe", astCheckPassed: true, terraformFmtPassed: null, terraformValidatePassed: null, sandboxProvider: "local-pwsh", validationLatencyMs: 5, whatIfSafe: true, findings: [] },
+        staging: null,
+        approval: { state: "pending", requiredIdentity: "admin@test", approvedBy: null, approvedAt: null },
+        providerTelemetry: { tier: "Tier 3B", provider: "local", modelId: "deterministic", latencyMs: 1, tokensUsed: 0 },
+      });
+      remediationStore.save(drawer);
+      // Capture the ledger entry instead of writing it into the operator's data/audit-log.json.
+      const { spyOn } = await import("bun:test");
+      const appended: Array<{ actionType: string; execution?: string }> = [];
+      const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: { actionType: string; execution?: string }) => {
+        appended.push(input);
+        return input;
+      }) as never);
+      const result = await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" }).finally(() => auditSpy.mockRestore());
+      expect(result.approval.state).toBe("simulated");
+      expect(result.convergence).toBeNull();
+      expect(result.executionLog.join("\n")).not.toContain("HTTP 200");
+      expect(result.executionLog.join("\n")).toContain("staged, not executed");
+      expect(appended.find((a) => a.actionType === "hitl-approval")?.execution).toBe("simulated");
+      remediationStore.clear(entry.scenarioId);
+    } finally {
+      Object.assign(mutableConfig, previous);
+      clearCustomTickets("unscripted");
+    }
+  });
+});
