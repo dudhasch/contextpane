@@ -125,15 +125,16 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     for (const c of layout.components) for (const ptr of Object.values(c.dataPtrs)) expect(ptr.startsWith(prefix)).toBe(true);
   });
 
-  test("remediation verification on arbitrary ticket text: custom bundle, invariants and timeline all hold without baseScenarioId fallback", async () => {
+  test("remediation verification on arbitrary ticket text: custom bundle and timeline hold, and no formal proof is claimed", async () => {
     const entry = registerCustomTicket(erp);
     const ctx = await gatherContext(entry.scenarioId, { fresh: true });
     const plan = buildRemediationPlan(ctx);
     expect(plan.bundle.powershellScript).toContain("ShouldProcess");
     expect(plan.bundle.title).toContain(entry.scenarioId);
+    // No symbolic model exists for an ad-hoc ticket, so nothing is proved (H-04).
     const formal = verifyFormalInvariants(entry.scenarioId);
-    expect(formal.passed).toBe(true);
-    expect(formal.invariants.length).toBe(3);
+    expect(formal.passed).toBeNull();
+    expect(formal.invariants).toEqual([]);
     expect(verifyIdempotency(entry.scenarioId).passed).toBe(true);
     expect(getTimeline(entry.scenarioId)?.slices.length).toBeGreaterThanOrEqual(4);
 
@@ -143,7 +144,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(fabCtx.intune?.data.errorCode).toBe("0x87D1FDE8");
     const fabPlan = buildRemediationPlan(fabCtx);
     expect(fabPlan.bundle.powershellScript).toContain("ShouldProcess");
-    expect(verifyFormalInvariants(fab.scenarioId).passed).toBe(true);
+    expect(verifyFormalInvariants(fab.scenarioId).passed).toBeNull();
   });
 
   test("ANOM-APP-401 and custom ERP ticket brief copy ends cleanly with full words & periods", async () => {
@@ -349,14 +350,23 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(refinedPlan.bundle.powershellScript).not.toContain("alex.wilber");
   }, 15000);
 
-  test("#ERP-* and #CUSTOM-* formal verification passes all pre-flight checks", () => {
+  test("#ERP-* and #CUSTOM-* tickets are not provable: no invariants, no borrowed AVD NSG / CA-204 proof (H-04)", async () => {
     const erpProof = verifyFormalInvariants("ERP-202688511" as any);
-    expect(erpProof.passed).toBe(true);
-    expect(verifyIdempotency("ERP-202688511" as any).passed).toBe(true);
+    expect(erpProof.passed).toBeNull();
+    expect(erpProof.invariants).toEqual([]);
+    expect(erpProof.note).toContain("no symbolic model");
 
     const customProof = verifyFormalInvariants("CUSTOM-14KX82" as any);
-    expect(customProof.passed).toBe(true);
-    expect(verifyIdempotency("CUSTOM-14KX82" as any).passed).toBe(true);
+    expect(customProof.passed).toBeNull();
+    expect(customProof.invariants).toEqual([]);
+
+    const { app } = await import("../app.ts");
+    const registered = registerCustomTicket(avd);
+    const res = await app.request(`/api/formal/${registered.scenarioId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { formal: { passed: boolean | null; invariants: unknown[] } };
+    expect(body.formal.invariants).toEqual([]);
+    expect(body.formal.passed).toBeNull();
   });
 
   test("Custom ticket mentioning a seeded entity (Lynne Robins + Key Vault soft-delete) mounts SynthesizedDynamicCard instead of LicenseDriftCard and records real sub-agent latencies", async () => {

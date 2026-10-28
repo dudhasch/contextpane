@@ -179,10 +179,10 @@ describe("Tier 3C formal blast-radius prover", () => {
       expect(verifyPccBitmask(r.invariantProofMask)).toBe(true);
       expect(r.minPerturbationCost).toBeGreaterThan(0);
       expect(r.schemaSignature).toContain("0x7f");
-      expect(r.maxSmtSynthesis.optimal).toBe(true);
-      expect(r.maxSmtSynthesis.collateralLockouts).toBe(0);
-      expect(r.maxSmtSynthesis.hardInvariants).toHaveLength(7);
-      expect(r.maxSmtSynthesis.hardInvariants.every((h) => h.passed)).toBe(true);
+      expect(r.maxSmtSynthesis!.optimal).toBe(true);
+      expect(r.maxSmtSynthesis!.collateralLockouts).toBe(0);
+      expect(r.maxSmtSynthesis!.hardInvariants).toHaveLength(7);
+      expect(r.maxSmtSynthesis!.hardInvariants.every((h) => h.passed)).toBe(true);
     }
     const smt = maxSmtSynthesis("INC-4092");
     expect(smt.invariantProofMask).toBe(0x7f);

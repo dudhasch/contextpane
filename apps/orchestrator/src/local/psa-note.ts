@@ -116,7 +116,9 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const customerSummary = `${rootCause} ${resolution} ${affectedUsers ? `${affectedUsers} account${affectedUsers === 1 ? "" : "s"}${userListDetail} ${convergence.reclaimedUpns.length && !remediatedUpns.length ? "had unused licences reclaimed" : "were brought back to the expected state"}; ` : ""}every change was verified before and after it ran, with a verified 1-click undo script archived should anything regress.`;
 
   const trail: string[] = [
-    `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency check (safe to re-run) ${idempotency.passed ? "passed" : "FAILED"}`,
+    formal.passed === null
+      ? `Formal invariants: not provable for this ad-hoc ticket (${formal.note ?? "no symbolic model"})`
+      : `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency check (safe to re-run) ${idempotency.passed ? "passed" : "FAILED"}`,
     canary
       ? `Canary probes: ${canary.stages.map((s) => s.stage).join(" → ")} · identity probe ${canary.probes.identity.passed ? "passed" : "failed"}${targetId === "INC-4092" ? `, network probe ${canary.probes.network.tcp3389Closed === undefined ? "n/a" : canary.probes.network.tcp3389Closed ? "TCP/3389 closed" : "TCP/3389 OPEN"}${canary.probes.network.tcp443Open === undefined ? "" : canary.probes.network.tcp443Open ? ", TCP/443 open" : ", TCP/443 closed"}` : ", posture & compliance probes passed (0 conflicts)"} · cohort ${canary.canaryCohort}`
       : "Canary probes: not run for this approval",

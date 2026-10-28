@@ -149,7 +149,7 @@ export function ActionApprovalDrawerSheet() {
       failureReasons.push("Mutating PowerShell cmdlet detected outside a ShouldProcess (-WhatIf) guard.");
     }
   }
-  if (formal && !formal.formal.passed) {
+  if (formal && formal.formal.passed === false) {
     for (const inv of formal.formal.invariants) {
       if (!inv.passed) {
         failureReasons.push(`Safety invariant failed: ${inv.statement}`);
@@ -825,7 +825,9 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
 
   const b = formal.blastRadius;
   const asrBlast = formal.asrBlast ?? formal.formal.asrBlast ?? null;
-  const allPassed = formal.formal.passed && formal.idempotency.passed;
+  // An ad-hoc ticket has no symbolic model: say so instead of showing another scenario's proof (H-04).
+  const notProvable = formal.formal.passed === null;
+  const allPassed = formal.formal.passed === true && formal.idempotency.passed;
 
   return (
     <div className="space-y-4 text-[12px]" data-testid="formal-proof">
@@ -833,8 +835,8 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
       <section className="space-y-3 rounded-lg border border-slate-800 bg-canvas/60 p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Pill tone={allPassed ? "healthy" : "critical"} icon={<ShieldCheck />} mono={false} className="font-semibold">
-              {allPassed ? "Pre-Flight Safety Checks (All Passed)" : "Pre-Flight Safety Check Warning"}
+            <Pill tone={notProvable ? "muted" : allPassed ? "healthy" : "critical"} icon={<ShieldCheck />} mono={false} className="font-semibold">
+              {notProvable ? "Safety Checks: not provable for ad-hoc tickets" : allPassed ? "Pre-Flight Safety Checks (All Passed)" : "Pre-Flight Safety Check Warning"}
             </Pill>
           </div>
           <Button
@@ -848,6 +850,11 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
           </Button>
         </div>
 
+        {notProvable && (
+          <div className="text-[11.5px] text-muted" data-testid="formal-not-provable">
+            No symbolic model exists for this ticket ({formal.formal.note ?? "ad-hoc ticket"}), so no invariant is claimed. Rely on the pre-flight checks and the -WhatIf dry run.
+          </div>
+        )}
         <ul className="space-y-1.5 pt-0.5 text-[12.5px]">
           {formal.formal.invariants.map((i) => (
             <li key={i.id} className="flex items-start gap-2">
@@ -855,12 +862,14 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
               <span className="text-text">{humanizeInvariant(i.id, drawer.ticketId, i.statement)}</span>
             </li>
           ))}
-          <li className="flex items-start gap-2">
-            <span className={`font-semibold ${formal.idempotency.passed ? "text-healthy" : "text-critical"}`}>
-              {formal.idempotency.passed ? "✓" : "✗"}
-            </span>
-            <span className="text-text">Safe to re-run (running this script twice produces the exact same state)</span>
-          </li>
+          {!notProvable && (
+            <li className="flex items-start gap-2">
+              <span className={`font-semibold ${formal.idempotency.passed ? "text-healthy" : "text-critical"}`}>
+                {formal.idempotency.passed ? "✓" : "✗"}
+              </span>
+              <span className="text-text">Safe to re-run (running this script twice produces the exact same state)</span>
+            </li>
+          )}
         </ul>
 
         {/* Blast-Radius Summary Table */}
@@ -1188,7 +1197,7 @@ function CustomerNoteAndDocsTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (t
     drawer.summary,
     "",
     `## 2. Pre-Flight Safety Checks`,
-    `- Status: Pre-Flight Safety Checks Passed`,
+    `- Status: ${drawer.verificationStatus.verdict}`,
     `- Dry-Run (-WhatIf) Verified: ${drawer.verificationStatus.whatIfSafe ? "Yes" : "No"}`,
     ...(formal
       ? formal.formal.invariants.map((i) => `- ✓ ${humanizeInvariant(i.id, drawer.ticketId, i.statement)}`)

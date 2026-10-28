@@ -2088,7 +2088,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({
         tone: "healthy",
         title: `${result.scenario.scenarioId} triaged in ${Math.round(performance.now() - started)} ms`,
-        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} tenant entities matched live · Pre-flight safety ${result.verification.formal.passed ? "verified" : "flagged"}`,
+        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} tenant entities matched live · Formal proof ${result.verification.formal.passed === null ? "not provable for ad-hoc tickets" : result.verification.formal.passed ? "verified" : "flagged"}`,
       });
       await get().selectScenario(result.scenario.scenarioId);
     } catch (error) {

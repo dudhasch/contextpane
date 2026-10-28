@@ -127,7 +127,9 @@ export interface AsrBlast { executions: number; workstations: number; binary: st
 export interface FormalResponse {
   scenarioId: string;
   formal: {
-    passed: boolean;
+    /** null: not provable (an ad-hoc ticket has no symbolic model). */
+    passed: boolean | null;
+    note?: string;
     latencyMs: number;
     invariantProofMask?: number;
     minPerturbationCost?: number;
@@ -258,7 +260,7 @@ export interface TriageCustomResponse {
   subAgentTasks?: SubAgentTaskRecord[];
   dataPtrs: string[];
   dataPlane: { datasets: number; bytes: number; piiMetrics: PiiMetrics };
-  verification: { formal: { passed: boolean; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean }; baseScenarioId: ScenarioId };
+  verification: { formal: { passed: boolean | null; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean }; baseScenarioId: ScenarioId };
   timelineSlices: number;
   latencyMs: number;
   telemetry: RouterTelemetry;

@@ -131,7 +131,9 @@ export interface MaxSmtSynthesisResult {
 
 export interface FormalVerificationResult {
   scenarioId: ScenarioId | string;
-  passed: boolean;
+  /** null: nothing was proved, because there is no symbolic model for the ticket (custom / ERP ids). */
+  passed: boolean | null;
+  note?: string;
   invariants: InvariantResult[];
   counterexamples: Counterexample[];
   latencyMs: number;
@@ -139,7 +141,7 @@ export interface FormalVerificationResult {
   invariantProofMask: number;
   minPerturbationCost: number;
   schemaSignature: string;
-  maxSmtSynthesis: MaxSmtSynthesisResult;
+  maxSmtSynthesis: MaxSmtSynthesisResult | null;
 }
 
 export function verifyPccBitmask(mask: number | undefined | null): boolean {
@@ -672,6 +674,22 @@ export function maxSmtSynthesis(scenarioId: ScenarioId | string | null, options?
 export function verifyFormalInvariants(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): FormalVerificationResult {
   const started = performance.now();
   const effectiveId = effectiveScenarioId(scenarioId);
+  // An ad-hoc ticket has no symbolic model; "proving" it against INC-4092's NSG and CA-204's policies proved nothing (H-04).
+  if (!isScenarioId(effectiveId) && (effectiveId as string) !== SHADOW_ADMIN_SCENARIO_ID && isCustomOrErpId(String(effectiveId))) {
+    return {
+      scenarioId: scenarioId ?? effectiveId,
+      passed: null,
+      note: "no symbolic model for ad-hoc tickets",
+      invariants: [],
+      counterexamples: [],
+      latencyMs: Math.round((performance.now() - started) * 1000) / 1000,
+      prover: "symbolic-formal-verifier",
+      invariantProofMask: 0,
+      minPerturbationCost: 0,
+      schemaSignature: "",
+      maxSmtSynthesis: null,
+    };
+  }
   const state = resolveOptions(effectiveId, options);
   const invariants: InvariantResult[] = [verifyBreakGlassNonLockout(state), verifyTargetRemediation(state), verifyNsgReachability(state)];
   // 4th invariant ONLY for ANOM-APP-401 (string compare: the catalog id
