@@ -285,7 +285,8 @@ export async function synthesizeAndPersistMissingElements(input: {
         const stub = `data/synthesized-elements/${missing.elementId.replace(/[^A-Za-z0-9_-]/g, "")}.tsx`;
         const cleanRows = Array.isArray(raw.rows) ? raw.rows.slice(0, 12).map((r: Record<string, unknown>) => Object.fromEntries(Object.entries(r ?? {}).map(([k, v]) => [k, typeof v === "number" || typeof v === "boolean" ? v : String(v ?? "")]))) : [];
         const candidate = {
-          elementId: String(raw.elementId || missing.elementId),
+          // The gatekeeper names the element; Wonder fills it in.
+          elementId: missing.elementId,
           title: String(raw.title || missing.title),
           headline: String(raw.headline || missing.reason).slice(0, 240),
           domain: ["azure", "identity", "intune", "licensing", "network", "cloud-status"].includes(raw.domain) ? raw.domain : missing.domain,
@@ -310,16 +311,18 @@ export async function synthesizeAndPersistMissingElements(input: {
       }
     }
     const latencyMs = Math.max(1, Math.round(performance.now() - started));
-    if (!card) card = buildMinimalFallbackCard(missing, input.gatekeeperModel, synthesizerModel, latencyMs);
+    const source = card ? "llm" : "fallback";
+    const cardModel = card ? synthesizerModel : "deterministic-template";
+    if (!card) card = buildMinimalFallbackCard(missing, input.gatekeeperModel, cardModel, latencyMs);
     const tsxPath = writeTsxStub(card);
     const nowIso = new Date().toISOString();
-    card.synthesisMeta = { gatekeeperModel: input.gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: tsxPath, synthesizedAt: nowIso };
+    card.synthesisMeta = { gatekeeperModel: input.gatekeeperModel, synthesizerModel: cardModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: tsxPath, synthesizedAt: nowIso, source };
     const existingIdx = store.dynamicElements.findIndex((e) => e.elementId === card!.elementId);
-    const entry: DynamicCatalogEntry = { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: existingIdx >= 0 ? store.dynamicElements[existingIdx]!.createdAt : nowIso, lastUsedAt: nowIso, reuseCount: existingIdx >= 0 ? store.dynamicElements[existingIdx]!.reuseCount + 1 : 1, gatekeeperModel: input.gatekeeperModel, synthesizerModel, tsxStubPath: tsxPath, cardTemplate: card };
+    const entry: DynamicCatalogEntry = { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: existingIdx >= 0 ? store.dynamicElements[existingIdx]!.createdAt : nowIso, lastUsedAt: nowIso, reuseCount: existingIdx >= 0 ? store.dynamicElements[existingIdx]!.reuseCount + 1 : 1, gatekeeperModel: input.gatekeeperModel, synthesizerModel: cardModel, tsxStubPath: tsxPath, cardTemplate: card };
     if (existingIdx >= 0) store.dynamicElements[existingIdx] = entry;
     else store.dynamicElements.push(entry);
     saveDynamicCatalog(store);
-    appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: card.elementId, title: card.title, domain: card.domain, gatekeeperModel: input.gatekeeperModel, modelUsed: synthesizerModel, latencyMs, tokens, reusedFromCatalog: false, reuseCount: entry.reuseCount, tsxStubPath: tsxPath, schemaSpec: { requiredPrimitives: card.requiredPrimitives, blockKinds: card.blocks.map((b) => b.kind) } });
+    appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: card.elementId, title: card.title, domain: card.domain, gatekeeperModel: input.gatekeeperModel, modelUsed: cardModel, latencyMs, tokens, reusedFromCatalog: false, reuseCount: entry.reuseCount, tsxStubPath: tsxPath, schemaSpec: { requiredPrimitives: card.requiredPrimitives, blockKinds: card.blocks.map((b) => b.kind) } });
     results.push(card);
   }
   return results;

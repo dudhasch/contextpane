@@ -373,3 +373,109 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(entry.subAgentTasks?.map((t) => t.latencyMs)).not.toEqual([42, 34, 65, 58, 12]);
   });
 });
+
+describe("sub-agent pipeline sequencing (L-05, L-07)", () => {
+  test("Key Vault ticket: clarifier answers reach the coder and the gatekeeper's decision reaches the synthesizer", async () => {
+    const { spyOn } = await import("bun:test");
+    const openai = await import("../router/openai.ts");
+    const correlator = await import("./cloud-status-correlator.ts");
+    const { config, providers } = await import("../config.ts");
+    const { buildDeterministicRoutingDecision } = await import("./dynamic-catalog.ts");
+    const { triageCustomTicketAsync, removeCustomTicket } = await import("./custom-ticket.ts");
+
+    // The persisted CUSTOM-13E7NK proof. No answers are passed: the clarifier preselects
+    // "Purge protection is enabled…" and "Recover the old vault", and those must reach the coder.
+    const ticket = {
+      title: "Lynne Robins cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation",
+      body: "Lynne Robins (lynne.robins.contoso@c4a8shili.onmicrosoft.com) cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation in Contoso Finance.",
+      customerName: "Contoso Finance",
+    };
+    const option = (value: string, i: number) => ({ id: `opt-${i}`, label: value, value, description: value });
+    const questions = [
+      { id: "question-1", question: "What is the root cause and scope?", category: "scope", options: ["The original vault was deleted and is in soft-delete state", "A new vault was created but Lynne lacks access permissions", "The name conflicts with a soft-deleted vault elsewhere"].map(option) },
+      { id: "question-2", question: "What is the purge protection state?", category: "security", options: ["Purge protection is enabled and retention has not expired", "Purge protection is disabled and the vault can be purged", "Retention and purge protection status are unknown"].map(option) },
+      { id: "question-3", question: "Preferred resolution strategy?", category: "remediation", options: ["Recover the old vault", "Permanently purge then recreate", "Keep the new vault and fix access for Lynne"].map(option) },
+    ];
+    const gatekeeperDecision = buildDeterministicRoutingDecision({ title: ticket.title, body: ticket.body, matchedSeededComponents: [] });
+    gatekeeperDecision.missingElements[0]!.elementId = "KeyVaultSoftDeleteRecoveryCard";
+    gatekeeperDecision.missingElements[0]!.domain = "identity";
+
+    const calls: Array<{ tool: string; user: string }> = [];
+    const usage = { prompt: 10, completion: 10, total: 20 };
+    const chatSpy = spyOn(openai, "chatWithForcedTool").mockImplementation((async (_provider: unknown, _model: string, messages: Array<{ role: string; content: string }>, tool: { function: { name: string } }) => {
+      const user = messages.find((m) => m.role === "user")?.content ?? "";
+      calls.push({ tool: tool.function.name, user });
+      const respond = (args: unknown) => ({ toolName: tool.function.name, argumentsRaw: JSON.stringify(args), usage, latencyMs: 5, finishReason: "stop" });
+      switch (tool.function.name) {
+        case "emit_clarifying_questions":
+          return respond({ questions });
+        case "emit_element_routing_decision":
+          return respond(gatekeeperDecision);
+        case "emit_synthesized_dynamic_card":
+          return respond({
+            title: "Key Vault soft-delete recovery",
+            headline: "kv-contoso-fin-02 is soft-deleted with purge protection",
+            domain: "identity",
+            state: "warning",
+            gauges: [{ id: "g1", label: "Retention days left", used: 83, limit: 90, unit: "days", status: "warning" }],
+            diff: "- # vault soft-deleted\n+ Undo-AzKeyVaultRemoval -VaultName kv-contoso-fin-02 -ResourceGroupName rg-contoso-fin -Location westeurope",
+            recommendedActions: [{ id: "a1", label: "Recover vault", description: "Recover in place", command: "Undo-AzKeyVaultRemoval -VaultName kv-contoso-fin-02", kind: "stage-fix" }],
+          });
+        case "emit_custom_remediation_template": {
+          const recover = user.includes("Recover the old vault");
+          return respond({
+            title: recover ? "Recover soft-deleted kv-contoso-fin-02" : "Purge and recreate kv-contoso-fin-02",
+            summary: "Key Vault remediation",
+            powershellScript: recover
+              ? "[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$VaultName = 'kv-contoso-fin-02')\nif ($PSCmdlet.ShouldProcess($VaultName, 'Recover')) {\n  Undo-AzKeyVaultRemoval -VaultName $VaultName -ResourceGroupName rg-contoso-fin -Location westeurope\n}\n"
+              : "[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$VaultName = 'kv-contoso-fin-02')\nif ($PSCmdlet.ShouldProcess($VaultName, 'Purge')) {\n  Remove-AzKeyVault -VaultName $VaultName -InRemovedState -Force\n}\n",
+            terraformDiff: "",
+            graphPatch: "{}",
+            rollbackScript: "",
+            executionSteps: ["Recover the vault"],
+          });
+        }
+        default:
+          throw new Error(`unexpected tool ${tool.function.name}`);
+      }
+    }) as never);
+    const statusSpy = spyOn(correlator, "correlateUpstreamCloudStatus").mockImplementation((async (input: { ticketText: string; createdAt?: string }) => correlator.correlateUpstreamCloudStatusSync(input)) as never);
+    const mutableConfig = config as { forceLocal: boolean };
+    const mutableMeta = providers.meta as { hasKey: boolean };
+    const previous = { nodeEnv: process.env.NODE_ENV, forceLocal: mutableConfig.forceLocal, hasKey: mutableMeta.hasKey };
+    // The sub-agents only call models outside the test env with a key; the spy above is the model.
+    process.env.NODE_ENV = "development";
+    mutableConfig.forceLocal = false;
+    mutableMeta.hasKey = true;
+    let scenarioId: string | null = null;
+    try {
+      const entry = await triageCustomTicketAsync(ticket);
+      scenarioId = entry.scenarioId;
+      const script = entry.customRemediation?.powershellScript ?? "";
+      expect(script).toContain("Undo-AzKeyVaultRemoval");
+      expect(script).not.toContain("-InRemovedState");
+      expect(entry.clarifiedAnswers?.["question-2"]).toBe("Purge protection is enabled and retention has not expired");
+      expect(entry.clarifiedAnswers?.["question-3"]).toBe("Recover the old vault");
+
+      const order = calls.map((c) => c.tool);
+      expect(order.indexOf("emit_clarifying_questions")).toBe(0);
+      expect(order.indexOf("emit_element_routing_decision")).toBeLessThan(order.indexOf("emit_synthesized_dynamic_card"));
+      const synthCall = calls.find((c) => c.tool === "emit_synthesized_dynamic_card")!;
+      expect(JSON.parse(synthCall.user).missingElement.elementId).toBe("KeyVaultSoftDeleteRecoveryCard");
+      expect(JSON.parse(synthCall.user).clarifiedAnswers["question-3"]).toBe("Recover the old vault");
+      expect(entry.synthesizedElements?.[0]?.elementId).toBe("KeyVaultSoftDeleteRecoveryCard");
+      expect(entry.synthesizedElements?.[0]?.synthesisMeta.source).toBe("llm");
+      const steps = Object.fromEntries((entry.subAgentTasks ?? []).map((t) => [t.stepIndex, t]));
+      expect(steps[1]?.source).toBe("llm");
+      expect(steps[3]?.source).toBe("llm");
+      expect(steps[4]?.source).toBe("llm");
+    } finally {
+      process.env.NODE_ENV = previous.nodeEnv;
+      mutableConfig.forceLocal = previous.forceLocal;
+      mutableMeta.hasKey = previous.hasKey;
+      chatSpy.mockRestore();
+      statusSpy.mockRestore();
+      if (scenarioId) removeCustomTicket(scenarioId);
+    }
+  });
+});

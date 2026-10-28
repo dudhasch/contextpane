@@ -234,6 +234,8 @@ export const SubAgentTaskRecordSchema = z.object({
   status: z.enum(["completed", "running", "fallback"]),
   source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "fallback-on-error"]).optional(),
   latencyMs: z.number().int().nonnegative(),
+  /** When the step started, in ms after the pipeline started; absent for steps that never ran on a clock. */
+  startOffsetMs: z.number().int().nonnegative().optional(),
   tokensUsed: z.number().int().nonnegative().optional(),
   inputSummary: z.string(),
   outputSummary: z.string(),

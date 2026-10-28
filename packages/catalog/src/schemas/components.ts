@@ -520,6 +520,8 @@ export const SynthesizedDynamicCardSchema = z.object({
     reuseCount: z.number().int().positive().default(1),
     tsxStubPath: z.string(),
     synthesizedAt: z.string(),
+    /** "llm" when muse-wonder produced the card, "fallback" for the deterministic template. */
+    source: z.enum(["llm", "fallback"]).optional(),
   }),
   sourceRef: SourceRefSchema.nullable().default(null),
 });

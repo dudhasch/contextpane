@@ -554,6 +554,7 @@ export async function triageCustomTicketAsync(
     gatekeeperModel,
     cloudStatusCorrelation,
     clarifyingQuestions,
+    clarifiedAnswers: initialAnswers,
     synthesizedElements,
     customRemediation,
     subAgentTasks,
@@ -572,22 +573,12 @@ export async function triageCustomTicketAsync(
     ? ["SynthesizedDynamicCard"]
     : rawExtraction.components;
 
-  const initialAnswers: Record<string, string> = Object.fromEntries(
-    clarifyingQuestions.map((q) => {
-      const raw = input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
-      const matched = q.options.find(
-        (o) => o.value.toLowerCase() === raw.toLowerCase() || o.id.toLowerCase() === raw.toLowerCase() || o.label.toLowerCase() === raw.toLowerCase(),
-      );
-      return [q.id, matched ? matched.label : raw];
-    }),
-  );
-
   const extraction: TicketExtraction = hasMissingElements
     ? {
         ...rawExtraction,
         components: finalComponents,
         entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, `${gatekeeperModel} · N+k Catalog Gatekeeper`),
-        rationale: `Stage-1 ${gatekeeperModel} routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+        rationale: `Stage-1 ${gatekeeperModel} routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 ${synthesizedElements[0]?.synthesisMeta.synthesizerModel ?? "deterministic-template"} built the dynamic UI element`.slice(0, 300),
       }
     : rawExtraction;
 

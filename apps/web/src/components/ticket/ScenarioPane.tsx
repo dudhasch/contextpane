@@ -170,8 +170,12 @@ function UnifiedStatusAndAgentBar({
   const isBusy = triageStatus === "loading" || refiningGoal;
   const displayTasks = tasks.length > 0 ? tasks : FALLBACK_LIVE_TASKS;
   const completedCount = displayTasks.filter((t) => t.status === "completed").length;
+  // Steps with a start offset ran on one clock (S1, then S2 ∥ S3 ∥ S4, then S5): report wall clock, not the sum.
   const totalLatencyMs = useMemo(
-    () => displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0) || 42,
+    () =>
+      displayTasks.some((t) => t.startOffsetMs !== undefined)
+        ? Math.max(...displayTasks.map((t) => (t.startOffsetMs ?? 0) + (t.latencyMs || 0)))
+        : displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0) || 42,
     [displayTasks],
   );
   const hasAdvisory = Boolean(
@@ -265,6 +269,7 @@ function UnifiedStatusAndAgentBar({
                     }`}
                   >
                     <span>{isBusy ? "●" : "✓"} {stageName}</span>
+                    {!isBusy && t.startOffsetMs !== undefined && <span className="text-faint">+{t.startOffsetMs}·{t.latencyMs}ms</span>}
                   </button>
                   {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
                 </Fragment>
