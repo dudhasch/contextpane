@@ -70,8 +70,12 @@ export function TicketComposer() {
       setClarifierModel(res.modelUsed);
       const nextAnswers: Record<string, string> = { ...answers };
       for (const q of res.questions) {
-        if (!nextAnswers[q.id] && (q.selectedValue || q.options[0]?.value)) {
-          nextAnswers[q.id] = q.selectedValue ?? q.options[0]!.value;
+        if (!nextAnswers[q.id] && (q.selectedValue || q.options[0]?.label || q.options[0]?.value)) {
+          const raw = q.selectedValue ?? q.options[0]?.label ?? q.options[0]!.value;
+          const matched = q.options.find(
+            (o) => o.value.toLowerCase() === raw.toLowerCase() || o.id.toLowerCase() === raw.toLowerCase() || o.label.toLowerCase() === raw.toLowerCase(),
+          );
+          nextAnswers[q.id] = matched ? matched.label : raw;
         }
       }
       setAnswers(nextAnswers);
@@ -196,7 +200,13 @@ export function TicketComposer() {
             </div>
             <div className="space-y-2">
               {questions.map((q, idx) => {
-                const currentVal = answers[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+                const currentVal = answers[q.id] ?? q.options[0]?.label ?? q.selectedValue ?? "";
+                const isPresetOption = q.options.some(
+                  (opt) =>
+                    currentVal.toLowerCase() === opt.label.toLowerCase() ||
+                    currentVal.toLowerCase() === opt.value.toLowerCase() ||
+                    currentVal.toLowerCase() === opt.id.toLowerCase(),
+                );
                 return (
                   <div key={q.id} className="rounded border border-border-subtle bg-canvas/85 p-2 text-[11.5px]">
                     <div className="font-medium text-text">
@@ -204,12 +214,14 @@ export function TicketComposer() {
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {q.options.map((opt) => {
-                        const active = currentVal === opt.value;
+                        const active =
+                          currentVal.toLowerCase() === opt.label.toLowerCase() ||
+                          currentVal.toLowerCase() === opt.value.toLowerCase();
                         return (
                           <button
                             key={opt.id}
                             type="button"
-                            onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.value }))}
+                            onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.label }))}
                             title={opt.description}
                             className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-colors ${
                               active
@@ -225,10 +237,10 @@ export function TicketComposer() {
                     </div>
                     <input
                       type="text"
-                      value={currentVal}
+                      value={isPresetOption ? "" : currentVal}
                       onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                      placeholder={q.customHint ?? "Or type custom value…"}
-                      className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-mono text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                      placeholder={q.customHint ?? "Or type custom parameter…"}
+                      className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
                     />
                   </div>
                 );

@@ -420,7 +420,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
           source: "muse-spark-1.3 · N+k Catalog Gatekeeper",
           confidence: 1,
         })),
-        rationale: `Stage-1 muse-spark-1.3 flagged element_not_existent (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+        rationale: `Stage-1 muse-spark-1.3 routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
       }
     : rawExtraction;
 
@@ -451,7 +451,13 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
   });
   const initialAnswers: Record<string, string> = Object.fromEntries(
-    clarifyingQuestions.map((q) => [q.id, input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""]),
+    clarifyingQuestions.map((q) => {
+      const raw = input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
+      const matched = q.options.find(
+        (o) => o.value.toLowerCase() === raw.toLowerCase() || o.id.toLowerCase() === raw.toLowerCase() || o.label.toLowerCase() === raw.toLowerCase(),
+      );
+      return [q.id, matched ? matched.label : raw];
+    }),
   );
   const subAgentTasks = buildSubAgentPipelineRecords({
     scenarioId: id,
@@ -576,7 +582,13 @@ export async function triageCustomTicketAsync(
     : rawExtraction.components;
 
   const initialAnswers: Record<string, string> = Object.fromEntries(
-    clarifyingQuestions.map((q) => [q.id, input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""]),
+    clarifyingQuestions.map((q) => {
+      const raw = input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
+      const matched = q.options.find(
+        (o) => o.value.toLowerCase() === raw.toLowerCase() || o.id.toLowerCase() === raw.toLowerCase() || o.label.toLowerCase() === raw.toLowerCase(),
+      );
+      return [q.id, matched ? matched.label : raw];
+    }),
   );
 
   const extraction: TicketExtraction = hasMissingElements
@@ -592,7 +604,7 @@ export async function triageCustomTicketAsync(
           source: `${gatekeeperModel} · N+k Catalog Gatekeeper`,
           confidence: 1,
         })),
-        rationale: `Stage-1 ${gatekeeperModel} flagged element_not_existent (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+        rationale: `Stage-1 ${gatekeeperModel} routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
       }
     : rawExtraction;
 

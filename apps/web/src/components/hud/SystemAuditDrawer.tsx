@@ -10,16 +10,37 @@ import { RouterSavingsBody } from "./RouterSavings";
 /** One drawer for everything that is not the technical state of the scenario: router savings, audit ledger, providers. */
 export function SystemAuditDrawer() {
   const open = useWorkbench((s) => s.systemOpen);
+  const drawerOpen = useWorkbench((s) => s.drawerOpen);
   const tab = useWorkbench((s) => s.systemTab);
   const setOpen = useWorkbench((s) => s.setSystemOpen);
   const loadDrawerExtras = useWorkbench((s) => s.loadDrawerExtras);
+  const [catalog, setCatalog] = useState<DynamicCatalogResponse | null>(null);
+
+  const loadCatalog = () => {
+    api
+      .dynamicCatalog()
+      .then((res) => setCatalog(res))
+      .catch(() => undefined);
+  };
+
   useEffect(() => {
-    if (open) void loadDrawerExtras();
+    if (open) {
+      void loadDrawerExtras();
+      loadCatalog();
+    }
   }, [open, loadDrawerExtras]);
+
   if (!open) return null;
+  const elements = catalog?.catalog?.dynamicElements ?? [];
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-canvas/60" onClick={() => setOpen(false)}>
-      <aside className="flex h-full w-[600px] max-w-full animate-slide-in-right flex-col border-l border-border bg-surface shadow-popover" onClick={(e) => e.stopPropagation()}>
+    <div
+      className={`fixed inset-0 z-50 flex ${drawerOpen ? "justify-start pointer-events-none bg-transparent" : "justify-end bg-canvas/60"}`}
+      onClick={() => setOpen(false)}
+    >
+      <aside
+        className="pointer-events-auto flex h-full w-[600px] max-w-full animate-slide-in-right flex-col border-x border-border bg-surface shadow-popover"
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <Activity className="size-4 text-primary" />
           <span className="text-[13px] font-semibold">System &amp; Audit</span>
@@ -38,35 +59,29 @@ export function SystemAuditDrawer() {
           {tab === "audit" && <AuditLogBody />}
           {tab === "providers" && <ProvidersBody />}
           {tab === "skills" && <SkillsPiiBody />}
-          <SynthesizedElementsLedgerSection />
-          <OmegaPrimeTelemetrySection />
+          <SynthesizedElementsLedgerSection catalog={catalog} onRefresh={loadCatalog} />
+          <OmegaPrimeTelemetrySection catalogCount={elements.length} />
         </div>
       </aside>
     </div>
   );
 }
 
-function SynthesizedElementsLedgerSection() {
-  const [catalog, setCatalog] = useState<DynamicCatalogResponse | null>(null);
+function SynthesizedElementsLedgerSection({
+  catalog,
+  onRefresh,
+}: {
+  catalog: DynamicCatalogResponse | null;
+  onRefresh: () => void;
+}) {
   const [clearing, setClearing] = useState(false);
   const toast = useWorkbench((s) => s.toast);
-
-  const loadCatalog = () => {
-    api
-      .dynamicCatalog()
-      .then((res) => setCatalog(res))
-      .catch(() => undefined);
-  };
-
-  useEffect(() => {
-    loadCatalog();
-  }, []);
 
   const handleClear = async () => {
     setClearing(true);
     try {
       const res = await api.clearDynamicCatalog();
-      loadCatalog();
+      onRefresh();
       toast({
         tone: "info",
         title: `Cleared ${res.removed} synthesized UI element${res.removed === 1 ? "" : "s"}`,
@@ -140,7 +155,7 @@ const DEFAULT_SUB_AGENT_PIPELINE = [
   { stepIndex: 5, agentName: "Safety Verifier", role: "AST, -WhatIf & 1-Click Undo Check", modelId: "muse-spark-1.3", latencyMs: 35 },
 ] as const;
 
-function OmegaPrimeTelemetrySection() {
+function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) {
   const brief = useWorkbench((s) => s.brief);
   const layout = useWorkbench((s) => s.layout);
   const pii = useWorkbench((s) => s.piiMetrics);
@@ -151,7 +166,7 @@ function OmegaPrimeTelemetrySection() {
     brief?.subAgentTasks && brief.subAgentTasks.length > 0
       ? brief.subAgentTasks.map((t) => ({
           stepIndex: t.stepIndex,
-          agentName: t.agentName,
+          agentName: t.agentName.replace(/^\d+\.\s*/, ""),
           role: t.role,
           modelId: t.modelId,
           latencyMs: t.latencyMs,
@@ -159,6 +174,7 @@ function OmegaPrimeTelemetrySection() {
       : DEFAULT_SUB_AGENT_PIPELINE;
 
   const synthesizedCount =
+    catalogCount ||
     layout?.components.filter((c) => c.type === "SynthesizedDynamicCard").length ||
     brief?.elementRouting?.missingElements.length ||
     0;
@@ -180,8 +196,8 @@ function OmegaPrimeTelemetrySection() {
           {subAgents.map((agent) => (
             <div key={agent.stepIndex} className="flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
               <div className="flex min-w-0 items-center gap-1.5">
-                <span className="font-mono text-[10px] text-faint">{agent.stepIndex}.</span>
-                <span className="font-semibold text-text">{agent.agentName}</span>
+                <span className="shrink-0 font-mono text-[10px] text-faint">{agent.stepIndex}.</span>
+                <span className="shrink-0 font-semibold whitespace-nowrap text-text">{agent.agentName}</span>
                 <span className="truncate text-[10px] text-muted">· {agent.role}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10px]">

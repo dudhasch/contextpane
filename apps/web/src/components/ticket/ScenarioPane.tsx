@@ -19,6 +19,7 @@ import { ResolutionNoteBox } from "./ResolutionNote";
 export function ScenarioPane() {
   const brief = useWorkbench((s) => s.brief);
   const status = useWorkbench((s) => s.briefStatus);
+  const triageStatus = useWorkbench((s) => s.triageStatus);
   if (!brief) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted">
@@ -26,10 +27,11 @@ export function ScenarioPane() {
       </div>
     );
   }
+  const hasTasks = Boolean((brief.subAgentTasks && brief.subAgentTasks.length > 0) || triageStatus === "loading");
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-4" data-testid="scenario-pane">
       <ScenarioHeader brief={brief} />
-      {brief.subAgentTasks && brief.subAgentTasks.length > 0 && <SubAgentTaskStrip tasks={brief.subAgentTasks} />}
+      {hasTasks && <SubAgentTaskStrip tasks={brief.subAgentTasks ?? []} />}
       {brief.cloudStatusCorrelation && <UpstreamCloudStatusBanner correlation={brief.cloudStatusCorrelation} />}
       {brief.clarifyingQuestions && brief.clarifyingQuestions.length > 0 && (
         <ProjectGoalClarifierCard
@@ -101,15 +103,16 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
         <Pill tone={resolved ? "healthy" : drop ? "meta" : ticket ? "critical" : "warning"} icon={resolved ? <Check /> : drop ? <Inbox /> : <AlertOctagon />} mono={false} className="font-semibold tracking-wide" flashKey={resolved ? "resolved" : "open"}>
           {closed ? "CLOSED IN PSA ✓" : resolved ? "RESOLVED & VERIFIED ✓" : open}
         </Pill>
-        {unscripted && (
-          <Pill tone="primary" icon={drop ? <FolderInput /> : <Sparkles />} title={brief.extraction?.rationale}>
+        {unscripted ? (
+          <Pill tone="primary" icon={drop ? <FolderInput /> : <Sparkles />} title={cleanInlineSlugs(brief.extraction?.rationale ?? "")}>
             {drop ? "triaged from drop" : "unscripted"} ·{" "}
             {brief.elementRouting?.missingElements[0]
               ? `dynamic UI (${brief.elementRouting.missingElements[0].elementId})`
               : `base ${brief.extraction?.baseScenarioId}`}
           </Pill>
+        ) : (
+          <span className="truncate text-[11px] text-faint">{brief.origin}</span>
         )}
-        <span className="truncate text-[11px] text-faint">{brief.origin}</span>
       </div>
       <h2 className="mt-1.5 text-[15px] leading-snug font-semibold">{brief.title}</h2>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
@@ -128,23 +131,39 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
   );
 }
 
+const FALLBACK_LIVE_TASKS: SubAgentTaskRecord[] = [
+  { stepIndex: 1, task: "scope-and-questions", agentName: "1. Goal Clarifier", role: "Target Scope & Clarifying Questions", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 0, inputSummary: "Synthesizing clarifying options...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 2, task: "telemetry-and-status", agentName: "2. Telemetry Scout", role: "Live Graph & ARM Status Scout", modelId: "muse-spark-1.3", status: "completed", latencyMs: 0, inputSummary: "Correlating upstream cloud status...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 3, task: "ui-element-synthesis", agentName: "3. UI Architect", role: "N+k Dynamic Card Synthesis", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 0, inputSummary: "Synthesizing domain-specific card...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 4, task: "script-and-iac-synthesis", agentName: "4. IaC & PS7 Coder", role: "PowerShell 7 & Terraform Patch", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 0, inputSummary: "Generating idempotent remediation...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Safety Verifier", role: "AST, -WhatIf & 1-Click Undo", modelId: "muse-spark-1.3", status: "completed", latencyMs: 0, inputSummary: "Verifying pre-flight invariants...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+];
+
 /** Per-Task Sub-Agent Pipeline strip showing the 5 specialized sub-agents that triaged and synthesized the scenario. */
 function SubAgentTaskStrip({ tasks }: { tasks: SubAgentTaskRecord[] }) {
   const [selectedStep, setSelectedStep] = useState<number | null>(null);
-  const activeTask = tasks.find((t) => t.stepIndex === selectedStep) ?? null;
+  const triageStatus = useWorkbench((s) => s.triageStatus);
+  const refiningGoal = useWorkbench((s) => s.refiningGoal);
+  const isBusy = triageStatus === "loading" || refiningGoal;
+  const displayTasks = tasks.length > 0 ? tasks : FALLBACK_LIVE_TASKS;
+  const activeTask = displayTasks.find((t) => t.stepIndex === selectedStep) ?? null;
 
   return (
     <section
-      className="rounded-lg border border-border-subtle bg-surface/90 px-2.5 py-2 text-[11px]"
+      className={`rounded-lg border px-2.5 py-2 text-[11px] transition-colors ${
+        isBusy ? "border-primary/60 bg-primary/10" : "border-border-subtle bg-surface/90"
+      }`}
       data-testid="subagent-task-strip"
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        <Bot className="size-3.5 shrink-0 text-primary" />
+        <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
         <span className="font-semibold text-text">
-          Sub-Agent Task Pipeline ({tasks.filter((t) => t.status === "completed").length}/{tasks.length} Completed)
+          {isBusy
+            ? "Sub-Agent Task Pipeline (Synthesizing Live via muse-wonder-1.0...)"
+            : `Sub-Agent Task Pipeline (${displayTasks.filter((t) => t.status === "completed").length}/${displayTasks.length} Completed)`}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-1">
-          {tasks.map((t, idx) => {
+          {displayTasks.map((t, idx) => {
             const isSelected = selectedStep === t.stepIndex;
             return (
               <Fragment key={t.stepIndex}>
@@ -154,14 +173,16 @@ function SubAgentTaskStrip({ tasks }: { tasks: SubAgentTaskRecord[] }) {
                   data-testid={`subagent-pill-${t.stepIndex}`}
                   title={`${t.role} (${t.modelId}) · ${t.latencyMs} ms — click to inspect`}
                   className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
-                    isSelected
-                      ? "border-primary bg-primary/20 font-semibold text-primary"
-                      : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                    isBusy
+                      ? "animate-pulse border-primary/60 bg-primary/20 font-semibold text-primary"
+                      : isSelected
+                        ? "border-primary bg-primary/20 font-semibold text-primary"
+                        : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
                   }`}
                 >
-                  <span>✓ {t.agentName}</span>
+                  <span>{isBusy ? "●" : "✓"} {t.agentName}</span>
                 </button>
-                {idx < tasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
+                {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
               </Fragment>
             );
           })}
@@ -183,14 +204,29 @@ function SubAgentTaskStrip({ tasks }: { tasks: SubAgentTaskRecord[] }) {
           </div>
           <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">
             <span className="font-mono text-faint">Input:</span>
-            <span className="text-muted">{activeTask.inputSummary}</span>
+            <span className="text-muted">{cleanInlineSlugs(activeTask.inputSummary)}</span>
             <span className="font-mono text-faint">Output:</span>
-            <span className="text-text font-medium">{activeTask.outputSummary}</span>
+            <span className="text-text font-medium">{cleanInlineSlugs(activeTask.outputSummary)}</span>
           </div>
         </div>
       )}
     </section>
   );
+}
+
+function formatSlugWord(w: string): string {
+  if (/^(vm|rg|az|ca|spn|sku|dns|bgp|iam|pim|mfa|arm|rbac|oidc|kv|pr|id|ip|nsg|avd)$/i.test(w)) {
+    return w.toUpperCase();
+  }
+  return w.charAt(0).toUpperCase() + w.slice(1);
+}
+
+function cleanInlineSlugs(text: string): string {
+  return text
+    .replace(/\belement_not_existent\b/gi, "dynamic UI synthesis")
+    .replace(/\b([a-z]{2,}(?:_[a-z0-9]{2,})+)\b/g, (match) =>
+      match.split("_").map(formatSlugWord).join(" "),
+    );
 }
 
 function humanizeClarifierSlug(raw: string, q?: ClarifyingQuestion): string {
@@ -204,16 +240,16 @@ function humanizeClarifierSlug(raw: string, q?: ClarifyingQuestion): string {
         o.label.toLowerCase() === trimmed.toLowerCase(),
     );
     if (matchedOpt && !/^[a-z0-9]+(?:[_-][a-z0-9]+)+$/i.test(matchedOpt.label)) {
-      return matchedOpt.label;
+      return cleanInlineSlugs(matchedOpt.label);
     }
   }
   if (/^[a-z0-9]+(?:[_-][a-z0-9]+)+$/i.test(trimmed)) {
     return trimmed
       .split(/[_-]+/)
-      .map((w) => (w.length <= 3 && /^(vm|rg|az|ca|spn|sku|dns|bgp|iam|pim|mfa|arm)$/i.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+      .map(formatSlugWord)
       .join(" ");
   }
-  return trimmed;
+  return cleanInlineSlugs(trimmed);
 }
 
 /** Interactive Project & Goal Clarifier card allowing 1-click option pill selection or custom input to regenerate the plan & remediation. */
@@ -228,6 +264,7 @@ function ProjectGoalClarifierCard({
 }) {
   const refineGoal = useWorkbench((s) => s.refineGoal);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
+  const lastRefinedAt = useWorkbench((s) => s.lastRefinedAt);
   const [expanded, setExpanded] = useState(true);
   const [draft, setDraft] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -260,6 +297,15 @@ function ProjectGoalClarifierCard({
         <span className="rounded border border-primary/35 bg-canvas/75 px-1.5 py-0.5 font-mono text-[10px] text-primary">
           Sub-Agent 1 · muse-wonder-1.0
         </span>
+        {lastRefinedAt && !refiningGoal && (
+          <span
+            className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-300"
+            data-testid="clarifier-refreshed-badge"
+          >
+            <Check className="size-2.5" />
+            Refreshed {lastRefinedAt}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -270,11 +316,8 @@ function ProjectGoalClarifierCard({
       </div>
 
       {expanded && (
-        <div className="mt-2 space-y-2">
-          <p className="text-[11px] text-muted">
-            Select target scope options or type custom parameters below — Sub-Agents 3 &amp; 4 will immediately re-synthesize the resolution plan, UI card, and PowerShell/IaC remediation.
-          </p>
-          <div className="space-y-1.5">
+        <div className="mt-1.5 space-y-1.5">
+          <div className="space-y-1">
             {questions.map((q, idx) => {
               const rawVal = draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
               const currentVal = humanizeClarifierSlug(rawVal, q);
@@ -287,16 +330,18 @@ function ProjectGoalClarifierCard({
               return (
                 <div
                   key={q.id}
-                  className="rounded-md border border-border-subtle bg-canvas/85 p-2"
+                  className="rounded-md border border-border-subtle bg-canvas/85 px-2 py-1.5"
                   data-testid={`clarifier-question-${q.id}`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-text">
-                      {idx + 1}. {q.question}
+                      {idx + 1}. {cleanInlineSlugs(q.question)}
                     </span>
-                    <span className="font-mono text-[10px] text-faint">{q.category}</span>
+                    <span className="rounded border border-border-subtle bg-surface px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted">
+                      {humanizeClarifierSlug(q.category)}
+                    </span>
                   </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
                     {q.options.map((opt) => {
                       const cleanLabel = humanizeClarifierSlug(opt.label, q);
                       const active =
@@ -309,9 +354,9 @@ function ProjectGoalClarifierCard({
                           data-testid={`clarifier-opt-${q.id}-${opt.id}`}
                           onClick={() => setDraft((prev) => ({ ...prev, [q.id]: cleanLabel }))}
                           title={opt.description}
-                          className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-colors ${
+                          className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-all ${
                             active
-                              ? "border-primary bg-primary/20 font-semibold text-primary"
+                              ? "border-primary bg-primary/22 font-semibold text-primary shadow-[0_0_8px_rgba(56,189,248,0.2)]"
                               : "border-border bg-surface text-muted hover:border-primary/40 hover:text-text"
                           }`}
                         >
@@ -320,22 +365,36 @@ function ProjectGoalClarifierCard({
                         </button>
                       );
                     })}
+                    <input
+                      type="text"
+                      value={isPresetOption ? "" : currentVal}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                      placeholder={q.customHint ?? "Or type custom parameter…"}
+                      data-testid={`clarifier-input-${q.id}`}
+                      className="h-6 min-w-[140px] flex-1 rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    value={isPresetOption ? "" : currentVal}
-                    onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                    placeholder={q.customHint ?? "Or type custom parameter…"}
-                    data-testid={`clarifier-input-${q.id}`}
-                    className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
-                  />
                 </div>
               );
             })}
           </div>
-          <div className="flex items-center justify-end gap-2 pt-0.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+            {refiningGoal ? (
+              <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-primary">
+                <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                Sub-Agents 3 &amp; 4 re-synthesizing card &amp; PowerShell/IaC...
+              </span>
+            ) : lastRefinedAt ? (
+              <span className="font-mono text-[10.5px] text-emerald-300">
+                ✓ Plan, Dynamic UI &amp; Remediation updated at {lastRefinedAt}
+              </span>
+            ) : (
+              <span className="text-[10.5px] text-muted">
+                Click any option or type custom parameters to re-synthesize plan &amp; scripts.
+              </span>
+            )}
             <Button
-              size="sm"
+              size="xs"
               variant="primary"
               icon={<Sparkles />}
               loading={refiningGoal}
@@ -494,7 +553,7 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
         )}
       </div>
       <p className="text-[13px] leading-relaxed text-text" data-testid="summary-text">
-        <EnrichedText text={brief.summary} entities={NO_ENTITIES} selections={selections} />
+        <EnrichedText text={cleanInlineSlugs(brief.summary)} entities={NO_ENTITIES} selections={selections} />
       </p>
       <div className="mt-2.5 mb-1 flex items-center gap-1.5 text-[11px] text-muted">
         <ListChecks className="size-3.5" />
@@ -587,9 +646,9 @@ function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep;
         title="Open the card for this step"
         data-testid="plan-step-text"
       >
-        <span className={`mr-1.5 text-[12px] font-semibold ${CAT_TEXT}`}>{step.title}:</span>
+        <span className={`mr-1.5 text-[12px] font-semibold ${CAT_TEXT}`}>{cleanInlineSlugs(step.title)}:</span>
         <span className={`text-[12.5px] ${checked ? "text-muted line-through decoration-healthy/60" : "text-text"}`}>
-          <EnrichedText text={step.detail} entities={NO_ENTITIES} selections={selections} />
+          <EnrichedText text={cleanInlineSlugs(step.detail)} entities={NO_ENTITIES} selections={selections} />
         </span>
       </div>
       <Button

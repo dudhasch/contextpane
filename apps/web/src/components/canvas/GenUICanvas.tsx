@@ -1,6 +1,7 @@
-import { ChevronRight, Database, LayoutGrid, Pin, Undo2, X } from "lucide-react";
+import { Bot, Check, ChevronRight, Clock3, Database, LayoutGrid, Pin, Sparkles, Undo2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { LayoutComponent } from "@contextpane/catalog";
-import { selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
+import { selectActiveTimelineSlice, selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
 import { IaCDriftBannerCard } from "./IaCDriftBanner";
 import { IntuneDriftCardView } from "./IntuneDriftCard";
@@ -24,20 +25,26 @@ export function GenUICanvas() {
   const miniDashboards = useWorkbench((s) => s.miniDashboards);
   const exploreStatus = useWorkbench((s) => s.exploreStatus);
   const activeExploreText = useWorkbench((s) => s.activeExploreText);
+  const triageStatus = useWorkbench((s) => s.triageStatus);
+  const pendingTriageTitle = useWorkbench((s) => s.pendingTriageTitle);
+  const refiningGoal = useWorkbench((s) => s.refiningGoal);
+  const briefTitle = useWorkbench((s) => s.brief?.title);
   const components = visibleComponents(layout, filter);
 
   return (
     <div className="flex h-full flex-col">
       <TenantBreadcrumb cards={components.length} customCards={miniDashboards.length} />
       <TimeTravelScrubber />
+      <HistoricalSnapshotBanner />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
+        {(triageStatus === "loading" || refiningGoal) && (
+          <SubAgentSynthesisSkeleton
+            mode={triageStatus === "loading" ? "triage" : "refine"}
+            title={triageStatus === "loading" ? (pendingTriageTitle ?? "Custom Incident / Project Goal") : (briefTitle ?? "Refining Scope & Plan")}
+          />
+        )}
         {exploreStatus === "loading" && (
-          <div className="card flex items-center gap-2 border-l-4 border-l-selection text-[12px] text-selection" data-testid="mini-dashboard-loading">
-            <span className="size-3 animate-spin rounded-full border-2 border-selection border-t-transparent" />
-            <span>
-              🧠 muse-wonder-1.0 is synthesizing custom context UI for &quot;{activeExploreText ?? "selection"}&quot;...
-            </span>
-          </div>
+          <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "selection"} />
         )}
         {miniDashboards.map((m) => (
           <ContextualMiniDashboardCard key={m.id} entry={m} />
@@ -47,6 +54,182 @@ export function GenUICanvas() {
         {layout && components.map((c) => <Component key={c.id} component={c} />)}
         {layout && components.length === 0 && status === "ready" && <div className="card text-sm text-muted">No components match the current filter.</div>}
       </div>
+    </div>
+  );
+}
+
+const SUB_AGENT_SYNTHESIS_STAGES = [
+  { step: 1, name: "Goal Clarifier", role: "Target Scope & Clarifying Options", model: "muse-wonder-1.0" },
+  { step: 2, name: "Telemetry Scout", role: "Live Graph, ARM & Cloud Status Correlation", model: "muse-spark-1.3" },
+  { step: 3, name: "UI Architect", role: "N+k Dynamic Card & Block Synthesis", model: "muse-wonder-1.0" },
+  { step: 4, name: "IaC & PS7 Coder", role: "PowerShell 7, Graph JSON & Terraform Diff", model: "muse-wonder-1.0" },
+  { step: 5, name: "Safety Verifier", role: "AST, -WhatIf Guard & 1-Click Undo Verification", model: "muse-spark-1.3" },
+] as const;
+
+function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine"; title: string }) {
+  const [elapsedMs, setElapsedMs] = useState(100);
+  useEffect(() => {
+    const started = performance.now();
+    const timer = window.setInterval(() => {
+      setElapsedMs(Math.round(performance.now() - started));
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsedSec = (elapsedMs / 1000).toFixed(1);
+  const activeStageIndex = Math.min(4, Math.floor(elapsedMs / 1200));
+
+  return (
+    <section
+      className="card animate-fade-in border-l-4 border-l-primary bg-surface/95 p-3 shadow-popover"
+      data-testid="subagent-synthesis-skeleton"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="size-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <Bot className="size-4 text-primary" />
+          <span className="text-[12.5px] font-semibold text-text">
+            {mode === "triage"
+              ? "5-Stage Sub-Agent Pipeline · Synthesizing Custom Ticket & Dynamic UI"
+              : "Re-Synthesizing Resolution Plan, UI Card & Remediation Scripts"}
+          </span>
+        </div>
+        <span
+          className="inline-flex items-center gap-1.5 rounded-pill border border-primary/45 bg-primary/15 px-2 py-0.5 font-mono text-[10.5px] font-semibold text-primary"
+          data-testid="synthesis-elapsed-timer"
+        >
+          <Sparkles className="size-3 animate-pulse" />
+          muse-wonder-1.0 · {elapsedSec}s elapsed
+        </span>
+      </div>
+
+      <div className="mt-1 truncate text-[11.5px] text-muted">
+        Target: <span className="font-medium text-text">{title}</span>
+      </div>
+
+      <div className="mt-2.5 grid gap-1.5 sm:grid-cols-5">
+        {SUB_AGENT_SYNTHESIS_STAGES.map((st, idx) => {
+          const done = idx < activeStageIndex;
+          const active = idx === activeStageIndex;
+          return (
+            <div
+              key={st.step}
+              className={`rounded-md border p-2 text-[10.5px] transition-all ${
+                done
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                  : active
+                    ? "animate-pulse border-primary bg-primary/15 text-text shadow-[0_0_12px_rgba(56,189,248,0.2)]"
+                    : "border-border-subtle bg-canvas/60 text-faint"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-1 font-mono text-[10px]">
+                <span className="font-semibold">
+                  {done ? "✓" : active ? "●" : st.step} {st.name}
+                </span>
+              </div>
+              <div className="mt-0.5 truncate text-[10px] opacity-85">{st.role}</div>
+              <div className="mt-1 font-mono text-[9.5px] text-primary/90">{st.model}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Shimmer skeleton preview of upcoming SynthesizedDynamicCard */}
+      <div className="mt-2.5 grid grid-cols-3 gap-2 rounded-md border border-border-subtle bg-canvas/60 p-2.5">
+        <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
+          <div className="h-2.5 w-2/3 animate-pulse rounded bg-elevated" />
+          <div className="h-2 w-full animate-pulse rounded bg-primary/25" />
+          <div className="h-2 w-4/5 animate-pulse rounded bg-elevated" />
+        </div>
+        <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
+          <div className="h-2.5 w-3/4 animate-pulse rounded bg-elevated" />
+          <div className="h-2 w-full animate-pulse rounded bg-teal-500/25" />
+          <div className="h-2 w-1/2 animate-pulse rounded bg-elevated" />
+        </div>
+        <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
+          <div className="h-2.5 w-1/2 animate-pulse rounded bg-elevated" />
+          <div className="h-2 w-full animate-pulse rounded bg-emerald-500/25" />
+          <div className="h-2 w-3/5 animate-pulse rounded bg-elevated" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }) {
+  const [elapsedMs, setElapsedMs] = useState(100);
+  useEffect(() => {
+    const started = performance.now();
+    const timer = window.setInterval(() => {
+      setElapsedMs(Math.round(performance.now() - started));
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, []);
+  const elapsedSec = (elapsedMs / 1000).toFixed(1);
+
+  return (
+    <div
+      className="card space-y-2 border-l-4 border-l-selection bg-surface/95 p-3 text-[12px] text-selection"
+      data-testid="mini-dashboard-loading"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-medium">
+          <span className="size-3.5 animate-spin rounded-full border-2 border-selection border-t-transparent" />
+          <span>
+            🧠 muse-wonder-1.0 is synthesizing custom context UI for &quot;{selectionText}&quot;...
+          </span>
+        </div>
+        <span className="rounded-pill border border-selection/40 bg-selection/12 px-2 py-0.5 font-mono text-[10.5px]">
+          {elapsedSec}s elapsed · 4-Mode Synthesis
+        </span>
+      </div>
+      <div className="grid grid-cols-4 gap-1.5">
+        {[1, 2, 3, 4].map((k) => (
+          <div key={k} className="rounded border border-border-subtle bg-canvas/70 p-2">
+            <div className="h-2 w-1/2 animate-pulse rounded bg-elevated" />
+            <div className="mt-1.5 h-3.5 w-2/3 animate-pulse rounded bg-selection/25" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HistoricalSnapshotBanner() {
+  const timeline = useWorkbench((s) => s.timeline);
+  const activeSlice = useWorkbench(selectActiveTimelineSlice);
+  const scenarioId = useWorkbench((s) => s.scenarioId);
+  const cardCount = useWorkbench((s) => s.layout?.components.length ?? 1);
+  const select = useWorkbench((s) => s.selectTimelineSlice);
+  if (!timeline || !activeSlice || activeSlice.relativeLabel === "NOW" || activeSlice.kind === "now") {
+    return null;
+  }
+  const nowSlice = timeline.slices.find((s) => s.relativeLabel === "NOW" || s.kind === "now") ?? timeline.slices.at(-2) ?? timeline.slices.at(-1);
+  return (
+    <div
+      className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-500/40 bg-amber-500/12 px-3 py-1.5 text-[11.5px] text-amber-200"
+      data-testid="historical-snapshot-banner"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <Clock3 className="size-3.5 shrink-0 text-amber-400" />
+        <span className="font-semibold text-amber-300">
+          Historical Snapshot: {formatTimelineStepLabel(activeSlice)}
+        </span>
+        <span className="truncate text-amber-200/90">
+          — {formatTimelineStepDescription(activeSlice, scenarioId, cardCount)} (Pre-incident tenant posture)
+        </span>
+      </div>
+      {nowSlice && (
+        <button
+          type="button"
+          onClick={() => select(nowSlice.id)}
+          data-testid="return-to-now-button"
+          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-amber-400/50 bg-amber-500/20 px-2 font-mono text-[10.5px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/30"
+        >
+          <Check className="size-3" />
+          Return to Now
+        </button>
+      )}
     </div>
   );
 }
@@ -61,12 +244,18 @@ function formatTimelineStepLabel(s: { kind?: string; relativeLabel: string; time
   return s.label;
 }
 
-function formatTimelineStepDescription(s: { kind?: string; relativeLabel: string; state: { summary: string } }, scenarioId: string): string {
-  const isAvd = scenarioId === "INC-4092" || scenarioId.startsWith("CUSTOM-") || scenarioId.startsWith("ERP-");
+function formatTimelineStepDescription(
+  s: { kind?: string; relativeLabel: string; state: { summary: string } },
+  scenarioId: string,
+  cardCount = 3,
+): string {
+  const isAvd = scenarioId === "INC-4092" || scenarioId.startsWith("ERP-");
   if (s.kind === "baseline" || s.relativeLabel === "T-18m") return "Healthy baseline · 0 issues";
   if (s.kind === "drift" || s.relativeLabel === "T-14m") return isAvd ? "Drift introduced · 3 users & port 3389" : "Drift introduced · Config changed";
   if (s.kind === "first-failure" || s.relativeLabel === "T-06m") return isAvd ? "First AVD sign-in error (53003)" : "First user or device error";
-  if (s.kind === "now" || s.relativeLabel === "NOW") return isAvd ? "Active incident · 3 cards affected" : "Active incident · Needs fix";
+  if (s.kind === "now" || s.relativeLabel === "NOW") {
+    return `Active incident · ${cardCount} ${cardCount === 1 ? "card" : "cards"} mounted`;
+  }
   if (s.kind === "counterfactual" || s.relativeLabel === "T+Fix") return "Preview after fix · All healthy";
   return s.state.summary;
 }
@@ -76,6 +265,7 @@ function TimeTravelScrubber() {
   const timeline = useWorkbench((s) => s.timeline);
   const sliceId = useWorkbench((s) => s.timelineSliceId);
   const scenarioId = useWorkbench((s) => s.scenarioId);
+  const cardCount = useWorkbench((s) => s.layout?.components.length ?? 1);
   const select = useWorkbench((s) => s.selectTimelineSlice);
   const load = useWorkbench((s) => s.loadDrawerExtras);
   const convergence = useWorkbench(selectConvergence);
@@ -122,7 +312,7 @@ function TimeTravelScrubber() {
         </div>
       </div>
       {active && !convergence && (
-        <span className="shrink-0 whitespace-nowrap text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId)}</span>
+        <span className="shrink-0 whitespace-nowrap text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId, cardCount)}</span>
       )}
       {convergence && (
         <button

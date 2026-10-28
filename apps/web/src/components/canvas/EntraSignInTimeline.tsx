@@ -166,7 +166,9 @@ function SignInList({ events: all }: { events: SignInEvent[] }) {
                       <Pill tone="healthy" icon={<ShieldCheck />} mono={false}>
                         {e.errorCodeLabel && !/blocked|53003|failure|error|7000222/i.test(e.errorCodeLabel)
                           ? e.errorCodeLabel
-                          : "AVD Sign-In OK · Compliant"}
+                          : /virtual desktop|\bavd\b/i.test(e.appDisplayName)
+                            ? "AVD Sign-In OK · Compliant"
+                            : "Sign-In OK · Compliant"}
                       </Pill>
                     ) : e.errorCodeLabel ? (
                       <Pill tone={e.status === "interrupted" ? "warning" : "critical"}>{e.errorCodeLabel}</Pill>

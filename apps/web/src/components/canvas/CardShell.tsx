@@ -143,7 +143,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
                     role="tab"
                     aria-selected={t.id === tab}
                     onClick={() => setTab(type, t.id)}
-                    className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-2 py-1 text-[11.5px] ${t.id === tab ? "border-[var(--cat)] font-medium text-text" : "border-transparent text-muted hover:text-text"}`}
+                    className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-2 py-1 text-[11.5px] ${t.id === tab ? `${converged || sliceHealthy ? "border-healthy" : "border-[var(--cat)]"} font-medium text-text` : "border-transparent text-muted hover:text-text"}`}
                   >
                     {t.label}
                     {t.badge !== undefined && <span className="rounded bg-surface px-1 font-mono text-[10px] text-faint">{t.badge}</span>}
@@ -156,7 +156,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
             <div className="flex min-w-0 items-center gap-1.5 pb-1">
               {triggeredBy.length > 0 && (
                 <span
-                  className={`hidden h-5 min-w-0 items-center gap-1 truncate rounded border px-1.5 text-[10.5px] lg:inline-flex ${CAT_CHIP}`}
+                  className={`hidden h-5 min-w-0 items-center gap-1 truncate rounded border px-1.5 text-[10.5px] lg:inline-flex ${converged || sliceHealthy ? "border-healthy/35 bg-healthy/10 text-healthy" : CAT_CHIP}`}
                   title={`Triggered by: ${triggeredBy.join(", ")}`}
                 >
                   <Link2 className="size-3 shrink-0" />

@@ -243,6 +243,10 @@ export function SynthesizedDynamicCard({
 
   const eventTabLabel = "Activity & Audit Log";
   const diffTabLabel = "Configuration & IaC Diff";
+  const quotaTabLabel =
+    quotaBlock && quotaBlock.title && quotaBlock.title.length <= 28
+      ? quotaBlock.title
+      : "State & Capacity Metrics";
 
   return (
     <CardShell
@@ -251,32 +255,14 @@ export function SynthesizedDynamicCard({
       title={props.title}
       state={props.state}
       triggeredBy={triggeredBy}
-      source={`Synthesized UI (${props.elementId})`}
-      codeLens={props.sourceRef}
       tabs={[
         { id: "all", label: "Full Diagnostic View", badge: props.blocks.length },
-        ...(quotaBlock ? [{ id: "quota-gauges", label: "Quota & Capacity", badge: quotaBlock.gauges.length }] : []),
+        ...(quotaBlock ? [{ id: "quota-gauges", label: quotaTabLabel, badge: quotaBlock.gauges.length }] : []),
         ...(policyBlock ? [{ id: "policy-chain", label: "Policy & State Chain", badge: policyBlock.hops.length }] : []),
         ...(diffBlock ? [{ id: "config-diff", label: diffTabLabel }] : []),
         ...(eventBlock ? [{ id: "event-stream", label: eventTabLabel, badge: eventBlock.events.length }] : []),
       ]}
-      summary={
-        <div className="space-y-1.5">
-          <div className="text-[12.5px] leading-snug text-text">{props.headline}</div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[10.5px]">
-            <span className="inline-flex items-center gap-1 rounded border border-teal-500/35 bg-teal-500/10 px-1.5 py-0.5 font-mono text-teal-300">
-              <Sparkles className="size-3" />
-              Stage 1 ({meta.gatekeeperModel}) → Stage 2 ({meta.synthesizerModel})
-            </span>
-            <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-mono text-muted">
-              {meta.reusedFromCatalog ? `Reused from dynamic-catalog.json (×${meta.reuseCount})` : "Persisted to data/dynamic-catalog.json"}
-            </span>
-            <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-mono text-faint">
-              {meta.tsxStubPath}
-            </span>
-          </div>
-        </div>
-      }
+      summary={<div className="text-[12.5px] leading-snug text-text">{props.headline}</div>}
       primaryAction={
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
@@ -321,13 +307,20 @@ export function SynthesizedDynamicCard({
                 <Stat label="Primitives:" tone="healthy">
                   {props.requiredPrimitives.join(" · ")}
                 </Stat>
+                <span className="inline-flex items-center gap-1 rounded border border-teal-500/35 bg-teal-500/10 px-1.5 py-0.5 font-mono text-[10px] text-teal-300">
+                  <Sparkles className="size-2.5" />
+                  {meta.gatekeeperModel} → {meta.synthesizerModel}
+                </span>
+                <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                  {meta.reusedFromCatalog ? `Reused from dynamic-catalog.json (×${meta.reuseCount})` : "Persisted to dynamic-catalog.json"}
+                </span>
               </div>
               <input
                 type="search"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
                 placeholder={dynamicFilterPlaceholder}
-                className="h-6 rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[11px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
+                className="h-6 min-w-[235px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[11px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
               />
             </div>
 

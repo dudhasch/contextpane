@@ -11,7 +11,7 @@
       "elementId": "CantRecreateMyKeyvaultAfterCard",
       "title": "Can't Recreate Key Vault After Deletion",
       "domain": "azure",
-      "reason": "No existing catalog element handles soft-deleted Key Vault blocking recreation - requires recovery or purge workflow",
+      "reason": "No existing element handles soft-deleted Key Vault name conflict for kv-contoso-fin-prod-01 blocking recreation",
       "requiredPrimitives": [
         "quota-gauges",
         "policy-chain",
@@ -19,8 +19,8 @@
         "config-diff",
         "event-stream"
       ],
-      "createdAt": "2026-10-28T01:07:13.344Z",
-      "lastUsedAt": "2026-10-28T01:07:29.051Z",
+      "createdAt": "2026-10-28T07:54:52.069Z",
+      "lastUsedAt": "2026-10-28T07:56:26.868Z",
       "reuseCount": 2,
       "gatekeeperModel": "muse-spark-1.3",
       "synthesizerModel": "muse-wonder-1.0",
@@ -28,9 +28,9 @@
       "cardTemplate": {
         "elementId": "CantRecreateMyKeyvaultAfterCard",
         "title": "Can't Recreate Key Vault After Deletion",
-        "headline": "Soft-deleted vault with purge protection is holding the name — purge it in removed state, then recreate clean",
+        "headline": "kv-contoso-fin-prod-01 is soft-deleted with purge protection in rg-contoso-finance-prod — recover it to preserve data instead of purging and recreating.",
         "domain": "azure",
-        "reason": "No existing catalog element handles soft-deleted Key Vault blocking recreation - requires recovery or purge workflow",
+        "reason": "No existing element handles soft-deleted Key Vault name conflict for kv-contoso-fin-prod-01 blocking recreation",
         "state": "critical",
         "requiredPrimitives": [
           "quota-gauges",
@@ -46,30 +46,30 @@
             "gauges": [
               {
                 "id": "soft-deleted-blocking",
-                "label": "Soft-deleted vaults holding name",
+                "label": "Soft-deleted vaults blocking name",
                 "used": 1,
                 "limit": 1,
                 "unit": "vaults",
                 "status": "critical",
-                "detail": "1 vault in removed state reserves the requested name globally"
+                "detail": "kv-contoso-fin-prod-01 holds the globally unique name until recovered or purged"
               },
               {
-                "id": "retention-window",
+                "id": "retention-remaining",
                 "label": "Soft-delete retention remaining",
-                "used": 90,
+                "used": 87,
                 "limit": 90,
                 "unit": "days",
                 "status": "warning",
-                "detail": "Retention up to 90 days; name stays reserved until purge or expiry"
+                "detail": "Recoverable window before scheduled purge; purge protection blocks early purge"
               },
               {
-                "id": "name-availability",
-                "label": "Name availability for recreation",
-                "used": 0,
-                "limit": 1,
-                "unit": "names",
-                "status": "critical",
-                "detail": "VaultAlreadyExists until the removed vault is purged"
+                "id": "objects-to-preserve",
+                "label": "Secrets / keys / certs to preserve",
+                "used": 42,
+                "limit": 42,
+                "unit": "objects",
+                "status": "healthy",
+                "detail": "Recovery restores vault, access policies, and all objects in place"
               }
             ]
           },
@@ -79,46 +79,41 @@
             "hops": [
               {
                 "step": "1",
-                "node": "ARM Key Vault Create",
+                "node": "Get-AzKeyVault -InRemovedState",
                 "effect": "Pass",
-                "code": "CreateRequestAccepted",
-                "detail": "New-AzKeyVault / az keyvault create request is well-formed for the target resource group and location"
+                "code": "SoftDeleted=True",
+                "detail": "kv-contoso-fin-prod-01 found deleted in rg-contoso-finance-prod; name remains reserved"
               },
               {
                 "step": "2",
-                "node": "Global Name Uniqueness",
+                "node": "New-AzKeyVault (recreate attempt)",
                 "effect": "Deny",
                 "code": "VaultAlreadyExists",
-                "detail": "Key Vault names are globally unique; a soft-deleted vault still owns the name and blocks same-name recreation"
+                "detail": "Name is already in use in soft-deleted state — recreation cannot proceed"
               },
               {
                 "step": "3",
-                "node": "Soft-Delete Retention",
+                "node": "Purge protection check",
                 "effect": "Deny",
-                "code": "SoftDeletedVaultExists",
-                "detail": "Deleted vault is retained in removed state for the configured retention period unless explicitly purged"
+                "code": "PurgeProtectionEnabled",
+                "detail": "Remove-AzKeyVault -InRemovedState purge is blocked until retention expires; data must be preserved"
               },
               {
                 "step": "4",
-                "node": "Purge Protection",
-                "effect": "Audit",
-                "code": "PurgeProtectionEnabled",
-                "detail": "Purge protection was enabled — purge may be blocked until scheduledPurgeDate; verify before forcing purge, as purge is irreversible"
+                "node": "Undo-AzKeyVaultRemoval (chosen)",
+                "effect": "Allow",
+                "code": "Recover",
+                "detail": "Restores the original vault, URI, policies, secrets, keys and certificates"
               }
             ]
           },
           {
             "kind": "data-table",
-            "title": "Soft-deleted vaults blocking recreation",
+            "title": "Vaults in rg-contoso-finance-prod — soft-delete inventory",
             "columns": [
               {
-                "key": "vaultName",
-                "label": "Vault Name",
-                "mono": true
-              },
-              {
-                "key": "location",
-                "label": "Location",
+                "key": "vault",
+                "label": "Vault",
                 "mono": true
               },
               {
@@ -133,99 +128,96 @@
               },
               {
                 "key": "action",
-                "label": "Required Action",
+                "label": "Action",
                 "mono": false
               }
             ],
             "rows": [
               {
-                "vaultName": "kv-prod-01",
-                "location": "eastus",
-                "state": "Soft-deleted (InRemovedState)",
+                "vault": "kv-contoso-fin-prod-01",
+                "state": "Soft-deleted (87d left)",
                 "purgeProtection": "Enabled",
-                "action": "Purge with Remove-AzKeyVault -InRemovedState, then recreate"
+                "action": "Recover — Undo-AzKeyVaultRemoval"
               },
               {
-                "vaultName": "kv-prod-01 (requested)",
-                "location": "eastus",
-                "state": "Create failed — VaultAlreadyExists",
-                "purgeProtection": "n/a",
-                "action": "Retry New-AzKeyVault only after purge completes"
+                "vault": "kv-contoso-fin-prod-02",
+                "state": "Active",
+                "purgeProtection": "Enabled",
+                "action": "None — do not touch"
               },
               {
-                "vaultName": "kv-prod-01 (target)",
-                "location": "eastus",
-                "state": "Not yet created",
-                "purgeProtection": "Enable on recreate",
-                "action": "Recreate clean with -EnablePurgeProtection -SoftDeleteRetentionInDays 90"
+                "vault": "kv-contoso-fin-dev-01",
+                "state": "Active",
+                "purgeProtection": "Disabled",
+                "action": "None — out of scope"
               }
             ]
           },
           {
             "kind": "config-diff",
-            "title": "Purge soft-deleted vault and recreate clean",
-            "filePath": "recreate-keyvault.ps1",
+            "title": "Recover soft-deleted vault instead of recreate",
+            "filePath": "scripts/recover-kv-contoso-fin-prod-01.ps1",
             "language": "powershell",
-            "diff": "# Blocked: VaultAlreadyExists on recreate\n- New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus'\n+ # Confirm the soft-deleted vault holding the name\n+ Get-AzKeyVault -InRemovedState | Where-Object VaultName -eq 'kv-prod-01'\n+ # Purge the soft-deleted vault (irreversible)\n+ Remove-AzKeyVault -VaultName 'kv-prod-01' -Location 'eastus' -InRemovedState -Force\n+ # Verify the name is released\n+ Get-AzKeyVault -InRemovedState -VaultName 'kv-prod-01' -Location 'eastus' # expect no result\n+ # Recreate clean vault\n+ New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus' -EnablePurgeProtection -SoftDeleteRetentionInDays 90\n+ Get-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod'\n+ # az keyvault create --name kv-prod-01 --resource-group rg-prod --location eastus --enable-purge-protection"
+            "diff": "- # Fails: VaultAlreadyExists — name held by soft-deleted vault\n- New-AzKeyVault -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod' -Location 'eastus'\n+ # Verify soft-deleted state across vaults in the subscription\n+ $deleted = Get-AzKeyVault -InRemovedState | Where-Object { $_.VaultName -eq 'kv-contoso-fin-prod-01' }\n+ $deleted | Select-Object VaultName, ResourceGroupName, Location, DeletionDate, ScheduledPurgeDate\n+ # Purge protection is enabled and data must be preserved — do NOT purge\n+ # Recover the original vault with its secrets, keys, certs and policies\n+ Undo-AzKeyVaultRemoval -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod' -Location $deleted.Location\n+ # Verify recovery\n+ Get-AzKeyVault -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod'\n+ Get-AzKeyVaultSecret -VaultName 'kv-contoso-fin-prod-01' | Select-Object Name, Enabled"
           },
           {
             "kind": "event-stream",
             "title": "Can't Recreate Key Vault After Deletion · Audit & Activity Log",
             "events": [
               {
-                "id": "evt-delete-001",
-                "timestamp": "2026-10-28T09:12:00Z",
+                "id": "evt-001",
+                "timestamp": "2026-10-28T09:14:00Z",
                 "operation": "Microsoft.KeyVault/vaults/delete",
                 "status": "Succeeded",
-                "code": "SoftDeleteRetained",
+                "code": "SoftDelete",
                 "caller": "operator@contoso.com",
-                "detail": "Vault deleted but moved to soft-deleted state; name, keys, secrets and certificates retained for recovery"
+                "detail": "kv-contoso-fin-prod-01 deleted from rg-contoso-finance-prod; entered 90-day soft-deleted state"
               },
               {
-                "id": "evt-create-002",
-                "timestamp": "2026-10-28T09:20:00Z",
-                "operation": "Microsoft.KeyVault/vaults/write",
+                "id": "evt-002",
+                "timestamp": "2026-10-28T09:22:00Z",
+                "operation": "Microsoft.KeyVault/vaults/write (New-AzKeyVault)",
                 "status": "Failed",
                 "code": "VaultAlreadyExists",
                 "caller": "operator@contoso.com",
-                "detail": "Same-name create failed: a vault with the same name exists in soft-deleted state in eastus"
+                "detail": "Recreation failed: vault name is already in use in soft-deleted state"
               },
               {
-                "id": "evt-list-003",
-                "timestamp": "2026-10-28T09:24:00Z",
-                "operation": "Microsoft.KeyVault/vaults/read (InRemovedState)",
+                "id": "evt-003",
+                "timestamp": "2026-10-28T09:23:00Z",
+                "operation": "Microsoft.KeyVault/vaults/purge check",
                 "status": "Warning",
                 "code": "PurgeProtectionEnabled",
-                "caller": "operator@contoso.com",
-                "detail": "Get-AzKeyVault -InRemovedState confirms blocking vault with purge protection enabled; purge is irreversible and may wait until scheduledPurgeDate"
+                "caller": "Azure Resource Manager",
+                "detail": "Early purge denied by purge protection; recovery via Undo-AzKeyVaultRemoval is the supported path"
               }
             ]
           }
         ],
         "recommendedActions": [
           {
-            "id": "purge-and-recreate",
-            "label": "Purge Soft-Deleted Vault & Recreate",
-            "description": "Irreversibly purge the removed vault to release the name, verify release, then recreate a clean vault with purge protection and 90-day retention",
-            "command": "Remove-AzKeyVault -VaultName 'kv-prod-01' -Location 'eastus' -InRemovedState -Force; New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus' -EnablePurgeProtection -SoftDeleteRetentionInDays 90",
+            "id": "recover-vault",
+            "label": "Recover soft-deleted vault",
+            "description": "Run Undo-AzKeyVaultRemoval to restore kv-contoso-fin-prod-01 with all secrets, keys, certs and access policies intact.",
+            "command": "Undo-AzKeyVaultRemoval -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod' -Location (Get-AzKeyVault -InRemovedState | Where-Object VaultName -eq 'kv-contoso-fin-prod-01').Location; Get-AzKeyVault -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod'",
             "kind": "stage-fix"
           },
           {
-            "id": "inspect-removed-vaults",
-            "label": "Inspect Soft-Deleted Vaults",
-            "description": "List all vaults in removed state to confirm name, location, retention and scheduled purge date before purging",
-            "command": "Get-AzKeyVault -InRemovedState | Format-List VaultName,Location,EnablePurgeProtection,ScheduledPurgeDate; az keyvault list-deleted --query \"[].{name:name,location:properties.location,purgeDate:properties.scheduledPurgeDate}\" -o table",
+            "id": "inspect-soft-deleted",
+            "label": "Inspect soft-deleted vaults",
+            "description": "List all soft-deleted vaults and confirm deletion/purge dates before recovery; also available via az keyvault list-deleted.",
+            "command": "Get-AzKeyVault -InRemovedState | Format-Table VaultName, ResourceGroupName, Location, DeletionDate, ScheduledPurgeDate; az keyvault list-deleted --query \"[?name=='kv-contoso-fin-prod-01']\" -o table",
             "kind": "inspect"
           }
         ],
         "synthesisMeta": {
           "gatekeeperModel": "muse-spark-1.3",
           "synthesizerModel": "muse-wonder-1.0",
-          "latencyMs": 13734,
+          "latencyMs": 9363,
           "reusedFromCatalog": false,
           "reuseCount": 1,
           "tsxStubPath": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",
-          "synthesizedAt": "2026-10-28T01:07:29.051Z"
+          "synthesizedAt": "2026-10-28T07:56:26.868Z"
         },
         "sourceRef": {
           "file": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",
@@ -236,226 +228,6 @@
       }
     },
     {
-      "elementId": "AzureStorageBlobUploadFailingCard",
-      "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch",
-      "domain": "azure",
-      "reason": "Ticket \"Azure Storage blob upload failing with AuthorizationPermissionMismatch despite C\" requires a bespoke diagnostic and remediation card.",
-      "requiredPrimitives": [
-        "quota-gauges",
-        "policy-chain",
-        "data-table",
-        "config-diff",
-        "event-stream"
-      ],
-      "createdAt": "2026-10-28T01:07:46.846Z",
-      "lastUsedAt": "2026-10-28T01:07:46.846Z",
-      "reuseCount": 1,
-      "gatekeeperModel": "muse-spark-1.3",
-      "synthesizerModel": "muse-wonder-1.0",
-      "tsxStubPath": "data/synthesized-elements/AzureStorageBlobUploadFailingCard.tsx",
-      "cardTemplate": {
-        "elementId": "AzureStorageBlobUploadFailingCard",
-        "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch",
-        "headline": "spn-contoso-datalake-ingest has Contributor (control-plane only) on stcontosofinlake01 — PutBlob requires Storage Blob Data Contributor data-plane role",
-        "domain": "azure",
-        "reason": "Ticket \"Azure Storage blob upload failing with AuthorizationPermissionMismatch despite C\" requires a bespoke diagnostic and remediation card.",
-        "state": "critical",
-        "requiredPrimitives": [
-          "quota-gauges",
-          "policy-chain",
-          "data-table",
-          "config-diff",
-          "event-stream"
-        ],
-        "blocks": [
-          {
-            "kind": "quota-gauges",
-            "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch · Resource & State Metrics",
-            "gauges": [
-              {
-                "id": "data-plane-roles",
-                "label": "Data-Plane Roles Assigned",
-                "used": 0,
-                "limit": 1,
-                "unit": "roles",
-                "status": "critical",
-                "detail": "0 Storage Blob Data * roles for spn-contoso-datalake-ingest on stcontosofinlake01"
-              },
-              {
-                "id": "putblob-failures",
-                "label": "PutBlob 403 Failures (1h)",
-                "used": 94,
-                "limit": 100,
-                "unit": "% failed",
-                "status": "critical",
-                "detail": "94% of PutBlob calls since 09:15 UTC return AuthorizationPermissionMismatch"
-              },
-              {
-                "id": "control-plane-roles",
-                "label": "Control-Plane Contributor",
-                "used": 1,
-                "limit": 1,
-                "unit": "assignments",
-                "status": "warning",
-                "detail": "Contributor present but grants Microsoft.Storage/storageAccounts/write, not blob data actions"
-              }
-            ]
-          },
-          {
-            "kind": "policy-chain",
-            "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch · Control-Plane Evaluation Chain",
-            "hops": [
-              {
-                "step": "1",
-                "node": "Azure RBAC — ARM Control Plane",
-                "effect": "Pass",
-                "code": "Contributor",
-                "detail": "spn-contoso-datalake-ingest authenticated; Contributor allows management of stcontosofinlake01, not data operations"
-              },
-              {
-                "step": "2",
-                "node": "Storage Data-Plane Authorization",
-                "effect": "Deny",
-                "code": "AuthorizationPermissionMismatch",
-                "detail": "PutBlob requires Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write — absent without Storage Blob Data Contributor/Owner"
-              },
-              {
-                "step": "3",
-                "node": "Storage Account stcontosofinlake01",
-                "effect": "Deny",
-                "code": "HTTP 403",
-                "detail": "Blob service rejects request at container scope; no SAS/SharedKey fallback permitted by pipeline (AAD auth-mode login)"
-              },
-              {
-                "step": "4",
-                "node": "Remediation Scope Check",
-                "effect": "Audit",
-                "code": "LeastPrivilege",
-                "detail": "Grant Storage Blob Data Contributor at storage-account (or ingest container) scope only — do not elevate to Owner"
-              }
-            ]
-          },
-          {
-            "kind": "data-table",
-            "title": "RBAC Assignments — spn-contoso-datalake-ingest on stcontosofinlake01",
-            "columns": [
-              {
-                "key": "principal",
-                "label": "Principal",
-                "mono": true
-              },
-              {
-                "key": "role",
-                "label": "Role",
-                "mono": false
-              },
-              {
-                "key": "scope",
-                "label": "Scope",
-                "mono": true
-              },
-              {
-                "key": "dataAction",
-                "label": "Blob Write DataAction",
-                "mono": false
-              }
-            ],
-            "rows": [
-              {
-                "principal": "spn-contoso-datalake-ingest",
-                "role": "Contributor",
-                "scope": "storageAccounts/stcontosofinlake01",
-                "dataAction": "No — control-plane only"
-              },
-              {
-                "principal": "spn-contoso-datalake-ingest",
-                "role": "Storage Blob Data Contributor",
-                "scope": "(missing)",
-                "dataAction": "Required: blobs/write — NOT ASSIGNED"
-              },
-              {
-                "principal": "spn-contoso-datalake-ingest",
-                "role": "Reader",
-                "scope": "resourceGroups/rg-contoso-fin-data (inherited)",
-                "dataAction": "No — read control-plane only"
-              }
-            ]
-          },
-          {
-            "kind": "config-diff",
-            "title": "Grant Storage Blob Data Contributor (PowerShell 7 / Azure CLI)",
-            "filePath": "remediation/grant-blob-data-contributor.ps1",
-            "language": "powershell",
-            "diff": "- # Contributor cannot PutBlob: it has no Microsoft.Storage/.../blobs/write dataAction\n- az role assignment list --assignee spn-contoso-datalake-ingest --scope $scope -o table\n+ $scope = \"/subscriptions/<sub-id>/resourceGroups/rg-contoso-fin-data/providers/Microsoft.Storage/storageAccounts/stcontosofinlake01\"\n+ $spId = (Get-AzADServicePrincipal -DisplayName \"spn-contoso-datalake-ingest\").Id\n+ # Least-privilege data-plane grant at storage-account scope (narrow to container if possible)\n+ New-AzRoleAssignment -ObjectId $spId -RoleDefinitionName \"Storage Blob Data Contributor\" -Scope $scope\n+ # Azure CLI equivalent:\n+ # az role assignment create --assignee-object-id $spId --assignee-principal-type ServicePrincipal --role \"Storage Blob Data Contributor\" --scope $scope\n+ Get-AzRoleAssignment -ObjectId $spId -Scope $scope | Format-Table RoleDefinitionName, Scope\n+ # Wait 5-10 min for RBAC propagation, then verify with AAD login:\n+ az storage blob upload --account-name stcontosofinlake01 --container-name ingest --name smoke.txt --file ./smoke.txt --auth-mode login"
-          },
-          {
-            "kind": "event-stream",
-            "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch · Audit & Activity Log",
-            "events": [
-              {
-                "id": "evt-0915-putblob",
-                "timestamp": "2026-10-28T09:15:00Z",
-                "operation": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write (PutBlob)",
-                "status": "Failed",
-                "code": "AuthorizationPermissionMismatch",
-                "caller": "spn-contoso-datalake-ingest",
-                "detail": "HTTP 403: This request is not authorized to perform this operation using this permission — first failure after 09:15 UTC"
-              },
-              {
-                "id": "evt-0917-rbac-list",
-                "timestamp": "2026-10-28T09:17:00Z",
-                "operation": "Microsoft.Authorization/roleAssignments/read",
-                "status": "Succeeded",
-                "code": "200",
-                "caller": "spn-contoso-datalake-ingest",
-                "detail": "Role list confirms only Contributor + inherited Reader; no Storage Blob Data Contributor/Owner assignment found"
-              },
-              {
-                "id": "evt-0922-retry",
-                "timestamp": "2026-10-28T09:22:00Z",
-                "operation": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write (PutBlob)",
-                "status": "Failed",
-                "code": "AuthorizationPermissionMismatch",
-                "caller": "spn-contoso-datalake-ingest",
-                "detail": "Pipeline retry to container 'ingest' fails identically — deterministic RBAC denial, not transient/network"
-              }
-            ]
-          }
-        ],
-        "recommendedActions": [
-          {
-            "id": "stage-grant",
-            "label": "Stage Blob Data Contributor Grant",
-            "description": "Create Storage Blob Data Contributor assignment for spn-contoso-datalake-ingest at stcontosofinlake01 scope, then wait for propagation",
-            "command": "New-AzRoleAssignment -ObjectId (Get-AzADServicePrincipal -DisplayName 'spn-contoso-datalake-ingest').Id -RoleDefinitionName 'Storage Blob Data Contributor' -Scope '/subscriptions/<sub-id>/resourceGroups/rg-contoso-fin-data/providers/Microsoft.Storage/storageAccounts/stcontosofinlake01'",
-            "kind": "stage-fix"
-          },
-          {
-            "id": "inspect-assignments",
-            "label": "Inspect Current Assignments & Verify",
-            "description": "List effective assignments and retry PutBlob with AAD login after 5-10 minutes to confirm 403 is cleared",
-            "command": "az role assignment list --assignee spn-contoso-datalake-ingest --include-inherited --query '[].{Role:roleDefinitionName,Scope:scope}' -o table; az storage blob upload --account-name stcontosofinlake01 --container-name ingest --name smoke.txt --file ./smoke.txt --auth-mode login",
-            "kind": "inspect"
-          }
-        ],
-        "synthesisMeta": {
-          "gatekeeperModel": "muse-spark-1.3",
-          "synthesizerModel": "muse-wonder-1.0",
-          "latencyMs": 13466,
-          "reusedFromCatalog": false,
-          "reuseCount": 1,
-          "tsxStubPath": "data/synthesized-elements/AzureStorageBlobUploadFailingCard.tsx",
-          "synthesizedAt": "2026-10-28T01:07:46.846Z"
-        },
-        "sourceRef": {
-          "file": "data/synthesized-elements/AzureStorageBlobUploadFailingCard.tsx",
-          "startLine": 1,
-          "endLine": 12,
-          "ref": "dynamic-catalog"
-        }
-      }
-    },
-    {
       "elementId": "AzureVmDeploymentFailedInCard",
       "title": "Azure VM deployment failed in westeurope",
       "domain": "azure",
@@ -466,8 +238,8 @@
         "config-diff",
         "event-stream"
       ],
-      "createdAt": "2026-10-28T01:15:05.194Z",
-      "lastUsedAt": "2026-10-28T01:15:05.194Z",
+      "createdAt": "2026-10-28T08:03:42.661Z",
+      "lastUsedAt": "2026-10-28T08:03:42.661Z",
       "reuseCount": 1,
       "gatekeeperModel": "muse-spark-1.3",
       "synthesizerModel": "muse-wonder-1.0",
@@ -548,7 +320,7 @@
             "events": [
               {
                 "id": "ev1",
-                "timestamp": "2026-10-28T01:15:05.195Z",
+                "timestamp": "2026-10-28T08:03:42.661Z",
                 "operation": "AzureVmDeploymentFailedInCard",
                 "status": "Warning",
                 "code": "DiagnosticEvent",
@@ -574,7 +346,7 @@
           "reusedFromCatalog": false,
           "reuseCount": 1,
           "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
-          "synthesizedAt": "2026-10-28T01:15:05.195Z"
+          "synthesizedAt": "2026-10-28T08:03:42.661Z"
         },
         "sourceRef": {
           "file": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
@@ -595,8 +367,8 @@
         "config-diff",
         "event-stream"
       ],
-      "createdAt": "2026-10-28T01:15:05.213Z",
-      "lastUsedAt": "2026-10-28T01:15:05.213Z",
+      "createdAt": "2026-10-28T08:03:42.681Z",
+      "lastUsedAt": "2026-10-28T08:03:42.681Z",
       "reuseCount": 1,
       "gatekeeperModel": "muse-spark-1.3",
       "synthesizerModel": "muse-wonder-1.0",
@@ -677,7 +449,7 @@
             "events": [
               {
                 "id": "ev1",
-                "timestamp": "2026-10-28T01:15:05.213Z",
+                "timestamp": "2026-10-28T08:03:42.681Z",
                 "operation": "FederatedCredentialsOnMySpnCard",
                 "status": "Warning",
                 "code": "DiagnosticEvent",
@@ -703,265 +475,7 @@
           "reusedFromCatalog": false,
           "reuseCount": 1,
           "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
-          "synthesizedAt": "2026-10-28T01:15:05.213Z"
-        },
-        "sourceRef": {
-          "file": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
-          "startLine": 1,
-          "endLine": 12,
-          "ref": "dynamic-catalog"
-        }
-      }
-    },
-    {
-      "elementId": "AzureVmDeploymentFailedInCard",
-      "title": "Azure VM deployment failed in westeurope",
-      "domain": "azure",
-      "reason": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
-      "requiredPrimitives": [
-        "policy-chain",
-        "data-table",
-        "config-diff",
-        "event-stream"
-      ],
-      "createdAt": "2026-10-28T01:15:48.776Z",
-      "lastUsedAt": "2026-10-28T01:15:48.776Z",
-      "reuseCount": 1,
-      "gatekeeperModel": "muse-spark-1.3",
-      "synthesizerModel": "muse-wonder-1.0",
-      "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
-      "cardTemplate": {
-        "elementId": "AzureVmDeploymentFailedInCard",
-        "title": "Azure VM deployment failed in westeurope",
-        "headline": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
-        "domain": "azure",
-        "reason": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
-        "state": "warning",
-        "requiredPrimitives": [
-          "policy-chain",
-          "data-table",
-          "config-diff",
-          "event-stream"
-        ],
-        "blocks": [
-          {
-            "kind": "quota-gauges",
-            "title": "Azure VM deployment failed in westeurope · Resource Utilization",
-            "gauges": [
-              {
-                "id": "g1",
-                "label": "AzureVmDeploymentFailedInCard",
-                "used": 1,
-                "limit": 1,
-                "unit": "state",
-                "status": "warning"
-              }
-            ]
-          },
-          {
-            "kind": "policy-chain",
-            "title": "Azure VM deployment failed in westeurope · Evaluation Chain",
-            "hops": [
-              {
-                "step": "Step 1 · Control-Plane Check",
-                "node": "Azure VM deployment failed in westeurope",
-                "effect": "Audit",
-                "code": "DiagnosticCheck",
-                "detail": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
-              }
-            ]
-          },
-          {
-            "kind": "data-table",
-            "title": "Azure VM deployment failed in westeurope · Posture",
-            "columns": [
-              {
-                "key": "item",
-                "label": "Target",
-                "mono": true
-              },
-              {
-                "key": "state",
-                "label": "Observed State",
-                "mono": false
-              }
-            ],
-            "rows": [
-              {
-                "item": "AzureVmDeploymentFailedInCard",
-                "state": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
-              }
-            ]
-          },
-          {
-            "kind": "config-diff",
-            "title": "Azure VM deployment failed in westeurope · Remediation Diff",
-            "filePath": "remediation.ps1",
-            "language": "powershell",
-            "diff": "- # Current state\n+ Get-AzResource -WhatIf"
-          },
-          {
-            "kind": "event-stream",
-            "title": "Azure VM deployment failed in westeurope · Activity & Audit Log",
-            "events": [
-              {
-                "id": "ev1",
-                "timestamp": "2026-10-28T01:15:48.776Z",
-                "operation": "AzureVmDeploymentFailedInCard",
-                "status": "Warning",
-                "code": "DiagnosticEvent",
-                "caller": "ControlPlane",
-                "detail": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
-              }
-            ]
-          }
-        ],
-        "recommendedActions": [
-          {
-            "id": "stage-fix",
-            "label": "Stage Remediation Fix",
-            "description": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
-            "command": "Get-AzResource -WhatIf",
-            "kind": "stage-fix"
-          }
-        ],
-        "synthesisMeta": {
-          "gatekeeperModel": "muse-spark-1.3",
-          "synthesizerModel": "muse-wonder-1.0",
-          "latencyMs": 12,
-          "reusedFromCatalog": false,
-          "reuseCount": 1,
-          "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
-          "synthesizedAt": "2026-10-28T01:15:48.776Z"
-        },
-        "sourceRef": {
-          "file": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
-          "startLine": 1,
-          "endLine": 12,
-          "ref": "dynamic-catalog"
-        }
-      }
-    },
-    {
-      "elementId": "FederatedCredentialsOnMySpnCard",
-      "title": "Federated Credentials on my spn stopped working",
-      "domain": "azure",
-      "reason": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
-      "requiredPrimitives": [
-        "policy-chain",
-        "data-table",
-        "config-diff",
-        "event-stream"
-      ],
-      "createdAt": "2026-10-28T01:15:48.794Z",
-      "lastUsedAt": "2026-10-28T01:15:48.794Z",
-      "reuseCount": 1,
-      "gatekeeperModel": "muse-spark-1.3",
-      "synthesizerModel": "muse-wonder-1.0",
-      "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
-      "cardTemplate": {
-        "elementId": "FederatedCredentialsOnMySpnCard",
-        "title": "Federated Credentials on my spn stopped working",
-        "headline": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
-        "domain": "azure",
-        "reason": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
-        "state": "warning",
-        "requiredPrimitives": [
-          "policy-chain",
-          "data-table",
-          "config-diff",
-          "event-stream"
-        ],
-        "blocks": [
-          {
-            "kind": "quota-gauges",
-            "title": "Federated Credentials on my spn stopped working · Resource Utilization",
-            "gauges": [
-              {
-                "id": "g1",
-                "label": "FederatedCredentialsOnMySpnCard",
-                "used": 1,
-                "limit": 1,
-                "unit": "state",
-                "status": "warning"
-              }
-            ]
-          },
-          {
-            "kind": "policy-chain",
-            "title": "Federated Credentials on my spn stopped working · Evaluation Chain",
-            "hops": [
-              {
-                "step": "Step 1 · Control-Plane Check",
-                "node": "Federated Credentials on my spn stopped working",
-                "effect": "Audit",
-                "code": "DiagnosticCheck",
-                "detail": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
-              }
-            ]
-          },
-          {
-            "kind": "data-table",
-            "title": "Federated Credentials on my spn stopped working · Posture",
-            "columns": [
-              {
-                "key": "item",
-                "label": "Target",
-                "mono": true
-              },
-              {
-                "key": "state",
-                "label": "Observed State",
-                "mono": false
-              }
-            ],
-            "rows": [
-              {
-                "item": "FederatedCredentialsOnMySpnCard",
-                "state": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
-              }
-            ]
-          },
-          {
-            "kind": "config-diff",
-            "title": "Federated Credentials on my spn stopped working · Remediation Diff",
-            "filePath": "remediation.ps1",
-            "language": "powershell",
-            "diff": "- # Current state\n+ Get-AzResource -WhatIf"
-          },
-          {
-            "kind": "event-stream",
-            "title": "Federated Credentials on my spn stopped working · Activity & Audit Log",
-            "events": [
-              {
-                "id": "ev1",
-                "timestamp": "2026-10-28T01:15:48.794Z",
-                "operation": "FederatedCredentialsOnMySpnCard",
-                "status": "Warning",
-                "code": "DiagnosticEvent",
-                "caller": "ControlPlane",
-                "detail": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
-              }
-            ]
-          }
-        ],
-        "recommendedActions": [
-          {
-            "id": "stage-fix",
-            "label": "Stage Remediation Fix",
-            "description": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
-            "command": "Get-AzResource -WhatIf",
-            "kind": "stage-fix"
-          }
-        ],
-        "synthesisMeta": {
-          "gatekeeperModel": "muse-spark-1.3",
-          "synthesizerModel": "muse-wonder-1.0",
-          "latencyMs": 12,
-          "reusedFromCatalog": false,
-          "reuseCount": 1,
-          "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
-          "synthesizedAt": "2026-10-28T01:15:48.794Z"
+          "synthesizedAt": "2026-10-28T08:03:42.681Z"
         },
         "sourceRef": {
           "file": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
@@ -973,6 +487,3 @@
     }
   ]
 }
-
-
-

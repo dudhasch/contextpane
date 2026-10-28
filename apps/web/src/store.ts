@@ -249,7 +249,9 @@ interface WorkbenchState {
   linkedSelection: string | null;
   composerOpen: boolean;
   triageStatus: CanvasStatus;
+  pendingTriageTitle: string | null;
   refiningGoal: boolean;
+  lastRefinedAt: string | null;
   rowFilter: RowFilter | null;
   resolutionNote: PsaResolutionNote | null;
   resolutionNoteStatus: CanvasStatus;
@@ -461,7 +463,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   linkedSelection: null,
   composerOpen: false,
   triageStatus: "idle",
+  pendingTriageTitle: null,
   refiningGoal: false,
+  lastRefinedAt: null,
   rowFilter: null,
   resolutionNote: null,
   resolutionNoteStatus: "idle",
@@ -1706,12 +1710,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async triageCustom(input) {
     if (get().triageStatus === "loading") return;
-    set({ triageStatus: "loading" });
+    set({ triageStatus: "loading", composerOpen: false, pendingTriageTitle: input.title, lastRefinedAt: null });
     const started = performance.now();
     try {
       const result = await api.triageCustom(input);
       await get().loadScenarios();
-      set({ triageStatus: "ready", composerOpen: false });
+      set({ triageStatus: "ready", composerOpen: false, pendingTriageTitle: null });
       const x = result.extraction;
       get().toast({
         tone: "healthy",
@@ -1720,7 +1724,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       });
       await get().selectScenario(result.scenario.scenarioId);
     } catch (error) {
-      set({ triageStatus: "error" });
+      set({ triageStatus: "error", pendingTriageTitle: null });
       get().toast({ tone: "critical", title: "Triage failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
@@ -1731,9 +1735,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     try {
       const result = await api.refineGoal(scenarioId, clarifiedAnswers);
       const wasDrawerOpen = get().drawerOpen;
+      const nowLabel = new Date().toISOString().slice(11, 19) + " UTC";
       set((s) => ({
         brief: result.brief,
         refiningGoal: false,
+        lastRefinedAt: nowLabel,
         drawer: null,
         remediateStatus: "idle",
         speculativeEpoch: s.speculativeEpoch + 1,
@@ -1892,7 +1898,9 @@ export function applyTimelineSliceToLayout(
               timestamp: BASELINE_TIMESTAMPS[idx] ?? `2026-10-26T07:${String(Math.max(10, 44 - idx * 3)).padStart(2, "0")}:12Z`,
               status: "success" as const,
               errorCode: 0,
-              errorCodeLabel: "AVD Sign-In OK · Compliant",
+              errorCodeLabel: /virtual desktop|\bavd\b/i.test(e.appDisplayName)
+                ? "AVD Sign-In OK · Compliant"
+                : "Sign-In OK · Compliant",
               failureReason: undefined,
               blockingPolicyName: undefined,
               conditionalAccessStatus: "success" as const,
@@ -1909,7 +1917,9 @@ export function applyTimelineSliceToLayout(
                 timestamp: POST_FIX_TIMESTAMPS[idx] ?? `2026-10-26T08:12:${String(Math.max(1, 55 - idx * 5)).padStart(2, "0")}Z`,
                 status: "success" as const,
                 errorCode: 0,
-                errorCodeLabel: "AVD Sign-In OK (SPE_E5)",
+                errorCodeLabel: /virtual desktop|\bavd\b/i.test(e.appDisplayName)
+                  ? "AVD Sign-In OK (SPE_E5)"
+                  : "Sign-In OK (SPE_E5)",
                 failureReason: undefined,
                 blockingPolicyName: undefined,
                 conditionalAccessStatus: "success" as const,

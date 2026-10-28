@@ -658,7 +658,7 @@ function ScriptsAndChangesTab({
                 }`}
               >
                 <Terminal className="size-3" />
-                <span>&gt;_ Live Console Output</span>
+                <span>Live Console Output</span>
               </button>
             )}
           </div>
@@ -1298,24 +1298,31 @@ function CanaryCheckbox() {
 
 function CanaryTraceBanner() {
   const canary = useWorkbench((s) => s.canary);
+  const reverted = useWorkbench((s) => s.liveConsoleReverted || s.drawer?.approval.state === "rolled-back");
   if (!canary) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-800 bg-surface/60 px-2.5 py-1.5 font-mono text-[10.5px]" data-testid="canary-trace">
       <span className="font-sans text-[11px] font-medium text-muted">Health Check:</span>
-      {canary.stages.map((s) => (
-        <span
-          key={s.stage}
-          className={`rounded border px-1.5 py-0.5 ${
-            s.stage === "AUTO_ROLLED_BACK"
-              ? "border-critical/40 bg-critical/10 font-semibold text-critical"
-              : s.stage === "CONVERGED"
-                ? "border-healthy/40 bg-healthy/10 font-semibold text-healthy"
-                : "border-border text-muted"
-          }`}
-        >
-          {s.stage}
+      {reverted ? (
+        <span className="rounded border border-amber-500/45 bg-amber-500/12 px-1.5 py-0.5 font-semibold text-amber-300">
+          ROLLED_BACK (PREVIOUS STATE RESTORED)
         </span>
-      ))}
+      ) : (
+        canary.stages.map((s) => (
+          <span
+            key={s.stage}
+            className={`rounded border px-1.5 py-0.5 ${
+              s.stage === "AUTO_ROLLED_BACK"
+                ? "border-critical/40 bg-critical/10 font-semibold text-critical"
+                : s.stage === "CONVERGED"
+                  ? "border-healthy/40 bg-healthy/10 font-semibold text-healthy"
+                  : "border-border text-muted"
+            }`}
+          >
+            {s.stage}
+          </span>
+        ))
+      )}
     </div>
   );
 }

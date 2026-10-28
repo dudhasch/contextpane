@@ -45,10 +45,10 @@ export function Pill({ tone = "muted", icon, children, mono = true, className = 
       key={flashKey}
       title={title}
       style={{ ["--flash-color" as string]: `var(--color-${tone === "muted" ? "border" : tone})` }}
-      className={`inline-flex h-6 items-center gap-1.5 rounded-pill border px-2 text-[11px] leading-none whitespace-nowrap ${mono ? "font-mono" : "font-medium"} ${TONE_CLASS[tone]} ${flashKey !== undefined ? "animate-flash" : ""} ${className}`}
+      className={`inline-flex h-6 items-center gap-1.5 rounded-pill border px-2 text-[11px] leading-snug whitespace-nowrap ${mono ? "font-mono" : "font-medium"} ${TONE_CLASS[tone]} ${flashKey !== undefined ? "animate-flash" : ""} ${className}`}
     >
       {icon && <span className="inline-flex shrink-0 [&>svg]:size-3">{icon}</span>}
-      <span className="truncate">{children}</span>
+      <span className="truncate py-0.5 leading-snug">{children}</span>
     </span>
   );
 }

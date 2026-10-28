@@ -3,9 +3,9 @@ export const CantRecreateMyKeyvaultAfterCardPropsSchema = SynthesizedDynamicCard
 export const DEFAULT_CANTRECREATEMYKEYVAULTAFTERCARD_SPEC: SynthesizedDynamicCard = {
   "elementId": "CantRecreateMyKeyvaultAfterCard",
   "title": "Can't Recreate Key Vault After Deletion",
-  "headline": "Soft-deleted vault with purge protection is holding the name — purge it in removed state, then recreate clean",
+  "headline": "kv-contoso-fin-prod-01 is soft-deleted with purge protection in rg-contoso-finance-prod — recover it to preserve data instead of purging and recreating.",
   "domain": "azure",
-  "reason": "No existing catalog element handles soft-deleted Key Vault blocking recreation - requires recovery or purge workflow",
+  "reason": "No existing element handles soft-deleted Key Vault name conflict for kv-contoso-fin-prod-01 blocking recreation",
   "state": "critical",
   "requiredPrimitives": [
     "quota-gauges",
@@ -21,30 +21,30 @@ export const DEFAULT_CANTRECREATEMYKEYVAULTAFTERCARD_SPEC: SynthesizedDynamicCar
       "gauges": [
         {
           "id": "soft-deleted-blocking",
-          "label": "Soft-deleted vaults holding name",
+          "label": "Soft-deleted vaults blocking name",
           "used": 1,
           "limit": 1,
           "unit": "vaults",
           "status": "critical",
-          "detail": "1 vault in removed state reserves the requested name globally"
+          "detail": "kv-contoso-fin-prod-01 holds the globally unique name until recovered or purged"
         },
         {
-          "id": "retention-window",
+          "id": "retention-remaining",
           "label": "Soft-delete retention remaining",
-          "used": 90,
+          "used": 87,
           "limit": 90,
           "unit": "days",
           "status": "warning",
-          "detail": "Retention up to 90 days; name stays reserved until purge or expiry"
+          "detail": "Recoverable window before scheduled purge; purge protection blocks early purge"
         },
         {
-          "id": "name-availability",
-          "label": "Name availability for recreation",
-          "used": 0,
-          "limit": 1,
-          "unit": "names",
-          "status": "critical",
-          "detail": "VaultAlreadyExists until the removed vault is purged"
+          "id": "objects-to-preserve",
+          "label": "Secrets / keys / certs to preserve",
+          "used": 42,
+          "limit": 42,
+          "unit": "objects",
+          "status": "healthy",
+          "detail": "Recovery restores vault, access policies, and all objects in place"
         }
       ]
     },
@@ -54,46 +54,41 @@ export const DEFAULT_CANTRECREATEMYKEYVAULTAFTERCARD_SPEC: SynthesizedDynamicCar
       "hops": [
         {
           "step": "1",
-          "node": "ARM Key Vault Create",
+          "node": "Get-AzKeyVault -InRemovedState",
           "effect": "Pass",
-          "code": "CreateRequestAccepted",
-          "detail": "New-AzKeyVault / az keyvault create request is well-formed for the target resource group and location"
+          "code": "SoftDeleted=True",
+          "detail": "kv-contoso-fin-prod-01 found deleted in rg-contoso-finance-prod; name remains reserved"
         },
         {
           "step": "2",
-          "node": "Global Name Uniqueness",
+          "node": "New-AzKeyVault (recreate attempt)",
           "effect": "Deny",
           "code": "VaultAlreadyExists",
-          "detail": "Key Vault names are globally unique; a soft-deleted vault still owns the name and blocks same-name recreation"
+          "detail": "Name is already in use in soft-deleted state — recreation cannot proceed"
         },
         {
           "step": "3",
-          "node": "Soft-Delete Retention",
+          "node": "Purge protection check",
           "effect": "Deny",
-          "code": "SoftDeletedVaultExists",
-          "detail": "Deleted vault is retained in removed state for the configured retention period unless explicitly purged"
+          "code": "PurgeProtectionEnabled",
+          "detail": "Remove-AzKeyVault -InRemovedState purge is blocked until retention expires; data must be preserved"
         },
         {
           "step": "4",
-          "node": "Purge Protection",
-          "effect": "Audit",
-          "code": "PurgeProtectionEnabled",
-          "detail": "Purge protection was enabled — purge may be blocked until scheduledPurgeDate; verify before forcing purge, as purge is irreversible"
+          "node": "Undo-AzKeyVaultRemoval (chosen)",
+          "effect": "Allow",
+          "code": "Recover",
+          "detail": "Restores the original vault, URI, policies, secrets, keys and certificates"
         }
       ]
     },
     {
       "kind": "data-table",
-      "title": "Soft-deleted vaults blocking recreation",
+      "title": "Vaults in rg-contoso-finance-prod — soft-delete inventory",
       "columns": [
         {
-          "key": "vaultName",
-          "label": "Vault Name",
-          "mono": true
-        },
-        {
-          "key": "location",
-          "label": "Location",
+          "key": "vault",
+          "label": "Vault",
           "mono": true
         },
         {
@@ -108,88 +103,85 @@ export const DEFAULT_CANTRECREATEMYKEYVAULTAFTERCARD_SPEC: SynthesizedDynamicCar
         },
         {
           "key": "action",
-          "label": "Required Action",
+          "label": "Action",
           "mono": false
         }
       ],
       "rows": [
         {
-          "vaultName": "kv-prod-01",
-          "location": "eastus",
-          "state": "Soft-deleted (InRemovedState)",
+          "vault": "kv-contoso-fin-prod-01",
+          "state": "Soft-deleted (87d left)",
           "purgeProtection": "Enabled",
-          "action": "Purge with Remove-AzKeyVault -InRemovedState, then recreate"
+          "action": "Recover — Undo-AzKeyVaultRemoval"
         },
         {
-          "vaultName": "kv-prod-01 (requested)",
-          "location": "eastus",
-          "state": "Create failed — VaultAlreadyExists",
-          "purgeProtection": "n/a",
-          "action": "Retry New-AzKeyVault only after purge completes"
+          "vault": "kv-contoso-fin-prod-02",
+          "state": "Active",
+          "purgeProtection": "Enabled",
+          "action": "None — do not touch"
         },
         {
-          "vaultName": "kv-prod-01 (target)",
-          "location": "eastus",
-          "state": "Not yet created",
-          "purgeProtection": "Enable on recreate",
-          "action": "Recreate clean with -EnablePurgeProtection -SoftDeleteRetentionInDays 90"
+          "vault": "kv-contoso-fin-dev-01",
+          "state": "Active",
+          "purgeProtection": "Disabled",
+          "action": "None — out of scope"
         }
       ]
     },
     {
       "kind": "config-diff",
-      "title": "Purge soft-deleted vault and recreate clean",
-      "filePath": "recreate-keyvault.ps1",
+      "title": "Recover soft-deleted vault instead of recreate",
+      "filePath": "scripts/recover-kv-contoso-fin-prod-01.ps1",
       "language": "powershell",
-      "diff": "# Blocked: VaultAlreadyExists on recreate\n- New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus'\n+ # Confirm the soft-deleted vault holding the name\n+ Get-AzKeyVault -InRemovedState | Where-Object VaultName -eq 'kv-prod-01'\n+ # Purge the soft-deleted vault (irreversible)\n+ Remove-AzKeyVault -VaultName 'kv-prod-01' -Location 'eastus' -InRemovedState -Force\n+ # Verify the name is released\n+ Get-AzKeyVault -InRemovedState -VaultName 'kv-prod-01' -Location 'eastus' # expect no result\n+ # Recreate clean vault\n+ New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus' -EnablePurgeProtection -SoftDeleteRetentionInDays 90\n+ Get-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod'\n+ # az keyvault create --name kv-prod-01 --resource-group rg-prod --location eastus --enable-purge-protection"
+      "diff": "- # Fails: VaultAlreadyExists — name held by soft-deleted vault\n- New-AzKeyVault -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod' -Location 'eastus'\n+ # Verify soft-deleted state across vaults in the subscription\n+ $deleted = Get-AzKeyVault -InRemovedState | Where-Object { $_.VaultName -eq 'kv-contoso-fin-prod-01' }\n+ $deleted | Select-Object VaultName, ResourceGroupName, Location, DeletionDate, ScheduledPurgeDate\n+ # Purge protection is enabled and data must be preserved — do NOT purge\n+ # Recover the original vault with its secrets, keys, certs and policies\n+ Undo-AzKeyVaultRemoval -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod' -Location $deleted.Location\n+ # Verify recovery\n+ Get-AzKeyVault -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod'\n+ Get-AzKeyVaultSecret -VaultName 'kv-contoso-fin-prod-01' | Select-Object Name, Enabled"
     },
     {
       "kind": "event-stream",
       "title": "Can't Recreate Key Vault After Deletion · Audit & Activity Log",
       "events": [
         {
-          "id": "evt-delete-001",
-          "timestamp": "2026-10-28T09:12:00Z",
+          "id": "evt-001",
+          "timestamp": "2026-10-28T09:14:00Z",
           "operation": "Microsoft.KeyVault/vaults/delete",
           "status": "Succeeded",
-          "code": "SoftDeleteRetained",
+          "code": "SoftDelete",
           "caller": "operator@contoso.com",
-          "detail": "Vault deleted but moved to soft-deleted state; name, keys, secrets and certificates retained for recovery"
+          "detail": "kv-contoso-fin-prod-01 deleted from rg-contoso-finance-prod; entered 90-day soft-deleted state"
         },
         {
-          "id": "evt-create-002",
-          "timestamp": "2026-10-28T09:20:00Z",
-          "operation": "Microsoft.KeyVault/vaults/write",
+          "id": "evt-002",
+          "timestamp": "2026-10-28T09:22:00Z",
+          "operation": "Microsoft.KeyVault/vaults/write (New-AzKeyVault)",
           "status": "Failed",
           "code": "VaultAlreadyExists",
           "caller": "operator@contoso.com",
-          "detail": "Same-name create failed: a vault with the same name exists in soft-deleted state in eastus"
+          "detail": "Recreation failed: vault name is already in use in soft-deleted state"
         },
         {
-          "id": "evt-list-003",
-          "timestamp": "2026-10-28T09:24:00Z",
-          "operation": "Microsoft.KeyVault/vaults/read (InRemovedState)",
+          "id": "evt-003",
+          "timestamp": "2026-10-28T09:23:00Z",
+          "operation": "Microsoft.KeyVault/vaults/purge check",
           "status": "Warning",
           "code": "PurgeProtectionEnabled",
-          "caller": "operator@contoso.com",
-          "detail": "Get-AzKeyVault -InRemovedState confirms blocking vault with purge protection enabled; purge is irreversible and may wait until scheduledPurgeDate"
+          "caller": "Azure Resource Manager",
+          "detail": "Early purge denied by purge protection; recovery via Undo-AzKeyVaultRemoval is the supported path"
         }
       ]
     }
   ],
   "recommendedActions": [
     {
-      "id": "purge-and-recreate",
-      "label": "Purge Soft-Deleted Vault & Recreate",
-      "description": "Irreversibly purge the removed vault to release the name, verify release, then recreate a clean vault with purge protection and 90-day retention",
-      "command": "Remove-AzKeyVault -VaultName 'kv-prod-01' -Location 'eastus' -InRemovedState -Force; New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus' -EnablePurgeProtection -SoftDeleteRetentionInDays 90",
+      "id": "recover-vault",
+      "label": "Recover soft-deleted vault",
+      "description": "Run Undo-AzKeyVaultRemoval to restore kv-contoso-fin-prod-01 with all secrets, keys, certs and access policies intact.",
+      "command": "Undo-AzKeyVaultRemoval -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod' -Location (Get-AzKeyVault -InRemovedState | Where-Object VaultName -eq 'kv-contoso-fin-prod-01').Location; Get-AzKeyVault -VaultName 'kv-contoso-fin-prod-01' -ResourceGroupName 'rg-contoso-finance-prod'",
       "kind": "stage-fix"
     },
     {
-      "id": "inspect-removed-vaults",
-      "label": "Inspect Soft-Deleted Vaults",
-      "description": "List all vaults in removed state to confirm name, location, retention and scheduled purge date before purging",
-      "command": "Get-AzKeyVault -InRemovedState | Format-List VaultName,Location,EnablePurgeProtection,ScheduledPurgeDate; az keyvault list-deleted --query \"[].{name:name,location:properties.location,purgeDate:properties.scheduledPurgeDate}\" -o table",
+      "id": "inspect-soft-deleted",
+      "label": "Inspect soft-deleted vaults",
+      "description": "List all soft-deleted vaults and confirm deletion/purge dates before recovery; also available via az keyvault list-deleted.",
+      "command": "Get-AzKeyVault -InRemovedState | Format-Table VaultName, ResourceGroupName, Location, DeletionDate, ScheduledPurgeDate; az keyvault list-deleted --query \"[?name=='kv-contoso-fin-prod-01']\" -o table",
       "kind": "inspect"
     }
   ],
@@ -200,7 +192,7 @@ export const DEFAULT_CANTRECREATEMYKEYVAULTAFTERCARD_SPEC: SynthesizedDynamicCar
     "reusedFromCatalog": false,
     "reuseCount": 1,
     "tsxStubPath": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",
-    "synthesizedAt": "2026-10-28T01:07:29.050Z"
+    "synthesizedAt": "2026-10-28T07:56:26.867Z"
   },
   "sourceRef": {
     "file": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",

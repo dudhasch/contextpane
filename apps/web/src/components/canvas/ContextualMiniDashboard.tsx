@@ -560,9 +560,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
 
   const driftedRow = useMemo(() => card.rows.find((r) => classify(r) === "bad") ?? card.rows[0] ?? {}, [card.rows]);
   const goldenRow = useMemo(
-    () =>
-      card.rows.find((r) => classify(r) === "good" || /golden|healthy|compliant|free|active entitlement/i.test(JSON.stringify(r))) ??
-      (card.rows.length > 1 ? card.rows[card.rows.length - 1] : null),
+    () => card.rows.find((r) => classify(r) === "good") ?? null,
     [card.rows],
   );
 
@@ -578,16 +576,32 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
 
   const synthGoldenValue = (key: string, liveVal: string): string => {
     if (goldenRow && goldenRow !== driftedRow && goldenRow[key] !== undefined && goldenRow[key] !== null) {
-      return String(goldenRow[key]);
+      const candidate = String(goldenRow[key]);
+      if (!BAD.test(candidate)) return candidate;
     }
     if (/currentsku|assignedsku/i.test(key)) return "SPE_E5";
     if (/assignmenttype|posture/i.test(key)) return "PIM Eligible (JIT 4h · MFA Required)";
+    if (/result|outcome|errorcode/i.test(key)) return "0 · Succeeded (Compliant / Allowed)";
+    if (/policy|blocking/i.test(key) && liveVal !== "—") return "Excluded / Compliant Grant Satisfied";
     if (/state|status|compliance/i.test(key)) return "Compliant / Healthy (Golden Baseline)";
     if (/headroom/i.test(key)) return "16 vCPUs Free (germanywestcentral)";
     if (/usage|utilization/i.test(key)) return "4/20 (20% · Healthy)";
     if (/error/i.test(key)) return "0 (None)";
     if (/drift/i.test(key)) return "in sync";
+    if (BAD.test(liveVal)) return "0 · Healthy / Allowed (Golden Baseline)";
     return liveVal;
+  };
+
+  const formatCardTitle = (row: Record<string, string | number | boolean | null>, idx: number): string => {
+    const rawPrimary = primaryCol ? String(row[primaryCol.key] ?? "") : "";
+    const identityLabel = String(
+      row.displayName ?? row.user ?? row.upn ?? row.deviceName ?? row.resource ?? row.policyName ?? "",
+    );
+    if (/^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2})/.test(rawPrimary)) {
+      const hhmm = rawPrimary.slice(11, 16);
+      return identityLabel ? `${identityLabel} (${hhmm})` : `${hhmm} UTC · Event #${idx + 1}`;
+    }
+    return rawPrimary || identityLabel || `Object #${idx + 1}`;
   };
 
   return (
@@ -598,27 +612,32 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
           Side-by-Side Live Drifted State vs. Golden Target Baseline · Comparing {compareRows.length} of {card.rows.length} objects
         </span>
         <span className="font-mono text-[10.5px] text-muted">
-          {differingKeys.size || attrColumns.length} diverging attribute{differingKeys.size === 1 ? "" : "s"} highlighted (Δ)
+          {differingKeys.size || 1} diverging attribute{differingKeys.size === 1 ? "" : "s"} highlighted (Δ)
         </span>
       </div>
 
       {/* Live Drifted State vs. Golden Target Baseline Matrix + Unified Diff */}
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-2" data-testid="comparison-remediation-delta">
         <div className="rounded-md border border-critical/40 bg-critical/5 p-2.5 text-[11px]">
-          <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle pb-1">
-            <span className="font-mono text-[11px] font-semibold text-critical uppercase">
+          <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
+            <span className="truncate font-mono text-[11px] font-semibold text-critical uppercase">
               Live Drifted State (Observed)
             </span>
-            <Pill tone="critical">Drifted / Active Incident</Pill>
+            <Pill tone="critical">Drifted / Active</Pill>
           </div>
           <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-1">
             {card.columns.map((c) => {
               const val = String(driftedRow[c.key] ?? "—");
+              const targetVal = synthGoldenValue(c.key, val);
+              const isDiff = val !== targetVal;
               return (
                 <div key={c.key} className="contents">
                   <dt className="text-faint">{c.label}</dt>
-                  <dd className="truncate font-mono text-[10.5px] text-critical" title={val}>
-                    - {val}
+                  <dd
+                    className={`truncate font-mono text-[10.5px] ${isDiff ? "font-semibold text-critical" : "text-muted"}`}
+                    title={val}
+                  >
+                    {isDiff ? `- ${val}` : `  ${val}`}
                   </dd>
                 </div>
               );
@@ -627,8 +646,8 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
         </div>
 
         <div className="rounded-md border border-healthy/45 bg-healthy/5 p-2.5 text-[11px]">
-          <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle pb-1">
-            <span className="font-mono text-[11px] font-semibold text-healthy uppercase">
+          <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
+            <span className="truncate font-mono text-[11px] font-semibold text-healthy uppercase">
               Golden Target Baseline (Desired)
             </span>
             <Pill tone="healthy">Golden Target</Pill>
@@ -637,11 +656,15 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
             {card.columns.map((c) => {
               const liveVal = String(driftedRow[c.key] ?? "—");
               const targetVal = synthGoldenValue(c.key, liveVal);
+              const isDiff = liveVal !== targetVal;
               return (
                 <div key={c.key} className="contents">
                   <dt className="text-faint">{c.label}</dt>
-                  <dd className="truncate font-mono text-[10.5px] text-healthy" title={targetVal}>
-                    + {targetVal}
+                  <dd
+                    className={`truncate font-mono text-[10.5px] ${isDiff ? "font-semibold text-healthy" : "text-muted"}`}
+                    title={targetVal}
+                  >
+                    {isDiff ? `+ ${targetVal}` : `  ${targetVal}`}
                   </dd>
                 </div>
               );
@@ -651,11 +674,11 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
       </div>
 
       {/* Side-by-side peer comparison cards */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {compareRows.map((row, idx) => {
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {compareRows.slice(0, 3).map((row, idx) => {
           const status = classify(row);
-          const title = primaryCol ? String(row[primaryCol.key] ?? `Item #${idx + 1}`) : `Item #${idx + 1}`;
-          const isBaseline = status === "good" || /golden|baseline|compliant|free/i.test(JSON.stringify(row));
+          const title = formatCardTitle(row, idx);
+          const isBaseline = status === "good";
           return (
             <div
               key={idx}
@@ -668,12 +691,12 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
                     : "border-warning/40 bg-warning/6"
               }`}
             >
-              <div className="mb-1.5 flex items-center justify-between gap-1.5 border-b border-border-subtle/80 pb-1.5">
+              <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border-subtle/80 pb-1.5">
                 <span className="truncate font-mono text-[11.5px] font-semibold text-text" title={title}>
                   {title}
                 </span>
                 <Pill tone={isBaseline ? "healthy" : status === "bad" ? "critical" : "warning"}>
-                  {isBaseline ? "Reference / Golden" : idx === 0 ? "Selected Target" : `Peer #${idx}`}
+                  {isBaseline ? "Reference / Golden" : status === "bad" ? (idx === 0 ? "Primary Failing" : `Drifted #${idx + 1}`) : idx === 0 ? "Selected Target" : `Peer #${idx + 1}`}
                 </Pill>
               </div>
               <div className="space-y-1.5">
