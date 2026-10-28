@@ -28,7 +28,7 @@ function isWithinSelectableSurface(node: Node | null, rootEl: HTMLElement | null
  * any hover popover portal) a floating action bar appears right above the selection:
  * - Left: `✨ Generate Context UI for "…"`
  * - Middle: auto-focused inline refinement input (e.g. "other apps with the same owner") — press Enter to generate
- * - Right: 4 VectorCraft SVG view-mode icons (Dashboard, Full Card, Quick Comparison, Blast Radius) — press Tab to cycle
+ * - Right: 4 VectorCraft SVG view-mode icons (Triage Lens, Live Inspector, State Diff, Blast Radius) — press Tab to cycle
  */
 export function SelectionTrigger({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   const rootRef = useRef<HTMLDivElement>(null);

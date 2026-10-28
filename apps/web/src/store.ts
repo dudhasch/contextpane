@@ -166,6 +166,7 @@ export interface RowFilter {
 }
 import { connectTelemetry } from "./lib/ws";
 import { orderWorkItems, type QueueFilter } from "./lib/workitem";
+import { CONTEXT_MODE_META } from "./components/ui/ContextModeIcons";
 
 export type CanvasStatus = "idle" | "loading" | "ready" | "error";
 
@@ -740,7 +741,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       });
       get().toast({
         tone: "critical",
-        title: "Free-Roam Dashboard Spawn Failed",
+        title: "Context Lens failed to open",
         detail: error instanceof Error ? error.message : String(error),
       });
     }
@@ -820,7 +821,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     get().toast({
       tone: "healthy",
       title: `Saved Free-Roam Board "${cleanName}"`,
-      detail: `${dashboards.length} dashboard(s) persisted to local workspace storage.`,
+      detail: `${dashboards.length} lens(es) saved to local workspace storage.`,
     });
   },
 
@@ -834,7 +835,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     get().toast({
       tone: "info",
       title: `Loaded Board "${found.name}"`,
-      detail: `Restored ${found.dashboards.length} dashboard(s).`,
+      detail: `Restored ${found.dashboards.length} lens(es).`,
     });
   },
 
@@ -2048,7 +2049,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         window.requestAnimationFrame(() => document.getElementById(`mini-${result!.card.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
       }
       setTimeout(() => set((s) => (s.linkedSelection === result!.card.id ? { linkedSelection: null } : {})), 1600);
-      const modeSuffix = resolvedViewMode !== "dashboard" ? ` [${resolvedViewMode}]` : "";
+      const modeSuffix = resolvedViewMode !== "dashboard" ? ` · ${CONTEXT_MODE_META[resolvedViewMode].shortLabel}` : "";
       const refSuffix = resolvedRefinement ? ` + "${resolvedRefinement.slice(0, 28)}"` : "";
       const elapsedSec = Math.max(0.1, Math.round((performance.now() - clickStartedAt) / 100) / 10).toFixed(1);
       const rowCount = result.slice?.rowCount ?? result.card.rows.length;

@@ -773,7 +773,7 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
     <section className="rounded-[10px] border border-border bg-surface px-3 py-2" data-testid="customer-ticket-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
-        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to spawn a live mini-dashboard">
+        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to open a live Context Lens">
           <Wand2 className="size-3 text-selection" /> ✨ Select any text on screen to generate Context UI
         </span>
       </div>
@@ -966,7 +966,7 @@ function SelectionBadge({ selection, text }: { selection: SelectionItem; text: s
           ? document.getElementById(`mini-${selection.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
           : void explore(selection.text, { ...(selection.refinementText ? { refinementText: selection.refinementText } : {}), ...(selection.viewMode ? { viewMode: selection.viewMode } : {}) })
       }
-      title={mounted ? `Selection #${selection.index}${extra} · click to scroll to its mini-dashboard` : `Selection #${selection.index}${extra} · dismissed; click to generate it again`}
+      title={mounted ? `Selection #${selection.index}${extra} · click to scroll to its Context Lens` : `Selection #${selection.index}${extra} · dismissed; click to generate it again`}
       className={`inline-flex h-5 max-w-full items-center gap-1 rounded border px-1.5 align-middle font-mono text-[11px] transition-colors hover:brightness-125 ${mounted ? "border-selection/60 bg-selection/14 text-selection" : "border-selection/30 bg-selection/6 text-selection/70"}`}
     >
       <Sparkles className="size-3 shrink-0" />

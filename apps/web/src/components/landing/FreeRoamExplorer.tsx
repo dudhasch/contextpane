@@ -118,7 +118,7 @@ export function FreeRoamExplorer() {
                 Free-Roam Startpage · Knowledge &amp; Tenant Explorer
               </h1>
               <p className="text-[10.5px] text-muted">
-                Spawn any dashboard across live MCP tenant telemetry or cloud architecture knowledge without opening a ticket
+                Open any lens on live MCP tenant telemetry or cloud architecture knowledge without opening a ticket
               </p>
             </div>
           </div>
@@ -154,7 +154,7 @@ export function FreeRoamExplorer() {
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-selection">
               <Wand2 className="size-3.5" />
-              <span>Spawn Dynamic Dashboard or Knowledge Matrix</span>
+              <span>Open a Triage Lens or Knowledge Matrix</span>
             </div>
             <span className="font-mono text-[10px] text-faint">muse-wonder-1.0 · MCP Grounded</span>
           </div>
@@ -233,7 +233,7 @@ export function FreeRoamExplorer() {
               disabled={prompt.trim().length < 2}
               data-testid="free-roam-spawn-button"
             >
-              Spawn Dashboard
+              Open Lens
             </Button>
             <Button
               type="button"
@@ -266,7 +266,7 @@ export function FreeRoamExplorer() {
           <div className="mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
               <Layers className="size-3 text-primary" />
-              1-Click Live Tenant Posture Dashboards (via MCP)
+              1-Click Live Tenant Posture Lenses (via MCP)
             </span>
             <span className="font-mono text-[10px] text-muted">
               {dataMode === "real-tenant" ? "live-graph / live-azure" : "simulated-lab"}
@@ -433,7 +433,7 @@ export function FreeRoamExplorer() {
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider text-faint uppercase">
               <FolderKanban className="size-3 text-selection" />
-              Saved Multi-Dashboard Boards ({savedBoards.length})
+              Saved Lens Boards ({savedBoards.length})
             </span>
           </div>
 

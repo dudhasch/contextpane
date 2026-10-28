@@ -43,13 +43,13 @@ export function GenUICanvas() {
       <div className="flex h-full flex-col" data-testid="free-roam-canvas">
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-[12px]">
           <Compass className="size-3.5 shrink-0 text-selection" />
-          <span className="font-medium text-text">Free-Roam Multi-Dashboard Workspace</span>
+          <span className="font-medium text-text">Free-Roam Lens Workspace</span>
           <ChevronRight className="size-3 shrink-0 text-faint" />
           <span className="truncate font-mono text-[11px] text-muted">
             {inventory?.tenant.displayName ?? "Contoso"} ({inventory?.tenant.verifiedDomain ?? "c4a8shili.onmicrosoft.com"})
           </span>
           <span className="shrink-0 font-mono text-[11px] text-selection">
-            · {freeRoamDashboards.length} {freeRoamDashboards.length === 1 ? "dashboard" : "dashboards"} mounted
+            · {freeRoamDashboards.length} {freeRoamDashboards.length === 1 ? "lens" : "lenses"} mounted
           </span>
           <div className="ml-auto flex items-center gap-1.5">
             <span
@@ -70,7 +70,7 @@ export function GenUICanvas() {
                   variant="meta"
                   icon={<Wrench />}
                   onClick={() => openRemediation()}
-                  title="Stage PowerShell 7 / Graph / Terraform action for the active Free-Roam dashboard"
+                  title="Stage PowerShell 7 / Graph / Terraform action for the active Free-Roam lens"
                 >
                   Stage Action
                 </Button>
@@ -79,7 +79,7 @@ export function GenUICanvas() {
                   variant="ghost"
                   icon={<Trash2 />}
                   onClick={() => clearFreeRoamDashboards()}
-                  title="Clear all spawned dashboards from the Free-Roam workspace"
+                  title="Close all open lenses in the Free-Roam workspace"
                 >
                   Clear ({freeRoamDashboards.length})
                 </Button>
@@ -107,7 +107,7 @@ export function GenUICanvas() {
                 Free-Roam Knowledge &amp; Telemetry Canvas Ready
               </div>
               <p className="max-w-md text-[11.5px] text-muted">
-                Type any cloud architecture question, error code, or tenant query in the left explorer—or click any entity in the live MCP tenant tree—to dynamically spawn interactive dashboards. Highlight any text on any card to recursively drill down.
+                Type any cloud architecture question, error code, or tenant query in the left explorer—or click any entity in the live MCP tenant tree—to open interactive lenses. Highlight any text on any card to recursively drill down.
               </p>
             </div>
           )}
