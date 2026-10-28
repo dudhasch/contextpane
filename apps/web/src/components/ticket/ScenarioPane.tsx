@@ -136,14 +136,6 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
   );
 }
 
-const FALLBACK_LIVE_TASKS: SubAgentTaskRecord[] = [
-  { stepIndex: 1, task: "scope-and-questions", agentName: "1. Scope Check", role: "Target Scope & Parameters", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Analyzing ticket parameters...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 2, task: "telemetry-and-status", agentName: "2. Live Telemetry", role: "Live Graph & ARM Status Check", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Correlating upstream cloud status...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 3, task: "ui-element-synthesis", agentName: "3. View Layout", role: "Diagnostic View Layout", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Building diagnostic card layout...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 4, task: "script-and-iac-synthesis", agentName: "4. Remediation Plan", role: "PowerShell 7 & Terraform Patch", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Preparing idempotent remediation...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Pre-Flight Safety", role: "AST, -WhatIf & 1-Click Undo", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Verifying pre-flight invariants...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-];
-
 const STAGE_DISPLAY_META: Record<number, { name: string; role: string }> = {
   1: { name: "1. Scope Check", role: "Target Scope & Parameters" },
   2: { name: "2. Live Telemetry", role: "Live Graph & ARM Status Check" },
@@ -168,14 +160,16 @@ function UnifiedStatusAndAgentBar({
   const triageStatus = useWorkbench((s) => s.triageStatus);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const isBusy = triageStatus === "loading" || refiningGoal;
-  const displayTasks = tasks.length > 0 ? tasks : FALLBACK_LIVE_TASKS;
+  // No recorded pipeline means none ran: nothing is invented to fill the strip (H-21).
+  const displayTasks = tasks;
   const completedCount = displayTasks.filter((t) => t.status === "completed").length;
+  const allCompleted = displayTasks.length > 0 && completedCount === displayTasks.length;
   // Steps with a start offset ran on one clock (S1, then S2 ∥ S3 ∥ S4, then S5): report wall clock, not the sum.
   const totalLatencyMs = useMemo(
     () =>
       displayTasks.some((t) => t.startOffsetMs !== undefined)
         ? Math.max(...displayTasks.map((t) => (t.startOffsetMs ?? 0) + (t.latencyMs || 0)))
-        : displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0) || 42,
+        : displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0),
     [displayTasks],
   );
   const hasAdvisory = Boolean(
@@ -214,10 +208,12 @@ function UnifiedStatusAndAgentBar({
           title="Click to inspect the 5 automated triage & safety checks"
         >
           <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
-          <span className="font-mono text-[10.5px] font-semibold text-emerald-300">
+          <span className={`font-mono text-[10.5px] font-semibold ${isBusy || allCompleted ? "text-emerald-300" : "text-amber-300"}`}>
             {isBusy
-              ? "● Running 5/5 Triage Checks..."
-              : `✓ ${completedCount}/${displayTasks.length} Triage Checks (${totalLatencyMs}ms)`}
+              ? "● Running Triage Checks..."
+              : displayTasks.length === 0
+                ? "Triage pipeline not run"
+                : `${allCompleted ? "✓" : "⚠"} ${completedCount}/${displayTasks.length} Triage Checks (${totalLatencyMs}ms)`}
           </span>
           <span className="font-mono text-[10px] text-muted">{agentsExpanded || isBusy ? "▴" : "▾"}</span>
         </button>
@@ -250,6 +246,7 @@ function UnifiedStatusAndAgentBar({
           <div className="flex flex-wrap items-center gap-1">
             {displayTasks.map((t, idx) => {
               const isSelected = selectedStep === t.stepIndex;
+              const ranOk = t.status === "completed";
               const stageMeta = STAGE_DISPLAY_META[t.stepIndex];
               const stageName = stageMeta?.name ?? t.agentName;
               const stageRole = stageMeta?.role ?? t.role;
@@ -265,10 +262,12 @@ function UnifiedStatusAndAgentBar({
                         ? "animate-pulse border-primary/60 bg-primary/20 font-semibold text-primary"
                         : isSelected
                           ? "border-primary bg-primary/20 font-semibold text-primary"
-                          : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                          : ranOk
+                            ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                            : "border-amber-500/35 bg-amber-500/10 text-amber-300 hover:border-primary/50 hover:text-text"
                     }`}
                   >
-                    <span>{isBusy ? "●" : "✓"} {stageName}</span>
+                    <span>{isBusy ? "●" : ranOk ? "✓" : "○"} {stageName}</span>
                     {!isBusy && t.startOffsetMs !== undefined && <span className="text-faint">+{t.startOffsetMs}·{t.latencyMs}ms</span>}
                   </button>
                   {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
@@ -287,7 +286,7 @@ function UnifiedStatusAndAgentBar({
                   {STAGE_DISPLAY_META[activeTask.stepIndex]?.name ?? activeTask.agentName} · {STAGE_DISPLAY_META[activeTask.stepIndex]?.role ?? activeTask.role}
                 </span>
                 <span className="font-mono text-[10px] text-muted">
-                  {activeTask.latencyMs} ms · Verified
+                  {activeTask.modelId} · {activeTask.latencyMs} ms · {activeTask.source === "llm" ? "model call" : activeTask.source === "not-attempted" ? "no model call" : (activeTask.source ?? activeTask.status)}
                 </span>
               </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">

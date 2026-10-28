@@ -61,7 +61,7 @@ import {
   spawnFreeRoamDashboard,
   stageFreeRoamRemediation,
 } from "./local/free-roam.ts";
-import { generateClarifyingQuestions } from "./local/subagent-orchestrator.ts";
+import { generateClarifyingQuestions, telemetryFromSubAgentTasks } from "./local/subagent-orchestrator.ts";
 import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
 import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
@@ -354,18 +354,18 @@ app.post("/api/tickets/triage-custom", async (c) => {
   const idempotency = verifyIdempotency(entry.baseScenarioId ?? entry.scenarioId);
   const timeline = getTimeline(entry.baseScenarioId ?? entry.scenarioId);
   const latencyMs = Math.round(performance.now() - started);
-  const hasSynthesized = Boolean(entry.elementRouting && entry.elementRouting.missingElements.length > 0);
+  // Provider, model and tokens come from what the sub-agents actually did; no constant savings (L-06, M-02).
+  const pipeline = telemetryFromSubAgentTasks(entry.subAgentTasks ?? []);
   const event = telemetry.record({
     requestId: telemetry.nextRequestId("t0"),
     endpoint: "/api/tickets/triage-custom",
-    tier: hasSynthesized ? "Tier 2" : "Tier 0",
-    provider: hasSynthesized && providers.meta.hasKey && !config.forceLocal ? "meta" : "local",
-    modelId: hasSynthesized ? "muse-spark-1.3 -> muse-wonder-1.0" : "deterministic-entity-extractor",
+    tier: pipeline.provider === "meta" ? "Tier 2" : "Tier 0",
+    provider: pipeline.provider,
+    modelId: pipeline.modelId,
     latencyMs,
-    tokensUsed: { ...ZERO_USAGE },
-    fallbackChain: [],
+    tokensUsed: pipeline.tokensUsed,
+    fallbackChain: pipeline.fallbackChain,
     tenantId: entry.tenantId,
-    estimatedSavings: { tokens: 1800, ms: 4000, versus: "model-based ticket classification" },
   });
   return c.json(
     {

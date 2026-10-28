@@ -436,8 +436,8 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     ? {
         ...rawExtraction,
         components: finalComponents,
-        entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, "muse-spark-1.3 · N+k Catalog Gatekeeper"),
-        rationale: `Stage-1 muse-spark-1.3 routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+        entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, "deterministic-router · N+k Catalog Gatekeeper"),
+        rationale: `deterministic-router routed to a dynamic UI element (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) built from the deterministic template; no model call yet`.slice(0, 300),
       }
     : rawExtraction;
 
@@ -483,13 +483,14 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     questions: clarifyingQuestions,
     clarifiedAnswers: initialAnswers,
     elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
-    gatekeeperModel: "muse-spark-1.3",
-    synthesizerModel: "muse-wonder-1.0",
+    gatekeeperModel: "deterministic-router",
+    synthesizerModel: "deterministic-template",
+    // The sync path makes zero model calls: S1/S3/S4 ran their deterministic templates (L-06).
     measurements: {
-      1: { latencyMs: t1Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
-      2: { latencyMs: t2Ms, status: "completed", source: "mcp-probe", tokensUsed: 0 },
-      3: { latencyMs: t3Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
-      4: { latencyMs: t4Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
+      1: { latencyMs: t1Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
+      2: { latencyMs: t2Ms, modelId: "cloud-status (seeded, sync)", status: "completed", source: "mcp-probe", tokensUsed: 0 },
+      3: { latencyMs: t3Ms, modelId: "deterministic-router -> deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
+      4: { latencyMs: t4Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
       5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "symbolic-verifier", tokensUsed: 0 },
     },
   });

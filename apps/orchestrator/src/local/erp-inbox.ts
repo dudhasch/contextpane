@@ -9,6 +9,7 @@ import { convergenceStore } from "../store/convergence.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { matchSignIn, visionExtract, type VisionResult } from "../tiers/vision.ts";
 import { customScenarioListItem, registerCustomTicket, removeCustomTicket, triageCustomTicketAsync } from "./custom-ticket.ts";
+import { telemetryFromSubAgentTasks } from "./subagent-orchestrator.ts";
 import { generateDrop, type DropArchetype } from "./erp-drop-generator.ts";
 import { readPngInfo } from "./png.ts";
 
@@ -213,7 +214,6 @@ export function ingestFolder(folder: string, options: { announce?: boolean } = {
       tokensUsed: { ...ZERO_USAGE },
       fallbackChain: [],
       tenantId: entry.tenantId,
-      estimatedSavings: { tokens: 1800, ms: 4000, versus: "model-based ticket classification" },
     });
     workbenchEvents.publish({ type: "inbox/ingested", item, folder, attachments: attachments.map((a) => a.fileName) });
     if (providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test") {
@@ -229,11 +229,29 @@ export function ingestFolder(folder: string, options: { announce?: boolean } = {
       )
         .then((asyncEntry) => {
           invalidateContext(scenarioId);
+          // The upgrade landed: record what the sub-agents really spent (provider "local" until now).
+          const pipeline = telemetryFromSubAgentTasks(asyncEntry.subAgentTasks ?? []);
+          telemetry.record({
+            requestId: telemetry.nextRequestId("t2"),
+            endpoint: "/inbox/triage-async",
+            tier: pipeline.provider === "meta" ? "Tier 2" : "Tier 0",
+            provider: pipeline.provider,
+            modelId: pipeline.modelId,
+            latencyMs: Math.round(performance.now() - started),
+            tokensUsed: pipeline.tokensUsed,
+            fallbackChain: pipeline.fallbackChain,
+            tenantId: asyncEntry.tenantId,
+          });
           const updatedItem = customScenarioListItem(asyncEntry, Boolean(convergenceStore.get(scenarioId)));
           workbenchEvents.publish({ type: "inbox/ingested", item: updatedItem, folder, attachments: attachments.map((a) => a.fileName) });
           return gatherContext(scenarioId, { fresh: true });
         })
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          // The deterministic entry stays; republish it so the queue stops waiting on an upgrade that failed.
+          console.warn(`[erp-inbox] async triage of ${scenarioId} failed: ${error instanceof Error ? error.message : String(error)}`);
+          invalidateContext(scenarioId);
+          workbenchEvents.publish({ type: "inbox/ingested", item, folder, attachments: attachments.map((a) => a.fileName) });
+        });
     } else {
       // Warm the brief and the data plane so the first click on the new item is instant.
       void gatherContext(scenarioId, { fresh: true }).catch(() => undefined);

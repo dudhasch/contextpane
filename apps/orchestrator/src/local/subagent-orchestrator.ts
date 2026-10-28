@@ -399,8 +399,34 @@ export interface SubAgentStepMeasurement {
   modelId?: string;
   tokensUsed?: number;
   status?: "completed" | "running" | "fallback";
-  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error";
+  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error" | "not-attempted";
   outputSummary?: string;
+}
+
+/**
+ * Router telemetry derived from what the sub-agents actually did: provider "meta" and real
+ * token counts only when at least one step called a model (L-04, L-06).
+ */
+export function telemetryFromSubAgentTasks(tasks: SubAgentTaskRecord[]): {
+  provider: "meta" | "local";
+  modelId: string;
+  tokensUsed: { prompt: number; completion: number; total: number };
+  fallbackChain: Array<{ provider: "meta" | "local"; modelId: string; outcome: "ok" | "skipped" | "error"; latencyMs: number }>;
+} {
+  const modelSteps = tasks.filter((t) => t.stepIndex === 1 || t.stepIndex === 3 || t.stepIndex === 4);
+  const llmSteps = modelSteps.filter((t) => t.source === "llm");
+  const total = llmSteps.reduce((sum, t) => sum + (t.tokensUsed ?? 0), 0);
+  return {
+    provider: llmSteps.length ? "meta" : "local",
+    modelId: llmSteps.length ? [...new Set(llmSteps.map((t) => t.modelId))].join(" + ") : "deterministic-router",
+    tokensUsed: { prompt: 0, completion: 0, total },
+    fallbackChain: modelSteps.map((t) => ({
+      provider: t.source === "llm" ? "meta" : "local",
+      modelId: t.modelId,
+      outcome: t.source === "llm" ? "ok" : t.source === "fallback-on-error" ? "error" : "skipped",
+      latencyMs: t.latencyMs,
+    })),
+  };
 }
 
 export function buildSubAgentPipelineRecords(input: {
@@ -425,14 +451,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "scope-and-questions",
       agentName: "1. Goal Clarifier",
       role: "Goal & Scope Clarifier Sub-Agent",
-      modelId: m[1]?.modelId ?? models.metaWonder,
-      status: m[1]?.status ?? "fallback",
-      source: m[1]?.source ?? "fallback-on-error",
-      latencyMs: m[1]?.latencyMs ?? 1,
+      modelId: m[1] ? (m[1].modelId ?? models.metaWonder) : "not run",
+      status: m[1] ? (m[1].status ?? "fallback") : "fallback",
+      source: m[1] ? (m[1].source ?? "fallback-on-error") : "not-attempted",
+      latencyMs: m[1]?.latencyMs ?? 0,
       ...(m[1]?.startOffsetMs !== undefined ? { startOffsetMs: m[1].startOffsetMs } : {}),
       ...(m[1]?.tokensUsed !== undefined ? { tokensUsed: m[1].tokensUsed } : {}),
       inputSummary: `Ticket "${input.title.slice(0, 70)}"`,
-      outputSummary: m[1]?.outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
+      outputSummary: !m[1] ? "Not run for this ticket" : m[1].outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
       timestamp: now,
     },
     {
@@ -440,14 +466,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "telemetry-and-status",
       agentName: "2. Telemetry Scout",
       role: "Telemetry & Cloud Status Scout Sub-Agent",
-      modelId: m[2]?.modelId ?? "mcp-msgraph + cloud-status",
-      status: m[2]?.status ?? "completed",
-      source: m[2]?.source ?? "mcp-probe",
-      latencyMs: m[2]?.latencyMs ?? 1,
+      modelId: m[2] ? (m[2].modelId ?? "mcp-msgraph + cloud-status") : "not run",
+      status: m[2] ? (m[2].status ?? "completed") : "fallback",
+      source: m[2] ? (m[2].source ?? "mcp-probe") : "not-attempted",
+      latencyMs: m[2]?.latencyMs ?? 0,
       ...(m[2]?.startOffsetMs !== undefined ? { startOffsetMs: m[2].startOffsetMs } : {}),
       ...(m[2]?.tokensUsed !== undefined ? { tokensUsed: m[2].tokensUsed } : {}),
       inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`,
-      outputSummary: m[2]?.outputSummary ?? "Correlated live tenant objects & health advisories",
+      outputSummary: !m[2] ? "Not run for this ticket" : m[2].outputSummary ?? "Correlated live tenant objects & health advisories",
       timestamp: now,
     },
     {
@@ -455,14 +481,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "ui-element-synthesis",
       agentName: "3. UI Architect",
       role: "UI Architect Sub-Agent (N+k Catalog)",
-      modelId: m[3]?.modelId ?? input.synthesizerModel,
-      status: m[3]?.status ?? "fallback",
-      source: m[3]?.source ?? "fallback-on-error",
-      latencyMs: m[3]?.latencyMs ?? 1,
+      modelId: m[3] ? (m[3].modelId ?? input.synthesizerModel) : "not run",
+      status: m[3] ? (m[3].status ?? "fallback") : "fallback",
+      source: m[3] ? (m[3].source ?? "fallback-on-error") : "not-attempted",
+      latencyMs: m[3]?.latencyMs ?? 0,
       ...(m[3]?.startOffsetMs !== undefined ? { startOffsetMs: m[3].startOffsetMs } : {}),
       ...(m[3]?.tokensUsed !== undefined ? { tokensUsed: m[3].tokensUsed } : {}),
       inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`,
-      outputSummary: m[3]?.outputSummary ?? `Synthesized ${elementsLabel}`,
+      outputSummary: !m[3] ? "Not run for this ticket" : m[3].outputSummary ?? `Synthesized ${elementsLabel}`,
       timestamp: now,
     },
     {
@@ -470,14 +496,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "script-and-iac-synthesis",
       agentName: "4. IaC & PS7 Coder",
       role: "Remediation & IaC Coder Sub-Agent",
-      modelId: m[4]?.modelId ?? input.synthesizerModel,
-      status: m[4]?.status ?? "fallback",
-      source: m[4]?.source ?? "fallback-on-error",
-      latencyMs: m[4]?.latencyMs ?? 1,
+      modelId: m[4] ? (m[4].modelId ?? input.synthesizerModel) : "not run",
+      status: m[4] ? (m[4].status ?? "fallback") : "fallback",
+      source: m[4] ? (m[4].source ?? "fallback-on-error") : "not-attempted",
+      latencyMs: m[4]?.latencyMs ?? 0,
       ...(m[4]?.startOffsetMs !== undefined ? { startOffsetMs: m[4].startOffsetMs } : {}),
       ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
       inputSummary: `Target parameters: ${activePairs.join(", ")}`,
-      outputSummary: m[4]?.outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
+      outputSummary: !m[4] ? "Not run for this ticket" : m[4].outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
       timestamp: now,
     },
     {
@@ -485,14 +511,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "preflight-and-undo",
       agentName: "5. Safety Verifier",
       role: "Safety & Rollback Verifier Sub-Agent",
-      modelId: m[5]?.modelId ?? "symbolic-formal-verifier",
-      status: m[5]?.status ?? "completed",
-      source: m[5]?.source ?? "symbolic-verifier",
-      latencyMs: m[5]?.latencyMs ?? 1,
+      modelId: m[5] ? (m[5].modelId ?? "symbolic-formal-verifier") : "not run",
+      status: m[5] ? (m[5].status ?? "completed") : "fallback",
+      source: m[5] ? (m[5].source ?? "symbolic-verifier") : "not-attempted",
+      latencyMs: m[5]?.latencyMs ?? 0,
       ...(m[5]?.startOffsetMs !== undefined ? { startOffsetMs: m[5].startOffsetMs } : {}),
       ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
       inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`,
-      outputSummary: m[5]?.outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
+      outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
       timestamp: now,
     },
   ];

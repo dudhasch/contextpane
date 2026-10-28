@@ -232,7 +232,8 @@ export const SubAgentTaskRecordSchema = z.object({
   role: z.string(),
   modelId: z.string(),
   status: z.enum(["completed", "running", "fallback"]),
-  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "fallback-on-error"]).optional(),
+  /** "not-attempted": no model call was made for this step (offline or deterministic path). */
+  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "fallback-on-error", "not-attempted"]).optional(),
   latencyMs: z.number().int().nonnegative(),
   /** When the step started, in ms after the pipeline started; absent for steps that never ran on a clock. */
   startOffsetMs: z.number().int().nonnegative().optional(),

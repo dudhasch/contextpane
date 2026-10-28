@@ -154,14 +154,6 @@ function SynthesizedElementsLedgerSection({
   );
 }
 
-const DEFAULT_SUB_AGENT_PIPELINE = [
-  { stepIndex: 1, agentName: "Goal Clarifier", role: "Scope & Clarifying Questions", modelId: "muse-spark-1.3", latencyMs: 42 },
-  { stepIndex: 2, agentName: "Telemetry Scout", role: "Live Graph / ARM / Status Scout", modelId: "muse-spark-1.3", latencyMs: 68 },
-  { stepIndex: 3, agentName: "UI Architect", role: "N+k Card & Layout Synthesis", modelId: "muse-wonder-1.0", latencyMs: 115 },
-  { stepIndex: 4, agentName: "IaC & PS7 Coder", role: "PowerShell 7 & Terraform Patch", modelId: "muse-wonder-1.0", latencyMs: 140 },
-  { stepIndex: 5, agentName: "Safety Verifier", role: "AST, -WhatIf & 1-Click Undo Check", modelId: "muse-spark-1.3", latencyMs: 35 },
-] as const;
-
 function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) {
   const brief = useWorkbench((s) => s.brief);
   const layout = useWorkbench((s) => s.layout);
@@ -177,8 +169,10 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           role: t.role,
           modelId: t.modelId,
           latencyMs: t.latencyMs,
+          usedModel: t.source === "llm",
+          source: t.source ?? t.status,
         }))
-      : DEFAULT_SUB_AGENT_PIPELINE;
+      : [];
 
   const synthesizedCount =
     catalogCount ||
@@ -195,10 +189,13 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
       <div className="rounded border border-border-subtle bg-surface p-2.5" data-testid="subagent-task-telemetry">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[10px] font-semibold tracking-wider text-faint uppercase">Sub-Agent Task Telemetry (5-Stage Pipeline)</div>
-          <span className="font-mono text-[10.5px] text-healthy">
-            {subAgents.length}/5 stages active
+          <span className={`font-mono text-[10.5px] ${subAgents.some((a) => a.usedModel) ? "text-healthy" : "text-muted"}`}>
+            {subAgents.length ? `${subAgents.filter((a) => a.usedModel).length}/${subAgents.length} called a model` : "pipeline not run"}
           </span>
         </div>
+        {subAgents.length === 0 && (
+          <div className="mt-1.5 text-[10.5px] text-muted">The sub-agent pipeline runs only for custom and ERP tickets; nothing to report for this one.</div>
+        )}
         <div className="mt-1.5 divide-y divide-border-subtle rounded border border-border-subtle bg-canvas/40">
           {subAgents.map((agent) => (
             <div key={agent.stepIndex} className="flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
@@ -208,7 +205,8 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
                 <span className="truncate text-[10px] text-muted">· {agent.role}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10px]">
-                <span className="text-primary">{agent.modelId}</span>
+                <span className={agent.usedModel ? "text-primary" : "text-muted"}>{agent.modelId}</span>
+                {!agent.usedModel && <span className="text-warning">{agent.source}</span>}
                 <span className="text-muted">{agent.latencyMs} ms</span>
               </div>
             </div>

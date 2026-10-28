@@ -23,6 +23,7 @@ import { contextForCorrelation, gatherContext, type CorrelationContext } from ".
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
+import { telemetryFromSubAgentTasks } from "../local/subagent-orchestrator.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
 
 export interface CorrelateInput {
@@ -166,14 +167,12 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
 
   const hasSynthesizedCard = wanted.includes("SynthesizedDynamicCard");
   if (hasSynthesizedCard) {
-    provider = providers.meta.hasKey && !config.forceLocal ? "meta" : "local";
-    modelId = models.metaWonder;
-    tier = "Tier 2";
-    chain = [
-      { provider: provider === "meta" ? "meta" : "local", modelId: models.metaCatalog, outcome: "ok", latencyMs: 12 },
-      { provider: provider === "meta" ? "meta" : "local", modelId: models.metaWonder, outcome: "ok", latencyMs: 24 },
-    ];
-    report("llm:skip", `SynthesizedDynamicCard already synthesized via ${models.metaCatalog} -> ${models.metaWonder}`);
+    // Correlate reuses the card built at triage and calls no model; the chain is what triage recorded (L-04).
+    provider = "local";
+    modelId = "deterministic (reused triage synthesis)";
+    tier = "Tier 0";
+    chain = telemetryFromSubAgentTasks(ctx.custom?.subAgentTasks ?? []).fallbackChain;
+    report("llm:skip", "SynthesizedDynamicCard reused from triage; no model call");
   } else if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const tool = getHydrateLayoutToolDefinition();
     const modelContext = contextForCorrelation(ctx, snapshot.descriptors);
