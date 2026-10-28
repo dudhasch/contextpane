@@ -2,6 +2,7 @@ import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@f
 import { CornerDownLeft, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { CONTEXT_VIEW_MODES, SELECTION_MAX_CHARS, SELECTION_MIN_CHARS, type ContextViewMode } from "@contextpane/catalog";
+import { setSelectionBar } from "@/lib/selection-bar";
 import { useWorkbench } from "@/store";
 import { CONTEXT_MODE_LIST, CONTEXT_MODE_META, ContextModeIcon } from "../ui/ContextModeIcons";
 
@@ -9,6 +10,8 @@ interface Pending {
   text: string;
   rect: DOMRect;
   insidePopover?: boolean;
+  /** The hover popover the selection lives in (pins that popover while the bar is up). */
+  anchor?: Element | null;
 }
 
 function isWithinSelectableSurface(node: Node | null, rootEl: HTMLElement | null): boolean {
@@ -41,6 +44,11 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
   const discardSpeculative = useWorkbench((s) => s.discardSpeculativeSelection);
   const status = useWorkbench((s) => s.exploreStatus);
   const debounceRef = useRef<number | null>(null);
+  // A press that started on the bar: its mouseup must neither re-read the selection nor
+  // dismiss the bar before the click lands (the bar can reflow under the cursor in between).
+  const pressInBarRef = useRef(false);
+  const pendingRef = useRef<Pending | null>(null);
+  pendingRef.current = pending;
 
   const { refs, floatingStyles } = useFloating({
     open: Boolean(pending),
@@ -70,7 +78,10 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
     const popoverEl = commonEl?.closest('[data-hover-popover="true"], [data-testid="hover-popover"], [data-testid="permission-hover-popover"]');
     const rect = popoverEl ? popoverEl.getBoundingClientRect() : range.getBoundingClientRect();
     if (!rect.width && !rect.height) return setPending(null);
-    setPending({ text, rect, insidePopover: Boolean(popoverEl) });
+    // The same selection read again (keyup after mouseup, a stray mouseup) keeps the bar as it is.
+    const prev = pendingRef.current;
+    if (prev && prev.text === text && prev.anchor === (popoverEl ?? null)) return;
+    setPending({ text, rect, insidePopover: Boolean(popoverEl), anchor: popoverEl ?? null });
     setRefinement("");
     setViewMode("dashboard");
     if (/@|[0-9a-f]{8}-[0-9a-f]{4}/i.test(text)) {
@@ -81,17 +92,27 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
   // Listen for mouseup and keyup on document so selections inside portal hover popovers also trigger the floating bar
   useEffect(() => {
     const onDocMouseUp = (e: MouseEvent) => {
+      if (pressInBarRef.current) return;
       const pill = refs.floating.current;
       if (pill && pill.contains(e.target as Node)) return;
       readSelection();
+    };
+    const onDocPointerUp = () => {
+      if (!pressInBarRef.current) return;
+      // Cleared after this gesture's mouseup + click have been dispatched.
+      window.setTimeout(() => {
+        pressInBarRef.current = false;
+      }, 0);
     };
     const onDocKeyUp = (e: KeyboardEvent) => {
       if (e.shiftKey) readSelection();
     };
     document.addEventListener("mouseup", onDocMouseUp);
+    document.addEventListener("pointerup", onDocPointerUp, true);
     document.addEventListener("keyup", onDocKeyUp);
     return () => {
       document.removeEventListener("mouseup", onDocMouseUp);
+      document.removeEventListener("pointerup", onDocPointerUp, true);
       document.removeEventListener("keyup", onDocKeyUp);
     };
   }, [readSelection, refs.floating]);
@@ -128,6 +149,15 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
     };
   }, [prewarmSelection, viewMode, refinement]);
 
+  // Publish the bar's lifecycle so hover popovers pin only for their own selection and
+  // re-check a deferred close the moment the bar unmounts.
+  const barAnchor = pending ? (pending.anchor ?? null) : undefined;
+  useEffect(() => {
+    if (barAnchor === undefined) return;
+    setSelectionBar({ anchor: barAnchor });
+    return () => setSelectionBar(null);
+  }, [barAnchor, pending?.text]);
+
   useEffect(() => {
     if (!pending) return;
     const rect = pending.rect;
@@ -141,7 +171,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const pill = refs.floating.current;
-      if (pill && pill.contains(e.target as Node)) return;
+      if (pressInBarRef.current || (pill && pill.contains(e.target as Node))) return;
       setPending((prev) => {
         if (prev) discardSpeculative();
         return null;
@@ -210,8 +240,6 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
     <>
       <div
         ref={rootRef}
-        onMouseUp={readSelection}
-        onKeyUp={(e) => (e.shiftKey ? readSelection() : undefined)}
         data-testid="selection-surface"
         className={className}
         style={style}
@@ -224,6 +252,9 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
             ref={refs.setFloating}
             style={floatingStyles}
             onKeyDown={onBarKeyDown}
+            onPointerDownCapture={() => {
+              pressInBarRef.current = true;
+            }}
             onPointerEnter={() =>
               void prewarmSelection(pending.text, {
                 viewMode,

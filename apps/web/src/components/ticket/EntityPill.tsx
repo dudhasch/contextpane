@@ -13,7 +13,8 @@ import {
   useRole,
 } from "@floating-ui/react";
 import { AlertTriangle, Cloud, Cpu, ExternalLink, Hash, Laptop, ShieldBan, SlidersHorizontal, Sparkles, UserRound, Users, Wrench } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { usePopoverPinning } from "@/hooks/usePopoverPinning";
 import { lookupRoleOrPermission, type EnrichedEntity, type EntityType, type QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
 import { healthTone, humanizeStatus } from "@/lib/format";
@@ -80,45 +81,20 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
           ? "ring-1 ring-warning/60 border-warning/50"
           : "";
 
-  const scheduleClose = () => {
-    const sel = typeof window !== "undefined" ? window.getSelection() : null;
-    const selText = sel?.toString().trim() ?? "";
-    const floatingEl = refs.floating.current;
-    const commonNode = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).commonAncestorContainer : null;
-    const commonEl = commonNode instanceof Element ? commonNode : commonNode?.parentElement ?? null;
-    const hasPopoverSelection =
-      selText.length >= 3 &&
-      Boolean((floatingEl && commonNode && floatingEl.contains(commonNode)) || commonEl?.closest('[data-hover-popover="true"]'));
-    const activeEl = typeof document !== "undefined" ? document.activeElement : null;
-    const isInteractingWithTrigger =
-      (activeEl instanceof Element &&
-        Boolean(
-          activeEl.closest(
-            '[data-selection-bar="true"], [data-testid="selection-trigger-bar"], [data-testid="selection-trigger"], [data-testid="selection-trigger-button"]',
-          ),
-        )) ||
-      (typeof document !== "undefined" &&
-        Boolean(
-          document.querySelector(
-            '[data-selection-bar="true"], [data-testid="selection-trigger-bar"], [data-testid="selection-trigger-button"]',
-          ),
-        ));
-    if (hasPopoverSelection || isInteractingWithTrigger) {
-      return;
-    }
-    setOpen(false);
-  };
-
   const { refs, floatingStyles, context } = useFloating({
     open: open && hoverable,
     onOpenChange: (nextOpen) => {
-      if (nextOpen) setOpen(true);
-      else scheduleClose();
+      if (nextOpen) {
+        pinning.cancelClose();
+        setOpen(true);
+      } else pinning.requestClose();
     },
     placement: "top-start",
     middleware: [offset(6), flip({ fallbackPlacements: ["bottom-start", "right-start"] }), shift({ padding: 8 })],
     whileElementsMounted: autoUpdate,
   });
+  const closePopover = useCallback(() => setOpen(false), []);
+  const pinning = usePopoverPinning(refs.floating, closePopover);
   const { getReferenceProps, getFloatingProps } = useInteractions([
     useHover(context, { delay: { open: 150, close: 180 }, handleClose: safePolygon({ buffer: 2 }) }),
     useFocus(context),
@@ -175,7 +151,7 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
           <div
             ref={refs.setFloating}
             style={floatingStyles}
-            {...getFloatingProps()}
+            {...getFloatingProps({ onPointerDownCapture: pinning.onPointerDownCapture })}
             data-hover-popover="true"
             data-testid="hover-popover"
             className={`z-[9999] select-text ${lookupRoleOrPermission(entity.id) ? "w-[340px] max-w-[360px]" : "w-[288px] max-w-[300px]"} animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-2.5 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md`}
