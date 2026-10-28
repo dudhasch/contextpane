@@ -76,7 +76,7 @@ export const DEFAULT_AZUREVMDEPLOYMENTFAILEDINCARD_SPEC: SynthesizedDynamicCard 
       "events": [
         {
           "id": "ev1",
-          "timestamp": "2026-10-28T08:03:42.661Z",
+          "timestamp": "2026-10-28T09:05:18.050Z",
           "operation": "AzureVmDeploymentFailedInCard",
           "status": "Warning",
           "code": "DiagnosticEvent",
@@ -102,7 +102,7 @@ export const DEFAULT_AZUREVMDEPLOYMENTFAILEDINCARD_SPEC: SynthesizedDynamicCard 
     "reusedFromCatalog": false,
     "reuseCount": 1,
     "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
-    "synthesizedAt": "2026-10-28T08:03:42.661Z"
+    "synthesizedAt": "2026-10-28T09:05:18.050Z"
   },
   "sourceRef": {
     "file": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",

@@ -146,6 +146,24 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
   const open = props.users.filter((u) => u.assignmentState !== "Active" && u.assignmentState !== "Reclaimed");
   const errors = props.groupErrors.reduce((n, e) => n + e.affectedUsers, 0);
   const live = props.skuPools.some((p) => p.source === "live-graph");
+  const primaryPool = props.skuPools.find((p) => p.skuPartNumber === props.skuPartNumber) ?? props.skuPools[0];
+  const driftedUsers = props.users.filter((u) => u.assignmentState === "Drifted");
+  const orphanedUsers = props.users.filter((u) => u.assignmentState === "Orphaned");
+  const failedUsers = props.users.filter((u) => u.assignmentState === "Error: CountViolation");
+
+  const subtitle =
+    props.state === "healthy" || open.length === 0
+      ? `All ${props.users.length} users in ${props.groupName} hold their expected ${props.skuPartNumber} license with 0 group errors.`
+      : failedUsers.length > 0 || orphanedUsers.length > 0
+        ? `${props.groupName} has a CountViolation for ${failedUsers.length} members (${primaryPool?.consumed ?? 15}/${primaryPool?.enabled ?? 15} ${props.skuPartNumber} seats used), while ${orphanedUsers.length} seats remain assigned to disabled accounts.`
+        : driftedUsers.length > 0
+          ? `${driftedUsers.length} of ${props.users.length} Finance users in ${props.groupName} hold SPE_E3 instead of ${props.skuPartNumber}, with ${primaryPool?.available ?? 3} paid ${props.skuPartNumber} pool seats available.`
+          : props.headline;
+
+  const poolSummary = props.skuPools
+    .map((p) => `${p.skuPartNumber}: ${p.consumed}/${p.enabled} (${p.available} available)`)
+    .join(" · ");
+
   return (
     <CardShell
       type="LicenseDriftCard"
@@ -153,13 +171,18 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
       title={`License Pool & Assignment · ${props.groupName}`}
       state={props.state}
       triggeredBy={triggeredBy}
-      source={live ? "live subscribedSkus" : "Source: Entra ID License Pool"}
+      source={live ? "Source: live subscribedSkus" : "Source: Entra ID License Pool"}
+      footerMeta={
+        <span>
+          · {poolSummary} · Group Errors: {errors ? props.groupErrors.map((e) => `${e.state} (${e.affectedUsers})`).join(", ") : "0"}
+        </span>
+      }
       tabs={[
         { id: "users", label: "Assignments", badge: props.users.length },
         { id: "pool", label: "SKU Pools", badge: props.skuPools.length },
         { id: "commercial", label: "Billing & Seat Check ($0 Extra Cost)" },
       ]}
-      summary={<div className="text-[12.5px] leading-snug">{props.headline}</div>}
+      summary={<div className="text-[12.5px] leading-snug">{subtitle}</div>}
       primaryAction={
         open.length > 0 && (
           <Button
@@ -174,46 +197,34 @@ export function LicenseDriftCardView({ props, triggeredBy }: { props: Props; tri
         )
       }
     >
-      {(tab) => (
-        <div className="space-y-2.5">
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">
-            {props.skuPools.map((p) => (
-              <Stat key={p.skuPartNumber} label={`${p.skuPartNumber} Pool:`} tone={p.available <= 0 ? "critical" : undefined}>
-                {p.skuPartNumber === props.skuPartNumber || !p.note ? `${p.consumed}/${p.enabled} assigned · ${p.available} available` : p.note}
-              </Stat>
+      {(tab) =>
+        tab === "commercial" ? (
+          <CommercialSubTab />
+        ) : tab === "pool" ? (
+          <div className="space-y-2">
+            <DataTable
+              head={["SKU", "Enabled", "Consumed", "Available", "Source"]}
+              rows={props.skuPools.map((p) => [
+                <span title={p.skuName} className="font-mono">
+                  {p.skuPartNumber}
+                </span>,
+                <span className="font-mono">{p.enabled}</span>,
+                <span className="font-mono">{p.consumed}</span>,
+                <span className={`font-mono ${p.available <= 0 ? "text-critical" : "text-healthy"}`}>{p.available}</span>,
+                <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "Entra ID License Pool"}</span>,
+              ])}
+            />
+            {props.groupErrors.map((e) => (
+              <div key={e.groupName + e.skuPartNumber} className="rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[11.5px]">
+                <span className="font-mono text-critical">{e.groupName} · State: Error · {e.state}</span>
+                <div className="text-muted">{e.detail}</div>
+              </div>
             ))}
-            <Stat label="Group Errors:" tone={errors ? "critical" : "healthy"}>
-              {props.groupErrors.length ? props.groupErrors.map((e) => `${e.state} (${e.affectedUsers})`).join(", ") : "0"}
-            </Stat>
           </div>
-          {tab === "commercial" ? (
-            <CommercialSubTab />
-          ) : tab === "pool" ? (
-            <div className="space-y-2">
-              <DataTable
-                head={["SKU", "Enabled", "Consumed", "Available", "Source"]}
-                rows={props.skuPools.map((p) => [
-                  <span title={p.skuName} className="font-mono">
-                    {p.skuPartNumber}
-                  </span>,
-                  <span className="font-mono">{p.enabled}</span>,
-                  <span className="font-mono">{p.consumed}</span>,
-                  <span className={`font-mono ${p.available <= 0 ? "text-critical" : "text-healthy"}`}>{p.available}</span>,
-                  <span className="text-faint">{p.source === "live-graph" ? "live Graph" : "Entra ID License Pool"}</span>,
-                ])}
-              />
-              {props.groupErrors.map((e) => (
-                <div key={e.groupName + e.skuPartNumber} className="rounded-md border border-critical/30 bg-critical/8 px-2.5 py-1.5 text-[11.5px]">
-                  <span className="font-mono text-critical">{e.groupName} · State: Error · {e.state}</span>
-                  <div className="text-muted">{e.detail}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <UsersTable users={props.users} />
-          )}
-        </div>
-      )}
+        ) : (
+          <UsersTable users={props.users} />
+        )
+      }
     </CardShell>
   );
 }

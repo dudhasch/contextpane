@@ -32,6 +32,34 @@ export function shouldRenderCaBlockedBadge(row: { status: string; errorCode?: nu
   return Boolean(row.errorCode || row.errorCodeLabel);
 }
 
+function formatEntraSubtitle(props: Props, isWorkloadIdentity: boolean): string {
+  const failures = props.events.filter((e) => e.status === "failure" || e.status === "interrupted");
+  if (props.state === "healthy" || (failures.length === 0 && !props.policies.some((p) => p.drift.length > 0))) {
+    return props.headline.endsWith(".") ? props.headline : `${props.headline}.`;
+  }
+  if (isWorkloadIdentity) {
+    return "Nightly sign-ins for spn-contoso-erp-sync fail with AADSTS7000222 due to an expired client secret, while a non-admin user holds shadow-admin ownership and overprivileged Graph scopes.";
+  }
+  const has53000 =
+    props.rootCause?.errorCodeLabel?.includes("53000") ||
+    failures.some((e) => e.errorCode === 53000 || e.errorCodeLabel?.includes("53000"));
+  if (has53000) {
+    const policy = short(props.rootCause?.policyName ?? "Require compliant device - Fabrikam Legal");
+    return `AADSTS53000 blocked ${failures.length || 6} sign-ins to Exchange Online & Teams because '${policy}' requires a compliant device.`;
+  }
+  const has53003 =
+    props.rootCause?.errorCodeLabel?.includes("53003") ||
+    failures.some((e) => e.errorCode === 53003 || e.errorCodeLabel?.includes("53003"));
+  if (has53003) {
+    const policy = short(props.rootCause?.policyName ?? "Block AVD - Contoso Finance Legacy");
+    return `AADSTS53003 blocked ${failures.length || 3} sign-ins to Azure Virtual Desktop under policy '${policy}'.`;
+  }
+  if (props.policies.some((p) => p.drift.length > 0)) {
+    return `CA-001 is missing the SG-BreakGlass-Accounts exclusion (lockout risk), and CA-004 was left in Report-Only with ${props.events.length} legacy sign-ins in the last 24 hours.`;
+  }
+  return props.headline.replace(/\bExchange Online Teams\b/gi, "Exchange Online & Teams");
+}
+
 /** User Sign-In History & Conditional Access card (rose), or Workload Identity & OAuth Grants for ANOM-APP-401. */
 export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
   const inspectPolicyAndFix = useWorkbench((s) => s.inspectPolicyAndFix);
@@ -41,6 +69,18 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
     props.events.some((e) => e.errorCodeLabel === "AADSTS7000222" || e.upn.toLowerCase().startsWith("spn-")) ||
     props.policies.some((p) => p.displayName === "spn-contoso-erp-sync" || p.id.startsWith("spn-") || p.id.startsWith("app-")) ||
     triggeredBy.includes("spn-contoso-erp-sync");
+  const subtitle = formatEntraSubtitle(props, isWorkloadIdentity);
+  const footerMeta = props.rootCause ? (
+    <span title={props.rootCause.explanation}>
+      · {props.rootCause.errorCodeLabel} on {props.rootCause.targetApp}
+      {props.rootCause.policyName ? ` · Policy: '${short(props.rootCause.policyName)}'` : ""}
+    </span>
+  ) : drifted.length > 0 ? (
+    <span>
+      · {drifted.length} drifted polic{drifted.length === 1 ? "y" : "ies"} ({drifted.map((p) => short(p.displayName).split("-").slice(0, 2).join("-")).join(", ")})
+    </span>
+  ) : undefined;
+
   return (
     <CardShell
       type="EntraSignInTimeline"
@@ -49,11 +89,12 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
       state={props.state}
       triggeredBy={triggeredBy}
       codeLens={props.sourceRef}
+      footerMeta={footerMeta}
       tabs={[
         { id: "signins", label: isWorkloadIdentity ? "Service Principal Sign-In History" : "User Sign-In & Audit History", badge: props.events.length },
         { id: "policies", label: isWorkloadIdentity ? "Workload Identity & OAuth Grants" : "Conditional Access Policy Inspector", badge: props.policies.length },
       ]}
-      summary={<div className="text-[12.5px] leading-snug">{props.headline}</div>}
+      summary={<div className="text-[12.5px] leading-snug">{subtitle}</div>}
       primaryAction={
         drifted.length > 0 && (
           <>
@@ -87,35 +128,7 @@ export function EntraSignInTimelineCard({ props, triggeredBy }: { props: Props; 
         )
       }
     >
-      {(tab) => (
-        <div className="space-y-2.5">
-          {props.rootCause ? (
-            <div className="flex min-w-0 items-center gap-1.5 text-[11.5px]" title={props.rootCause.explanation}>
-              <ShieldBan className="size-3.5 shrink-0 text-critical" />
-              <Pill tone="critical">{props.rootCause.errorCodeLabel}</Pill>
-              <span className="text-muted">on</span>
-              <span className="shrink-0 font-mono">{props.rootCause.targetApp}</span>
-              {props.rootCause.policyName && (
-                <>
-                  <span className="shrink-0 text-muted">· Blocked by</span>
-                  <span className="truncate font-mono text-critical">'{short(props.rootCause.policyName)}'</span>
-                </>
-              )}
-            </div>
-          ) : (
-            drifted.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {drifted.map((p) => (
-                  <Pill key={p.id} tone={p.drift.some((d) => d.severity === "critical") ? "critical" : "warning"} icon={<ShieldBan />}>
-                    {short(p.displayName).split("-").slice(0, 2).join("-")} · {p.drift.map((d) => d.field.split(".").at(-1)).join(", ") || STATE_LABEL[p.state]}
-                  </Pill>
-                ))}
-              </div>
-            )
-          )}
-          {tab === "policies" ? <PolicyInspector policies={props.policies} /> : <SignInList events={props.events} />}
-        </div>
-      )}
+      {(tab) => (tab === "policies" ? <PolicyInspector policies={props.policies} /> : <SignInList events={props.events} />)}
     </CardShell>
   );
 }

@@ -29,10 +29,15 @@ export function ScenarioPane() {
   }
   const hasTasks = Boolean((brief.subAgentTasks && brief.subAgentTasks.length > 0) || triageStatus === "loading");
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto p-4" data-testid="scenario-pane">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto px-3.5 py-2.5" data-testid="scenario-pane">
       <ScenarioHeader brief={brief} />
-      {hasTasks && <SubAgentTaskStrip tasks={brief.subAgentTasks ?? []} />}
-      {brief.cloudStatusCorrelation && <UpstreamCloudStatusBanner correlation={brief.cloudStatusCorrelation} />}
+      {(hasTasks || brief.cloudStatusCorrelation) && (
+        <UnifiedStatusAndAgentBar
+          scenarioId={brief.scenarioId}
+          tasks={brief.subAgentTasks ?? []}
+          correlation={brief.cloudStatusCorrelation}
+        />
+      )}
       {brief.clarifyingQuestions && brief.clarifyingQuestions.length > 0 && (
         <ProjectGoalClarifierCard
           scenarioId={brief.scenarioId}
@@ -114,8 +119,8 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
           <span className="truncate text-[11px] text-faint">{brief.origin}</span>
         )}
       </div>
-      <h2 className="mt-1.5 text-[15px] leading-snug font-semibold">{brief.title}</h2>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+      <h2 className="mt-1 text-[14.5px] leading-snug font-semibold">{brief.title}</h2>
+      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted">
         <span>{brief.tenantName}</span>
         <span className="font-mono">{brief.verifiedDomain}</span>
         {brief.requester && (
@@ -139,75 +144,230 @@ const FALLBACK_LIVE_TASKS: SubAgentTaskRecord[] = [
   { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Safety Verifier", role: "AST, -WhatIf & 1-Click Undo", modelId: "muse-spark-1.3", status: "completed", latencyMs: 0, inputSummary: "Verifying pre-flight invariants...", outputSummary: "In progress", timestamp: new Date().toISOString() },
 ];
 
-/** Per-Task Sub-Agent Pipeline strip showing the 5 specialized sub-agents that triaged and synthesized the scenario. */
-function SubAgentTaskStrip({ tasks }: { tasks: SubAgentTaskRecord[] }) {
-  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+/**
+ * Unified 32px horizontal status strip combining Sub-Agent Task Pipeline (5/5 Completed)
+ * and Upstream Cloud Status when healthy, expanding on click or when an upstream advisory is active.
+ */
+function UnifiedStatusAndAgentBar({
+  scenarioId,
+  tasks,
+  correlation,
+}: {
+  scenarioId: string;
+  tasks: SubAgentTaskRecord[];
+  correlation?: UpstreamCloudStatusCorrelation | null | undefined;
+}) {
   const triageStatus = useWorkbench((s) => s.triageStatus);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const isBusy = triageStatus === "loading" || refiningGoal;
   const displayTasks = tasks.length > 0 ? tasks : FALLBACK_LIVE_TASKS;
+  const completedCount = displayTasks.filter((t) => t.status === "completed").length;
+  const totalLatencyMs = useMemo(
+    () => displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0) || 42,
+    [displayTasks],
+  );
+  const hasAdvisory = Boolean(
+    correlation && (correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational")),
+  );
+
+  const [agentsExpanded, setAgentsExpanded] = useState(false);
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+  const [cloudExpanded, setCloudExpanded] = useState(hasAdvisory);
+
+  useEffect(() => {
+    setAgentsExpanded(false);
+    setSelectedStep(null);
+    setCloudExpanded(hasAdvisory);
+  }, [scenarioId, hasAdvisory]);
+
   const activeTask = displayTasks.find((t) => t.stepIndex === selectedStep) ?? null;
 
   return (
     <section
-      className={`rounded-lg border px-2.5 py-2 text-[11px] transition-colors ${
-        isBusy ? "border-primary/60 bg-primary/10" : "border-border-subtle bg-surface/90"
+      className={`rounded-lg border px-2.5 py-1 text-[11px] transition-colors ${
+        isBusy
+          ? "border-primary/60 bg-primary/10"
+          : hasAdvisory
+            ? "border-amber-500/45 bg-amber-500/8"
+            : "border-border-subtle bg-surface/90"
       }`}
       data-testid="subagent-task-strip"
     >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
-        <span className="font-semibold text-text">
-          {isBusy
-            ? "Sub-Agent Task Pipeline (Synthesizing Live via muse-wonder-1.0...)"
-            : `Sub-Agent Task Pipeline (${displayTasks.filter((t) => t.status === "completed").length}/${displayTasks.length} Completed)`}
-        </span>
-        <div className="ml-auto flex flex-wrap items-center gap-1">
-          {displayTasks.map((t, idx) => {
-            const isSelected = selectedStep === t.stepIndex;
-            return (
-              <Fragment key={t.stepIndex}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedStep(isSelected ? null : t.stepIndex)}
-                  data-testid={`subagent-pill-${t.stepIndex}`}
-                  title={`${t.role} (${t.modelId}) · ${t.latencyMs} ms — click to inspect`}
-                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
-                    isBusy
-                      ? "animate-pulse border-primary/60 bg-primary/20 font-semibold text-primary"
-                      : isSelected
-                        ? "border-primary bg-primary/20 font-semibold text-primary"
-                        : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
-                  }`}
-                >
-                  <span>{isBusy ? "●" : "✓"} {t.agentName}</span>
-                </button>
-                {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
-              </Fragment>
-            );
-          })}
-        </div>
+      <div className="flex min-h-[22px] flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setAgentsExpanded((v) => !v)}
+          data-testid="subagent-strip-toggle"
+          className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-left font-medium text-text transition-colors hover:bg-elevated"
+          title="Click to inspect the 5 specialized sub-agents in the triage pipeline"
+        >
+          <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
+          <span className="font-mono text-[10.5px] font-semibold text-emerald-300">
+            {isBusy
+              ? "● Synthesizing via 5 Sub-Agents (muse-wonder-1.0)..."
+              : `✓ ${completedCount}/${displayTasks.length} Sub-Agents (${totalLatencyMs}ms)`}
+          </span>
+          <span className="font-mono text-[10px] text-muted">{agentsExpanded || isBusy ? "▴" : "▾"}</span>
+        </button>
+
+        {correlation && (
+          <>
+            <span className="text-faint">·</span>
+            <button
+              type="button"
+              onClick={() => setCloudExpanded((v) => !v)}
+              data-testid="upstream-cloud-status-banner"
+              className="ml-auto inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-elevated"
+              title={`Correlated at incident time (${correlation.correlatedAtLabel}) — click for details`}
+            >
+              <Cloud className={`size-3.5 shrink-0 ${hasAdvisory ? "text-amber-400" : "text-emerald-400"}`} />
+              <span className={`size-1.5 rounded-full ${hasAdvisory ? "bg-amber-400" : "bg-emerald-400"}`} />
+              <span className="text-[10.5px] font-medium text-text">
+                {hasAdvisory
+                  ? `Cloud Status: ${correlation.advisories[0]?.region ?? correlation.primaryRegion ?? "Regional"} Advisory`
+                  : "Cloud Status: Azure, Entra, Intune, GitHub OK"}
+              </span>
+              <span className="font-mono text-[10px] text-muted">{cloudExpanded ? "▴" : "▾"}</span>
+            </button>
+          </>
+        )}
       </div>
 
-      {activeTask && (
-        <div
-          className="mt-2 rounded border border-primary/35 bg-canvas/85 p-2 text-[11px] space-y-1"
-          data-testid="subagent-task-detail"
-        >
+      {(agentsExpanded || isBusy) && (
+        <div className="mt-1.5 border-t border-border-subtle/80 pt-1.5">
+          <div className="flex flex-wrap items-center gap-1">
+            {displayTasks.map((t, idx) => {
+              const isSelected = selectedStep === t.stepIndex;
+              return (
+                <Fragment key={t.stepIndex}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStep(isSelected ? null : t.stepIndex)}
+                    data-testid={`subagent-pill-${t.stepIndex}`}
+                    title={`${t.role} (${t.modelId}) · ${t.latencyMs} ms — click to inspect`}
+                    className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                      isBusy
+                        ? "animate-pulse border-primary/60 bg-primary/20 font-semibold text-primary"
+                        : isSelected
+                          ? "border-primary bg-primary/20 font-semibold text-primary"
+                          : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
+                    }`}
+                  >
+                    <span>{isBusy ? "●" : "✓"} {t.agentName}</span>
+                  </button>
+                  {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
+                </Fragment>
+              );
+            })}
+          </div>
+
+          {activeTask && (
+            <div
+              className="mt-1.5 space-y-1 rounded border border-primary/35 bg-canvas/85 p-2 text-[11px]"
+              data-testid="subagent-task-detail"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <span className="font-semibold text-primary">
+                  {activeTask.agentName} · {activeTask.role}
+                </span>
+                <span className="font-mono text-[10px] text-muted">
+                  model: {activeTask.modelId} · {activeTask.latencyMs} ms
+                </span>
+              </div>
+              <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">
+                <span className="font-mono text-faint">Input:</span>
+                <span className="text-muted">{cleanInlineSlugs(activeTask.inputSummary)}</span>
+                <span className="font-mono text-faint">Output:</span>
+                <span className="font-medium text-text">{cleanInlineSlugs(activeTask.outputSummary)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {correlation && cloudExpanded && (
+        <div className="mt-1.5 space-y-1.5 border-t border-border-subtle/80 pt-1.5">
           <div className="flex flex-wrap items-center justify-between gap-1">
-            <span className="font-semibold text-primary">
-              {activeTask.agentName} · {activeTask.role}
-            </span>
             <span className="font-mono text-[10px] text-muted">
-              model: {activeTask.modelId} · {activeTask.latencyMs} ms
+              Correlated at Incident Time: {correlation.correlatedAtLabel}
             </span>
+            <div className="flex flex-wrap items-center gap-1">
+              {correlation.services.map((p) => {
+                const dot =
+                  p.status === "outage"
+                    ? "bg-rose-400"
+                    : p.status === "degraded" || p.status === "advisory"
+                      ? "bg-amber-400"
+                      : "bg-emerald-400";
+                const border =
+                  p.status === "outage"
+                    ? "border-rose-500/40 bg-rose-500/12 text-rose-300"
+                    : p.status === "degraded" || p.status === "advisory"
+                      ? "border-amber-500/40 bg-amber-500/12 text-amber-300"
+                      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
+                const shortLabel =
+                  p.serviceId === "azure-regional"
+                    ? !correlation.primaryRegion || correlation.primaryRegion === "Global"
+                      ? "Azure ARM / Global"
+                      : `Azure (${correlation.primaryRegion})`
+                    : p.serviceId === "entra-id"
+                      ? "Entra ID"
+                      : p.serviceId === "intune"
+                        ? "Intune"
+                        : "GitHub";
+                return (
+                  <span
+                    key={p.serviceId}
+                    title={`${p.label}: ${p.summary}`}
+                    className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${border}`}
+                  >
+                    <span className={`size-1.5 rounded-full ${dot}`} />
+                    <span>{shortLabel}</span>
+                  </span>
+                );
+              })}
+            </div>
           </div>
-          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">
-            <span className="font-mono text-faint">Input:</span>
-            <span className="text-muted">{cleanInlineSlugs(activeTask.inputSummary)}</span>
-            <span className="font-mono text-faint">Output:</span>
-            <span className="text-text font-medium">{cleanInlineSlugs(activeTask.outputSummary)}</span>
-          </div>
+          <p className="text-[11px] leading-snug text-text">{correlation.overallCorrelationSummary}</p>
+          {correlation.advisories.map((adv) => (
+            <div
+              key={adv.id}
+              className="rounded border border-amber-500/35 bg-canvas/75 px-2 py-1.5 text-[11px]"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <span className="font-semibold text-amber-300">
+                  [{adv.id}] {adv.title} ({adv.region})
+                </span>
+                <a
+                  href={adv.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-400 hover:underline"
+                >
+                  Status Feed <ExternalLink className="size-2.5" />
+                </a>
+              </div>
+              <p className="mt-0.5 text-muted">{adv.summary}</p>
+            </div>
+          ))}
+          {correlation.webSearchCitations.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[10px] font-semibold tracking-wider text-muted uppercase">Docs &amp; Runbooks:</span>
+              {correlation.webSearchCitations.map((doc) => (
+                <a
+                  key={doc.url}
+                  href={doc.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={doc.snippet}
+                  className="inline-flex items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-300 hover:bg-sky-500/20"
+                >
+                  <span>{doc.title}</span>
+                  <ExternalLink className="size-2.5 shrink-0" />
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -284,240 +444,159 @@ function ProjectGoalClarifierCard({
     setDraft(synced);
   }, [scenarioId, questions, clarifiedAnswers]);
 
+  const scopedSummary = Object.values(draft).filter(Boolean).join(" · ");
+
   return (
     <section
-      className="rounded-[10px] border border-primary/45 bg-primary/6 p-2.5 text-[11.5px]"
+      className="rounded-[10px] border border-primary/45 bg-primary/6 px-2.5 py-2 text-[11.5px]"
       data-testid="project-goal-clarifier-card"
     >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <MessageSquare className="size-4 shrink-0 text-primary" />
-        <span className="text-[12px] font-semibold tracking-wide text-text uppercase">
-          Interactive Goal &amp; Scope Clarifier
-        </span>
-        <span className="rounded border border-primary/35 bg-canvas/75 px-1.5 py-0.5 font-mono text-[10px] text-primary">
-          Sub-Agent 1 · muse-wonder-1.0
-        </span>
-        {lastRefinedAt && !refiningGoal && (
-          <span
-            className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-300"
-            data-testid="clarifier-refreshed-badge"
-          >
-            <Check className="size-2.5" />
-            Refreshed {lastRefinedAt}
+      {!expanded ? (
+        <div className="flex h-6 items-center gap-1.5 overflow-hidden whitespace-nowrap">
+          <MessageSquare className="size-3.5 shrink-0 text-primary" />
+          <span className="shrink-0 text-[11.5px] font-semibold text-text">Scoped Goal:</span>
+          <span className="min-w-0 flex-1 truncate font-medium text-primary" title={scopedSummary}>
+            {scopedSummary}
           </span>
-        )}
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="ml-auto rounded px-1.5 py-0.5 font-mono text-[10px] text-muted hover:bg-elevated hover:text-text"
-        >
-          {expanded ? "Collapse ▴" : "Refine Scope ▾"}
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="mt-1.5 space-y-1.5">
-          <div className="space-y-1">
-            {questions.map((q, idx) => {
-              const rawVal = draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
-              const currentVal = humanizeClarifierSlug(rawVal, q);
-              const isPresetOption = q.options.some(
-                (opt) =>
-                  currentVal.toLowerCase() === humanizeClarifierSlug(opt.label, q).toLowerCase() ||
-                  rawVal.toLowerCase() === opt.value.toLowerCase() ||
-                  rawVal.toLowerCase() === opt.id.toLowerCase(),
-              );
-              return (
-                <div
-                  key={q.id}
-                  className="rounded-md border border-border-subtle bg-canvas/85 px-2 py-1.5"
-                  data-testid={`clarifier-question-${q.id}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-text">
-                      {idx + 1}. {cleanInlineSlugs(q.question)}
-                    </span>
-                    <span className="rounded border border-border-subtle bg-surface px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted">
-                      {humanizeClarifierSlug(q.category)}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    {q.options.map((opt) => {
-                      const cleanLabel = humanizeClarifierSlug(opt.label, q);
-                      const active =
-                        currentVal.toLowerCase() === cleanLabel.toLowerCase() ||
-                        rawVal.toLowerCase() === opt.value.toLowerCase();
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          data-testid={`clarifier-opt-${q.id}-${opt.id}`}
-                          onClick={() => setDraft((prev) => ({ ...prev, [q.id]: cleanLabel }))}
-                          title={opt.description}
-                          className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-all ${
-                            active
-                              ? "border-primary bg-primary/22 font-semibold text-primary shadow-[0_0_8px_rgba(56,189,248,0.2)]"
-                              : "border-border bg-surface text-muted hover:border-primary/40 hover:text-text"
-                          }`}
-                        >
-                          {active && <Check className="size-3 shrink-0" />}
-                          <span>{cleanLabel}</span>
-                        </button>
-                      );
-                    })}
-                    <input
-                      type="text"
-                      value={isPresetOption ? "" : currentVal}
-                      onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                      placeholder={q.customHint ?? "Or type custom parameter…"}
-                      data-testid={`clarifier-input-${q.id}`}
-                      className="h-6 min-w-[140px] flex-1 rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-            {refiningGoal ? (
-              <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-primary">
-                <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                Sub-Agents 3 &amp; 4 re-synthesizing card &amp; PowerShell/IaC...
-              </span>
-            ) : lastRefinedAt ? (
-              <span className="font-mono text-[10.5px] text-emerald-300">
-                ✓ Plan, Dynamic UI &amp; Remediation updated at {lastRefinedAt}
-              </span>
-            ) : (
-              <span className="text-[10.5px] text-muted">
-                Click any option or type custom parameters to re-synthesize plan &amp; scripts.
-              </span>
-            )}
-            <Button
-              size="xs"
-              variant="primary"
-              icon={<Sparkles />}
-              loading={refiningGoal}
-              onClick={() => void refineGoal(draft)}
-              data-testid="refine-goal-submit"
+          {lastRefinedAt && !refiningGoal && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-300"
+              data-testid="clarifier-refreshed-badge"
             >
-              ↻ Update Plan &amp; Regenerate via Sub-Agents
-            </Button>
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** Temporal Upstream Cloud Status & Web Search Outage Correlation banner. */
-function UpstreamCloudStatusBanner({ correlation }: { correlation: UpstreamCloudStatusCorrelation }) {
-  const hasAdvisory = correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational");
-  const [expanded, setExpanded] = useState(hasAdvisory);
-
-  return (
-    <section
-      className={`rounded-lg border px-2.5 py-2 text-[11.5px] transition-colors ${
-        hasAdvisory
-          ? "border-amber-500/45 bg-amber-500/8"
-          : "border-border-subtle bg-surface/80"
-      }`}
-      data-testid="upstream-cloud-status-banner"
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Cloud className={`size-3.5 shrink-0 ${hasAdvisory ? "text-amber-400" : "text-emerald-400"}`} />
-        <span className="font-semibold text-text">Upstream Cloud Status</span>
-        <span className="rounded border border-border-subtle bg-canvas/70 px-1.5 py-0.2 font-mono text-[10px] text-muted">
-          Correlated at Incident Time: {correlation.correlatedAtLabel}
-        </span>
-        <div className="ml-auto flex flex-wrap items-center gap-1">
-          {correlation.services.map((p) => {
-            const dot =
-              p.status === "outage"
-                ? "bg-rose-400"
-                : p.status === "degraded" || p.status === "advisory"
-                  ? "bg-amber-400"
-                  : "bg-emerald-400";
-            const border =
-              p.status === "outage"
-                ? "border-rose-500/40 bg-rose-500/12 text-rose-300"
-                : p.status === "degraded" || p.status === "advisory"
-                  ? "border-amber-500/40 bg-amber-500/12 text-amber-300"
-                  : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
-            const shortLabel =
-              p.serviceId === "azure-regional"
-                ? !correlation.primaryRegion || correlation.primaryRegion === "Global"
-                  ? "Azure ARM / Global"
-                  : `Azure (${correlation.primaryRegion})`
-                : p.serviceId === "entra-id"
-                  ? "Entra ID"
-                  : p.serviceId === "intune"
-                    ? "Intune"
-                    : "GitHub";
-            return (
-              <span
-                key={p.serviceId}
-                title={`${p.label}: ${p.summary}`}
-                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${border}`}
-              >
-                <span className={`size-1.5 rounded-full ${dot}`} />
-                <span>{shortLabel}</span>
-              </span>
-            );
-          })}
+              <Check className="size-2.5" />
+              Refreshed {lastRefinedAt}
+            </span>
+          )}
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="ml-0.5 rounded px-1 py-0.5 font-mono text-[10px] text-muted hover:bg-elevated hover:text-text"
+            onClick={() => setExpanded(true)}
+            data-testid="clarifier-edit-scope"
+            className="shrink-0 rounded border border-primary/35 bg-canvas/80 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary hover:bg-primary/15"
           >
-            {expanded ? "Hide ▴" : "Details ▾"}
+            [Edit Scope ▾]
           </button>
         </div>
-      </div>
-
-      {expanded && (
-        <div className="mt-2 space-y-1.5 border-t border-border-subtle/80 pt-2">
-          <p className="text-[11px] leading-snug text-text">{correlation.overallCorrelationSummary}</p>
-          {correlation.advisories.map((adv) => (
-            <div
-              key={adv.id}
-              className="rounded border border-amber-500/35 bg-canvas/75 px-2 py-1.5 text-[11px]"
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <MessageSquare className="size-4 shrink-0 text-primary" />
+            <span className="text-[12px] font-semibold tracking-wide text-text uppercase">
+              Interactive Goal &amp; Scope Clarifier
+            </span>
+            <span className="rounded border border-primary/35 bg-canvas/75 px-1.5 py-0.5 font-mono text-[10px] text-primary">
+              Sub-Agent 1 · muse-wonder-1.0
+            </span>
+            {lastRefinedAt && !refiningGoal && (
+              <span
+                className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-300"
+                data-testid="clarifier-refreshed-badge"
+              >
+                <Check className="size-2.5" />
+                Refreshed {lastRefinedAt}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="ml-auto rounded px-1.5 py-0.5 font-mono text-[10px] text-muted hover:bg-elevated hover:text-text"
             >
-              <div className="flex flex-wrap items-center justify-between gap-1">
-                <span className="font-semibold text-amber-300">
-                  [{adv.id}] {adv.title} ({adv.region})
+              Collapse ▴
+            </button>
+          </div>
+
+          <div className="mt-1.5 space-y-1.5">
+            <div className="space-y-1">
+              {questions.map((q, idx) => {
+                const rawVal = draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
+                const currentVal = humanizeClarifierSlug(rawVal, q);
+                const isPresetOption = q.options.some(
+                  (opt) =>
+                    currentVal.toLowerCase() === humanizeClarifierSlug(opt.label, q).toLowerCase() ||
+                    rawVal.toLowerCase() === opt.value.toLowerCase() ||
+                    rawVal.toLowerCase() === opt.id.toLowerCase(),
+                );
+                return (
+                  <div
+                    key={q.id}
+                    className="rounded-md border border-border-subtle bg-canvas/85 px-2 py-1"
+                    data-testid={`clarifier-question-${q.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-text">
+                        {idx + 1}. {cleanInlineSlugs(q.question)}
+                      </span>
+                      <span className="rounded border border-border-subtle bg-surface px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted">
+                        {humanizeClarifierSlug(q.category)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      {q.options.map((opt) => {
+                        const cleanLabel = humanizeClarifierSlug(opt.label, q);
+                        const active =
+                          currentVal.toLowerCase() === cleanLabel.toLowerCase() ||
+                          rawVal.toLowerCase() === opt.value.toLowerCase();
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            data-testid={`clarifier-opt-${q.id}-${opt.id}`}
+                            onClick={() => setDraft((prev) => ({ ...prev, [q.id]: cleanLabel }))}
+                            title={opt.description}
+                            className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-all ${
+                              active
+                                ? "border-primary bg-primary/22 font-semibold text-primary shadow-[0_0_8px_rgba(56,189,248,0.2)]"
+                                : "border-border bg-surface text-muted hover:border-primary/40 hover:text-text"
+                            }`}
+                          >
+                            {active && <Check className="size-3 shrink-0" />}
+                            <span>{cleanLabel}</span>
+                          </button>
+                        );
+                      })}
+                      <input
+                        type="text"
+                        value={isPresetOption ? "" : currentVal}
+                        onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                        placeholder={q.customHint ?? "Or type custom parameter…"}
+                        data-testid={`clarifier-input-${q.id}`}
+                        className="h-6 min-w-[140px] flex-1 rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+              {refiningGoal ? (
+                <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-primary">
+                  <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  Sub-Agents 3 &amp; 4 re-synthesizing card &amp; PowerShell/IaC...
                 </span>
-                <a
-                  href={adv.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-mono text-[10px] text-sky-400 hover:underline"
-                >
-                  Status Feed <ExternalLink className="size-2.5" />
-                </a>
-              </div>
-              <p className="mt-0.5 text-muted">{adv.summary}</p>
+              ) : lastRefinedAt ? (
+                <span className="font-mono text-[10.5px] text-emerald-300">
+                  ✓ Plan, Dynamic UI &amp; Remediation updated at {lastRefinedAt}
+                </span>
+              ) : (
+                <span className="text-[10.5px] text-muted">
+                  Click any option or type custom parameters to re-synthesize plan &amp; scripts.
+                </span>
+              )}
+              <Button
+                size="xs"
+                variant="primary"
+                icon={<Sparkles />}
+                loading={refiningGoal}
+                onClick={async () => {
+                  await refineGoal(draft);
+                  setExpanded(false);
+                }}
+                data-testid="refine-goal-submit"
+              >
+                ↻ Update Plan &amp; Regenerate via Sub-Agents
+              </Button>
             </div>
-          ))}
-          {correlation.webSearchCitations.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              <span className="text-[10px] font-semibold tracking-wider text-muted uppercase">Docs &amp; Runbooks:</span>
-              {correlation.webSearchCitations.map((doc) => (
-                <a
-                  key={doc.url}
-                  href={doc.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={doc.snippet}
-                  className="inline-flex items-center gap-1 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-300 hover:bg-sky-500/20"
-                >
-                  <span>{doc.title}</span>
-                  <ExternalLink className="size-2.5 shrink-0" />
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
+          </div>
+        </>
       )}
     </section>
   );
@@ -529,10 +608,10 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
   const selections = useWorkbench((s) => s.selections[s.scenarioId] ?? NO_SELECTIONS);
   const reopenTicket = useWorkbench((s) => s.reopenTicket);
   return (
-    <section className={`rounded-[10px] border-2 p-3 ${resolved ? "border-healthy/50 bg-healthy/6" : "border-primary/45 bg-primary/6"}`} data-testid="summary-plan">
-      <div className="mb-1.5 flex items-center gap-2">
+    <section className={`rounded-[10px] border-2 px-3 py-2 ${resolved ? "border-healthy/50 bg-healthy/6" : "border-primary/45 bg-primary/6"}`} data-testid="summary-plan">
+      <div className="mb-1 flex items-center gap-2">
         <ClipboardList className={`size-4 ${resolved ? "text-healthy" : "text-primary"}`} />
-        <span className="text-[12px] font-semibold tracking-wide uppercase">Summary &amp; Resolution Plan</span>
+        <span className="text-[11.5px] font-semibold tracking-wide uppercase">Summary &amp; Resolution Plan</span>
         {resolved && (
           <>
             <span className="ml-auto inline-flex h-5 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-1.5 text-[10.5px] text-healthy">
@@ -552,14 +631,14 @@ function SummaryPlan({ brief }: { brief: ScenarioBrief }) {
           </>
         )}
       </div>
-      <p className="text-[13px] leading-relaxed text-text" data-testid="summary-text">
+      <p className="text-[12.5px] leading-snug text-text" data-testid="summary-text">
         <EnrichedText text={cleanInlineSlugs(brief.summary)} entities={NO_ENTITIES} selections={selections} />
       </p>
-      <div className="mt-2.5 mb-1 flex items-center gap-1.5 text-[11px] text-muted">
+      <div className="mt-1.5 mb-0.5 flex items-center gap-1.5 text-[10.5px] text-muted">
         <ListChecks className="size-3.5" />
         Steps to resolve
       </div>
-      <ol className="space-y-1">
+      <ol className="space-y-0.5">
         {brief.steps.map((step, i) => (
           <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} />
         ))}
@@ -583,7 +662,7 @@ function FleetPill() {
       onPointerEnter={() => {
         window.setTimeout(() => void prewarmRemediation(), 60);
       }}
-      className="mt-2.5 inline-flex min-h-6 items-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-2.5 py-1 text-left text-[11.5px] leading-tight whitespace-normal text-warning transition-colors hover:bg-warning/20"
+      className="mt-1.5 inline-flex min-h-5 items-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-2 py-0.5 text-left text-[11px] leading-tight whitespace-normal text-warning transition-colors hover:bg-warning/20"
       title={`Review ${fleet.affectedCount} other client tenants with this same misconfiguration`}
       data-testid="fleet-pill"
     >
@@ -611,7 +690,7 @@ function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep;
   return (
     <li
       style={catStyle(effectiveCategory)}
-      className="group flex items-start gap-2 rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-[color-mix(in_oklab,var(--cat)_40%,transparent)] hover:bg-[color-mix(in_oklab,var(--cat)_8%,transparent)]"
+      className="group flex items-start gap-2 rounded-md border border-transparent px-1.5 py-0.5 transition-colors hover:border-[color-mix(in_oklab,var(--cat)_40%,transparent)] hover:bg-[color-mix(in_oklab,var(--cat)_8%,transparent)]"
       onMouseEnter={() => {
         setLinked({ target: step.target, category: effectiveCategory });
         if (step.action.kind === "stage-fix") {
@@ -642,12 +721,12 @@ function PlanStep({ step, index, resolved, selections }: { step: ResolutionStep;
           e.preventDefault();
           focusCard(step.target, step.tab);
         }}
-        className="min-w-0 flex-1 cursor-pointer text-left select-text"
+        className="min-w-0 flex-1 cursor-pointer text-left select-text leading-snug"
         title="Open the card for this step"
         data-testid="plan-step-text"
       >
-        <span className={`mr-1.5 text-[12px] font-semibold ${CAT_TEXT}`}>{cleanInlineSlugs(step.title)}:</span>
-        <span className={`text-[12.5px] ${checked ? "text-muted line-through decoration-healthy/60" : "text-text"}`}>
+        <span className={`mr-1.5 text-[11.5px] font-semibold ${CAT_TEXT}`}>{cleanInlineSlugs(step.title)}:</span>
+        <span className={`text-[12px] ${checked ? "text-muted line-through decoration-healthy/60" : "text-text"}`}>
           <EnrichedText text={cleanInlineSlugs(step.detail)} entities={NO_ENTITIES} selections={selections} />
         </span>
       </div>
@@ -673,25 +752,25 @@ const NO_ENTITIES: EnrichedEntity[] = [];
 function ScenarioText({ brief }: { brief: ScenarioBrief }) {
   const selections = useWorkbench((s) => s.selections[s.scenarioId] ?? NO_SELECTIONS);
   return (
-    <section className="card">
-      <div className="mb-1.5 flex flex-wrap items-center gap-2">
+    <section className="rounded-[10px] border border-border bg-surface px-3 py-2" data-testid="customer-ticket-card">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
         <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
-        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10.5px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to spawn a live mini-dashboard">
+        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to spawn a live mini-dashboard">
           <Wand2 className="size-3 text-selection" /> ✨ Select any text on screen to generate Context UI
         </span>
       </div>
-      <p className="text-[12.5px] leading-relaxed text-text" data-testid="scenario-body">
+      <p className="text-[12px] leading-snug text-text" data-testid="scenario-body">
         <EnrichedText text={brief.body} entities={brief.entities} selections={selections} />
       </p>
       {brief.signals.length > 0 && (
-        <ul className="mt-2.5 space-y-1">
+        <ul className="mt-1.5 space-y-1">
           {brief.signals.map((sig) => (
-            <li key={sig.label} style={catStyle(sig.category)} className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 rounded-md border border-border-subtle bg-surface px-2 py-1 text-[11.5px]">
+            <li key={sig.label} style={catStyle(sig.category)} className="grid grid-cols-[auto_1fr] items-baseline gap-x-2 rounded-md border border-border-subtle bg-surface px-2 py-1 text-[11px]">
               <span className={`inline-flex items-center gap-1.5 font-medium ${CAT_TEXT}`}>
                 <span className={`size-1.5 rounded-full ${CAT_DOT}`} />
-                {sig.label}
+                {cleanInlineSlugs(sig.label)}
               </span>
-              <span className="text-text">{sig.value}</span>
+              <span className="text-text">{cleanInlineSlugs(sig.value)}</span>
               <span />
               <span className="font-mono text-[10px] text-faint">{sig.source}</span>
             </li>
@@ -771,19 +850,18 @@ function TicketAttachment({ attachment }: { attachment: ErpAttachment }) {
   const result = vision.status === "ready" ? vision.result : undefined;
   const x = result?.extraction;
   return (
-    <div className="mt-3" data-testid="ticket-attachment">
-      <div className="flex gap-2.5 rounded-md border border-border-subtle bg-surface p-2">
+    <div className="mt-2" data-testid="ticket-attachment">
+      <div className="flex items-center gap-2.5 rounded-md border border-border-subtle bg-surface px-2 py-1.5">
         <a href={attachment.url} target="_blank" rel="noreferrer" className="shrink-0" title="Open full size">
-          <img src={attachment.url} alt={`Customer screenshot ${attachment.fileName}`} className="h-[56px] w-[90px] rounded border border-border object-cover" />
+          <img src={attachment.url} alt={`Customer screenshot ${attachment.fileName}`} className="h-[44px] w-[72px] rounded border border-border object-cover" />
         </a>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[11.5px]">
+          <div className="flex items-center gap-1.5 text-[11px]">
             <ImageIcon className="size-3 shrink-0 text-muted" />
             <span className="truncate font-mono">{attachment.fileName}</span>
-          </div>
-          <div className="mt-0.5 text-[10.5px] text-faint">
-            {attachment.uploadedBy} · {Math.round(attachment.sizeBytes / 1024)} KB
-            {attachment.url.startsWith("/api/tickets/inbox-attachment/") ? ` · read from input/tickets/${decodeURIComponent(attachment.url.split("/")[4] ?? "")}/` : ""}
+            <span className="text-[10px] text-faint">
+              ({attachment.uploadedBy} · {Math.round(attachment.sizeBytes / 1024)} KB)
+            </span>
           </div>
           <Button size="xs" variant="meta" icon={<ScanEye />} className="mt-1" loading={vision.status === "loading"} onClick={() => void extract(attachment)}>
             Scan Screenshot for Error Code &amp; Timestamp

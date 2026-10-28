@@ -16,6 +16,22 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
   const pool = props.hostPool;
   const critical = props.rogueSecurityRules.filter((r) => r.severity === "critical");
   const nonCompliant = props.azurePolicies.filter((p) => p.compliance === "NonCompliant");
+
+  const subtitle =
+    !drift || props.state === "healthy"
+      ? `NSG ${props.resourceName} and ${pool?.name ?? "host pool"} are in sync with the Terraform baseline (${props.gitBranch}) with 0 rogue rules.`
+      : critical.length > 0
+        ? `Rogue rule ${critical[0]!.ruleName} exposes ${critical[0]!.protocol.toUpperCase()}/${critical[0]!.port} from ${critical[0]!.source} on ${props.resourceName}, plus ${props.tagDrift.length} drifted Terraform tags.`
+        : props.summary.replace(/^State:\s*/i, "");
+
+  const footerSummary = [
+    pool ? `${pool.name} (${pool.sessionHosts.length}× ${pool.vmSize}, ${pool.location})` : null,
+    drift ? `${critical.length} critical NSG rule(s), ${props.tagDrift.length} tag drift(s)` : "NSG in sync",
+    nonCompliant.length ? `${nonCompliant.length} non-compliant Azure Policy` : "Azure Policy Compliant",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <CardShell
       type="IaCDriftBanner"
@@ -25,12 +41,13 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
       triggeredBy={triggeredBy}
       source={props.comparedAgainst === "live-azure" ? "NSG: live Azure" : "NSG: manifest"}
       codeLens={props.sourceRef}
+      footerMeta={<span>· {footerSummary}</span>}
       tabs={[
         { id: "hostpool", label: "Host Pool & Session Hosts", badge: pool?.sessionHosts.length },
         { id: "nsg", label: "NSG Rules & Terraform Drift", badge: props.rogueSecurityRules.length + props.tagDrift.length },
         { id: "policies", label: "Azure Policies & Compliance", badge: nonCompliant.length },
       ]}
-      summary={<div className="text-[12.5px] leading-snug">{props.summary.replace(/^State:\s*/i, "")}</div>}
+      summary={<div className="text-[12.5px] leading-snug">{subtitle}</div>}
       primaryAction={
         drift && (
           <Button
@@ -48,92 +65,41 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
       }
     >
       {(tab) => {
-        const headerStats = (
-          <div className="mb-2.5 space-y-1 text-[11.5px]">
-            {pool && (
-              <div className="font-mono text-[11.5px] text-muted">
-                {pool.name} · {pool.poolType} · {pool.loadBalancer} · {pool.sessionHosts.length}x {pool.vmSize} · {pool.location}
-              </div>
-            )}
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-              <Stat label="NSG:" tone={drift ? (critical.length ? "critical" : "warning") : "healthy"}>
-                {drift
-                  ? `${critical.length ? `${critical.length} Critical NSG Drift (${critical.map((r) => `${r.protocol.toUpperCase()}/${r.port}`).join(", ")} Open)` : "drift"}${props.tagDrift.length ? ` + ${props.tagDrift.length} tag drift` : ""}`
-                  : "in sync with Terraform"}
-              </Stat>
-              <Stat label="Azure Policy:" tone={nonCompliant.length ? "warning" : "healthy"}>
-                {nonCompliant.length ? `${nonCompliant.length} Non-Compliant` : "Compliant"}
-              </Stat>
-            </div>
-          </div>
-        );
         if (tab === "hostpool") {
-          if (!pool) return <div className="text-[11.5px] text-muted">{headerStats}No host pool in scope.</div>;
+          if (!pool) return <div className="text-[11.5px] text-muted">No host pool in scope.</div>;
           return (
             <div className="space-y-2">
-              {headerStats}
-              <dl className="grid grid-cols-[auto_1fr_auto_1fr] gap-x-3 gap-y-0.5 text-[11.5px]">
-                <dt className="text-faint">Pool type</dt>
-                <dd className="font-mono">{pool.poolType}</dd>
-                <dt className="text-faint">Load balancing</dt>
-                <dd className="font-mono">{pool.loadBalancer}</dd>
-                <dt className="text-faint">VM size</dt>
-                <dd className="font-mono">{pool.vmSize}</dd>
-                <dt className="text-faint">Max sessions</dt>
-                <dd className="font-mono">{pool.maxSessionLimit ?? "—"}</dd>
-                <dt className="text-faint">Identity</dt>
-                <dd>{pool.joinType}</dd>
-                <dt className="text-faint">FSLogix</dt>
-                <dd>
-                  <Pill tone={pool.fslogix.status === "Healthy" ? "healthy" : "warning"}>{pool.fslogix.status}</Pill> <span className="font-mono text-[10.5px] text-faint">{pool.fslogix.share}</span>
-                </dd>
-              </dl>
               <DataTable
-                head={["Session host", "Status", "Sessions", "Agent"]}
+                head={["Session host", "Status", "Sessions", "VM Size / Pool", "FSLogix & Agent"]}
                 rows={pool.sessionHosts.map((h) => [
                   <span className="font-mono">{h.name}</span>,
                   <Pill tone={h.status === "Available" ? "healthy" : "warning"}>{h.status}</Pill>,
                   <span className="font-mono">{h.sessions}</span>,
-                  <span className="font-mono text-faint">{h.agentVersion ?? "—"}</span>,
+                  <span className="font-mono text-[11px] text-muted">{pool.vmSize} · {pool.poolType}</span>,
+                  <span className="font-mono text-[10.5px] text-faint">FSLogix {pool.fslogix.status} · v{h.agentVersion ?? "—"}</span>,
                 ])}
               />
-              <div className="text-[10.5px] text-faint">Host pool topology: {pool.source === "live-azure" ? "live Azure" : "fixture (the lab has no session hosts)"}</div>
             </div>
           );
         }
         if (tab === "policies") {
           return (
-            <div className="space-y-2">
-              {headerStats}
-              <DataTable
-                head={["Policy definition", "Effect", "Compliance", "Detail"]}
-                rows={props.azurePolicies.map((p) => [
-                  <span>{p.name}</span>,
-                  <span className="font-mono text-faint">{p.effect}</span>,
-                  <Pill tone={p.compliance === "Compliant" ? "healthy" : "critical"}>{p.compliance === "Compliant" ? "Compliant" : `Non-Compliant (${p.nonCompliantResources})`}</Pill>,
-                  <span className="text-[11px] text-muted">{p.detail}</span>,
-                ])}
-              />
-            </div>
+            <DataTable
+              head={["Policy definition", "Effect", "Compliance", "Detail"]}
+              rows={props.azurePolicies.map((p) => [
+                <span>{p.name}</span>,
+                <span className="font-mono text-faint">{p.effect}</span>,
+                <Pill tone={p.compliance === "Compliant" ? "healthy" : "critical"}>{p.compliance === "Compliant" ? "Compliant" : `Non-Compliant (${p.nonCompliantResources})`}</Pill>,
+                <span className="text-[11px] text-muted">{p.detail}</span>,
+              ])}
+            />
           );
         }
         return (
           <div className="space-y-2">
-            {headerStats}
-            <div className="flex flex-wrap items-center gap-x-3 text-[11px] text-muted">
-              <span>
-                NSG <span className="font-mono text-text">{props.resourceName}</span>
-              </span>
-              <span>
-                RG <span className="font-mono text-text">{props.resourceGroup}</span>
-              </span>
-              <Pill tone="muted" icon={<GitBranch />}>
-                {props.terraformFile} @ {props.gitBranch}
-              </Pill>
-            </div>
             <div className="grid gap-2 lg:grid-cols-2">
               <div className="rounded-md border border-border-subtle">
-                <div className="border-b border-border-subtle bg-surface px-2.5 py-1 text-[10px] tracking-wider text-faint uppercase">Rogue rules · live Azure, not in Terraform</div>
+                <div className="border-b border-border-subtle bg-surface px-2.5 py-1 text-[10px] tracking-wider text-faint uppercase">Rogue rules · live Azure ({props.resourceName})</div>
                 {props.rogueSecurityRules.length === 0 ? (
                   <div className="px-2.5 py-2 text-[11px] text-healthy">no rogue rules</div>
                 ) : (
@@ -159,7 +125,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
                 )}
               </div>
               <div className="rounded-md border border-border-subtle">
-                <div className="border-b border-border-subtle bg-surface px-2.5 py-1 text-[10px] tracking-wider text-faint uppercase">Tag drift · Terraform vs Azure</div>
+                <div className="border-b border-border-subtle bg-surface px-2.5 py-1 text-[10px] tracking-wider text-faint uppercase">Tag drift · {props.terraformFile} @ {props.gitBranch}</div>
                 {props.tagDrift.length === 0 ? (
                   <div className="px-2.5 py-2 text-[11px] text-healthy">tags in sync</div>
                 ) : (
@@ -178,11 +144,6 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
               </div>
             </div>
             {drift && <DiffView diff={props.hclDiff} />}
-            {drift && (
-              <Button size="xs" variant="meta" icon={<Wrench />} onClick={() => useWorkbench.getState().openRemediation({ tab: "terraform" })}>
-                Generate Fix &amp; Stage PR
-              </Button>
-            )}
           </div>
         );
       }}

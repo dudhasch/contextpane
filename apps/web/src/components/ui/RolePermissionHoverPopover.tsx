@@ -134,7 +134,7 @@ export function RolePermissionHoverPopover({
       (typeof document !== "undefined" &&
         Boolean(
           document.querySelector(
-            '[data-selection-bar="true"]:hover, [data-testid="selection-trigger-bar"]:hover, [data-testid="selection-trigger-button"]:hover',
+            '[data-selection-bar="true"], [data-testid="selection-trigger-bar"], [data-testid="selection-trigger-button"]',
           ),
         ));
     if (hasPopoverSelection || isInteractingWithTrigger) {
@@ -157,7 +157,10 @@ export function RolePermissionHoverPopover({
   const { getReferenceProps, getFloatingProps } = useInteractions([
     useHover(context, { delay: { open: 110, close: 160 }, handleClose: safePolygon({ buffer: 4 }) }),
     useFocus(context),
-    useDismiss(context),
+    useDismiss(context, {
+      outsidePress: (event) =>
+        !(event.target instanceof Element && event.target.closest('[data-selection-bar="true"], [data-testid="selection-trigger-bar"]')),
+    }),
     useRole(context, { role: "dialog" }),
   ]);
 

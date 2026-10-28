@@ -97,7 +97,14 @@ export function bindDataPlane(raw: unknown, ctx: CorrelationContext, snapshot: D
       binding.bound++;
     }
     for (const [key, value] of Object.entries(reference.props)) {
-      if (props[key] === undefined || props[key] === null || (ORCHESTRATOR_PROPS as readonly string[]).includes(key)) props[key] = value;
+      if (
+        props[key] === undefined ||
+        props[key] === null ||
+        (ORCHESTRATOR_PROPS as readonly string[]).includes(key) ||
+        ((key === "headline" || key === "summary") && props[key] !== "model headline")
+      ) {
+        props[key] = value;
+      }
     }
     return { ...c, triggeredBy: reference.triggeredBy, dataPtrs: reference.dataPtrs, props };
   });

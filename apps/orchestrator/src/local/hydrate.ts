@@ -59,12 +59,12 @@ export function buildLicenseDriftCard(ctx: CorrelationContext): LicenseDriftCard
   const target = inv.skuPools.find((p) => p.skuPartNumber === inv.sku.skuPartNumber);
   let headline: string;
   if (failed.length || orphaned.length) {
-    headline = `${inv.groupName}: ${failed.length ? `CountViolation for ${failed.length} members (${target?.consumed}/${target?.enabled} ${inv.sku.skuPartNumber})` : "no group errors"} · ${orphaned.length} seats held by disabled accounts`;
+    headline = `${inv.groupName} has a CountViolation for ${failed.length} members (${target?.consumed}/${target?.enabled} ${inv.sku.skuPartNumber}), with ${orphaned.length} seats held by disabled accounts.`;
   } else if (drifted.length) {
     const legacy = [...new Set(drifted.map((u) => u.currentSku))].join("/");
-    headline = `${drifted.length} users in ${inv.groupName} on ${legacy} instead of ${inv.sku.skuPartNumber} · ${target ? `${target.available} ${inv.sku.skuPartNumber} seats available` : "pool unknown"}`;
+    headline = `${drifted.length} users in ${inv.groupName} are assigned ${legacy} instead of ${inv.sku.skuPartNumber} (${target ? `${target.available} ${inv.sku.skuPartNumber} seats available` : "pool unknown"}).`;
   } else {
-    headline = `All ${inv.users.length} users in ${inv.groupName} hold their expected SKU · 0 group errors`;
+    headline = `All ${inv.users.length} users in ${inv.groupName} hold their expected ${inv.sku.skuPartNumber} license with 0 group errors.`;
   }
   return {
     headline: headline.slice(0, 200),
@@ -181,7 +181,7 @@ function buildWorkloadIdentityTimeline(ctx: CorrelationContext): EntraSignInTime
     { field: "oauth2PermissionGrants", expected: "verified publisher, least privilege", actual: `${w.oauth2PermissionGrant.scope} (unverified publisher)`, severity: "high", sourceRef: ref },
   ];
   return {
-    headline: `AADSTS7000222 nightly failures · ${w.spn.displayName} secret expired · shadow-admin owner ${w.owner.upn} (0 directory roles) with overprivileged Graph scopes`.slice(0, 200),
+    headline: `Nightly AADSTS7000222 failures: ${w.spn.displayName} client secret expired, and shadow-admin owner ${w.owner.upn} holds overprivileged Graph scopes.`.slice(0, 200),
     focusUpn: w.owner.upn,
     windowStart: events[0]?.timestamp ?? ctx.gatheredAt,
     windowEnd: events.at(-1)?.timestamp ?? ctx.gatheredAt,
@@ -251,9 +251,18 @@ export function buildEntraSignInTimeline(ctx: CorrelationContext): EntraSignInTi
   }
 
   const blocked = failures.filter((e) => blockingPolicy && (e.blockingPolicyId === blockingPolicy.id || e.blockingPolicyName === blockingPolicy.displayName)).length;
+  const distinctApps = [...new Set(failures.map((e) => e.appDisplayName).filter(Boolean))];
+  const appsLabel =
+    distinctApps.length === 0
+      ? focusFailure?.appDisplayName ?? "cloud apps"
+      : distinctApps.length === 1
+        ? distinctApps[0]!
+        : distinctApps.length === 2
+          ? `${distinctApps[0]} & ${distinctApps[1]}`
+          : `${distinctApps.slice(0, -1).join(", ")} & ${distinctApps.at(-1)}`;
   const headline = focusFailure
-    ? `${focusFailure.errorCodeLabel ?? focusFailure.errorCode} on ${focusFailure.appDisplayName}${blockingPolicy ? ` · Blocked by '${short(blockingPolicy.displayName)}'` : ""}${blocked > 1 ? ` · ${blocked} sign-ins` : ""}`
-    : `No failing sign-ins in the window · ${ctx.policies.data.length} policies in scope`;
+    ? `${focusFailure.errorCodeLabel ?? `AADSTS${focusFailure.errorCode}`} blocked ${blocked > 1 ? `${blocked} sign-ins` : "sign-in"} to ${appsLabel}${blockingPolicy ? ` via '${short(blockingPolicy.displayName)}'` : ""}.`
+    : `All sign-ins succeeded across ${ctx.policies.data.length} Conditional Access policies in scope.`;
   return {
     headline: headline.slice(0, 200),
     focusUpn,
@@ -287,10 +296,10 @@ function buildCaPostureTimeline(ctx: CorrelationContext): EntraSignInTimeline {
   const events = [...posture.legacySignIns].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const parts = [
     missingExclusion ? `Missing break-glass exclusion on ${short(missingExclusion.displayName).split("-Require")[0]}` : "",
-    reportOnly ? `${short(reportOnly.displayName).split("-Block")[0]} Report-Only with ${events.length} legacy sign-ins (24 h)` : "",
+    reportOnly ? `${short(reportOnly.displayName).split("-Block")[0]} is in Report-Only mode with ${events.length} legacy sign-ins (24 h)` : "",
   ].filter(Boolean);
   return {
-    headline: (parts.join(" · ") || "Conditional Access matches the golden baseline").slice(0, 200),
+    headline: (`${parts.join(", and ") || "Conditional Access policies match the golden baseline"}.`).slice(0, 200),
     focusUpn: "",
     windowStart: events[0]?.timestamp ?? ctx.gatheredAt,
     windowEnd: events.at(-1)?.timestamp ?? ctx.gatheredAt,
@@ -317,12 +326,12 @@ export function buildIntuneDriftCard(ctx: CorrelationContext): IntuneDriftCard |
   const conflicts = d.settings.filter((s) => s.status === "conflict");
   let headline: string;
   if (d.resolved || (!drifted.length && !conflicts.length)) {
-    headline = `In sync with the golden baseline · ${d.devices.length} devices compliant`;
+    headline = `All ${d.devices.length} managed devices are compliant and in sync with the golden baseline.`;
   } else if (d.issueKind === "policy-conflict") {
-    headline = `BitLocker ${d.errorCode ?? ""} · ${conflicts.length} conflicting settings with the legacy profile · ${d.affectedDeviceCount} devices NonCompliant`;
+    headline = `${d.affectedDeviceCount} Windows 11 devices are NonCompliant (${d.errorCode ?? "0x87D1FDE8"}) due to ${conflicts.length} conflicting BitLocker settings with the legacy profile.`;
   } else {
     const asr = drifted.find((s) => s.settingName.startsWith("ASR"));
-    headline = `${asr ? `ASR LSASS rule: ${asr.live} ≠ ${asr.golden}` : `${drifted.length} drifted settings`} · EnableFirewall conflict on ${d.affectedDeviceCount} devices`;
+    headline = `${asr ? `ASR LSASS rule drifted (${asr.live} ≠ ${asr.golden})` : `${drifted.length} settings drifted`}, causing an EnableFirewall conflict on ${d.affectedDeviceCount} devices.`;
   }
   return {
     headline: headline.replace(/\s+/g, " ").slice(0, 200),
@@ -360,7 +369,7 @@ export function buildIaCDriftBanner(ctx: CorrelationContext): IaCDriftBanner | n
     rogueSecurityRules: d.rogueSecurityRules,
     missingSecurityRules: d.missingSecurityRules,
     hclDiff: d.hclDiff,
-    summary: `State: ${d.summary}`,
+    summary: d.summary.endsWith(".") ? d.summary : `${d.summary}.`,
     hostPool: ctx.avd?.data.hostPool ?? null,
     azurePolicies: ctx.avd?.data.azurePolicies ?? [],
     state: d.severity === "critical" ? "critical" : d.driftState === "drift-detected" ? "warning" : "healthy",

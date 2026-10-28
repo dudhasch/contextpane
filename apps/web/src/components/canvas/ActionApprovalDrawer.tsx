@@ -5,6 +5,7 @@ import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { CodeBlock } from "../ui/CodeBlock";
 import { Pill, type Tone } from "../ui/Pill";
+import { SmartTechPath } from "./CardShell";
 import { DiffView } from "./DiffView";
 import { ProgressRail } from "./ProgressRail";
 
@@ -781,7 +782,13 @@ function DeviceHealthScriptTab() {
                 {health.csp.map((c) => (
                   <tr key={c.settingName} className="border-t border-border-subtle align-middle">
                     <td className="px-2.5 py-1.5 font-medium">{c.settingName}</td>
-                    <td className="px-2.5 py-1.5 font-mono text-[10.5px] break-all whitespace-normal text-muted">{c.registryPath ?? c.cspUri ?? "—"}</td>
+                    <td className="px-2.5 py-1.5">
+                      {c.registryPath || c.cspUri ? (
+                        <SmartTechPath path={c.registryPath ?? c.cspUri!} />
+                      ) : (
+                        <span className="text-faint">—</span>
+                      )}
+                    </td>
                     <td className="px-2.5 py-1.5">
                       {c.tattooedOnUnassign ? <Pill tone="warning" mono={false}>Stays tattooed without script</Pill> : <span className="text-faint">Reverts cleanly</span>}
                     </td>

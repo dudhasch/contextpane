@@ -255,6 +255,22 @@ export function SynthesizedDynamicCard({
       title={props.title}
       state={props.state}
       triggeredBy={triggeredBy}
+      footerMeta={
+        <span className="inline-flex items-center gap-1.5 font-mono text-[10px]">
+          <Sparkles className="size-2.5 text-teal-400" />
+          <span>{props.elementId}</span>
+          <span>·</span>
+          <span className="text-teal-300">
+            {meta.gatekeeperModel} → {meta.synthesizerModel}
+          </span>
+          <span>·</span>
+          <span>
+            {meta.reusedFromCatalog
+              ? `Reused from dynamic-catalog.json (×${meta.reuseCount})`
+              : "Persisted to dynamic-catalog.json"}
+          </span>
+        </span>
+      }
       tabs={[
         { id: "all", label: "Full Diagnostic View", badge: props.blocks.length },
         ...(quotaBlock ? [{ id: "quota-gauges", label: quotaTabLabel, badge: quotaBlock.gauges.length }] : []),
@@ -265,6 +281,13 @@ export function SynthesizedDynamicCard({
       summary={<div className="text-[12.5px] leading-snug text-text">{props.headline}</div>}
       primaryAction={
         <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            type="search"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            placeholder={dynamicFilterPlaceholder}
+            className="h-6 w-[185px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[10.5px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
+          />
           <Button
             size="xs"
             variant="outline"
@@ -298,61 +321,8 @@ export function SynthesizedDynamicCard({
           tab === "all" ? props.blocks : props.blocks.filter((b) => b.kind === tab);
 
         return (
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-teal-500/25 bg-teal-500/6 px-2.5 py-1.5 text-[11px]">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Stat label="Synthesized Element:" tone="primary">
-                  {props.elementId}
-                </Stat>
-                <Stat label="Primitives:" tone="healthy">
-                  {props.requiredPrimitives.join(" · ")}
-                </Stat>
-                <span className="inline-flex items-center gap-1 rounded border border-teal-500/35 bg-teal-500/10 px-1.5 py-0.5 font-mono text-[10px] text-teal-300">
-                  <Sparkles className="size-2.5" />
-                  {meta.gatekeeperModel} → {meta.synthesizerModel}
-                </span>
-                <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                  {meta.reusedFromCatalog ? `Reused from dynamic-catalog.json (×${meta.reuseCount})` : "Persisted to dynamic-catalog.json"}
-                </span>
-              </div>
-              <input
-                type="search"
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-                placeholder={dynamicFilterPlaceholder}
-                className="h-6 min-w-[235px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[11px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
-              />
-            </div>
-
+          <div className="space-y-2.5">
             {blocksToRender.map((b) => renderBlock(b, filterText))}
-
-            {props.recommendedActions.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-subtle bg-elevated/50 p-2.5">
-                <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-text">
-                  <CheckCircle2 className="size-3.5 text-emerald-400" />
-                  <span>Recommended Remediation Actions</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {props.recommendedActions.map((act) => (
-                    <Button
-                      key={act.id}
-                      size="xs"
-                      variant={act.kind === "stage-fix" ? "meta" : "outline"}
-                      icon={act.kind === "view-diff" ? <GitCompareArrows /> : <Wrench />}
-                      onClick={() =>
-                        openRemediation({
-                          tab: act.kind === "view-diff" ? "terraform" : "powershell",
-                          focusBanner: `Focused: ${act.label}`,
-                        })
-                      }
-                      title={act.command ?? act.description}
-                    >
-                      {act.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         );
       }}

@@ -27,17 +27,23 @@ interface CardShellProps {
   source?: string;
   /** Git line provenance of the drifted resource or baseline rule; the badge opens the card's diff. */
   codeLens?: SourceRef | null;
+  /** Compact 1-line metadata rendered inside the unified single-row card footer below the table. */
+  footerMeta?: ReactNode;
   tabs: CardTab[];
   children: (tab: string) => ReactNode;
 }
 
-/** A scenario with a single card opens it expanded; with several, every card starts compact. */
+/** Card #1 (the primary diagnostic card) opens expanded by default; secondary cards start compact. */
 function useExpanded(type: CanvasComponentType): boolean {
   return useWorkbench((s) => {
     const explicit = s.expanded[type];
     if (explicit !== undefined) return explicit;
     if (type === "SynthesizedDynamicCard") return true;
-    return (s.layout?.components.filter((c) => c.type !== "HoverDiagnosticPopover" && c.type !== "ActionApprovalDrawer").length ?? 0) === 1;
+    const canvasCards =
+      s.layout?.components.filter(
+        (c) => c.type !== "HoverDiagnosticPopover" && c.type !== "ActionApprovalDrawer",
+      ) ?? [];
+    return canvasCards.length === 1 || canvasCards[0]?.type === type;
   });
 }
 
@@ -55,7 +61,7 @@ function statusLabel(state?: HealthState): string {
  * colour of the left-pane entities that spawned it), ultra-clean compact header & 1-line
  * subtitle by default, technical provenance tags and tabs inside the expanded body.
  */
-export function CardShell({ type, icon, title, state, triggeredBy, summary, primaryAction, source, codeLens, tabs, children }: CardShellProps) {
+export function CardShell({ type, icon, title, state, triggeredBy, summary, primaryAction, source, codeLens, footerMeta, tabs, children }: CardShellProps) {
   const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
   const expanded = useExpanded(type);
   const toggle = useWorkbench((s) => s.toggleExpanded);
@@ -96,7 +102,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
       style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--color-healthy)" : CATEGORY_META[category].color })}
       className={`card scroll-mt-2 animate-fade-in border-l-4 transition-[opacity,box-shadow] duration-150 ${borderClass} ${isLinked ? "ring-2 ring-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing ? "animate-pulse-ring" : ""}`}
     >
-      <header className="flex items-center gap-2">
+      <header className="flex flex-wrap items-center gap-2">
         <span className={`shrink-0 [&>svg]:size-4 ${converged || sliceHealthy ? "text-healthy" : CAT_TEXT}`}>{icon}</span>
         <h3 className="min-w-0 truncate text-[13px] font-semibold">{title}</h3>
         {converged ? (
@@ -114,26 +120,25 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
             </Pill>
           )
         )}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {!expanded && primaryAction}
+          <button
+            type="button"
+            onClick={() => toggle(type, !expanded)}
+            aria-expanded={expanded}
+            className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted hover:bg-surface hover:text-text"
+          >
+            {expanded ? "Collapse" : "Expand Details"}
+            <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </button>
+        </div>
       </header>
 
-      <div className="mt-1.5 text-[12.5px] leading-relaxed text-muted">{summary}</div>
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        {primaryAction}
-        <button
-          type="button"
-          onClick={() => toggle(type, !expanded)}
-          aria-expanded={expanded}
-          className="ml-auto inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-[11px] text-muted hover:bg-surface hover:text-text"
-        >
-          {expanded ? "Collapse" : "Expand Details"}
-          <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
-        </button>
-      </div>
+      <div className="mt-1 text-[12.5px] leading-snug text-muted">{summary}</div>
 
       {expanded && (
-        <div className="mt-2.5 animate-fade-in border-t border-border-subtle pt-2">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle">
+        <div className="mt-2 animate-fade-in">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-y border-border-subtle py-1">
             {tabs.length > 1 ? (
               <div className="flex gap-1" role="tablist">
                 {tabs.map((t) => (
@@ -153,10 +158,32 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
             ) : (
               <div />
             )}
-            <div className="flex min-w-0 items-center gap-1.5 pb-1">
+            {primaryAction && <div className="ml-auto flex shrink-0 items-center gap-1.5">{primaryAction}</div>}
+          </div>
+
+          {children(tab)}
+
+          {(codeLens || source || footerMeta || triggeredBy.length > 0) && (
+            <footer className="mt-2 flex items-center justify-between gap-2 overflow-hidden whitespace-nowrap border-t border-border-subtle/70 pt-1.5 text-[10.5px] text-faint" data-testid="card-footer">
+              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap">
+                {codeLens && (
+                  <button
+                    type="button"
+                    data-testid="codelens"
+                    onClick={() => setDiffOpen(true, type)}
+                    title={`${formatSourceRef(codeLens)} @ ${codeLens.ref}: open the diff`}
+                    className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-border-subtle px-1.5 font-mono text-[10px] text-faint hover:border-border hover:text-text"
+                  >
+                    <FileCode2 className="size-3 shrink-0" />
+                    <span className="truncate">Source: {formatSourceRef({ ...codeLens, file: codeLens.file.split("/").slice(-2).join("/") })}</span>
+                  </button>
+                )}
+                {source && <span className="shrink-0 font-mono text-[10px] text-faint">{source}</span>}
+                {footerMeta && <span className="min-w-0 truncate text-[10.5px] text-muted">{footerMeta}</span>}
+              </div>
               {triggeredBy.length > 0 && (
                 <span
-                  className={`hidden h-5 min-w-0 items-center gap-1 truncate rounded border px-1.5 text-[10.5px] lg:inline-flex ${converged || sliceHealthy ? "border-healthy/35 bg-healthy/10 text-healthy" : CAT_CHIP}`}
+                  className={`inline-flex h-5 shrink-0 items-center gap-1 truncate rounded border px-1.5 text-[10px] ${converged || sliceHealthy ? "border-healthy/35 bg-healthy/10 text-healthy" : CAT_CHIP}`}
                   title={`Triggered by: ${triggeredBy.join(", ")}`}
                 >
                   <Link2 className="size-3 shrink-0" />
@@ -166,22 +193,8 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
                   </span>
                 </span>
               )}
-              {codeLens && (
-                <button
-                  type="button"
-                  data-testid="codelens"
-                  onClick={() => setDiffOpen(true, type)}
-                  title={`${formatSourceRef(codeLens)} @ ${codeLens.ref}: open the diff`}
-                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-border-subtle px-1.5 font-mono text-[10px] text-faint hover:border-border hover:text-text"
-                >
-                  <FileCode2 className="size-3 shrink-0" />
-                  <span className="truncate">{formatSourceRef({ ...codeLens, file: codeLens.file.split("/").slice(-2).join("/") })}</span>
-                </button>
-              )}
-              {source && <span className="shrink-0 font-mono text-[10px] text-faint">{source}</span>}
-            </div>
-          </div>
-          {children(tab)}
+            </footer>
+          )}
         </div>
       )}
     </section>
@@ -199,15 +212,73 @@ export function Stat({ label, children, tone }: { label: string; children: React
   );
 }
 
-/** Generic data table with the canvas look. */
-export function DataTable({ head, rows, className = "", rowClassName }: { head: string[]; rows: ReactNode[][]; className?: string; rowClassName?: (index: number) => string }) {
+/**
+ * Formats OMA-URI, registry keys, or technical file paths into a compact muted prefix line
+ * + bold leaf identifier with whitespace-nowrap and a full hover tooltip, preventing mid-word character splits.
+ */
+export function SmartTechPath({ path, badge }: { path: string; badge?: ReactNode }) {
+  const parenMatch = path.match(/^(.*?)\s*(\([^)]+\))$/);
+  const corePath = parenMatch ? parenMatch[1]!.trim() : path.trim();
+  const lastSep = Math.max(corePath.lastIndexOf("/"), corePath.lastIndexOf("\\"));
+  const rawPrefix = lastSep >= 0 ? corePath.slice(0, lastSep + 1) : "";
+  const leaf = lastSep >= 0 ? corePath.slice(lastSep + 1) : corePath;
+
+  let compactPrefix = rawPrefix;
+  if (rawPrefix.length > 42) {
+    const sep = rawPrefix.includes("\\") ? "\\" : "/";
+    const parts = rawPrefix.split(/[\\/]/).filter(Boolean);
+    if (parts.length > 4) {
+      compactPrefix = `${parts[0]}${sep}…${sep}${parts.slice(-2).join(sep)}${sep}`;
+    }
+  }
+
+  return (
+    <div className="min-w-0 leading-tight" title={path} data-testid="smart-tech-path">
+      {compactPrefix && (
+        <div className="truncate font-mono text-[9.5px] leading-tight whitespace-nowrap text-faint" data-testid="smart-tech-prefix">
+          {compactPrefix}
+        </div>
+      )}
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate font-mono text-[11px] font-semibold leading-snug whitespace-nowrap text-text" data-testid="smart-tech-leaf">
+          {leaf}
+        </span>
+        {badge && <span className="shrink-0">{badge}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Generic data table with the canvas look and optional proportioned column widths. */
+export function DataTable({
+  head,
+  rows,
+  className = "",
+  rowClassName,
+  colWidths,
+  cellPy = "py-2",
+}: {
+  head: string[];
+  rows: ReactNode[][];
+  className?: string;
+  rowClassName?: (index: number) => string;
+  colWidths?: string[];
+  cellPy?: string;
+}) {
   return (
     <div className={`overflow-x-auto rounded-md border border-border-subtle ${className}`}>
-      <table className="w-full text-[11.5px]">
+      <table className={`w-full text-[11.5px] ${colWidths ? "table-fixed" : ""}`}>
+        {colWidths && (
+          <colgroup>
+            {colWidths.map((w, idx) => (
+              <col key={idx} style={{ width: w }} />
+            ))}
+          </colgroup>
+        )}
         <thead className="sticky top-0 z-10 bg-slate-950/95 text-[10px] tracking-wider text-faint uppercase backdrop-blur-sm">
           <tr>
             {head.map((h) => (
-              <th key={h} className="px-2.5 py-1.5 text-left font-medium whitespace-nowrap">
+              <th key={h} className="px-2.5 py-2 text-left font-medium whitespace-nowrap">
                 {h}
               </th>
             ))}
@@ -217,7 +288,7 @@ export function DataTable({ head, rows, className = "", rowClassName }: { head: 
           {rows.map((r, i) => (
             <tr key={i} className={`border-t border-border-subtle align-middle transition-opacity ${rowClassName?.(i) ?? ""}`}>
               {r.map((cell, j) => (
-                <td key={j} className="px-2.5 py-1.5">
+                <td key={j} className={`px-2.5 ${cellPy}`}>
                   {cell}
                 </td>
               ))}

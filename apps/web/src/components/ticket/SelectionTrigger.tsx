@@ -8,6 +8,7 @@ import { CONTEXT_MODE_LIST, CONTEXT_MODE_META, ContextModeIcon } from "../ui/Con
 interface Pending {
   text: string;
   rect: DOMRect;
+  insidePopover?: boolean;
 }
 
 function isWithinSelectableSurface(node: Node | null, rootEl: HTMLElement | null): boolean {
@@ -43,7 +44,7 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
 
   const { refs, floatingStyles } = useFloating({
     open: Boolean(pending),
-    placement: "top",
+    placement: pending?.insidePopover ? "bottom-start" : "top",
     middleware: [offset(8), flip(), shift({ padding: 8 })],
     whileElementsMounted: autoUpdate,
   });
@@ -62,9 +63,14 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
     if (!isWithinSelectableSurface(range.commonAncestorContainer, rootRef.current)) return;
     const text = sel.toString().replace(/\s+/g, " ").trim();
     if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return setPending(null);
-    const rect = range.getBoundingClientRect();
+    const commonEl =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+    const popoverEl = commonEl?.closest('[data-hover-popover="true"], [data-testid="hover-popover"], [data-testid="permission-hover-popover"]');
+    const rect = popoverEl ? popoverEl.getBoundingClientRect() : range.getBoundingClientRect();
     if (!rect.width && !rect.height) return setPending(null);
-    setPending({ text, rect });
+    setPending({ text, rect, insidePopover: Boolean(popoverEl) });
     setRefinement("");
     setViewMode("dashboard");
     if (/@|[0-9a-f]{8}-[0-9a-f]{4}/i.test(text)) {

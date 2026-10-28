@@ -599,7 +599,7 @@ function buildCustomBrief(
       signals: [
         {
           label: "N+k Catalog Synthesis",
-          value: `muse-spark-1.3 flagged element_not_existent -> muse-wonder-1.0 synthesized ${missingNames}`,
+          value: `muse-spark-1.3 routed to dynamic UI synthesis -> muse-wonder-1.0 synthesized ${missingNames}`,
           category: "azure",
           source: "data/dynamic-catalog.json",
         },

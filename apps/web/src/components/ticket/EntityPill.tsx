@@ -100,7 +100,7 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
       (typeof document !== "undefined" &&
         Boolean(
           document.querySelector(
-            '[data-selection-bar="true"]:hover, [data-testid="selection-trigger-bar"]:hover, [data-testid="selection-trigger-button"]:hover',
+            '[data-selection-bar="true"], [data-testid="selection-trigger-bar"], [data-testid="selection-trigger-button"]',
           ),
         ));
     if (hasPopoverSelection || isInteractingWithTrigger) {
@@ -122,7 +122,10 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
   const { getReferenceProps, getFloatingProps } = useInteractions([
     useHover(context, { delay: { open: 150, close: 180 }, handleClose: safePolygon({ buffer: 2 }) }),
     useFocus(context),
-    useDismiss(context),
+    useDismiss(context, {
+      outsidePress: (event) =>
+        !(event.target instanceof Element && event.target.closest('[data-selection-bar="true"], [data-testid="selection-trigger-bar"]')),
+    }),
     useRole(context, { role: "dialog" }),
   ]);
 

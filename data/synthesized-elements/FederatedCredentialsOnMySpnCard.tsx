@@ -76,7 +76,7 @@ export const DEFAULT_FEDERATEDCREDENTIALSONMYSPNCARD_SPEC: SynthesizedDynamicCar
       "events": [
         {
           "id": "ev1",
-          "timestamp": "2026-10-28T08:03:42.681Z",
+          "timestamp": "2026-10-28T09:05:18.072Z",
           "operation": "FederatedCredentialsOnMySpnCard",
           "status": "Warning",
           "code": "DiagnosticEvent",
@@ -102,7 +102,7 @@ export const DEFAULT_FEDERATEDCREDENTIALSONMYSPNCARD_SPEC: SynthesizedDynamicCar
     "reusedFromCatalog": false,
     "reuseCount": 1,
     "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
-    "synthesizedAt": "2026-10-28T08:03:42.681Z"
+    "synthesizedAt": "2026-10-28T09:05:18.072Z"
   },
   "sourceRef": {
     "file": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
