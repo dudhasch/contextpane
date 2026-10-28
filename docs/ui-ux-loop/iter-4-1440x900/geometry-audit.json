@@ -1,0 +1,75 @@
+{
+  "capturedAt": "2026-10-28",
+  "viewport": [1440, 900],
+  "method": "In-app browser, resize_window 1440x900, DOM measured with getBoundingClientRect / clientHeight / scrollHeight after setting the left pane's scrollTop to 0. Orchestrator: the running :4000 server (main checkout, P0 merged, Simulated-Lab data mode). Left pane at the default 40% split.",
+  "notes": [
+    "P2-7 of docs/fable-research/FABLE_5_1_DEEP_AUDIT.md. Supersedes docs/ui-ux-loop/iter-3/geometry-audit.json, which was measured at 1600x900 with pre-warmed contexts.",
+    "P1-2 (ticket body above the clarifier, collapsed clarifier, title truncation and tab-strip overflow) had not landed when this was measured, so the ERP case still needs ~500 px of scroll and the canvas still overflows by 118 px. Re-run after P1 merges; P1-2's done-criterion is ticketCard.fullyAboveFold === true and canvas.horizontalOverflowPx === 0 for ERP-2026323.",
+    "statusBar.visibleAtScrollTop0 means the unified triage/cloud strip lies fully between the 48 px top bar and the 900 px fold.",
+    "freeRoamLensCards is 0 on the P2 build because the posture lens is no longer spawned at boot (P2-1); the landing shows an 'Open Tenant Posture Overview' button instead."
+  ],
+  "before": {
+    "source": "FABLE_5_1_DEEP_AUDIT.md section 3.2, measured on ERP-2026323 before any fix pass",
+    "ERP-2026323": {
+      "topBar": [0, 48],
+      "leftPane": { "clientHeight": 852, "scrollHeight": 1349, "needsScrollPx": 497 },
+      "ticketTitleTop": 86,
+      "statusBar": { "top": 144, "singleLine": true, "text": "✓ 2/5 Triage Checks (55ms) · Cloud Status: Azure, Entra, Intune, GitHub OK" },
+      "clarifier": { "top": 220, "bottom": 470, "expandedByDefault": true },
+      "summaryTop": 623,
+      "ticketCard": { "fullyAboveFold": false, "note": "customer ticket body below 900" },
+      "canvas": { "clientWidth": 848, "scrollWidth": 966, "horizontalOverflowPx": 118 }
+    }
+  },
+  "recordingServer_5173": {
+    "build": "main @ 83191f5 (P0-1..P0-9), served by the user's :5173 Vite",
+    "landing": {
+      "leftPane": { "clientHeight": 765, "scrollHeight": 1401, "needsScrollPx": 636 },
+      "canvas": { "clientWidth": 848, "scrollWidth": 848, "horizontalOverflowPx": 0 }
+    },
+    "INC-4092": {
+      "title": "Finance department cannot access new AVD Host Pool after Microsoft 365 E5 upgrade",
+      "leftPane": { "clientHeight": 852, "scrollHeight": 918, "needsScrollPx": 66 },
+      "statusBar": { "top": 170, "height": 32, "visibleAtScrollTop0": true, "text": "Triage pipeline not run" },
+      "clarifier": null,
+      "summaryTop": 210,
+      "ticketCard": { "top": 559, "bottom": 794, "fullyAboveFold": true },
+      "canvas": { "clientWidth": 858, "scrollWidth": 858, "horizontalOverflowPx": 0 }
+    },
+    "ERP-2026323": {
+      "title": "Patti Fernandez cannot connect to AVD (AADSTS53003) and RDP 3389 looks open on the host pool",
+      "leftPane": { "clientHeight": 852, "scrollHeight": 1349, "needsScrollPx": 497 },
+      "statusBar": { "top": 170, "height": 32, "visibleAtScrollTop0": true, "text": "⚠ 2/5 Triage Checks (5ms)" },
+      "clarifier": { "top": 210, "bottom": 605, "height": 395 },
+      "summaryTop": 613,
+      "ticketCard": { "top": 900, "bottom": 1305, "fullyAboveFold": false },
+      "canvas": { "clientWidth": 848, "scrollWidth": 966, "horizontalOverflowPx": 118 }
+    }
+  },
+  "p2Build_5176": {
+    "build": "claude/kind-kapitsa-ba3415 after merging main (P0 + P2-1..P2-5), web served from that worktree on :5176 against the same :4000 orchestrator",
+    "landing": {
+      "leftPane": { "clientHeight": 748, "scrollHeight": 1421, "needsScrollPx": 673 },
+      "canvas": { "clientWidth": 858, "scrollWidth": 858, "horizontalOverflowPx": 0 },
+      "freeRoamLensCards": 0,
+      "openPostureOverviewButton": true
+    },
+    "INC-4092": {
+      "leftPane": { "clientHeight": 852, "scrollHeight": 919, "needsScrollPx": 67 },
+      "statusBar": { "top": 170, "height": 32, "visibleAtScrollTop0": true, "text": "Triage pipeline not run" },
+      "clarifier": null,
+      "summaryTop": 210,
+      "ticketCard": { "top": 561, "bottom": 795, "fullyAboveFold": true },
+      "canvas": { "clientWidth": 858, "scrollWidth": 858, "horizontalOverflowPx": 0 }
+    },
+    "ERP-2026323": {
+      "leftPane": { "clientHeight": 852, "scrollHeight": 1351, "needsScrollPx": 499 },
+      "statusBar": { "top": 170, "height": 32, "visibleAtScrollTop0": true, "text": "⚠ 2/5 Triage Checks (5 ms)" },
+      "clarifier": { "top": 210, "height": 396 },
+      "summaryTop": 613,
+      "ticketCard": { "top": 902, "bottom": 1307, "fullyAboveFold": false },
+      "canvas": { "clientWidth": 848, "scrollWidth": 966, "horizontalOverflowPx": 118 }
+    },
+    "deltaVsRecordingServer": "+1 to +2 px from the 10.5 -> 11 px type floor; the strip stays one 32 px line (an earlier P2 draft wrapped it to 58 px and was fixed in 0e52992)."
+  }
+}
