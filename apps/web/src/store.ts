@@ -1334,10 +1334,16 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         liveConsoleLines: executionLog,
       });
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
+        // The toast says only what the orchestrator did: a drill on a staged approval reverted nothing (HARD_CASES 6).
+        const landed = result.canary.rollbackExecuted === true;
         get().toast({
-          tone: "critical",
-          title: "Health check failed · Auto-rollback restored previous state",
-          detail: "Canary health check failed — 1-Click Undo script executed automatically to restore the previous tenant state",
+          tone: landed ? "warning" : "critical",
+          title: landed
+            ? "Health check failed · inverse rollback executed"
+            : result.canary.execution === "live-graph"
+              ? "Health check failed · inverse staged, live change still in the tenant"
+              : "Health check failed (drill) · nothing was written live",
+          detail: executionLog.find((l) => l.startsWith("Inverse rollback") || l.startsWith("Drill:")) ?? executionLog.at(-1),
         });
         return;
       }

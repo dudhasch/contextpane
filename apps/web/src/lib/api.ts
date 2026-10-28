@@ -66,7 +66,21 @@ export interface RemediateResponse {
   telemetry: RouterTelemetry;
 }
 
-export interface CanaryTrace { scenarioId: string; mode: string; finalState: "CONVERGED" | "AUTO_ROLLED_BACK"; canaryCohort: string; tenantRestored?: boolean; stages: Array<{ stage: string; detail: string; probes?: unknown }>; probes: { identity: { passed: boolean }; network: { tcp3389Closed?: boolean; tcp443Open?: boolean; intuneConflicts?: number } } }
+export interface CanaryTrace {
+  scenarioId: string;
+  mode: string;
+  /** "live-graph" when the approval wrote to the tenant; "simulated" for a staged approval or a drill. */
+  execution?: "live-graph" | "simulated";
+  /** "symbolic": probes evaluated the fixture model; "none": no model for this ticket, nothing evaluated. */
+  probeSource?: "symbolic" | "none";
+  finalState: "CONVERGED" | "AUTO_ROLLED_BACK";
+  canaryCohort: string;
+  /** True only when the orchestrator executed the inverse and it landed. */
+  rollbackExecuted?: boolean;
+  tenantRestored?: boolean;
+  stages: Array<{ stage: string; detail: string; probes?: unknown }>;
+  probes: { identity: { passed: boolean }; network: { tcp3389Closed?: boolean; tcp443Open?: boolean; intuneConflicts?: number } };
+}
 export interface ApproveResponse {
   drawer: ActionApprovalDrawer & { executionLog: string[] };
   convergence: Convergence | null;
@@ -147,7 +161,8 @@ export interface FormalResponse {
   };
   blastRadius: { targetBlockedToAllowed: number; breakGlassAllowedToAllowed: number; collateralChanges: number; rows: Array<{ cohort: string; entities: string[]; before: string; after: string; attempts: number }> };
   rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[] };
-  idempotency: { passed: boolean; idempotent: boolean };
+  /** null: no symbolic model for this ticket, so no fixture transform was checked. */
+  idempotency: { passed: boolean; idempotent: boolean } | null;
   asrBlast?: AsrBlast | null;
 }
 export interface IntuneHealthCsp { settingName: string; cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean }
@@ -260,7 +275,7 @@ export interface TriageCustomResponse {
   subAgentTasks?: SubAgentTaskRecord[];
   dataPtrs: string[];
   dataPlane: { datasets: number; bytes: number; piiMetrics: PiiMetrics };
-  verification: { formal: { passed: boolean | null; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean }; baseScenarioId: ScenarioId };
+  verification: { formal: { passed: boolean | null; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean | null }; baseScenarioId: ScenarioId };
   timelineSlices: number;
   latencyMs: number;
   telemetry: RouterTelemetry;

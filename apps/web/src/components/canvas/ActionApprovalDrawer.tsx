@@ -841,7 +841,7 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
   const asrBlast = formal.asrBlast ?? formal.formal.asrBlast ?? null;
   // An ad-hoc ticket has no symbolic model: say so instead of showing another scenario's proof (H-04).
   const notProvable = formal.formal.passed === null;
-  const allPassed = formal.formal.passed === true && formal.idempotency.passed;
+  const allPassed = formal.formal.passed === true && formal.idempotency?.passed === true;
 
   return (
     <div className="space-y-4 text-[12px]" data-testid="formal-proof">
@@ -876,7 +876,7 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
               <span className="text-text">{humanizeInvariant(i.id, drawer.ticketId, i.statement)}</span>
             </li>
           ))}
-          {!notProvable && (
+          {!notProvable && formal.idempotency && (
             <li className="flex items-start gap-2">
               <span className={`font-semibold ${formal.idempotency.passed ? "text-healthy" : "text-critical"}`}>
                 {formal.idempotency.passed ? "✓" : "✗"}
@@ -1303,8 +1303,13 @@ function CanaryTraceBanner() {
     <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-800 bg-surface/60 px-2.5 py-1.5 font-mono text-[11px]" data-testid="canary-trace">
       <span className="font-sans text-[11px] font-medium text-muted">Health Check:</span>
       {reverted ? (
-        <span className="rounded border border-amber-500/45 bg-amber-500/12 px-1.5 py-0.5 font-semibold text-amber-300">
-          ROLLED_BACK (PREVIOUS STATE RESTORED)
+        // Wording keyed on what executed: only a landed inverse restored anything in the tenant (HARD_CASES 6).
+        <span className="rounded border border-amber-500/45 bg-amber-500/12 px-1.5 py-0.5 font-semibold text-amber-300" data-testid="canary-rolled-back">
+          {canary.rollbackExecuted
+            ? "ROLLED_BACK · tenant restored from the pre-change snapshot"
+            : canary.execution === "live-graph"
+              ? "ROLLED_BACK · inverse staged, the live change is still in the tenant"
+              : "ROLLED_BACK · drill, nothing was written live"}
         </span>
       ) : (
         canary.stages.map((s) => (

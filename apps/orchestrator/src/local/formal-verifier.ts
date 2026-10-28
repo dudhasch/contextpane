@@ -1,4 +1,4 @@
-import { baseScenarioOf, getCustomScenario, isCustomScenarioId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { baseScenarioOf, getCustomScenario, isCustomScenarioId, isFreeRoamActionId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, demoName } from "@contextpane/mcp-msgraph";
 import {
   SHADOW_ADMIN_SCENARIO_ID,
@@ -587,7 +587,7 @@ export function maxSmtSynthesis(scenarioId: ScenarioId | string | null, options?
       ? verifyShadowAdminInvariant(effectiveId as string).passed
       : transitiveTier0ShadowAdmins(shadowAdminGraphPost()).length === 0;
   const inv5Passed = verifyProactiveRemediationInvariant(CANONICAL_DETECT_SCRIPT).passed;
-  const inv6Passed = verifyIdempotency(effectiveId, options).passed;
+  const inv6Passed = verifyIdempotency(effectiveId, options)?.passed ?? false;
   const inv7Passed = verifyInverseRollback(effectiveId).passed;
 
   const hardInvariants: MaxSmtHardInvariant[] = [
@@ -739,8 +739,20 @@ function stableHash(value: unknown): string {
   return `h${(h >>> 0).toString(16)}`;
 }
 
-/** Copy-on-write fork check: f(f(S)) == f(S) and f does not mutate its input fork's source. */
-export function verifyIdempotency(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): IdempotencyResult {
+/** True when the id has a symbolic model: a built-in scenario, or a custom ticket that inherits one. */
+export function hasSymbolicModel(scenarioId: ScenarioId | string | null): boolean {
+  if (!scenarioId || isFreeRoamActionId(scenarioId)) return false;
+  const effectiveId = effectiveScenarioId(scenarioId);
+  return isScenarioId(effectiveId) || (effectiveId as string) === SHADOW_ADMIN_SCENARIO_ID;
+}
+
+/**
+ * Copy-on-write fork check: f(f(S)) == f(S) and f does not mutate its input fork's source.
+ * Returns null for ids without a symbolic model (ad-hoc tickets, Free-Roam actions): running the
+ * fixture transform on them proved nothing about their script (HARD_CASES 5).
+ */
+export function verifyIdempotency(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): IdempotencyResult | null {
+  if (!hasSymbolicModel(scenarioId)) return null;
   const effectiveId = effectiveScenarioId(scenarioId);
   const source = options?.postState ? ({ ...preState(effectiveId), ...options.postState } as SymbolicState) : preState(effectiveId);
   const snapshot = JSON.stringify(source);
@@ -762,6 +774,8 @@ export interface InverseRollbackBundle {
   hcl: string;
   graphPatch: string; // JSON restore bundle
   restores: string[];
+  /** Set when there is nothing to invert (a staged Free-Roam action): the script is empty on purpose. */
+  note?: string;
 }
 
 /** Microsoft 365 E3. 6fd2c87f-… is Office 365 E3 (ENTERPRISEPACK), not SPE_E3. */
@@ -813,6 +827,10 @@ const MODULES: Record<string, string[]> = {
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
 export function buildInverseRollback(scenarioId: ScenarioId | string | null): InverseRollbackBundle {
   const resolvedId = scenarioId ?? "CUSTOM-UNSEEDED";
+  // A Free-Roam action is staged, never executed: there is no f to invert (HARD_CASES 29).
+  if (isFreeRoamActionId(resolvedId)) {
+    return { scenarioId: resolvedId, powershellScript: "", terraformDiff: "", hcl: "", graphPatch: "{}", restores: [], note: "staged action, nothing to revert" };
+  }
   const customEntry = getCustomScenario(String(resolvedId).trim().replace(/^#/, ""));
   if (customEntry?.customRemediation) {
     return {

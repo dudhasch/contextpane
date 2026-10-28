@@ -12,7 +12,7 @@ import {
 } from "@contextpane/catalog";
 import { z } from "zod";
 import { config, models, providers } from "../config.ts";
-import { chatWithForcedTool } from "../router/openai.ts";
+import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
 import { assessTicketElementNeeds, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
 
@@ -127,6 +127,8 @@ export interface ClarifierSubAgentResult {
   modelUsed: string;
   latencyMs: number;
   tokensUsed: number;
+  /** Prompt / completion split when the provider reported one. */
+  usage?: TokenUsage;
   status: "completed" | "fallback";
   source: "llm" | "fallback-on-error";
 }
@@ -173,6 +175,7 @@ export async function generateClarifyingQuestions(input: {
         modelUsed: modelId,
         latencyMs: Math.max(1, Math.round(performance.now() - started)),
         tokensUsed: res.usage.total,
+        usage: res.usage,
         status: "completed",
         source: "llm",
       };
@@ -248,6 +251,8 @@ export interface RemediationCoderMeta {
   modelUsed: string;
   latencyMs: number;
   tokensUsed: number;
+  /** Prompt / completion split when the provider reported one. */
+  usage?: TokenUsage;
   status: "completed" | "fallback";
   source: "llm" | "fallback-on-error";
 }
@@ -309,6 +314,7 @@ export async function synthesizeCustomRemediation(input: {
           modelUsed: modelId,
           latencyMs: Math.max(1, Math.round(performance.now() - started)),
           tokensUsed: res.usage.total,
+          usage: res.usage,
           status: "completed",
           source: "llm",
         },
@@ -412,6 +418,8 @@ export interface SubAgentStepMeasurement {
   startOffsetMs?: number;
   modelId?: string;
   tokensUsed?: number;
+  /** Prompt / completion split, stored on the record so the Router Savings HUD can show it (HARD_CASES 10). */
+  usage?: TokenUsage;
   status?: "completed" | "running" | "fallback";
   source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error" | "not-attempted";
   outputSummary?: string;
@@ -430,10 +438,13 @@ export function telemetryFromSubAgentTasks(tasks: SubAgentTaskRecord[]): {
   const modelSteps = tasks.filter((t) => t.stepIndex === 1 || t.stepIndex === 3 || t.stepIndex === 4);
   const llmSteps = modelSteps.filter((t) => t.source === "llm");
   const total = llmSteps.reduce((sum, t) => sum + (t.tokensUsed ?? 0), 0);
+  // The split is what the records carry; a step without one contributes only to the total.
+  const prompt = llmSteps.reduce((sum, t) => sum + (t.tokensPrompt ?? 0), 0);
+  const completion = llmSteps.reduce((sum, t) => sum + (t.tokensCompletion ?? 0), 0);
   return {
     provider: llmSteps.length ? "meta" : "local",
     modelId: llmSteps.length ? [...new Set(llmSteps.map((t) => t.modelId))].join(" + ") : "deterministic-router",
-    tokensUsed: { prompt: 0, completion: 0, total },
+    tokensUsed: { prompt, completion, total },
     fallbackChain: modelSteps.map((t) => ({
       provider: t.source === "llm" ? "meta" : "local",
       modelId: t.modelId,
@@ -471,6 +482,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[1]?.latencyMs ?? 0,
       ...(m[1]?.startOffsetMs !== undefined ? { startOffsetMs: m[1].startOffsetMs } : {}),
       ...(m[1]?.tokensUsed !== undefined ? { tokensUsed: m[1].tokensUsed } : {}),
+      ...(m[1]?.usage ? { tokensPrompt: m[1].usage.prompt, tokensCompletion: m[1].usage.completion } : {}),
       inputSummary: `Ticket "${input.title.slice(0, 70)}"`,
       outputSummary: !m[1] ? "Not run for this ticket" : m[1].outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
       timestamp: now,
@@ -486,6 +498,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[2]?.latencyMs ?? 0,
       ...(m[2]?.startOffsetMs !== undefined ? { startOffsetMs: m[2].startOffsetMs } : {}),
       ...(m[2]?.tokensUsed !== undefined ? { tokensUsed: m[2].tokensUsed } : {}),
+      ...(m[2]?.usage ? { tokensPrompt: m[2].usage.prompt, tokensCompletion: m[2].usage.completion } : {}),
       inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`,
       outputSummary: !m[2] ? "Not run for this ticket" : m[2].outputSummary ?? "Correlated live tenant objects & health advisories",
       timestamp: now,
@@ -501,6 +514,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[3]?.latencyMs ?? 0,
       ...(m[3]?.startOffsetMs !== undefined ? { startOffsetMs: m[3].startOffsetMs } : {}),
       ...(m[3]?.tokensUsed !== undefined ? { tokensUsed: m[3].tokensUsed } : {}),
+      ...(m[3]?.usage ? { tokensPrompt: m[3].usage.prompt, tokensCompletion: m[3].usage.completion } : {}),
       inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`,
       outputSummary: !m[3] ? "Not run for this ticket" : m[3].outputSummary ?? `Synthesized ${elementsLabel}`,
       timestamp: now,
@@ -516,6 +530,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[4]?.latencyMs ?? 0,
       ...(m[4]?.startOffsetMs !== undefined ? { startOffsetMs: m[4].startOffsetMs } : {}),
       ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
+      ...(m[4]?.usage ? { tokensPrompt: m[4].usage.prompt, tokensCompletion: m[4].usage.completion } : {}),
       inputSummary: `Target parameters: ${activePairs.join(", ")}`,
       outputSummary: !m[4] ? "Not run for this ticket" : m[4].outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
       timestamp: now,
@@ -531,6 +546,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[5]?.latencyMs ?? 0,
       ...(m[5]?.startOffsetMs !== undefined ? { startOffsetMs: m[5].startOffsetMs } : {}),
       ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
+      ...(m[5]?.usage ? { tokensPrompt: m[5].usage.prompt, tokensCompletion: m[5].usage.completion } : {}),
       inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`,
       outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
       timestamp: now,
@@ -641,6 +657,7 @@ export async function runSubAgentPipeline(input: {
         startOffsetMs: offset(t1Start),
         modelId: clarifierRes.modelUsed,
         tokensUsed: clarifierRes.tokensUsed,
+        ...(clarifierRes.usage ? { usage: clarifierRes.usage } : {}),
         status: clarifierRes.status,
         source: clarifierRes.source,
       },
@@ -657,6 +674,7 @@ export async function runSubAgentPipeline(input: {
         startOffsetMs: offset(t3Start),
         modelId: `${gatekeeperModel} -> ${uiUsedLlm ? models.metaWonder : "deterministic-template"}`,
         tokensUsed: uiRes.routing.tokensUsed ?? 0,
+        ...(uiRes.routing.usage ? { usage: uiRes.routing.usage } : {}),
         status: uiUsedLlm ? "completed" : "fallback",
         source: uiUsedLlm ? "llm" : "fallback-on-error",
       },
@@ -665,6 +683,7 @@ export async function runSubAgentPipeline(input: {
         startOffsetMs: offset(t4Start),
         modelId: coderRes.data._meta?.modelUsed ?? models.metaWonder,
         tokensUsed: coderRes.data._meta?.tokensUsed ?? 0,
+        ...(coderRes.data._meta?.usage ? { usage: coderRes.data._meta.usage } : {}),
         status: coderRes.data._meta?.status ?? "fallback",
         source: coderRes.data._meta?.source ?? "fallback-on-error",
       },

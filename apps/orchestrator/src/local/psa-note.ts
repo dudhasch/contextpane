@@ -118,7 +118,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const trail: string[] = [
     formal.passed === null
       ? `Formal invariants: not provable for this ad-hoc ticket (${formal.note ?? "no symbolic model"})`
-      : `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency check (safe to re-run) ${idempotency.passed ? "passed" : "FAILED"}`,
+      : `Formal invariants: ${formal.invariants.filter((i) => i.passed).length}/${formal.invariants.length} proved by the symbolic blast-radius prover (${formal.invariants.map((i) => i.id).join(", ")}) in ${formal.latencyMs} ms · idempotency check (safe to re-run) ${idempotency ? (idempotency.passed ? "passed" : "FAILED") : "n/a"}`,
     canary
       ? `Canary probes: ${canary.stages.map((s) => s.stage).join(" → ")} · identity probe ${canary.probes.identity.passed ? "passed" : "failed"}${targetId === "INC-4092" ? `, network probe ${canary.probes.network.tcp3389Closed === undefined ? "n/a" : canary.probes.network.tcp3389Closed ? "TCP/3389 closed" : "TCP/3389 OPEN"}${canary.probes.network.tcp443Open === undefined ? "" : canary.probes.network.tcp443Open ? ", TCP/443 open" : ", TCP/443 closed"}` : ", posture & compliance probes passed (0 conflicts)"} · cohort ${canary.canaryCohort}`
       : "Canary probes: not run for this approval",

@@ -135,7 +135,8 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const formal = verifyFormalInvariants(entry.scenarioId);
     expect(formal.passed).toBeNull();
     expect(formal.invariants).toEqual([]);
-    expect(verifyIdempotency(entry.scenarioId).passed).toBe(true);
+    // No fixture transform is run for an ad-hoc ticket either (HARD_CASES 5).
+    expect(verifyIdempotency(entry.scenarioId)).toBeNull();
     expect(getTimeline(entry.scenarioId)?.slices.length).toBeGreaterThanOrEqual(4);
 
     const fab = registerCustomTicket(legal);

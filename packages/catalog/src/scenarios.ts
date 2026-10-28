@@ -244,6 +244,9 @@ export const SubAgentTaskRecordSchema = z.object({
   /** When the step started, in ms after the pipeline started; absent for steps that never ran on a clock. */
   startOffsetMs: z.number().int().nonnegative().optional(),
   tokensUsed: z.number().int().nonnegative().optional(),
+  /** Prompt / completion split of tokensUsed, when the provider reported one (HARD_CASES 10). */
+  tokensPrompt: z.number().int().nonnegative().optional(),
+  tokensCompletion: z.number().int().nonnegative().optional(),
   inputSummary: z.string(),
   outputSummary: z.string(),
   timestamp: z.string(),

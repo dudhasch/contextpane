@@ -388,7 +388,7 @@ app.post("/api/tickets/triage-custom", async (c) => {
       dataPlane: { datasets: snapshot.descriptors.length, bytes: snapshot.bytes, piiMetrics: snapshot.piiMetrics },
       verification: {
         formal: { passed: formal.passed, invariants: formal.invariants.length, ids: formal.invariants.map((i) => i.id), latencyMs: formal.latencyMs },
-        idempotency: { passed: idempotency.passed },
+        idempotency: { passed: idempotency?.passed ?? null },
         baseScenarioId: entry.baseScenarioId,
       },
       timelineSlices: timeline?.slices.length ?? 0,
@@ -640,8 +640,9 @@ app.post("/api/rollback", async (c) => {
   const targetId = baseScenarioOf(requested) ?? requested;
   const started = performance.now();
   const rollback = buildInverseRollback(requested);
+  // null: no symbolic model (ad-hoc ticket), so there is no fixture transform to check (HARD_CASES 5).
   const check = verifyIdempotency(targetId);
-  if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
+  if (check && !check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
   // No inverse is executed yet (U-5 derives it from a pre-change snapshot): the script is staged and nothing is claimed (L-09).
   const reason = "Revert is staged, not executed: no inverse write is wired to the tenant yet";
   return c.json({
@@ -909,41 +910,47 @@ const approveHandler = async (c: Context) => {
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
   const scenarioId = drawer.ticketId;
   const liveWriteApplied = drawer.approval.state === "executed";
+  const drill = body.simulateCanaryFailure === true;
+  // No canary for an approval that wrote nothing: there is no change in the tenant to probe (HARD_CASES 4).
+  // A rollback drill still runs so the operator can see the dead-man's switch, labelled as a drill.
+  if (!liveWriteApplied && !drill) return c.json({ drawer, convergence, canary: null });
   const canaryTarget = baseScenarioOf(scenarioId) ?? scenarioId;
-  // Only an "executed" approval wrote to the live tenant; when simulateCanaryFailure triggers AUTO_ROLLED_BACK, execute f^-1 immediately.
+  // A drill after a live write reverts first, so the canary reports what happened, not the request flag (M-15).
+  const baseForRevert = baseScenarioOf(scenarioId);
+  const revertWrite = drill && liveWriteApplied && baseForRevert ? await applyScenarioState(baseForRevert, "drifted") : null;
+  const revertLanded = revertWrite?.source === "live-graph" && revertWrite.results.every((r) => r.ok);
   const canary = {
     ...runCanaryConvergence(canaryTarget, {
       mode: body.mode ?? "break-glass",
-      simulateCanaryFailure: body.simulateCanaryFailure ?? false,
+      simulateCanaryFailure: drill,
       liveWriteApplied,
-      rollbackExecuted: Boolean(body.simulateCanaryFailure),
+      rollbackExecuted: revertLanded,
     }),
     scenarioId: scenarioId as ScenarioId,
   };
   closureStore.setCanary(scenarioId, canary);
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
-    const baseForRevert = baseScenarioOf(scenarioId);
-    const revertWrite = liveWriteApplied && baseForRevert ? await applyScenarioState(baseForRevert, "drifted") : null;
     invalidateContext(scenarioId);
+    // Wording keyed on what executed: a drill without a live write reverted nothing (HARD_CASES 6).
+    const failedWrites = revertWrite?.results.filter((r) => !r.ok).map((r) => `${r.id}: HTTP ${r.status}`).join(", ");
     const rollbackLog = revertWrite
-      ? `Inverse rollback f⁻¹ executed (${revertWrite.source}, ${revertWrite.latencyMs} ms): ${revertWrite.summary}`
-      : "Inverse rollback f⁻¹ executed: in-memory state reverted to pre-change baseline";
+      ? revertLanded
+        ? `Inverse rollback f⁻¹ executed (${revertWrite.source}, ${revertWrite.latencyMs} ms): ${revertWrite.summary}`
+        : `Inverse rollback f⁻¹ attempted but did not land (${revertWrite.fallbackReason ?? failedWrites}); the live change is still in the tenant`
+      : "Drill: nothing was written live, so nothing was reverted; the canvas returns to its drifted state";
     const rolledBackDrawer = {
       ...drawer,
       approval: { ...drawer.approval, state: "rolled-back" as const },
       executionLog: [
         ...drawer.executionLog,
-        "Synthetic probe failed in Canary Ring 0: AADSTS53003 spike detected — dead-man's switch triggered",
+        "Synthetic probe failed in Canary Ring 0 (drill): AADSTS53003 spike simulated — dead-man's switch triggered",
         rollbackLog,
       ],
     };
     const { executionLog: _log, ...toSave } = rolledBackDrawer;
     remediationStore.save(toSave);
     const rolledBack = canary.stages.find((s) => s.stage === "AUTO_ROLLED_BACK");
-    const rollbackExecution =
-      revertWrite?.source === "live-graph" ? "live-graph-and-arm-reverted" : "in-memory-state-reverted";
-    const rollbackLatencyMs = revertWrite ? Math.max(1, Math.round(revertWrite.latencyMs)) : 12;
     auditLedger.append({
       tenantId: drawer.tenantId,
       ticketId: drawer.ticketId,
@@ -954,9 +961,9 @@ const approveHandler = async (c: Context) => {
       tfValidatePass: null,
       gitBranch: drawer.staging?.branchName ?? null,
       prUrl: null,
-      latencyMs: rollbackLatencyMs,
-      execution: rollbackExecution,
-      detail: `Simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}`,
+      latencyMs: revertWrite ? Math.max(0, Math.round(revertWrite.latencyMs)) : 0,
+      execution: revertLanded ? "live-graph-and-arm-reverted" : revertWrite ? "simulated" : "none",
+      detail: `Drill: simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}`,
     });
     return c.json({ drawer: rolledBackDrawer, convergence: null, canary });
   }

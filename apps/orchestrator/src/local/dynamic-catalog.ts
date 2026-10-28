@@ -177,7 +177,7 @@ export async function assessTicketElementNeeds(input: {
   body: string;
   matchedSeededComponents: string[];
   clarifiedAnswers?: Record<string, string>;
-}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; source?: "llm" | "fallback-on-error" }> {
+}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error" }> {
   const started = performance.now();
   const fallback = buildDeterministicRoutingDecision(input);
   const gatekeeperModel = models.metaCatalog;
@@ -205,6 +205,7 @@ export async function assessTicketElementNeeds(input: {
           modelUsed: gatekeeperModel,
           latencyMs: Math.max(1, Math.round(performance.now() - started)),
           tokensUsed: res.usage.total,
+          usage: res.usage,
           source: "llm",
         };
       }
