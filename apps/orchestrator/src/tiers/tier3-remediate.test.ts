@@ -211,3 +211,25 @@ describe("every scenario (offline fixtures)", () => {
     expect(hover.quickActions.map((a) => a.label)).toEqual(["Inspect Blocking CA Policy", "Stage License Fix"]);
   });
 });
+
+describe("remediate() unexpected-error path (L-01)", () => {
+  test("a crash before pre-flight yields Verification Failed with every check unknown", async () => {
+    const { spyOn } = await import("bun:test");
+    const remediateModule = await import("../local/remediate.ts");
+    const { remediate } = await import("./tier3-remediate.ts");
+    const spy = spyOn(remediateModule, "buildRemediationPlan").mockImplementationOnce(() => {
+      throw new Error("simulated planner crash");
+    });
+    try {
+      const { drawer } = await remediate({ scenarioId: "INC-4092", fresh: false });
+      expect(drawer.verificationStatus.verdict).toBe("Verification Failed");
+      expect(drawer.verificationStatus.astCheckPassed).toBeNull();
+      expect(drawer.verificationStatus.whatIfSafe).toBeNull();
+      expect(drawer.verificationStatus.terraformFmtPassed).toBeNull();
+      expect(drawer.verificationStatus.validationLatencyMs).toBe(0);
+      expect(drawer.verificationStatus.findings).toEqual(["pre-flight not run: simulated planner crash"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

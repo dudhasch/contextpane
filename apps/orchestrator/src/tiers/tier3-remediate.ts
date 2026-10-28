@@ -310,17 +310,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     const fallbackCtx = await gatherContext(baseScenarioOf(input.scenarioId) ?? input.scenarioId, { fresh: false });
     const fallbackPlan = buildRemediationPlan(fallbackCtx);
     const fallbackBundle = fallbackPlan.bundle;
-    const latencyMs = Math.max(12, Math.round(performance.now() - started));
-    const fallbackVerification: VerificationStatus = {
-      verdict: "Verified Safe",
-      astCheckPassed: true,
-      terraformFmtPassed: fallbackBundle.terraformDiff ? true : null,
-      terraformValidatePassed: fallbackBundle.terraformDiff ? true : null,
-      sandboxProvider: "local-pwsh",
-      validationLatencyMs: 18,
-      whatIfSafe: true,
-      findings: [],
-    };
+    const latencyMs = Math.round(performance.now() - started);
+    // Nothing was checked on this path, so nothing may claim to have passed (L-01).
+    const fallbackVerification = preflightNotRunVerification(unexpectedError);
     const drawer = ActionApprovalDrawerSchema.parse({
       remediationId,
       ticketId: input.scenarioId,
@@ -354,6 +346,21 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     });
     return { drawer, telemetry: event };
   }
+}
+
+/** Verification record for a bundle whose pre-flight never ran: every check unknown, verdict failed. */
+export function preflightNotRunVerification(error: unknown): VerificationStatus {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    verdict: "Verification Failed",
+    astCheckPassed: null,
+    terraformFmtPassed: null,
+    terraformValidatePassed: null,
+    sandboxProvider: "none",
+    validationLatencyMs: 0,
+    whatIfSafe: null,
+    findings: [`pre-flight not run: ${message}`.slice(0, 300)],
+  };
 }
 
 /**
