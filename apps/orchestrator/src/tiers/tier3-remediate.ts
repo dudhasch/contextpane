@@ -39,6 +39,7 @@ import { auditLedger } from "../store/audit.ts";
 import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
+import { coerceAffectedEntityType } from "../local/entity-type.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
 
 export interface RemediateInput {
@@ -282,10 +283,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       powershellScript: bundle.powershellScript,
       terraformDiff: bundle.terraformDiff,
       graphPatch: bundle.graphPatch,
-      affectedEntities: bundle.affectedEntities.slice(0, 20).map((e) => ({
-        ...e,
-        change: e.change.slice(0, 200),
-      })),
+      affectedEntities: bundle.affectedEntities.slice(0, 20).map((e) =>
+        coerceAffectedEntityType({ ...e, change: e.change.slice(0, 200) }),
+      ),
       verificationStatus: verification,
       staging,
       approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },

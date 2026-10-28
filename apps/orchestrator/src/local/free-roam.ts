@@ -34,6 +34,7 @@ import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { exploreSelection, type ExploreResult } from "../tiers/explore.ts";
 import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
+import { coerceAffectedEntityType } from "./entity-type.ts";
 import { customScenarioListItem, listCustomScenarios, registerCustomTicket } from "./custom-ticket.ts";
 import { publishSelection } from "./dataplane.ts";
 import { ERROR_CODE_ENCYCLOPEDIA } from "./selection.ts";
@@ -848,13 +849,6 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
  * The coder model sometimes names an affected entity `user`, `app` or `subscription`; the drawer schema
  * only knows the catalog's entity types, so an unknown one would fail the whole staging. Map it instead.
  */
-function coerceAffectedEntityType<T extends { type: string }>(entity: T): T & { type: (typeof EntityTypeSchema.options)[number] } {
-  if (EntityTypeSchema.safeParse(entity.type).success) return entity as T & { type: (typeof EntityTypeSchema.options)[number] };
-  const raw = entity.type.toLowerCase();
-  const type = /user|upn|account|identity|person/.test(raw) ? "upn" : /group/.test(raw) ? "group" : /device|endpoint/.test(raw) ? "device" : /policy|rule/.test(raw) ? "policy" : /sku|licen/.test(raw) ? "sku" : /setting|config/.test(raw) ? "setting" : "resource";
-  return { ...entity, type };
-}
-
 export interface StageFreeRoamRemediationInput {
   prompt: string;
   title?: string;
