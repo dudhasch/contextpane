@@ -134,6 +134,7 @@ export async function getFreeRoamInventory(tenantIdInput?: string): Promise<Free
     signIns,
     workloadIdentity,
     intune,
+    virtualMachines,
     azureResources,
     azurePolicies,
     regionalQuotas,
@@ -145,6 +146,7 @@ export async function getFreeRoamInventory(tenantIdInput?: string): Promise<Free
     sources.msgraph.getSignInEvents(tenantId, { top: 25 }).catch(() => null),
     sources.msgraph.getWorkloadIdentityPosture(tenantId).catch(() => null),
     sources.msgraph.getIntuneDrift(tenantId === "tenant-fabrikam-02" ? "INC-4099" : "ANOM-INT-309").catch(() => null),
+    sources.azure.getVirtualMachines(tenantId).catch(() => null),
     sources.azure.getResourceInventory(tenantId).catch(() => null),
     sources.azure.getAzurePolicies(tenantId).catch(() => null),
     sources.azure.getRegionalQuotas(tenantId).catch(() => null),
@@ -157,6 +159,7 @@ export async function getFreeRoamInventory(tenantIdInput?: string): Promise<Free
     signIns,
     workloadIdentity,
     intune,
+    virtualMachines,
     azureResources,
     azurePolicies,
     regionalQuotas,
@@ -177,12 +180,27 @@ export async function getFreeRoamInventory(tenantIdInput?: string): Promise<Free
   const policies = caPolicies?.data ?? [];
   const signInList = signIns?.data ?? [];
   const devices = intune?.data.devices ?? [];
+  const vms = virtualMachines?.data ?? [];
   const resourceInventory = azureResources?.data;
   const resources = resourceInventory?.resources ?? [];
   const armPolicies = azurePolicies?.data ?? [];
   const quotas = regionalQuotas?.data ?? [];
 
   const categories: FreeRoamCategory[] = [
+    {
+      id: "azure-vms",
+      title: "Azure Virtual Machines (Get-AzVM)",
+      source: virtualMachines?.source ?? (dataMode === "real-tenant" ? "live-azure" : "seeded-manifest"),
+      count: vms.length,
+      items: vms.map((vm) => ({
+        id: vm.id,
+        label: vm.name,
+        sublabel: `${vm.resourceGroup} · ${vm.location} · ${vm.vmSize} · ${vm.osType} · NIC: ${vm.nic}`,
+        badge: vm.provisioningState,
+        tone: vm.provisioningState === "Succeeded" ? "success" : "warning",
+        queryPrompt: `what vms do we have`,
+      })),
+    },
     {
       id: "users",
       title: "Entra ID Users & Licenses",
@@ -259,14 +277,18 @@ export async function getFreeRoamInventory(tenantIdInput?: string): Promise<Free
       source: azureResources?.source ?? azurePolicies?.source ?? (dataMode === "real-tenant" ? "live-azure" : "seeded-manifest"),
       count: resources.length + armPolicies.length,
       items: [
-        ...resources.slice(0, 15).map((r) => ({
-          id: r.id,
-          label: r.name,
-          sublabel: `${r.type} · ${resourceInventory?.resourceGroup ?? "rg"} (${resourceInventory?.location ?? "westeurope"})`,
-          badge: "Provisioned",
-          tone: "success" as MetricTone,
-          queryPrompt: `${r.name} ${r.type} posture`,
-        })),
+        ...resources.slice(0, 25).map((r) => {
+          const rg = ("resourceGroup" in r && typeof r.resourceGroup === "string" && r.resourceGroup) ? r.resourceGroup : (resourceInventory?.resourceGroup ?? "rg");
+          const loc = ("location" in r && typeof r.location === "string" && r.location) ? r.location : (resourceInventory?.location ?? "westeurope");
+          return {
+            id: r.id,
+            label: r.name,
+            sublabel: `${r.type} · ${rg} (${loc})`,
+            badge: "Provisioned",
+            tone: "success" as MetricTone,
+            queryPrompt: `${r.name} ${r.type}`,
+          };
+        }),
         ...armPolicies.slice(0, 10).map((p) => ({
           id: `${p.name}-${p.scope}`,
           label: p.name,
@@ -607,18 +629,26 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
   // When scope is "hybrid" or "tenant-only", check if the prompt matches live MCP datasets first
   if (scope !== "knowledge") {
     const explored = await exploreSelection({
-      scenarioId: tenantId,
+      scenarioId: "FREE-ROAM",
       selectedText: prompt,
       ...(input.refinementText ? { refinementText: input.refinementText } : {}),
       ...(input.viewMode ? { viewMode: input.viewMode } : {}),
-      ...(scope === "hybrid" ? { customTicketText: `Free-Roam Explorer Query (${dataMode}): ${prompt}` } : {}),
     });
 
-    // If it matched a real dataset in MCP (or LLM synthesized a bespoke card in hybrid mode), return it!
-    if (explored.slice.matchedBy !== "none" || (explored.provider === "meta" && scope === "hybrid")) {
+    // If it matched a real dataset in MCP, return it directly!
+    if (explored.slice.matchedBy !== "none") {
       return explored;
     }
   }
+
+  const isTenantInventoryQuestion =
+    scope === "tenant-only" ||
+    (dataMode === "real-tenant" &&
+      scope !== "knowledge" &&
+      /\b(what|which|list|show)\b.*\b(do we have|in our tenant|deployed|provisioned|exist)\b|\bour\s+(vms?|resources?|users?|groups?|policies|subscriptions?)\b/i.test(
+        prompt,
+      ));
+  const effectiveScope = isTenantInventoryQuestion ? "tenant-only" : scope;
 
   // Otherwise compose a Free-Roam Knowledge / Hybrid dashboard
   const requestId = telemetry.nextRequestId("t1s");
@@ -631,7 +661,7 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
     hash,
     ptr,
     dataMode,
-    scope,
+    effectiveScope,
   );
   publishSelection({
     ptr,
@@ -652,7 +682,7 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
     { provider: "meta", modelId: models.metaCatalog, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
   ];
 
-  if (!config.forceLocal && steps.some((s) => s.hasKey) && !(scope === "tenant-only" && dataMode === "real-tenant")) {
+  if (!config.forceLocal && steps.some((s) => s.hasKey) && !(effectiveScope === "tenant-only" && dataMode === "real-tenant")) {
     const inventory = scope === "knowledge" ? null : await getFreeRoamInventory(tenantId).catch(() => null);
     const baseTool = getComposeMiniDashboardToolDefinition();
     const baseParams = baseTool.function.parameters as Record<string, unknown>;

@@ -13,7 +13,7 @@ import {
   type TenantId,
   type WorkbenchScenarioId,
 } from "@contextpane/catalog";
-import type { AvdEstate, AzurePolicyAndHealthRow, IacResult, NsgDrift, RegionalQuotaRow } from "@contextpane/mcp-azure-iac";
+import type { AvdEstate, AzurePolicyAndHealthRow, IacResult, NsgDrift, RealAzureVmRow, RegionalQuotaRow } from "@contextpane/mcp-azure-iac";
 import type { ErpContract, ErpTenant, ErpTicket } from "@contextpane/mcp-erp";
 import type {
   CaPolicySummary,
@@ -27,7 +27,7 @@ import type {
 } from "@contextpane/mcp-msgraph";
 import { CA_POSTURE, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { DatasetDescriptor } from "@contextpane/catalog";
-import { sources, type McpDataSources } from "./clients.ts";
+import { sources, type McpDataSources, type ResourceInventory } from "./clients.ts";
 
 /**
  * Everything the tiers need about one scenario (a ticket or a tenant anomaly),
@@ -60,6 +60,8 @@ export interface CorrelationContext {
   securityGroups: GraphResult<SecurityGroupSummary[]> | null;
   azurePolicies: IacResult<AzurePolicyAndHealthRow[]> | null;
   regionalQuotas: IacResult<RegionalQuotaRow[]> | null;
+  virtualMachines: IacResult<RealAzureVmRow[]> | null;
+  resourceInventory: ResourceInventory | null;
   /** Entra security groups per UPN (lower-cased), for the user hover. */
   groupsByUpn: Map<string, string[]>;
   gatheredAt: string;
@@ -73,6 +75,11 @@ export interface CorrelationContext {
 const FRESH_MS = 30_000;
 const STALE_MAX_MS = 10 * 60_000;
 const cache = new Map<string, { at: number; value: Promise<CorrelationContext>; revalidating: boolean }>();
+
+export function isFreeRoamKey(value: string | undefined | null): boolean {
+  if (!value) return false;
+  return /^free[-_]?roam/i.test(value.trim());
+}
 
 /** Accepts a scenario id (built-in or registered CUSTOM-<hash>), or a tenant id (its ticket scenario), for older callers. */
 export function resolveScenarioId(value: string | undefined | null): WorkbenchScenarioId {
@@ -99,28 +106,111 @@ export function invalidateContext(key?: string) {
 }
 
 export async function gatherContext(scenarioOrTenant: string, options: { fresh?: boolean } = {}): Promise<CorrelationContext> {
-  const scenarioId = resolveScenarioId(scenarioOrTenant);
-  const hit = cache.get(scenarioId);
+  const freeRoam = isFreeRoamKey(scenarioOrTenant);
+  const cacheKey = freeRoam ? `FREE-ROAM:${sources.getDataMode()}` : resolveScenarioId(scenarioOrTenant);
+  const hit = cache.get(cacheKey);
   if (!options.fresh && hit) {
     const age = Date.now() - hit.at;
     if (age < FRESH_MS) return hit.value;
     if (age < STALE_MAX_MS) {
       if (!hit.revalidating) {
         hit.revalidating = true;
-        const next = load(scenarioId);
+        const next = freeRoam ? loadFreeRoam("tenant-contoso-01") : load(cacheKey as WorkbenchScenarioId);
         // Swap in only a successful refresh; a failed one keeps serving the stale context.
-        next.then(() => cache.set(scenarioId, { at: Date.now(), value: next, revalidating: false })).catch(() => (hit.revalidating = false));
+        next.then(() => cache.set(cacheKey, { at: Date.now(), value: next, revalidating: false })).catch(() => (hit.revalidating = false));
       }
       return hit.value;
     }
   }
-  const value = load(scenarioId);
-  cache.set(scenarioId, { at: Date.now(), value, revalidating: false });
-  value.catch(() => cache.delete(scenarioId));
+  const value = freeRoam ? loadFreeRoam("tenant-contoso-01") : load(cacheKey as WorkbenchScenarioId);
+  cache.set(cacheKey, { at: Date.now(), value, revalidating: false });
+  value.catch(() => cache.delete(cacheKey));
   return value;
 }
 
 const none = Promise.resolve(null);
+
+function loadFreeRoam(tenantId: TenantId): Promise<CorrelationContext> {
+  return (async () => {
+    const started = performance.now();
+    const [
+      erp,
+      license,
+      policies,
+      signIns,
+      caPosture,
+      intune,
+      drift,
+      avd,
+      securityGroups,
+      azurePolicies,
+      regionalQuotas,
+      workloadIdentityRes,
+      virtualMachines,
+      resourceInventory,
+    ] = await Promise.all([
+      sources.erp.getTenantContext(tenantId),
+      sources.msgraph.getLicenseInventory(tenantId),
+      sources.msgraph.getConditionalAccessPolicies(tenantId),
+      sources.msgraph.getSignInEvents(tenantId, { top: 50 }),
+      sources.msgraph.getCaPosture(tenantId),
+      sources.msgraph.getIntuneDrift("ANOM-INT-309"),
+      sources.azure.getNsgDrift(tenantId),
+      sources.azure.getAvdEstate(tenantId),
+      sources.msgraph.getSecurityGroups(tenantId),
+      sources.azure.getAzurePolicies(tenantId),
+      sources.azure.getRegionalQuotas(tenantId),
+      sources.msgraph.getWorkloadIdentityPosture(tenantId),
+      sources.azure.getVirtualMachines(tenantId),
+      sources.azure.getResourceInventory(tenantId),
+    ]);
+    const used: Record<string, { source: string; fallbackReason?: string } | null> = {
+      license,
+      policies,
+      signIns,
+      caPosture,
+      intune,
+      drift,
+      avd,
+      securityGroups,
+      azurePolicies,
+      regionalQuotas,
+      workloadIdentity: workloadIdentityRes,
+      virtualMachines,
+      resourceInventory,
+    };
+    return {
+      scenarioId: null,
+      kind: "ticket",
+      tenantId,
+      ticketId: "FREE-ROAM",
+      custom: null,
+      components: [],
+      erp: { tenant: erp.tenant, contract: erp.contract, ticket: null },
+      license,
+      policies,
+      signIns,
+      caPosture,
+      intune,
+      workloadIdentity: workloadIdentityRes?.data ?? null,
+      drift,
+      avd,
+      securityGroups,
+      azurePolicies,
+      regionalQuotas,
+      virtualMachines,
+      resourceInventory,
+      groupsByUpn: groupsByUpn(null, tenantId, license?.data ?? null, caPosture?.data ?? null, workloadIdentityRes?.data ?? null),
+      gatheredAt: new Date().toISOString(),
+      gatherLatencyMs: Math.round(performance.now() - started),
+      transport: sources.transport,
+      sourcesUsed: {
+        ...Object.fromEntries(Object.entries(used).filter(([, r]) => r).map(([k, r]) => [k, r!.source])),
+      },
+      fallbackReasons: Object.values(used).flatMap((r) => (r?.fallbackReason ? [r.fallbackReason] : [])),
+    } satisfies CorrelationContext;
+  })();
+}
 
 function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
   return (async () => {
@@ -137,7 +227,22 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
     const hasAzureEstate = tenantId === "tenant-contoso-01";
     const customIntents = new Set(custom?.extraction.intents ?? []);
     const customCards = new Set(custom?.extraction.components ?? []);
-    const [erp, license, policies, signIns, caPosture, intune, drift, avd, securityGroups, azurePolicies, regionalQuotas, workloadIdentityRes] = await Promise.all([
+    const [
+      erp,
+      license,
+      policies,
+      signIns,
+      caPosture,
+      intune,
+      drift,
+      avd,
+      securityGroups,
+      azurePolicies,
+      regionalQuotas,
+      workloadIdentityRes,
+      virtualMachines,
+      resourceInventory,
+    ] = await Promise.all([
       sources.erp.getTenantContext(tenantId),
       // Ticket scenarios read licenses for the user hover even when they show no license card.
       cards.has("LicenseDriftCard") || customCards.has("LicenseDriftCard") || ticketScenario ? sources.msgraph.getLicenseInventory(tenantId, scenarioId ?? undefined) : none,
@@ -153,6 +258,8 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       scenarioId === "ANOM-APP-401" || (custom && custom.extraction.intents.includes("workload-identity")) || sources.getDataMode() === "real-tenant"
         ? sources.msgraph.getWorkloadIdentityPosture(tenantId)
         : none,
+      hasAzureEstate ? sources.azure.getVirtualMachines(tenantId) : none,
+      hasAzureEstate ? sources.azure.getResourceInventory(tenantId) : none,
     ]);
     const used: Record<string, { source: string; fallbackReason?: string } | null> = {
       license,
@@ -166,6 +273,8 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       azurePolicies,
       regionalQuotas,
       workloadIdentity: workloadIdentityRes,
+      virtualMachines,
+      resourceInventory,
     };
     return {
       scenarioId,
@@ -186,6 +295,8 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       securityGroups,
       azurePolicies,
       regionalQuotas,
+      virtualMachines,
+      resourceInventory,
       groupsByUpn: groupsByUpn(scenarioId, tenantId, license?.data ?? null, caPosture?.data ?? null, workloadIdentityRes?.data ?? null),
       gatheredAt: new Date().toISOString(),
       gatherLatencyMs: Math.round(performance.now() - started),

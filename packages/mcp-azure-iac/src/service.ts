@@ -12,9 +12,11 @@ import {
   fetchRealAvdHostPoolsLive,
   fetchRealAzurePolicyAssignmentsLive,
   fetchRealComputeQuotasLive,
+  fetchRealVirtualMachinesLive,
   patchNsgTagsLive,
   putNsgRuleLive,
   resolveRealSubscriptionIdLive,
+  type RealAzureVmRow,
 } from "./live.ts";
 import {
   getManifestAzure,
@@ -476,6 +478,8 @@ export const azureIacService = {
               type: r.type,
               name: r.name,
               id: r.id,
+              resourceGroup: r.resourceGroup,
+              location: r.location,
               tags: r.tags,
               ruleCount: 0,
             })),
@@ -510,12 +514,90 @@ export const azureIacService = {
             type: "Microsoft.Network/networkSecurityGroups",
             name: state.data.name,
             id: state.data.id,
+            resourceGroup: tenant.azure.resourceGroup,
+            location: tenant.azure.location,
             tags: state.data.tags,
             ruleCount: state.data.rules.length,
           },
         ],
       },
     };
+  },
+
+  async getVirtualMachines(tenantId: string): Promise<IacResult<RealAzureVmRow[]>> {
+    const started = performance.now();
+    if (isStrictRealTenantMode() || isLiveCloudMode()) {
+      try {
+        const subId = await resolveRealSubscriptionIdLive(undefined, LIVE_TIMEOUT_MS);
+        const vms = await fetchRealVirtualMachinesLive(subId, LIVE_TIMEOUT_MS);
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: vms,
+        };
+      } catch (error) {
+        if (isStrictRealTenantMode()) {
+          return {
+            source: "live-azure",
+            liveCloudMode: true,
+            fallbackReason: error instanceof Error ? error.message : String(error),
+            fetchedAt: new Date().toISOString(),
+            latencyMs: Math.round(performance.now() - started),
+            data: [],
+          };
+        }
+      }
+    }
+    try {
+      const tenant = getManifestAzure(tenantId);
+      const seededVms: RealAzureVmRow[] = [
+        {
+          id: `/subscriptions/${tenant.subscriptionId}/resourceGroups/${tenant.azure.resourceGroup}/providers/Microsoft.Compute/virtualMachines/vm-contoso-avd-0`,
+          name: "vm-contoso-avd-0",
+          resourceGroup: tenant.azure.resourceGroup,
+          location: tenant.azure.location,
+          vmSize: "Standard_D4s_v5",
+          osType: "Windows",
+          osOfferSku: "Windows 11 Enterprise multi-session",
+          nic: "vm-contoso-avd-0-nic",
+          provisioningState: "Succeeded",
+          securityType: "TrustedLaunch",
+          computerName: "vm-contoso-avd-0",
+          tags: { Environment: "Production", Workload: "AVD" },
+        },
+        {
+          id: `/subscriptions/${tenant.subscriptionId}/resourceGroups/${tenant.azure.resourceGroup}/providers/Microsoft.Compute/virtualMachines/vm-contoso-avd-1`,
+          name: "vm-contoso-avd-1",
+          resourceGroup: tenant.azure.resourceGroup,
+          location: tenant.azure.location,
+          vmSize: "Standard_D4s_v5",
+          osType: "Windows",
+          osOfferSku: "Windows 11 Enterprise multi-session",
+          nic: "vm-contoso-avd-1-nic",
+          provisioningState: "Succeeded",
+          securityType: "TrustedLaunch",
+          computerName: "vm-contoso-avd-1",
+          tags: { Environment: "Production", Workload: "AVD" },
+        },
+      ];
+      return {
+        source: "seeded-manifest",
+        liveCloudMode: false,
+        fetchedAt: new Date().toISOString(),
+        latencyMs: Math.round(performance.now() - started),
+        data: seededVms,
+      };
+    } catch {
+      return {
+        source: "seeded-manifest",
+        liveCloudMode: false,
+        fetchedAt: new Date().toISOString(),
+        latencyMs: Math.round(performance.now() - started),
+        data: [],
+      };
+    }
   },
 
   /**

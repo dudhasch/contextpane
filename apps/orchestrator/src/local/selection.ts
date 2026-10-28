@@ -37,6 +37,8 @@ export type SliceKind =
   | "workload-identity"
   | "azure-nsg-rules"
   | "avd-session-hosts"
+  | "azure-vms"
+  | "azure-resources"
   | "azure-policies"
   | "azure-quota-capacity";
 
@@ -225,12 +227,34 @@ const DATASET_WORDS: Record<SliceKind, RegExp[]> = {
   "intune-settings": [/bitlocker/, /0x87d/, /\basr\b/, /attack surface/, /lsass/, /\bsetting/, /baseline/, /conflict/, /\bprofile/, /settings catalog/, /endpoint security/, /encryption/, /\bcsp\b/, /tattoo/],
   "workload-identity": [/client\s+secret/, /passwordcredential/, /service principal/, /\bspn-/, /\bappid\b/, /44b8e1a7/, /7c1d2e3f/, /8d2e3f4a/, /app registration/, /\boauth/, /same owner/, /other apps?/, /peer apps?/, /aadsts7000222/, /aadsts70021/, /\b70021\b/, /subject identifier/, /token\.actions\.githubusercontent\.com/, /federatedidentitycredential/, /federat/, /\boidc\b/, /github actions/, /workload identity/, /enterprise app/, /erp[- ]sync/, /api permission/, /consent/],
   "azure-nsg-rules": [/\bnsg\b/, /\b3389\b/, /\brdp\b/, /\bport\b/, /security rule/, /inbound/, /network security/, /firewall port/, /0\.0\.0\.0/, /terraform/, /\btag\b/, /rogue/, /\bhcl\b/],
-  "avd-session-hosts": [/\bavd\b/, /host ?pool/, /session host/, /virtual desktop/, /vdpool/, /fslogix/, /\bvm\b/],
+  "avd-session-hosts": [/\bavd\b/, /host ?pools?/, /session hosts?/, /virtual desktop/, /vdpool/, /fslogix/],
+  "azure-vms": [/\bvms?\b/i, /virtual\s*machines?/i, /get-azvm/i, /vm-summo/i, /rg-summon-labs/i, /provisioningstate/i, /ostype/i, /vmsize/i],
+  "azure-resources": [
+    /\bresources?\b/i,
+    /resource\s+groups?/i,
+    /key\s*vaults?/i,
+    /\bkv-/i,
+    /storage\s*accounts?/i,
+    /function\s*apps?/i,
+    /web\s*apps?/i,
+    /app\s*services?/i,
+    /server\s*farms?/i,
+    /virtual\s*networks?/i,
+    /\bvnets?\b/i,
+    /managed\s*identit/i,
+    /log\s*analytics/i,
+    /workspaces?/i,
+    /app(lication)?\s*insights/i,
+    /public\s*ips?/i,
+    /network\s*interfaces?/i,
+    /\bdisks?\b/i,
+  ],
   "azure-policies": [/azure policy/, /policy assignments?/, /non-?compliant resource/, /audit effect/, /resource health/, /allowed[- ]locations/, /requestdisallowedbypolicy/, /require[- ]tag/, /policyinsights/, /availabilitystatus/],
   "azure-quota-capacity": [/quotaexceeded/i, /\bquota\b/i, /\bcapacity\b/i, /\bvcpus?\b/i, /standard_d4s_v5/i, /\bd4s_v5\b/i, /westeurope/i, /germanywestcentral/i, /northeurope/i, /regional vcpu/i, /headroom/i],
 };
 
 const KIND_ORDER: SliceKind[] = [
+  "azure-vms",
   "azure-quota-capacity",
   "entra-users",
   "entra-signins",
@@ -241,6 +265,7 @@ const KIND_ORDER: SliceKind[] = [
   "workload-identity",
   "azure-nsg-rules",
   "avd-session-hosts",
+  "azure-resources",
   "entra-sku-pools",
   "azure-policies",
 ];
@@ -860,6 +885,121 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
     });
   }
 
+  // Azure Compute Virtual Machines (Get-AzVM) via @contextpane/mcp-azure-iac
+  {
+    const vmList = ctx.virtualMachines?.data ?? [];
+    const vmSub = ctx.resourceInventory?.data.subscriptionId || sub;
+    if (vmList.length) {
+      const vmRows: Row[] = vmList.map((vm) => ({
+        resourceGroup: vm.resourceGroup,
+        name: vm.name,
+        location: vm.location,
+        vmSize: vm.vmSize,
+        osType: vm.osOfferSku && vm.osOfferSku !== vm.osType ? `${vm.osType} (${vm.osOfferSku})` : vm.osType,
+        nic: vm.nic,
+        provisioningState: vm.provisioningState,
+        securityType: vm.securityType,
+      }));
+      out.push({
+        kind: "azure-vms",
+        rows: vmRows,
+        focus: vmRows,
+        columns: [
+          col("resourceGroup", "Resource Group", { mono: true }),
+          col("name", "Name", { mono: true }),
+          col("location", "Location", { mono: true }),
+          col("vmSize", "VM Size", { mono: true }),
+          col("osType", "OS Type"),
+          col("nic", "NIC", { mono: true }),
+          col("provisioningState", "Provisioning State", { isBadge: true }),
+        ],
+        sourceQuery: `GET /subscriptions/${vmSub}/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01 (Get-AzVM)`,
+        title: () => `Azure Virtual Machines (Get-AzVM) · ${vmSub.slice(0, 8)}…`,
+        subtitle: (m) => `Live ARM Microsoft.Compute/virtualMachines · ${plural(m.length, "VM")} in subscription ${vmSub}`,
+        kpis: (m) => [
+          { label: "Total VMs", value: plural(m.length, "VM"), tone: "default" },
+          {
+            label: "Succeeded",
+            value: `${m.filter((r) => r.provisioningState === "Succeeded").length}/${m.length}`,
+            tone: m.every((r) => r.provisioningState === "Succeeded") ? "success" : "warning",
+          },
+          { label: "Region", value: String(m[0]?.location ?? "westeurope"), tone: "default" },
+          { label: "VM Size", value: String(m[0]?.vmSize ?? "Standard_D4s_v5"), tone: "default" },
+        ],
+        breakdown: (m) => breakdownBy(m, "location", () => "default"),
+        action: () => ({
+          label: "Run Get-AzVM in subscription",
+          scriptPreview: `Get-AzVM | Select-Object ResourceGroupName, Name, Location, @{n='VmSize';e={$_.HardwareProfile.VmSize}}, @{n='OsType';e={$_.StorageProfile.OsDisk.OsType}}, @{n='NIC';e={($_.NetworkProfile.NetworkInterfaces[0].Id -split '/')[-1]}}, ProvisioningState`,
+          ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
+        }),
+      });
+    }
+  }
+
+  // Azure ARM Resource Inventory (Get-AzResource) via @contextpane/mcp-azure-iac
+  {
+    const armResources = ctx.resourceInventory?.data.resources ?? [];
+    const resSub = ctx.resourceInventory?.data.subscriptionId || sub;
+    if (armResources.length) {
+      const resRows: Row[] = armResources.map((r) => {
+        const rgFromId = /\/resourceGroups\/([^/]+)\//i.exec(r.id)?.[1];
+        const rg =
+          "resourceGroup" in r && typeof r.resourceGroup === "string" && r.resourceGroup
+            ? r.resourceGroup
+            : (rgFromId ?? ctx.resourceInventory?.data.resourceGroup ?? "rg-default");
+        const loc =
+          "location" in r && typeof r.location === "string" && r.location
+            ? r.location
+            : (ctx.resourceInventory?.data.location ?? "westeurope");
+        const shortType = r.type.replace(/^Microsoft\./i, "");
+        const tagSummary =
+          Object.entries(r.tags ?? {})
+            .slice(0, 2)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ") || "—";
+        return {
+          name: r.name,
+          type: shortType,
+          fullType: r.type,
+          resourceGroup: rg,
+          location: loc,
+          tags: tagSummary,
+        };
+      });
+      out.push({
+        kind: "azure-resources",
+        rows: resRows,
+        focus: resRows.slice(0, 40),
+        columns: [
+          col("name", "Resource Name", { mono: true }),
+          col("type", "Resource Type", { mono: true }),
+          col("resourceGroup", "Resource Group", { mono: true }),
+          col("location", "Location", { mono: true }),
+          col("tags", "Tags", { mono: true }),
+        ],
+        sourceQuery: `GET /subscriptions/${resSub}/resources?api-version=2021-04-01 (Get-AzResource)`,
+        title: () => `Azure ARM Resource Inventory · ${resSub.slice(0, 8)}…`,
+        subtitle: (m) => `Live ARM /subscriptions/${resSub}/resources · ${plural(m.length, "resource")} matched`,
+        kpis: (m) => [
+          { label: "Matched Resources", value: String(m.length), tone: "default" },
+          { label: "Resource Groups", value: String(new Set(m.map((r) => r.resourceGroup)).size), tone: "default" },
+          { label: "Resource Types", value: String(new Set(m.map((r) => r.type)).size), tone: "default" },
+          {
+            label: "Data Source",
+            value: ctx.resourceInventory?.source === "live-azure" ? "Live ARM" : "Manifest",
+            tone: "success",
+          },
+        ],
+        breakdown: (m) => breakdownBy(m, "type", () => "default"),
+        action: () => ({
+          label: "List Azure ARM resources",
+          scriptPreview: `Get-AzResource | Select-Object Name, ResourceType, ResourceGroupName, Location | Sort-Object ResourceGroupName, ResourceType`,
+          ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
+        }),
+      });
+    }
+  }
+
   // Populate Azure Policy & Resource Health dataset via @contextpane/mcp-azure-iac
   {
     const rgName = ctx.avd?.data.resourceGroup ?? ctx.drift?.data.resourceGroup ?? "rg-contoso-avd-prod";
@@ -1044,10 +1184,30 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     };
   }
 
-  const isQuotaSelection = /quotaexceeded|\bquota\b|\bcapacity\b|\bvcpus?\b|standard_d4s_v5|\bd4s_v5\b|westeurope|germanywestcentral|northeurope/i.test(selection);
+  const isVmSelection = /\bvms?\b|virtual\s*machines?|get-azvm|vm-summo|rg-summon-labs/i.test(combined);
+  const isArmResourceSelection =
+    /key\s*vaults?|\bkv-|storage\s*accounts?|function\s*apps?|web\s*apps?|app\s*services?|server\s*farms?|virtual\s*networks?|\bvnets?\b|managed\s*identit|log\s*analytics|workspaces?|app(lication)?\s*insights|public\s*ips?|network\s*interfaces?|\bdisks?\b|\bresources?\b/i.test(
+      combined,
+    ) && !/resource\s+health/i.test(combined);
+  const isQuotaSelection = /quotaexceeded|\bquota\b|\bcapacity\b|\bvcpus?\b|standard_d4s_v5|\bd4s_v5\b|westeurope|germanywestcentral|northeurope/i.test(selection) && !isVmSelection;
   const isConceptualGroupSelection = /legacy\s+block\s+group|legacy\s+group|block\s+group|security\s+groups?|^sg-$|sg-contoso-finance-legacy|sg-contoso-f3-frontline|sg-fabrikam-legacy-bitlocker/i.test(selection);
   const isAzurePolicySelection = /resource\s+health|policy\s+assignments?|allowed[- ]locations|requestdisallowedbypolicy|require[- ]tag/i.test(selection);
   const isOidcSelection = /subject\s+identifier|federat|aadsts70021|\b70021\b|token\.actions\.githubusercontent\.com/i.test(selection);
+
+  const filterArmResourcesByTopic = (allRows: Row[]): Row[] => {
+    if (/key\s*vault|\bkv-/i.test(combined)) return allRows.filter((r) => /keyvault\/vaults/i.test(String(r.fullType)));
+    if (/storage\s*account/i.test(combined)) return allRows.filter((r) => /storage\/storageaccounts/i.test(String(r.fullType)));
+    if (/function\s*app|web\s*app|app\s*service|server\s*farm/i.test(combined)) return allRows.filter((r) => /web\/(sites|serverfarms)/i.test(String(r.fullType)));
+    if (/virtual\s*network|\bvnet/i.test(combined)) return allRows.filter((r) => /network\/virtualnetworks/i.test(String(r.fullType)));
+    if (/managed\s*identit/i.test(combined)) return allRows.filter((r) => /managedidentity/i.test(String(r.fullType)));
+    if (/log\s*analytics|workspace/i.test(combined)) return allRows.filter((r) => /operationalinsights\/workspaces|desktopvirtualization\/workspaces/i.test(String(r.fullType)));
+    if (/app(lication)?\s*insights/i.test(combined)) return allRows.filter((r) => /insights\/components/i.test(String(r.fullType)));
+    if (/host\s*pool|\bavd\b|desktop\s*virtualization/i.test(combined)) return allRows.filter((r) => /desktopvirtualization/i.test(String(r.fullType)));
+    if (/public\s*ip/i.test(combined)) return allRows.filter((r) => /network\/publicipaddresses/i.test(String(r.fullType)));
+    if (/network\s*interface|\bnic\b/i.test(combined)) return allRows.filter((r) => /network\/networkinterfaces/i.test(String(r.fullType)));
+    if (/\bdisks?\b/i.test(combined)) return allRows.filter((r) => /compute\/disks/i.test(String(r.fullType)));
+    return [];
+  };
 
   let best: { ds: Dataset; score: number; matchedBy: "rows" | "dataset"; rows: Row[] } | null = null;
   const wantsCohortExpansion =
@@ -1064,16 +1224,25 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     let rows = matched;
 
     const domainBoost =
-      (ds.kind === "azure-quota-capacity" && isQuotaSelection) ||
-      (ds.kind === "entra-groups" && isConceptualGroupSelection) ||
-      (ds.kind === "azure-policies" && isAzurePolicySelection) ||
-      (ds.kind === "workload-identity" && isOidcSelection)
-        ? 220
-        : 0;
+      ds.kind === "azure-vms" && isVmSelection
+        ? 280
+        : ds.kind === "azure-resources" && isArmResourceSelection
+          ? 240
+          : (ds.kind === "azure-quota-capacity" && isQuotaSelection) ||
+              (ds.kind === "entra-groups" && isConceptualGroupSelection) ||
+              (ds.kind === "azure-policies" && isAzurePolicySelection) ||
+              (ds.kind === "workload-identity" && isOidcSelection)
+            ? 220
+            : 0;
 
     if (matched.length) {
       score = 100 + domainBoost + (hits + refHits) * 20 + Math.min(matched.length, 40) - (matched.length === ds.rows.length && hits === 0 ? 60 : 0);
-      if (ds.kind === "azure-quota-capacity" && isQuotaSelection) {
+      if (ds.kind === "azure-vms" && isVmSelection) {
+        rows = refMatched.length ? refMatched : matched.length ? matched : ds.focus;
+      } else if (ds.kind === "azure-resources" && isArmResourceSelection) {
+        const topicRows = filterArmResourcesByTopic(ds.rows);
+        rows = topicRows.length ? topicRows : matched.length ? matched : ds.focus;
+      } else if (ds.kind === "azure-quota-capacity" && isQuotaSelection) {
         rows = refMatched.length ? refMatched : ds.focus;
       } else if (ds.kind === "entra-groups" && isConceptualGroupSelection) {
         rows = refMatched.length ? refMatched : ds.focus;
@@ -1091,6 +1260,9 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
       if (ds.kind === "workload-identity" && isOidcSelection) {
         const oidcRows = ds.rows.filter((r) => /federated|oidc/i.test(String(r.kind)));
         rows = oidcRows.length ? oidcRows : ds.focus;
+      } else if (ds.kind === "azure-resources") {
+        const topicRows = filterArmResourcesByTopic(ds.rows);
+        rows = topicRows.length ? topicRows : refMatched.length ? refMatched : ds.focus;
       } else {
         rows = refMatched.length ? refMatched : ds.focus;
       }

@@ -90,6 +90,16 @@ export function createAzureIacMcpServer(): McpServer {
   );
 
   server.registerTool(
+    "get_virtual_machines",
+    {
+      title: "Get Azure Virtual Machines",
+      description: "Returns Azure Compute Virtual Machines (Get-AzVM) with resource group, location, vmSize, osType, NIC, and provisioningState.",
+      inputSchema: { tenantId },
+    },
+    async (args) => run(() => azureIacService.getVirtualMachines(args.tenantId)),
+  );
+
+  server.registerTool(
     "get_resource_diagnostic",
     {
       title: "Get resource diagnostic",

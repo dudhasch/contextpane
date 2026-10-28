@@ -18,6 +18,8 @@ data/hover-cache.json
 data/audit-log.json
 data/remediations/
 data/custom-scenarios.json
+data/settings.json
+apps/orchestrator/data/
 # ERP inbox: generated drops are runtime state; the seeded example stays in git
 input/tickets/*
 !input/tickets/.gitkeep

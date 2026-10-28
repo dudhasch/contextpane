@@ -24,6 +24,8 @@ import { CONTEXT_MODE_LIST, ContextModeIcon } from "../ui/ContextModeIcons";
 import { Pill, type Tone } from "../ui/Pill";
 
 const QUICK_TENANT_CHIPS: Array<{ label: string; prompt: string; viewMode: ContextViewMode }> = [
+  { label: "Azure VMs (Get-AzVM)", prompt: "what vms do we have ?", viewMode: "dashboard" },
+  { label: "Azure ARM Resources", prompt: "what resources do we have ?", viewMode: "dashboard" },
   { label: "Users & License Drift", prompt: "Entra ID users, SKU assignments, and disabled accounts holding licenses", viewMode: "dashboard" },
   { label: "Conditional Access Posture", prompt: "Conditional Access policies, report-only drift, and break-glass exclusions", viewMode: "comparison" },
   { label: "Failed Sign-In Audit", prompt: "Failed Entra sign-in events, AADSTS error codes, and blocking policies", viewMode: "dashboard" },

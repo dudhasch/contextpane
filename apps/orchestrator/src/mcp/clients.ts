@@ -6,6 +6,7 @@ import {
   type AzurePolicyAndHealthRow,
   type IacResult,
   type NsgDrift,
+  type RealAzureVmRow,
   type RegionalQuotaRow,
   type TerraformBaseline,
 } from "@contextpane/mcp-azure-iac";
@@ -64,6 +65,7 @@ export interface McpDataSources {
     getAvdEstate(tenantId: string): Promise<IacResult<AvdEstate>>;
     getResourceDiagnostic(tenantId: string, resourceName: string): Promise<ResourceDiagnostic>;
     getResourceInventory(tenantId: string): Promise<ResourceInventory>;
+    getVirtualMachines(tenantId: string): Promise<IacResult<RealAzureVmRow[]>>;
     getTerraformBaseline(tenantId: string): Promise<TerraformBaseline>;
     getAzurePolicies(tenantId: string): Promise<IacResult<AzurePolicyAndHealthRow[]>>;
     getRegionalQuotas(tenantId: string): Promise<IacResult<RegionalQuotaRow[]>>;
@@ -102,6 +104,7 @@ export const inProcessSources: McpDataSources = {
     getAvdEstate: (t) => azureIacService.getAvdEstate(t),
     getResourceDiagnostic: (t, r) => azureIacService.getResourceDiagnostic(t, r),
     getResourceInventory: (t) => azureIacService.getResourceInventory(t),
+    getVirtualMachines: (t) => azureIacService.getVirtualMachines(t),
     getTerraformBaseline: async (t) => azureIacService.getTerraformBaseline(t),
     getAzurePolicies: (t) => azureIacService.getAzurePolicies(t),
     getRegionalQuotas: (t) => azureIacService.getRegionalQuotas(t),
@@ -219,6 +222,7 @@ export const stdioSources: McpDataSources = {
     getAvdEstate: (tenantId) => pool.call("contextpane-azure-iac", "get_avd_estate", { tenantId }),
     getResourceDiagnostic: (tenantId, resourceName) => pool.call("contextpane-azure-iac", "get_resource_diagnostic", { tenantId, resourceName }),
     getResourceInventory: (tenantId) => pool.call("contextpane-azure-iac", "get_resource_inventory", { tenantId }),
+    getVirtualMachines: (tenantId) => pool.call("contextpane-azure-iac", "get_virtual_machines", { tenantId }),
     getTerraformBaseline: (tenantId) => pool.call("contextpane-azure-iac", "get_terraform_baseline", { tenantId }),
     getAzurePolicies: (tenantId) => pool.call("contextpane-azure-iac", "get_azure_policies", { tenantId }),
     getRegionalQuotas: (tenantId) => pool.call("contextpane-azure-iac", "get_regional_quotas", { tenantId }),

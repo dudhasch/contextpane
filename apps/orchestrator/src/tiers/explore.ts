@@ -16,6 +16,7 @@ import { config, models, providers } from "../config.ts";
 import { buildScenarioBrief } from "../local/brief.ts";
 import { publishSelection, type SelectionPublication } from "../local/dataplane.ts";
 import { buildSelectionSlice, sliceToCard, type SelectionSlice } from "../local/selection.ts";
+import { sources } from "../mcp/clients.ts";
 import { gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
@@ -100,10 +101,8 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
   const steps = chainSteps();
 
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
-    const isOpenEndedSynthesis =
-      slice.matchedBy === "none" ||
-      Boolean(input.customTicketText) ||
-      (Boolean(refinementText) && !/same\s+owner|other\s+apps?|peer\s+apps?/i.test(refinementText ?? ""));
+    const strictRealTenant = sources.getDataMode() === "real-tenant";
+    const isOpenEndedSynthesis = !strictRealTenant && slice.matchedBy === "none";
     const baseTool = getComposeMiniDashboardToolDefinition();
     const baseParams = baseTool.function.parameters as Record<string, unknown>;
     const baseProps = (baseParams.properties as Record<string, unknown>) ?? {};
@@ -117,11 +116,15 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
           required: isOpenEndedSynthesis ? [...new Set([...baseReq, "synthesizedRows"])] : baseReq,
           properties: {
             ...baseProps,
-            synthesizedRows: {
-              type: "array",
-              description: "Provide 4-5 domain-accurate rows whose keys exactly match the keys in columns.",
-              items: { type: "object" },
-            },
+            ...(isOpenEndedSynthesis
+              ? {
+                  synthesizedRows: {
+                    type: "array",
+                    description: "Provide 4-5 domain-accurate rows whose keys exactly match the keys in columns.",
+                    items: { type: "object" },
+                  },
+                }
+              : {}),
           },
         },
       },
@@ -136,7 +139,7 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         title: brief.title,
         summary: brief.summary,
         tenant: ctx.erp.tenant.verifiedDomain,
-        subscriptionId: config.lab.subscriptionId,
+        subscriptionId: ctx.resourceInventory?.data.subscriptionId || config.lab.subscriptionId,
       },
       selectedText,
       ...(refinementText ? { refinementText } : {}),
@@ -185,11 +188,18 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
       const keepReferenceAction =
         !isCustomSynthesized &&
         PLACEHOLDER_RE.test(args.suggestedAction.scriptPreview);
+      const mentionsWrongScenario =
+        ctx.ticketId !== "INC-4092" && (/inc-4092/i.test(args.title) || /inc-4092/i.test(args.subtitle));
       const keepReferenceHeading =
-        !isCustomSynthesized &&
-        slice.kind === "entra-ca-policies" &&
-        slice.rows[0]?.role === "blocking" &&
-        (/report-only|ca-004/i.test(args.title) || /report-only|ca-004/i.test(args.subtitle));
+        (!isCustomSynthesized &&
+          slice.kind === "entra-ca-policies" &&
+          slice.rows[0]?.role === "blocking" &&
+          (/report-only|ca-004/i.test(args.title) || /report-only|ca-004/i.test(args.subtitle))) ||
+        mentionsWrongScenario ||
+        (strictRealTenant && (slice.kind === "azure-vms" || slice.kind === "azure-resources"));
+      const keepReferenceMetrics =
+        mentionsWrongScenario ||
+        (strictRealTenant && (slice.kind === "azure-vms" || slice.kind === "azure-resources"));
       const finalRows = sanitizedSynthRows && sanitizedSynthRows.length > 0 ? sanitizedSynthRows : slice.rows;
       if (sanitizedSynthRows && sanitizedSynthRows.length > 0) {
         publishSelection({ ptr, scenarioId: ctx.ticketId, selectedText, sourceQuery: args.sourceQuery, rows: finalRows });
@@ -198,9 +208,9 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         ...reference,
         title: keepReferenceHeading ? reference.title : args.title,
         subtitle: keepReferenceHeading ? reference.subtitle : args.subtitle,
-        sourceQuery: args.sourceQuery,
-        kpis: args.kpis,
-        breakdown: args.breakdown,
+        sourceQuery: keepReferenceHeading ? reference.sourceQuery : args.sourceQuery,
+        kpis: keepReferenceMetrics ? reference.kpis : args.kpis,
+        breakdown: keepReferenceMetrics ? reference.breakdown : args.breakdown,
         columns: columns.length ? columns : reference.columns,
         suggestedAction: keepReferenceAction
           ? reference.suggestedAction

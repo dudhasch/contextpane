@@ -349,3 +349,68 @@ export async function fetchRealAvdHostPoolsLive(subscriptionId: string, timeoutM
     };
   });
 }
+
+export interface RealAzureVmRow {
+  id: string;
+  name: string;
+  resourceGroup: string;
+  location: string;
+  vmSize: string;
+  osType: string;
+  osOfferSku: string;
+  nic: string;
+  provisioningState: string;
+  securityType: string;
+  computerName: string;
+  tags: Record<string, string>;
+}
+
+export async function fetchRealVirtualMachinesLive(subscriptionId: string, timeoutMs: number): Promise<RealAzureVmRow[]> {
+  const res = await armGet<{
+    value?: Array<{
+      id: string;
+      name: string;
+      location: string;
+      tags?: Record<string, string>;
+      properties?: {
+        hardwareProfile?: { vmSize?: string };
+        provisioningState?: string;
+        storageProfile?: {
+          imageReference?: { publisher?: string; offer?: string; sku?: string };
+          osDisk?: { osType?: string; name?: string };
+        };
+        osProfile?: { computerName?: string };
+        securityProfile?: { securityType?: string };
+        networkProfile?: {
+          networkInterfaces?: Array<{ id?: string; properties?: { primary?: boolean } }>;
+        };
+      };
+    }>;
+  }>(`/subscriptions/${subscriptionId}/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01`, timeoutMs);
+
+  return (res.value ?? []).map((vm) => {
+    const rgMatch = /\/resourceGroups\/([^/]+)\//i.exec(vm.id);
+    const primaryNic =
+      vm.properties?.networkProfile?.networkInterfaces?.find((n) => n.properties?.primary) ??
+      vm.properties?.networkProfile?.networkInterfaces?.[0];
+    const nicName = primaryNic?.id?.split("/").pop() ?? "—";
+    const offer = vm.properties?.storageProfile?.imageReference?.offer;
+    const sku = vm.properties?.storageProfile?.imageReference?.sku;
+    const osType = vm.properties?.storageProfile?.osDisk?.osType ?? "Windows";
+    const osOfferSku = [offer, sku].filter(Boolean).join(" / ") || osType;
+    return {
+      id: vm.id,
+      name: vm.name,
+      resourceGroup: rgMatch?.[1] ?? "rg-default",
+      location: vm.location,
+      vmSize: vm.properties?.hardwareProfile?.vmSize ?? "Standard_D4s_v5",
+      osType,
+      osOfferSku,
+      nic: nicName,
+      provisioningState: vm.properties?.provisioningState ?? "Succeeded",
+      securityType: vm.properties?.securityProfile?.securityType ?? "Standard",
+      computerName: vm.properties?.osProfile?.computerName ?? vm.name,
+      tags: vm.tags ?? {},
+    };
+  });
+}

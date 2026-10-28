@@ -74,6 +74,7 @@ describe("Free-Roam Landing Page & MCP Data Mode ('real-tenant' vs 'simulated-la
     expect(inv.dataMode).toBe("simulated-lab");
     expect(inv.summary.users).toBeGreaterThan(0);
     expect(inv.summary.caPolicies).toBeGreaterThan(0);
+    expect(inv.categories.some((c) => c.id === "azure-vms")).toBe(true);
     expect(inv.categories.some((c) => c.id === "users")).toBe(true);
     expect(inv.categories.some((c) => c.id === "ca-policies")).toBe(true);
     expect(inv.categories.some((c) => c.id === "azure-resources")).toBe(true);
@@ -81,6 +82,24 @@ describe("Free-Roam Landing Page & MCP Data Mode ('real-tenant' vs 'simulated-la
 
   test("POST /api/free-roam/spawn dynamically composes a ContextualMiniDashboard for both tenant queries and general cloud knowledge", async () => {
     setPersistedDataMode("simulated-lab");
+
+    // 0. VM query ("what vms do we have ?") matches azure-vms dataset without mentioning INC-4092
+    const resVms = await app.request("/api/free-roam/spawn", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prompt: "what vms do we have ?",
+        scope: "hybrid",
+      }),
+    });
+    expect(resVms.status).toBe(200);
+    const bodyVms = (await resVms.json()) as {
+      slice: { kind: string; matchedBy: string };
+      card: { title: string; subtitle: string; rows: Array<Record<string, unknown>> };
+    };
+    expect(bodyVms.slice.kind).toBe("azure-vms");
+    expect(bodyVms.card.title).toContain("Azure Virtual Machines");
+    expect(bodyVms.card.subtitle).not.toContain("INC-4092");
 
     // 1. Knowledge query
     const resKnowledge = await app.request("/api/free-roam/spawn", {
