@@ -54,12 +54,18 @@ describe("Intune CSP-IR + Detect/Remediate verifier", () => {
       expect(v).toMatchObject({ readOnly: true, mutatingVerbsFound: [], hasExit0: true, hasExit1: true, outputBounded: true, passed: true });
       expect(detect).toContain("Get-ItemProperty");
       expect(detect.length).toBeLessThan(2048);
-      expect(remediate).toContain("PolicyManager\\current\\device");
       expect(remediate).toContain("Remove-ItemProperty");
       expect(remediate).toContain("$PSCmdlet.ShouldProcess");
-      expect(remediate).toContain("Invoke-MgGraphRequest -Method POST");
-      expect(remediate).toContain("deviceManagement/managedDevices/{id}/syncDevice");
+      // Runs as SYSTEM on the endpoint: no Graph module, no token, so the local enrollment task syncs.
+      expect(remediate).toContain("\\Microsoft\\Windows\\EnterpriseMgmt\\*");
+      expect(remediate).not.toContain("Invoke-MgGraphRequest");
+      expect(remediate).not.toContain("{id}");
     }
+    const bitlocker = buildDeviceHealthScripts("INC-4099").remediate;
+    expect(bitlocker).toContain("HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE");
+    expect(bitlocker).toContain("EncryptionMethodWithXtsOs");
+    expect(bitlocker).toContain("-eq 7) { continue }");
+    expect(bitlocker).not.toContain("PolicyManager");
     expect(() => buildDeviceHealthScripts("NOPE-0000")).toThrow(/unknown scenarioId/);
   });
 

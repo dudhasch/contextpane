@@ -37,22 +37,34 @@ export interface DeviceHealthScripts {
   remediate: string;
 }
 
-const SYNC_LINE =
-  'Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/{id}/syncDevice"';
+/**
+ * Remediate.ps1 runs on the endpoint as SYSTEM: there is no Graph module and no token there,
+ * so the device cannot call managedDevices/{id}/syncDevice on itself. The enrollment client's
+ * own scheduled task performs the same MDM check-in locally.
+ */
+const LOCAL_MDM_SYNC_LINES = [
+  "$sync = Get-ScheduledTask -TaskPath '\\Microsoft\\Windows\\EnterpriseMgmt\\*' -ErrorAction SilentlyContinue | Where-Object TaskName -eq 'Schedule #3 created by enrollment client'",
+  "if ($sync) { $sync | Start-ScheduledTask } else { Write-Output 'No EnterpriseMgmt sync task: device is not MDM-enrolled' }",
+];
 
-function remediateScript(opts: { title: string; policyManagerPath: string; valueName: string }): string {
+function remediateScript(opts: { title: string; registryPath: string; valueNames: string[]; goldenValue?: number }): string {
+  const keep = opts.goldenValue;
   return [
     "[CmdletBinding(SupportsShouldProcess = $true)]",
     "param()",
     `# ${opts.title}`,
-    `$tattooPath = "${opts.policyManagerPath}"`,
-    `if (Get-ItemProperty -Path $tattooPath -Name "${opts.valueName}" -ErrorAction SilentlyContinue) {`,
-    `  if ($PSCmdlet.ShouldProcess($tattooPath, "Remove tattooed value ${opts.valueName}")) {`,
-    `    Remove-ItemProperty -Path $tattooPath -Name "${opts.valueName}" -ErrorAction SilentlyContinue`,
+    `$tattooPath = "${opts.registryPath}"`,
+    "$current = Get-ItemProperty -Path $tattooPath -ErrorAction SilentlyContinue",
+    `foreach ($name in @(${opts.valueNames.map((n) => `"${n}"`).join(", ")})) {`,
+    keep === undefined
+      ? "  if ($null -eq $current.$name) { continue }"
+      : `  # ${keep} is the golden baseline value, written by the current policy: only a different value is the tattoo.\n  if ($null -eq $current.$name -or $current.$name -eq ${keep}) { continue }`,
+    '  if ($PSCmdlet.ShouldProcess("$tattooPath\\$name", "Remove tattooed value")) {',
+    "    Remove-ItemProperty -Path $tattooPath -Name $name -ErrorAction Stop",
     "  }",
     "}",
-    SYNC_LINE,
-    'Write-Output "Remediation complete: tattoo cleared, device sync requested"',
+    ...LOCAL_MDM_SYNC_LINES,
+    'Write-Output "Remediation complete: tattoo cleared, local MDM sync started"',
   ].join("\n");
 }
 
@@ -74,9 +86,10 @@ export function buildDeviceHealthScripts(scenarioId: string): DeviceHealthScript
     return {
       detect,
       remediate: remediateScript({
-        title: "Remediate.ps1 - INC-4099 clear tattooed BitLocker value, then syncDevice",
-        policyManagerPath: "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\BitLocker",
-        valueName: "EncryptionMethodByDriveType",
+        title: "Remediate.ps1 - INC-4099 clear tattooed (non XTS-AES 256) BitLocker values, then local MDM sync",
+        registryPath: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE",
+        valueNames: ["EncryptionMethodWithXtsOs", "EncryptionMethodWithXtsFdv", "EncryptionMethodWithXtsRdv"],
+        goldenValue: 7,
       }),
     };
   }
@@ -96,9 +109,9 @@ export function buildDeviceHealthScripts(scenarioId: string): DeviceHealthScript
     return {
       detect,
       remediate: remediateScript({
-        title: "Remediate.ps1 - ANOM-INT-309 clear tattooed Firewall value, then syncDevice",
-        policyManagerPath: "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Firewall",
-        valueName: "DomainProfile_EnableFirewall",
+        title: "Remediate.ps1 - ANOM-INT-309 clear the legacy GPO firewall value, then local MDM sync",
+        registryPath: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\DomainProfile",
+        valueNames: ["EnableFirewall"],
       }),
     };
   }
@@ -115,9 +128,9 @@ export function buildDeviceHealthScripts(scenarioId: string): DeviceHealthScript
   return {
     detect,
     remediate: remediateScript({
-      title: `Remediate.ps1 - ${scenarioId} generic tattoo cleanup, then syncDevice`,
-      policyManagerPath: "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device",
-      valueName: "TattooedSetting",
+      title: `Remediate.ps1 - ${scenarioId} generic tattoo cleanup, then local MDM sync`,
+      registryPath: "HKLM:\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device",
+      valueNames: ["TattooedSetting"],
     }),
   };
 }

@@ -149,8 +149,8 @@ describe("every scenario (offline fixtures)", () => {
     const caPatch = ops.find((o) => o.method === "PATCH" && o.url.includes("/identity/conditionalAccess/policies/"));
     expect(caPatch).toBeDefined();
     const usersCond = (caPatch?.body?.conditions as { users?: { includeGroups?: string[]; excludeGroups?: string[] } })?.users;
-    expect(usersCond?.includeGroups).toEqual(["6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c"]);
-    expect(usersCond?.excludeGroups).toContain("a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d");
+    expect(usersCond?.includeGroups).toEqual(["5e82f43a-f4cb-4ef9-8206-1cf01e101a54"]); // seeded SG-Contoso-Finance-Legacy, unchanged
+    expect(usersCond?.excludeGroups).toContain("a6b68a69-7a48-4481-b650-dc3ffd86640a"); // seeded SG-Contoso-Finance-AVD
   });
 
   test("INC-4099 primary script and graphPatch include New-MgBetaDeviceManagementDeviceHealthScript for tattooed BitLocker registry cleanup", async () => {
