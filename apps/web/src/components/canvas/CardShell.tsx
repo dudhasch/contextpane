@@ -141,7 +141,8 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
         <div className="mt-2 animate-fade-in">
           <div className="mb-2 flex flex-nowrap items-center justify-between gap-2 border-y border-border-subtle py-1">
             {tabs.length > 1 ? (
-              <div className="flex gap-1" role="tablist">
+              // The strip scrolls instead of pushing the action buttons past the canvas edge (118 px overflow at 1440×900).
+              <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto [scrollbar-width:thin]" role="tablist">
                 {tabs.map((t) => (
                   <button
                     key={t.id}
@@ -149,7 +150,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
                     role="tab"
                     aria-selected={t.id === tab}
                     onClick={() => setTab(type, t.id)}
-                    className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-2 py-1 text-[11.5px] ${t.id === tab ? `${converged || sliceHealthy ? "border-healthy" : "border-[var(--cat)]"} font-medium text-text` : "border-transparent text-muted hover:text-text"}`}
+                    className={`-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-2 py-1 text-[11.5px] whitespace-nowrap ${t.id === tab ? `${converged || sliceHealthy ? "border-healthy" : "border-[var(--cat)]"} font-medium text-text` : "border-transparent text-muted hover:text-text"}`}
                   >
                     {t.label}
                     {t.badge !== undefined && <span className="rounded bg-surface px-1 font-mono text-[10px] text-faint">{t.badge}</span>}
