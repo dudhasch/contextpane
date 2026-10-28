@@ -1,4 +1,4 @@
-import { Bot, Check, ChevronRight, Clock3, Compass, Database, LayoutGrid, Pin, Sparkles, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bot, Check, ChevronRight, Clock3, Compass, Database, Pin, Sparkles, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { LayoutComponent } from "@contextpane/catalog";
 import { selectActiveTimelineSlice, selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
@@ -102,7 +102,7 @@ export function GenUICanvas() {
             <ContextualMiniDashboardCard key={m.id} entry={m} />
           ))}
           {freeRoamDashboards.length === 0 && exploreStatus !== "loading" && (
-            <div className="card flex flex-col items-center justify-center gap-2 border-dashed border-border py-12 text-center">
+            <div className="flex flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-border bg-raised px-3 py-12 text-center">
               <Compass className="size-7 text-selection/70" />
               <div className="text-[13px] font-semibold text-text">
                 Free-Roam Knowledge &amp; Telemetry Canvas Ready
@@ -132,29 +132,37 @@ export function GenUICanvas() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <TenantBreadcrumb cards={components.length} customCards={miniDashboards.length} />
-      <TimeTravelScrubber />
+    <div className="flex h-full flex-col bg-ground">
+      <LensHeader cards={components.length} customCards={miniDashboards.length} />
       <HistoricalSnapshotBanner />
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
+      {/* Borderless sections separated by one hairline; non-section blocks get the same 16px gutter. */}
+      <div className="flex min-h-0 flex-1 flex-col divide-y divide-hairline overflow-y-auto" data-lens-list="">
         {(triageStatus === "loading" || refiningGoal) && (
-          <SubAgentSynthesisSkeleton
-            mode={triageStatus === "loading" ? "triage" : "refine"}
-            title={triageStatus === "loading" ? (pendingTriageTitle ?? "Custom Incident / Project Goal") : (briefTitle ?? "Refining Scope & Plan")}
-          />
+          <div className="px-4 py-3">
+            <SubAgentSynthesisSkeleton
+              mode={triageStatus === "loading" ? "triage" : "refine"}
+              title={triageStatus === "loading" ? (pendingTriageTitle ?? "Custom Incident / Project Goal") : (briefTitle ?? "Refining Scope & Plan")}
+            />
+          </div>
         )}
         {exploreStatus === "loading" && (
-          <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "selection"} />
+          <div className="px-4 py-3">
+            <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "selection"} />
+          </div>
         )}
         {miniDashboards.map((m) => (
-          <ContextualMiniDashboardCard key={m.id} entry={m} />
+          <div key={m.id} className="px-4 py-3">
+            <ContextualMiniDashboardCard entry={m} />
+          </div>
         ))}
         {!layout && status !== "error" && (
-          <ProgressRail events={progress} title={status === "ready" ? "No layout for this scenario" : "Correlating scenario"} busy={status !== "ready"} />
+          <div className="px-4 py-3">
+            <ProgressRail events={progress} title={status === "ready" ? "No layout for this scenario" : "Correlating scenario"} busy={status !== "ready"} />
+          </div>
         )}
-        {status === "error" && <div className="card border-critical/40 text-sm text-critical">Canvas error: {error}</div>}
+        {status === "error" && <div className="px-4 py-3 text-13 text-critical">Canvas error: {error}</div>}
         {layout && components.map((c) => <Component key={c.id} component={c} />)}
-        {layout && components.length === 0 && status === "ready" && <div className="card text-sm text-muted">No components match the current filter.</div>}
+        {layout && components.length === 0 && status === "ready" && <div className="px-4 py-3 text-13 text-muted">No components match the current filter.</div>}
       </div>
     </div>
   );
@@ -183,7 +191,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
 
   return (
     <section
-      className="card animate-fade-in border-l-4 border-l-primary bg-surface/95 p-3 shadow-popover"
+      className="animate-fade-in rounded-md border border-l-4 border-hairline border-l-signal bg-surface p-3 shadow-popover"
       data-testid="subagent-synthesis-skeleton"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -218,9 +226,9 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
               key={st.step}
               className={`rounded-md border p-2 text-[11px] transition-all ${
                 done
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                  ? "border-healthy/40 bg-healthy/10 text-healthy-strong"
                   : active
-                    ? "animate-pulse border-primary bg-primary/15 text-text shadow-[0_0_12px_rgba(56,189,248,0.2)]"
+                    ? "animate-pulse border-signal bg-signal/15 text-text shadow-[0_0_12px_color-mix(in_oklab,var(--signal)_20%,transparent)]"
                     : "border-border-subtle bg-canvas/60 text-faint"
               }`}
             >
@@ -245,12 +253,12 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
         </div>
         <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
           <div className="h-2.5 w-3/4 animate-pulse rounded bg-elevated" />
-          <div className="h-2 w-full animate-pulse rounded bg-teal-500/25" />
+          <div className="h-2 w-full animate-pulse rounded bg-dom-azure/25" />
           <div className="h-2 w-1/2 animate-pulse rounded bg-elevated" />
         </div>
         <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
           <div className="h-2.5 w-1/2 animate-pulse rounded bg-elevated" />
-          <div className="h-2 w-full animate-pulse rounded bg-emerald-500/25" />
+          <div className="h-2 w-full animate-pulse rounded bg-healthy/25" />
           <div className="h-2 w-3/5 animate-pulse rounded bg-elevated" />
         </div>
       </div>
@@ -271,7 +279,7 @@ function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }
 
   return (
     <div
-      className="card space-y-2 border-l-4 border-l-selection bg-surface/95 p-3 text-[12px] text-selection"
+      className="space-y-2 rounded-md border border-l-4 border-hairline border-l-signal bg-surface p-3 text-[12px] text-signal"
       data-testid="mini-dashboard-loading"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -297,6 +305,7 @@ function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }
   );
 }
 
+/** 24px strip under the lens header while a past timeline slice is selected. */
 function HistoricalSnapshotBanner() {
   const timeline = useWorkbench((s) => s.timeline);
   const activeSlice = useWorkbench(selectActiveTimelineSlice);
@@ -308,28 +317,21 @@ function HistoricalSnapshotBanner() {
   }
   const nowSlice = timeline.slices.find((s) => s.relativeLabel === "NOW" || s.kind === "now") ?? timeline.slices.at(-2) ?? timeline.slices.at(-1);
   return (
-    <div
-      className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-500/40 bg-amber-500/12 px-3 py-1.5 text-[11.5px] text-amber-200"
-      data-testid="historical-snapshot-banner"
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <Clock3 className="size-3.5 shrink-0 text-amber-400" />
-        <span className="font-semibold text-amber-300">
-          Historical Snapshot: {formatTimelineStepLabel(activeSlice)}
-        </span>
-        <span className="truncate text-amber-200/90">
-          — {formatTimelineStepDescription(activeSlice, scenarioId, cardCount)} (Pre-incident tenant posture)
-        </span>
-      </div>
+    <div className="flex h-6 shrink-0 items-center gap-2 border-b border-hairline px-4 text-11 text-warning" data-testid="historical-snapshot-banner">
+      <Clock3 className="size-3 shrink-0" aria-hidden="true" />
+      <span className="shrink-0 font-medium">Historical snapshot · {formatTimelineStepLabel(activeSlice)}</span>
+      <span className="min-w-0 truncate text-muted">
+        {formatTimelineStepDescription(activeSlice, scenarioId, cardCount)} (pre-incident tenant posture)
+      </span>
       {nowSlice && (
         <button
           type="button"
           onClick={() => select(nowSlice.id)}
           data-testid="return-to-now-button"
-          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-amber-400/50 bg-amber-500/20 px-2 font-mono text-[11px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/30"
+          className="ml-auto inline-flex shrink-0 items-center gap-1 font-mono text-signal hover:underline"
         >
           <Check className="size-3" />
-          Return to Now
+          Return to now
         </button>
       )}
     </div>
@@ -362,7 +364,16 @@ function formatTimelineStepDescription(
   return s.state.summary;
 }
 
-/** Clean, self-explanatory Incident Timeline bar. */
+/**
+ * Compact mono chip label for the lens header: the slice's relative offset (`T-18m`, `Now`, `T+Fix`),
+ * which keeps the five chips under ~200px at a 550px lens; the descriptive label and time are in the tooltip.
+ */
+function shortTimelineLabel(s: { kind?: string; relativeLabel: string; label: string }): string {
+  if (s.kind === "now" || s.relativeLabel === "NOW") return "Now";
+  return s.relativeLabel || s.label;
+}
+
+/** Incident timeline compacted into the lens header: mono text-11 chips, the active one in signal with a 2px underline. */
 function TimeTravelScrubber() {
   const timeline = useWorkbench((s) => s.timeline);
   const sliceId = useWorkbench((s) => s.timelineSliceId);
@@ -377,64 +388,57 @@ function TimeTravelScrubber() {
       <button
         type="button"
         onClick={() => void load()}
-        className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[11px] text-faint hover:text-text"
+        className="ml-auto inline-flex shrink-0 items-center gap-1 font-mono text-11 text-faint hover:text-text"
         data-testid="timeline-scrubber"
       >
-        <Clock3 className="size-3.5" aria-hidden="true" />
-        <span>Incident Timeline…</span>
+        <Clock3 className="size-3" aria-hidden="true" />
+        <span>Timeline…</span>
       </button>
     );
   }
-  const active = timeline.slices.find((s) => s.id === sliceId);
   return (
-    <div className="flex h-8 shrink-0 items-center justify-between gap-1.5 border-b border-border bg-surface/30 px-3" data-testid="timeline-scrubber">
-      <div className="flex min-w-0 items-center gap-1">
-        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium whitespace-nowrap text-muted">
-          <Clock3 className="size-3.5" aria-hidden="true" /> Timeline:
-        </span>
-        <div className="flex shrink-0 items-center gap-0.5">
-          {timeline.slices.map((s, idx) => {
-            const isSelected = s.id === sliceId;
-            const label = formatTimelineStepLabel(s);
-            return (
-              <div key={s.id} className="flex items-center gap-0.5">
-                {idx > 0 && <span className="text-[9px] text-faint">→</span>}
-                <button
-                  type="button"
-                  onClick={() => select(s.id)}
-                  title={s.state.summary}
-                  className={`h-5 shrink-0 rounded border px-1.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
-                    isSelected
-                      ? "border-primary/60 bg-primary/15 font-semibold text-primary"
-                      : "border-border-subtle bg-surface text-muted hover:border-border hover:text-text"
-                  }`}
-                >
-                  {label}
-                </button>
-              </div>
-            );
-          })}
-        </div>
+    <div className="ml-auto flex shrink-0 items-center gap-2" data-testid="timeline-scrubber" role="group" aria-label="Incident timeline">
+      <div className="flex items-center gap-2.5">
+        {timeline.slices.map((s) => {
+          const isSelected = s.id === sliceId;
+          const isNow = s.kind === "now" || s.relativeLabel === "NOW";
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => select(s.id)}
+              aria-pressed={isSelected}
+              title={`${formatTimelineStepLabel(s)} · ${formatTimelineStepDescription(s, scenarioId, cardCount)}\n${s.state.summary}`}
+              className={`relative inline-flex h-[34px] shrink-0 items-center font-mono text-11 whitespace-nowrap transition-colors ${
+                isSelected || isNow ? "text-signal" : "text-muted hover:text-text"
+              }`}
+            >
+              {shortTimelineLabel(s)}
+              {isSelected && <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5 bg-signal" />}
+            </button>
+          );
+        })}
       </div>
-      {active && !convergence && (
-        <span className="min-w-0 truncate text-[11px] text-muted">{formatTimelineStepDescription(active, scenarioId, cardCount)}</span>
-      )}
       {convergence && (
         <button
           type="button"
           onClick={() => void rollbackNow()}
-          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-healthy/40 bg-healthy/12 px-2 text-[11px] font-medium whitespace-nowrap text-healthy hover:bg-healthy/20"
+          className="inline-flex shrink-0 items-center gap-1 font-mono text-11 whitespace-nowrap text-healthy hover:underline"
+          title="Undo change (restore previous state)"
           data-testid="rollback-button"
         >
-          <Undo2 className="size-3 shrink-0" /> Undo Change (Restore Previous State)
+          <Undo2 className="size-3 shrink-0" /> Undo
         </button>
       )}
     </div>
   );
 }
 
-/** One line instead of a tenant header card: tenant › domain › scenario, plus recipe and voice-filter chips. */
-function TenantBreadcrumb({ cards, customCards = 0 }: { cards: number; customCards?: number }) {
+/**
+ * One 34px row over the lens: `Fabrikam Legal · fabrikamlegal.onmicrosoft.com · #INC-4099 · 2 cards`
+ * on the left (plus recipe, identity and voice filters; the live-source count is the tenant tooltip), the incident timeline on the right.
+ */
+function LensHeader({ cards, customCards = 0 }: { cards: number; customCards?: number }) {
   const brief = useWorkbench((s) => s.brief);
   const scenarioId = useWorkbench((s) => s.scenarioId);
   const status = useWorkbench((s) => s.canvasStatus);
@@ -447,42 +451,49 @@ function TenantBreadcrumb({ cards, customCards = 0 }: { cards: number; customCar
   const live = brief ? Object.values(brief.sources).filter((v) => v.startsWith("live")).length : 0;
   const total = brief ? Object.keys(brief.sources).length : 0;
   const totalCards = cards + customCards;
+  const sep = <span aria-hidden className="shrink-0 text-faint">·</span>;
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[12px]" data-testid="tenant-breadcrumb">
-      <LayoutGrid className="size-3.5 shrink-0 text-primary" />
-      <span className="shrink-0 font-medium">{brief?.tenantName ?? "…"}</span>
-      <ChevronRight className="size-3 shrink-0 text-faint" />
-      <span className="truncate font-mono text-[11px] text-muted">{brief?.verifiedDomain ?? ""}</span>
-      <ChevronRight className="size-3 shrink-0 text-faint" />
-      <span className={`shrink-0 font-mono text-[11.5px] ${resolved ? "text-healthy" : "text-text"}`}>{brief?.displayId ?? `#${scenarioId}`}</span>
-      <span className="shrink-0 text-faint">
-        · {totalCards} {totalCards === 1 ? "card" : "cards"}
-        {customCards > 0 ? <span className="text-selection"> ({cards} + {customCards} custom)</span> : ""}
-        {status === "loading" ? " · correlating…" : ""}
-      </span>
-      <div className="ml-auto flex min-w-0 items-center gap-1.5">
+    <div className="flex h-[34px] shrink-0 items-center gap-3 border-b border-hairline px-4 text-12">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap" data-testid="tenant-breadcrumb">
+        <span
+          className="shrink-0 font-medium text-text"
+          title={brief ? [`${live}/${total} sources live`, ...Object.entries(brief.sources).map(([k, v]) => `${k}: ${v}`)].join("\n") : undefined}
+        >
+          {brief?.tenantName ?? "…"}
+        </span>
+        {brief?.verifiedDomain && (
+          <>
+            {sep}
+            <span className="min-w-0 truncate font-mono text-muted" title={brief.verifiedDomain}>
+              {brief.verifiedDomain}
+            </span>
+          </>
+        )}
+        {sep}
+        <span className={`shrink-0 font-mono ${resolved ? "text-healthy" : "text-muted"}`}>{brief?.displayId ?? `#${scenarioId}`}</span>
+        {sep}
+        <span className="shrink-0 font-mono text-muted">
+          {totalCards} {totalCards === 1 ? "card" : "cards"}
+          {customCards > 0 ? <span className="text-signal"> ({cards} + {customCards} custom)</span> : ""}
+          {status === "loading" ? <span className="text-faint"> · correlating…</span> : ""}
+        </span>
         {recipe && (
-          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 text-[11px] text-primary" title={recipe.description}>
+          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-11 text-signal" title={recipe.description}>
             <Pin className="size-3" />
             {recipe.name} · Pinned
           </span>
         )}
         <RowFilterPill />
         {filter && (
-          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-meta/40 bg-meta/12 pr-0.5 pl-1.5 font-mono text-[11px] text-meta">
-            voice filter: {filter.join(", ")}
-            <button type="button" onClick={() => setFilter(null)} aria-label="Clear voice filter" className="grid size-4 place-items-center rounded hover:bg-meta/25">
+          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-11 text-dom-intune">
+            voice: {filter.join(", ")}
+            <button type="button" onClick={() => setFilter(null)} aria-label="Clear voice filter" className="grid size-4 place-items-center rounded text-muted hover:bg-raised hover:text-text">
               <X className="size-3" />
             </button>
           </span>
         )}
-        {brief && (
-          <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-faint" title={Object.entries(brief.sources).map(([k, v]) => `${k}: ${v}`).join("\n")}>
-            <Database className="size-3" />
-            {live}/{total} live
-          </span>
-        )}
       </div>
+      <TimeTravelScrubber />
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { useWorkbench, type RowFilter } from "@/store";
  * Interactive status filter chips and cross-card identity highlighting for the
  * expanded table views: `All (N) | Drifted / Error (M) | Compliant / Active (K)` filters rows
  * locally in 0 ms, and clicking a user or device row highlights that identity on every
- * open card (`Filtered by: lynne.robins [×]` in the canvas breadcrumb).
+ * open card (`filtered: lynne.robins ×` in the lens header).
  */
 
 export type RowStatus = "bad" | "good" | "other";
@@ -29,22 +29,28 @@ export function useStatusFilter<T>(rows: T[], classify: (row: T) => RowStatus) {
   return { chip, setChip, counts, filtered };
 }
 
+/** Status filter as header count toggles: text-12, the active one in `text-text` with a 2px signal underline, counts in faint mono. */
 export function FilterChips({ chip, counts, onChange, testId }: { chip: StatusChip; counts: Record<StatusChip, number>; onChange: (c: StatusChip) => void; testId?: string }) {
   return (
-    <div className="mb-1.5 flex flex-wrap items-center gap-1" role="group" aria-label="Filter rows" data-testid={testId ?? "filter-chips"}>
-      <Filter className="size-3 text-faint" />
-      {(["all", "bad", "good"] as StatusChip[]).map((c) => (
-        <button
-          key={c}
-          type="button"
-          aria-pressed={chip === c}
-          onClick={() => onChange(c)}
-          data-chip={c}
-          className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[11px] transition-colors ${chip === c ? (c === "bad" ? "border-critical/50 bg-critical/12 text-critical" : c === "good" ? "border-healthy/50 bg-healthy/12 text-healthy" : "border-primary/50 bg-primary/12 text-primary") : "border-border text-faint hover:text-text"}`}
-        >
-          {CHIP_LABEL[c]} <span className="opacity-80">({counts[c]})</span>
-        </button>
-      ))}
+    <div className="mb-1 flex min-w-0 items-center gap-3 overflow-x-auto [scrollbar-width:none]" role="group" aria-label="Filter rows" data-testid={testId ?? "filter-chips"}>
+      <Filter className="size-3 shrink-0 text-faint" aria-hidden />
+      {(["all", "bad", "good"] as StatusChip[]).map((c) => {
+        const active = chip === c;
+        return (
+          <button
+            key={c}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(c)}
+            data-chip={c}
+            className={`relative inline-flex h-6 shrink-0 items-center gap-1 text-12 whitespace-nowrap transition-colors ${active ? "text-text" : "text-muted hover:text-text"}`}
+          >
+            {CHIP_LABEL[c]}
+            <span className="font-mono text-11 text-faint">{counts[c]}</span>
+            {active && <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5 bg-signal" />}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -63,8 +69,8 @@ export function matchesRowFilter(filter: RowFilter | null, candidate: { upn?: st
 
 /** Row class names for the cross-card highlight: the matching identity lights up, the rest dim. */
 export function rowHighlightClass(filter: RowFilter | null, candidate: { upn?: string | null; deviceName?: string | null }): string {
-  if (!filter) return "cursor-pointer hover:bg-surface/60";
-  return matchesRowFilter(filter, candidate) ? "cursor-pointer bg-selection/12 ring-1 ring-inset ring-selection/50" : "cursor-pointer opacity-45 hover:opacity-80";
+  if (!filter) return "cursor-pointer hover:bg-raised/60";
+  return matchesRowFilter(filter, candidate) ? "cursor-pointer bg-signal/10 shadow-[inset_2px_0_0_var(--signal)]" : "cursor-pointer opacity-45 hover:opacity-80";
 }
 
 /** Clickable identity cell: sets (or clears) the cross-card filter. */
@@ -81,22 +87,22 @@ export function IdentityCell({ kind, value, children, className = "" }: { kind: 
         setRowFilter(active ? null : { kind, value });
       }}
       title={active ? "Clear the cross-card filter" : `Highlight ${value} across every open card`}
-      className={`min-w-0 max-w-full text-left ${active ? "text-selection" : ""} ${className}`}
+      className={`min-w-0 max-w-full text-left ${active ? "text-signal" : ""} ${className}`}
     >
       {children}
     </button>
   );
 }
 
-/** `Filtered by: lynne.robins [×]` pill shown in the canvas breadcrumb while a cross-card filter is active. */
+/** `filtered: lynne.robins ×` marker shown in the canvas breadcrumb while a cross-card filter is active. */
 export function RowFilterPill() {
   const filter = useWorkbench((s) => s.rowFilter);
   const setRowFilter = useWorkbench((s) => s.setRowFilter);
   if (!filter) return null;
   return (
-    <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-selection/45 bg-selection/12 pr-0.5 pl-1.5 font-mono text-[11px] text-selection" data-testid="row-filter-pill">
-      Filtered by: {identityLabel(filter)}
-      <button type="button" onClick={() => setRowFilter(null)} aria-label="Clear identity filter" className="grid size-4 place-items-center rounded hover:bg-selection/25">
+    <span className="inline-flex shrink-0 items-center gap-1 font-mono text-11 text-signal" data-testid="row-filter-pill">
+      filtered: {identityLabel(filter)}
+      <button type="button" onClick={() => setRowFilter(null)} aria-label="Clear identity filter" className="grid size-4 place-items-center rounded text-muted hover:bg-raised hover:text-text">
         <X className="size-3" />
       </button>
     </span>

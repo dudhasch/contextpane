@@ -41,7 +41,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
             <span>{entry.displayName}</span>
           </div>
           <div className="mt-0.5 font-mono text-[10px] text-muted">
-            GUID: <span className="text-sky-300">{entry.guid}</span>
+            GUID: <span className="text-signal">{entry.guid}</span>
           </div>
         </div>
         <Pill tone={tone}>{entry.riskTier}</Pill>
@@ -51,7 +51,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-medium text-muted">
           {entry.category}
         </span>
-        <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-sky-300">
+        <span className="rounded border border-signal/30 bg-signal/10 px-1.5 py-0.5 font-mono text-signal-strong">
           Grant: {entry.grantType}
         </span>
       </div>
@@ -71,11 +71,11 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         </ul>
       </div>
 
-      <div className="rounded-md border border-emerald-500/25 bg-emerald-500/8 p-2 text-[11px]">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+      <div className="rounded-md border border-healthy/25 bg-healthy/8 p-2 text-[11px]">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-healthy-strong">
           Recommended Least-Privilege Alternative
         </div>
-        <div className="mt-0.5 text-emerald-100/90">{entry.leastPrivilegeAlternative}</div>
+        <div className="mt-0.5 text-text">{entry.leastPrivilegeAlternative}</div>
       </div>
 
       <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[11px]">
@@ -85,7 +85,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
           target="_blank"
           rel="noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="inline-flex items-center gap-1 font-medium text-sky-400 hover:text-sky-300 hover:underline"
+          className="inline-flex items-center gap-1 font-medium text-signal hover:underline"
         >
           {entry.referenceUrl.includes("graphpermissions.merill.net")
             ? "graphpermissions.merill.net"
@@ -150,7 +150,7 @@ export function RolePermissionHoverPopover({
         ref={refs.setReference}
         {...getReferenceProps()}
         data-role-permission={entry.id}
-        className={`inline-flex cursor-help items-center decoration-sky-400/60 decoration-dotted underline-offset-2 hover:underline ${className}`}
+        className={`inline-flex cursor-help items-center decoration-signal/60 decoration-dotted underline-offset-2 hover:underline ${className}`}
       >
         {children}
       </span>
@@ -162,7 +162,7 @@ export function RolePermissionHoverPopover({
             {...getFloatingProps({ onPointerDownCapture: pinning.onPointerDownCapture })}
             data-hover-popover="true"
             data-testid="permission-hover-popover"
-            className="z-[9999] w-[340px] max-w-[360px] select-text animate-fade-in rounded-lg border border-sky-500/45 bg-slate-950/[0.98] p-3 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md"
+            className="z-[9999] w-[340px] max-w-[360px] select-text animate-fade-in rounded-lg border border-signal/45 bg-raised p-3 shadow-popover"
           >
             <RolePermissionCardContent entry={entry} />
           </div>
