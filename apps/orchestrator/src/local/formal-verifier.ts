@@ -792,15 +792,46 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
           `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${CONTOSO_AVD_CA_POLICY_ID}' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c'); excludeGroups = @('957845fd-42ee-4500-b407-ad04487da3c7') } } } | Out-Null }`,
           `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore Allow-Temp-RDP-Diagnostic-Drift rule and drifted tags on ${AVD_NSG_NAME}')) { $nsg = Get-AzNetworkSecurityGroup -Name '${AVD_NSG_NAME}' -ResourceGroupName 'rg-contoso-avd-prod'; Add-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name 'Allow-Temp-RDP-Diagnostic-Drift' -Priority 150 -Direction 'Inbound' -Access 'Allow' -Protocol 'Tcp' -SourcePortRange '*' -DestinationPortRange '3389' -SourceAddressPrefix '*' -DestinationAddressPrefix '*' | Set-AzNetworkSecurityGroup | Out-Null }`,
         ]
-      : [
-          ...pre.affected
-            .filter((a) => a.kind === "user")
-            .map(
+      : effectiveId === "INC-4099"
+        ? [
+            `if ($PSCmdlet.ShouldProcess('intune-bitlocker-legacy-v1', 'Restore legacy Fabrikam-Win10-Legacy-BitLocker-AES128 assignment to SG-Fabrikam-Legal-Workstations')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/intune-bitlocker-legacy-v1/assign' -Body @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = 'b1c2d3e4-1111-4222-8333-444455556666' } }) } | Out-Null }`,
+            ...pre.affected.map(
               (a) =>
-                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation license/CA state (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
+                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation BitLocker policy state (${a.pre})')) { Invoke-MgDeviceManagementManagedDeviceSyncDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
             ),
-          `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore NSG rules/tags to pre-remediation state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca001a11-2b3c-4d5e-8f9a-0b1c2d3e4f01' -BodyParameter @{ state = 'enabled' } | Out-Null }`,
-        ];
+          ]
+        : effectiveId === "ANOM-LIC-101"
+          ? [
+              `$SpeE5SkuId = '${SPE_E5_SKU_ID}'`,
+              ...pre.affected.map(
+                (a) =>
+                  `if ($PSCmdlet.ShouldProcess('${a.id}', 'Revert SPE_E5 group license reprocessing (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
+              ),
+              `if ($PSCmdlet.ShouldProcess('SG-Contoso-M365-E5', 'Restore pre-remediation disabled-account license assignments')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/groups/a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d/assignLicense' -Body @{ addLicenses = @(@{ skuId = '${SPE_E5_SKU_ID}' }); removeLicenses = @() } | Out-Null }`,
+            ]
+          : effectiveId === "ANOM-CA-204"
+            ? [
+                `if ($PSCmdlet.ShouldProcess('CA-001', 'Restore pre-remediation CA-001 excludeGroups state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca001a11-2b3c-4d5e-8f9a-0b1c2d3e4f01' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ excludeGroups = @() } } } | Out-Null }`,
+                `if ($PSCmdlet.ShouldProcess('CA-004', 'Restore CA-004-Block-Legacy-Auth to report-only state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca004d44-5e6f-4a8b-9c0d-3e4f5a6b7c04' -BodyParameter @{ state = 'enabledForReportingButNotEnforced' } | Out-Null }`,
+              ]
+            : effectiveId === "ANOM-INT-309"
+              ? [
+                  `if ($PSCmdlet.ShouldProcess('Contoso-ASR-Endpoint-Baseline', 'Revert ASR LSASS credential rule 9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2 to audit mode')) { Invoke-MgGraphRequest -Method PATCH -Uri 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/asr-contoso-baseline-01' -Body @{ description = 'Revert LSASS rule to Audit mode' } | Out-Null }`,
+                  `if ($PSCmdlet.ShouldProcess('Contoso-FW-Legacy-v1', 'Restore legacy Windows Firewall profile assignment')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/fw-contoso-legacy-v1/assign' -Body @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = 'c3d4e5f6-2222-4333-8444-555566667777' } }) } | Out-Null }`,
+                  ...pre.affected.map(
+                    (a) =>
+                      `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation state (${a.pre})')) { Invoke-MgDeviceManagementManagedDeviceSyncDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
+                  ),
+                ]
+              : (effectiveId as string) === SHADOW_ADMIN_SCENARIO_ID
+                ? [
+                    `if ($PSCmdlet.ShouldProcess('sp-contoso-erp-sync-prod', 'Remove federated GitHub OIDC credential and restore pre-remediation owner & Graph app role assignments')) { Invoke-MgGraphRequest -Method DELETE -Uri 'https://graph.microsoft.com/v1.0/applications/app-contoso-erp-sync-prod/federatedIdentityCredentials/github-actions-prod-deploy' | Out-Null }`,
+                  ]
+                : pre.affected.map((a) =>
+                    a.kind === "device"
+                      ? `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation device configuration state (${a.pre})')) { Invoke-MgDeviceManagementManagedDeviceSyncDevice -ManagedDeviceId '${a.id}' | Out-Null }`
+                      : `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation principal state (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
+                  );
 
   const powershellScript = [
     "#Requires -Version 7.0",
@@ -812,7 +843,11 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
     "",
   ].join("\n");
   const graphPatch = JSON.stringify({ scenarioId: resolvedId, inverseOf: "f", restorePolicies: pre.policies, restoreNsgRules: pre.nsgRules, restoreTags: pre.tags, restoreLicenses: pre.licenses }, null, 2);
-  return { scenarioId: resolvedId, powershellScript, terraformDiff, hcl, graphPatch, restores: [...pre.affected.map((a) => `${a.id}:${a.post}->${a.pre}`), `${AVD_NSG_NAME}:rules/tags->pre-state`] };
+  const restores =
+    effectiveId === "INC-4092"
+      ? [...pre.affected.map((a) => `${a.id}:${a.post}->${a.pre}`), `${AVD_NSG_NAME}:rules/tags->pre-state`]
+      : [...pre.affected.map((a) => `${a.id}:${a.post}->${a.pre}`)];
+  return { scenarioId: resolvedId, powershellScript, terraformDiff, hcl, graphPatch, restores };
 }
 export const synthesizeInverseRollback = buildInverseRollback;
 

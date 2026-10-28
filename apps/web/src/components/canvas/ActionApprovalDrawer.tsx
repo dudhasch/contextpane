@@ -818,9 +818,7 @@ function humanizeInvariant(id: string, scenarioId: string, fallback: string): st
     case "break-glass-non-lockout":
       return "Emergency Break-Glass accounts won't be locked out";
     case "target-remediation":
-      if (scenarioId === "INC-4092" || scenarioId.startsWith("CUSTOM-") || scenarioId.startsWith("ERP-")) {
-        return "3 affected Finance users will regain AVD access";
-      }
+      if (scenarioId === "INC-4092") return "3 affected Finance users will regain AVD access";
       if (scenarioId === "INC-4099") return "6 affected Windows 11 laptops will encrypt silently and regain compliance";
       if (scenarioId === "ANOM-LIC-101") return "2 users with license errors will receive active E5 seats";
       if (scenarioId === "ANOM-CA-204") return "Emergency Break-Glass group is excluded from phishing-resistant MFA";
@@ -828,7 +826,13 @@ function humanizeInvariant(id: string, scenarioId: string, fallback: string): st
       if (scenarioId === "ANOM-APP-401") return "ERP sync service principal switches to OIDC without breaking scheduled jobs";
       return "All affected users and devices will return to a healthy state";
     case "nsg-reachability":
-      return "Port 3389 closed; AVD port 443 stays open";
+      if (scenarioId === "INC-4092") return "Port 3389 closed; AVD port 443 stays open";
+      if (scenarioId === "INC-4099") return "Conflicting legacy BitLocker profile unassigned; XTS-AES 256 encryption baseline intact";
+      if (scenarioId === "ANOM-LIC-101") return "Zero active-user license removals; only disabled/unassigned E5 seats reclaimed";
+      if (scenarioId === "ANOM-CA-204") return "Legacy authentication blocked; phishing-resistant MFA enforced on admin roles";
+      if (scenarioId === "ANOM-INT-309") return "ASR LSASS rule set to Block with scoped ContosoErpSync.exe exclusion; duplicate firewall profile removed";
+      if (scenarioId === "ANOM-APP-401") return "GitHub Actions OIDC federated; overprivileged Graph scopes removed";
+      return "Security & network posture baseline preserved (no unauthorized exposure)";
     case "shadow-admin-zero-transitive":
       return "Non-admin contractor owner removed; 0 shadow-admin escalation paths";
     case "proactive-remediation-detect-read-only":
@@ -1039,7 +1043,7 @@ function OtherClientsTab({ onCopy }: { onCopy: (text: string, what: string) => P
   const activeTenantName = useWorkbench((s) => {
     if (s.brief?.tenantName) return s.brief.tenantName;
     const active = s.scenarios.find((sc) => sc.scenarioId === s.scenarioId);
-    return active?.tenantName ?? (s.scenarioId === "INC-4099" || s.scenarioId === "ANOM-INT-309" ? "Fabrikam Legal" : "Contoso Finance");
+    return active?.tenantName ?? (s.scenarioId === "INC-4099" ? "Fabrikam Legal" : "Contoso Finance");
   });
   const rev = useWorkbench((s) => s.reverseResult);
   const stage = useWorkbench((s) => s.stageCampaign);

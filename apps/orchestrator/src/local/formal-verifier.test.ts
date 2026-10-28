@@ -164,6 +164,14 @@ describe("Tier 3C formal blast-radius prover", () => {
     expect(rb.powershellScript).not.toContain("-AddLicenses @() -RemoveLicenses @()");
   });
 
+  test("buildInverseRollback('INC-4099') targets BitLocker & Fabrikam devices without leaking Contoso AVD NSG", () => {
+    const rb = buildInverseRollback("INC-4099");
+    expect(rb.powershellScript).toContain("intune-bitlocker-legacy-v1");
+    expect(rb.powershellScript).toContain("FABRIKAM-LT-1107");
+    expect(rb.powershellScript).not.toContain("nsg-contoso-avd-hostpool-01");
+    expect(rb.restores.join(" ")).not.toContain("nsg-contoso-avd-hostpool-01");
+  });
+
   test("Weighted Partial MaxSMT synthesis (ΔW) & 7-bit Proof-Carrying Certificate (0x7F)", () => {
     for (const id of ["INC-4092", "INC-4099", "ANOM-LIC-101", "ANOM-CA-204", "ANOM-INT-309", "ANOM-APP-401"] as const) {
       const r = verifyFormalInvariants(id);
