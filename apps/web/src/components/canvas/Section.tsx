@@ -51,6 +51,10 @@ export interface SectionProps {
   details?: ReactNode;
   tabs: CardTab[];
   children: (tab: string) => ReactNode;
+  /** Agent-made section (decision Q5): `✦` before the title and a dashed hairline above instead of the solid one. */
+  synthesized?: boolean;
+  /** Right-aligned controls in the count-toggles row under the title (e.g. a filter input); shown while expanded. */
+  toolbar?: ReactNode;
 }
 
 /** Card #1 (the primary diagnostic card) opens expanded by default; auto-collapses when a Selection Mini-Dashboard is open unless explicitly expanded. */
@@ -88,6 +92,13 @@ function splitTitle(title: string, accent?: string): [string, string, string] {
 }
 
 /**
+ * Dashed agent rule (decision Q5): a 1px strip over the list's solid divider (the previous
+ * sibling's bottom border), painted ground-first so the dash gaps hide the solid line.
+ */
+export const AGENT_RULE =
+  "after:pointer-events-none after:absolute after:inset-x-0 after:-top-px after:h-px after:border-t after:border-dashed after:border-hairline after:bg-ground after:content-['']";
+
+/**
  * Borderless lens section (decision Q3): no box, no fill, no accent bar. One 28px title row
  * (domain word in `--cat`, status as dot + word, chevron, one action row), a summary line,
  * header count toggles, full-bleed content and one faint mono provenance line with an ⓘ popover.
@@ -108,6 +119,8 @@ export function Section({
   details,
   tabs,
   children,
+  synthesized = false,
+  toolbar,
 }: SectionProps) {
   const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
   const expanded = useExpanded(type);
@@ -143,11 +156,17 @@ export function Section({
       data-slice={activeSlice?.relativeLabel}
       data-linked={isLinked || undefined}
       style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--healthy)" : categoryColor(category) })}
-      className={`relative scroll-mt-2 bg-ground px-4 pt-1.5 pb-3 animate-fade-in transition-opacity duration-150 ${isLinked ? "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing || isLinked ? "animate-pulse-ring" : ""}`}
+      className={`relative scroll-mt-2 bg-ground px-4 pt-1.5 pb-3 animate-fade-in transition-opacity duration-150 ${isLinked ? "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing || isLinked ? "animate-pulse-ring" : ""} ${synthesized ? AGENT_RULE : ""}`}
     >
-      <header className="flex h-7 items-center gap-2">
+      <header className={`flex items-center gap-2 ${synthesized ? "min-h-7 py-0.5" : "h-7"}`}>
         <span className={`inline-flex shrink-0 [&>svg]:size-3.5 ${healthy ? "text-healthy" : "text-[color:var(--cat)]"}`}>{icon}</span>
-        <h3 className="min-w-0 truncate text-13 font-medium text-text" title={title}>
+        {synthesized && (
+          <span aria-label="Agent-made section" title="Synthesized by the agent" className="-mr-1 shrink-0 text-13 leading-none text-signal" data-agent-mark="">
+            ✦
+          </span>
+        )}
+        {/* Agent-written titles run long: they wrap to two lines instead of truncating. */}
+        <h3 className={`min-w-0 text-13 font-medium text-text ${synthesized ? "line-clamp-2" : "truncate"}`} title={title}>
           {before}
           <span className="text-[color:var(--cat)]">{accent}</span>
           {after}
@@ -186,30 +205,35 @@ export function Section({
 
       {expanded && (
         <div className="animate-fade-in">
-          {tabs.length > 1 && (
-            // Header count toggles: text only, the active one carries a 2px signal underline.
-            <div className="mt-1.5 flex min-w-0 items-center gap-4 overflow-x-auto [scrollbar-width:none]" role="tablist">
-              {tabs.map((t) => {
-                const active = t.id === tab;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setTab(type, t.id)}
-                    className={`relative inline-flex h-6 shrink-0 items-center gap-1.5 text-12 whitespace-nowrap transition-colors ${active ? "text-text" : "text-muted hover:text-text"}`}
-                  >
-                    {t.label}
-                    {t.badge !== undefined && <span className="font-mono text-11 text-faint">{t.badge}</span>}
-                    {active && <span aria-hidden className={`absolute inset-x-0 bottom-0 h-0.5 ${healthy ? "bg-healthy" : "bg-signal"}`} />}
-                  </button>
-                );
-              })}
+          {(tabs.length > 1 || toolbar) && (
+            <div className="mt-1.5 flex min-w-0 items-center gap-3">
+              {tabs.length > 1 && (
+                // Header count toggles: text only, the active one carries a 2px signal underline.
+                <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto [scrollbar-width:none]" role="tablist">
+                  {tabs.map((t) => {
+                    const active = t.id === tab;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setTab(type, t.id)}
+                        className={`relative inline-flex h-6 shrink-0 items-center gap-1.5 text-12 whitespace-nowrap transition-colors ${active ? "text-text" : "text-muted hover:text-text"}`}
+                      >
+                        {t.label}
+                        {t.badge !== undefined && <span className="font-mono text-11 text-faint">{t.badge}</span>}
+                        {active && <span aria-hidden className={`absolute inset-x-0 bottom-0 h-0.5 ${healthy ? "bg-healthy" : "bg-signal"}`} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {toolbar && <div className="ml-auto flex shrink-0 items-center gap-1.5">{toolbar}</div>}
             </div>
           )}
 
-          <div className={tabs.length > 1 ? "mt-1" : "mt-2"}>{children(tab)}</div>
+          <div className={tabs.length > 1 || toolbar ? "mt-1" : "mt-2"}>{children(tab)}</div>
 
           {hasProvenance && (
             <ProvenanceLine

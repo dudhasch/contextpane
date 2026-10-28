@@ -1,11 +1,11 @@
-import { Activity, ArrowRight, CheckCircle2, Cloud, Code2, Cpu, Database, GitCompareArrows, ShieldAlert, Sparkles, Wrench } from "lucide-react";
-import { useState } from "react";
+import { Cloud, GitCompareArrows, Search, Wrench } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type { SynthesizedBlock, SynthesizedDynamicCard as Props } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
-import { CardShell, DataTable, Stat } from "../canvas/CardShell";
+import { DataTable, Section, SmartTechPath } from "../canvas/Section";
 import { DiffView } from "../canvas/DiffView";
 import { Button } from "../ui/Button";
-import { Mono, Pill, type Tone } from "../ui/Pill";
+import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
 import { RolePermissionHoverPopover } from "../ui/RolePermissionHoverPopover";
 
 function statusTone(state: string): Tone {
@@ -15,138 +15,132 @@ function statusTone(state: string): Tone {
   return "muted";
 }
 
+/** Tone of a free-text table value: the value cell carries the colour, there is no status column. */
+function valueTone(value: string): Tone | null {
+  const v = value.toLowerCase();
+  if (v.includes("denied") || v.includes("blocked") || v.includes("100% full")) return "critical";
+  if (v.includes("advisory")) return "warning";
+  if (v.includes("allowed") || v.includes("ready to deploy") || v.includes("operational")) return "healthy";
+  return null;
+}
+
+/** ARM ids, OMA-URIs, registry keys and file paths: no spaces, at least two separators. */
+const isPathLike = (value: string) => value.length > 24 && !/\s/.test(value) && (value.match(/[\\/]/g)?.length ?? 0) >= 2;
+
+const TRACK_FILL: Record<string, string> = { critical: "bg-critical", warning: "bg-warning" };
+
+/** Hairline sub-head of a block: faint uppercase label, the block's count in mono, hairline-2 above. */
+function BlockHead({ label, count, aside }: { label: string; count?: ReactNode; aside?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-2 border-t border-hairline-2 pt-2 pb-1">
+      <span className="min-w-0 truncate text-11 font-medium tracking-wider text-faint uppercase" title={label}>
+        {label}
+      </span>
+      {count !== undefined && <span className="shrink-0 font-mono text-11 text-faint">{count}</span>}
+      {aside && <span className="ml-auto min-w-0 truncate font-mono text-11 text-faint">{aside}</span>}
+    </div>
+  );
+}
+
+function diffCount(diff: string): string {
+  let add = 0;
+  let del = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) add++;
+    else if (line.startsWith("-")) del++;
+  }
+  return `+${add} −${del}`;
+}
+
 function renderBlock(block: SynthesizedBlock, filterText: string) {
   switch (block.kind) {
-    case "quota-gauges": {
+    case "quota-gauges":
       return (
-        <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-text">
-              <Cpu className="size-3.5 text-teal-400" />
-              {block.title}
-            </span>
-            <Pill tone="meta">Resource &amp; State Metrics</Pill>
-          </div>
-          <div className="grid gap-2.5 sm:grid-cols-2">
+        <div key={block.title} data-block={block.kind}>
+          <BlockHead label={block.title} count={block.gauges.length} />
+          <div className="grid grid-cols-1 gap-x-6 gap-y-2.5 pt-1 pb-1 sm:grid-cols-2">
             {block.gauges.map((g) => {
               const pct = Math.min(100, Math.round((g.used / Math.max(1, g.limit)) * 100));
-              const barColor =
-                g.status === "critical"
-                  ? "bg-rose-500"
-                  : g.status === "warning"
-                    ? "bg-amber-500"
-                    : "bg-emerald-500";
+              const tone = statusTone(g.status);
               return (
-                <div
-                  key={g.id}
-                  className={`rounded-md border p-2.5 ${
-                    g.status === "critical"
-                      ? "border-critical/40 bg-critical/8"
-                      : g.status === "warning"
-                        ? "border-warning/35 bg-warning/8"
-                        : "border-emerald-500/30 bg-emerald-500/6"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2 text-[11.5px]">
-                    <span className="font-medium text-text">{g.label}</span>
-                    <Pill tone={statusTone(g.status)}>
-                      {g.used} / {g.limit} {g.unit} ({pct}%)
-                    </Pill>
+                <div key={g.id} className="min-w-0">
+                  <div className="flex min-w-0 items-baseline justify-between gap-2 text-12">
+                    <span className="min-w-0 truncate text-text" title={g.label}>
+                      {g.label}
+                    </span>
+                    <span className={`shrink-0 font-mono text-12 ${tone === "muted" || tone === "healthy" ? "text-text" : TONE_TEXT[tone]}`}>
+                      {g.used}/{g.limit} {g.unit} · {pct}%
+                    </span>
                   </div>
-                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-900/90">
-                    <div className={`h-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                  <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-raised">
+                    <div className={`h-full transition-all ${TRACK_FILL[g.status] ?? "bg-signal"}`} style={{ width: `${pct}%` }} />
                   </div>
-                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
-                    {g.errorCode && (
-                      <span className="font-mono font-semibold text-text/90">{g.errorCode}</span>
-                    )}
-                    {g.detail && <span className="text-muted">{g.detail}</span>}
-                  </div>
+                  {(g.errorCode || g.detail) && (
+                    <div className="mt-1 flex min-w-0 items-baseline gap-1.5 text-11">
+                      {g.errorCode && <span className="shrink-0 font-mono text-muted">{g.errorCode}</span>}
+                      {g.detail && (
+                        <span className="min-w-0 truncate text-faint" title={g.detail}>
+                          {g.detail}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
       );
-    }
 
-    case "policy-chain": {
+    case "policy-chain":
       return (
-        <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-text">
-              <ShieldAlert className="size-3.5 text-rose-400" />
-              {block.title}
-            </span>
-            <Pill tone="critical">Multi-Hop Governance Evaluation</Pill>
-          </div>
-          <div className="space-y-2">
+        <div key={block.title} data-block={block.kind}>
+          <BlockHead label={block.title} count={block.hops.length} />
+          <ol className="space-y-1.5 border-l-2 border-[color:var(--cat)] py-1 pl-3">
             {block.hops.map((hop, idx) => (
-              <div
-                key={`${hop.step}-${idx}`}
-                className={`flex flex-col gap-1 rounded-md border p-2.5 text-[11.5px] ${
-                  hop.effect === "Deny"
-                    ? "border-critical/45 bg-critical/10"
-                    : hop.effect === "Audit"
-                      ? "border-warning/35 bg-warning/8"
-                      : "border-border-subtle bg-elevated/60"
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                      {hop.step}
-                    </span>
-                    <ArrowRight className="size-3 text-faint" />
-                    <RolePermissionHoverPopover query={hop.node}>
-                      <span className="font-mono font-semibold text-text">{hop.node}</span>
-                    </RolePermissionHoverPopover>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {hop.code && <Mono>{hop.code}</Mono>}
-                    <Pill tone={statusTone(hop.effect)}>{hop.effect}</Pill>
-                  </div>
+              <li key={`${hop.step}-${idx}`} className="min-w-0 text-12">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="shrink-0 font-mono text-11 text-faint">{hop.step}</span>
+                  <span aria-hidden className="shrink-0 text-faint">
+                    →
+                  </span>
+                  <RolePermissionHoverPopover query={hop.node}>
+                    <span className="truncate font-mono font-semibold text-text">{hop.node}</span>
+                  </RolePermissionHoverPopover>
+                  <span className="ml-auto flex shrink-0 items-center gap-2">
+                    {hop.code && <span className="font-mono text-11 text-faint">{hop.code}</span>}
+                    <Pill variant="status" tone={statusTone(hop.effect)}>
+                      {hop.effect}
+                    </Pill>
+                  </span>
                 </div>
-                <div className="text-[11px] text-muted">{hop.detail}</div>
-              </div>
+                <div className="text-11 text-muted">{hop.detail}</div>
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
       );
-    }
 
     case "data-table": {
       const q = filterText.trim().toLowerCase();
-      const filteredRows = q
-        ? block.rows.filter((r) =>
-            Object.values(r).some((v) => String(v).toLowerCase().includes(q)),
-          )
-        : block.rows;
+      const filteredRows = q ? block.rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q))) : block.rows;
       return (
-        <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-text">
-              <Database className="size-3.5 text-sky-400" />
-              {block.title}
-            </span>
-            <span className="font-mono text-[11px] text-faint">{filteredRows.length} rows</span>
-          </div>
+        <div key={block.title} data-block={block.kind}>
+          <BlockHead label={block.title} count={q ? `${filteredRows.length}/${block.rows.length}` : block.rows.length} />
           <DataTable
+            bleed
             head={block.columns.map((c) => c.label)}
             rows={filteredRows.map((row) =>
               block.columns.map((col) => {
                 const val = String(row[col.key] ?? "—");
-                const lowerVal = val.toLowerCase();
-                if (lowerVal.includes("denied") || lowerVal.includes("blocked") || lowerVal.includes("100% full")) {
-                  return <Pill tone="critical">{val}</Pill>;
-                }
-                if (lowerVal.includes("allowed") || lowerVal.includes("ready to deploy") || lowerVal.includes("operational")) {
-                  return <Pill tone="healthy">{val}</Pill>;
-                }
-                if (lowerVal.includes("advisory")) {
-                  return <Pill tone="warning">{val}</Pill>;
-                }
-                return <span className={col.mono ? "font-mono text-[11px]" : "text-[11.5px]"}>{val}</span>;
+                if (isPathLike(val)) return <SmartTechPath path={val} />;
+                const tone = valueTone(val);
+                return (
+                  <span className={`${col.mono ? "font-mono" : ""} ${tone ? TONE_TEXT[tone] : "text-text"}`} title={val}>
+                    {val}
+                  </span>
+                );
               }),
             )}
           />
@@ -154,68 +148,47 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
       );
     }
 
-    case "config-diff": {
+    case "config-diff":
       return (
-        <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-text">
-              <Code2 className="size-3.5 text-teal-400" />
-              {block.title}
-            </span>
-            <Mono>{block.filePath}</Mono>
-          </div>
-          <DiffView diff={block.diff} />
+        <div key={block.title} data-block={block.kind}>
+          <BlockHead label={block.title} count={diffCount(block.diff)} aside={<span title={block.filePath}>{block.filePath}</span>} />
+          <DiffView diff={block.diff} maxHeight="max-h-72" />
         </div>
       );
-    }
 
     case "event-stream": {
       const isArm = /\barm\b/i.test(block.title);
       return (
-        <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[11.5px] font-semibold text-text">
-              <Activity className="size-3.5 text-amber-400" />
-              {block.title}
-            </span>
-            <Pill tone="muted">
-              {block.events.length} {isArm ? "ARM events" : "audit events"}
-            </Pill>
-          </div>
-          <DataTable
-            head={[
-              "Timestamp (UTC)",
-              isArm ? "ARM Operation" : "Operation / Event",
-              "Status",
-              "Error / Code",
-              "Caller & Detail",
-            ]}
-            rows={block.events.map((ev) => [
-              <span className="font-mono text-[11px] text-faint">
-                {ev.timestamp.replace("T", " ").replace("Z", "")}
-              </span>,
-              <span className="font-mono text-[11px]">{ev.operation}</span>,
-              <Pill tone={statusTone(ev.status)}>{ev.status}</Pill>,
-              <Mono>{ev.code}</Mono>,
-              <div className="space-y-0.5 text-[11px]">
-                <div className="font-mono text-[11px] text-sky-300">{ev.caller}</div>
-                <div className="text-muted">{ev.detail}</div>
-              </div>,
-            ])}
-          />
+        <div key={block.title} data-block={block.kind}>
+          <BlockHead label={block.title} count={`${block.events.length} ${isArm ? "ARM" : "audit"}`} />
+          <ul className="divide-y divide-hairline-2 font-mono text-11">
+            {block.events.map((ev) => (
+              <li key={ev.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1">
+                <span className="text-faint" title={ev.timestamp}>
+                  {ev.timestamp.replace("T", " ").replace(/(\.\d+)?Z$/, "").slice(5)}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-12 text-text" title={ev.operation}>
+                    {ev.operation}
+                  </span>
+                  <span className="block truncate text-muted" title={`${ev.caller} · ${ev.detail}`}>
+                    {ev.caller} <span className="font-sans">· {ev.detail}</span>
+                  </span>
+                </span>
+                <span className="flex flex-col items-end gap-0.5">
+                  <span className={TONE_TEXT[statusTone(ev.status)]}>{ev.status}</span>
+                  <span className="text-faint">{ev.code}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       );
     }
   }
 }
 
-export function SynthesizedDynamicCard({
-  props,
-  triggeredBy,
-}: {
-  props: Props;
-  triggeredBy: string[];
-}) {
+export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
   const openRemediation = useWorkbench((s) => s.openRemediation);
   const [filterText, setFilterText] = useState("");
 
@@ -226,8 +199,7 @@ export function SynthesizedDynamicCard({
   const diffBlock = props.blocks.find((b) => b.kind === "config-diff");
   const eventBlock = props.blocks.find((b) => b.kind === "event-stream");
 
-  const stageAction =
-    props.recommendedActions.find((a) => a.kind === "stage-fix") ?? props.recommendedActions[0];
+  const stageAction = props.recommendedActions.find((a) => a.kind === "stage-fix") ?? props.recommendedActions[0];
   const diffAction = props.recommendedActions.find((a) => a.kind === "view-diff");
 
   const primaryCtaLabel = stageAction?.label ?? "Stage Remediation Fix";
@@ -238,91 +210,83 @@ export function SynthesizedDynamicCard({
       ? `Filter ${tableBlock.columns
           .slice(0, 2)
           .map((c) => c.label.toLowerCase())
-          .join(" / ")}...`
-      : "Filter items...";
-
-  const eventTabLabel = "Activity & Audit Log";
-  const diffTabLabel = "Configuration & IaC Diff";
-  const quotaTabLabel =
-    quotaBlock && quotaBlock.title && quotaBlock.title.length <= 28
-      ? quotaBlock.title
-      : "State & Capacity Metrics";
+          .join(" / ")}…`
+      : "Filter rows…";
 
   return (
-    <CardShell
+    <Section
       type="SynthesizedDynamicCard"
       icon={<Cloud />}
       title={props.title}
       state={props.state}
       triggeredBy={triggeredBy}
-      footerMeta={
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px]">
-          <Sparkles className="size-2.5 text-teal-400" />
-          <span>Live Azure &amp; Entra Diagnostics</span>
-          <span>·</span>
-          <span className="text-teal-300">
-            {meta.reusedFromCatalog
-              ? `Verified Custom View (×${meta.reuseCount})`
-              : "Synthesized Custom View"}
-          </span>
-        </span>
+      synthesized
+      source={meta.source === "fallback" ? "template" : meta.synthesizerModel}
+      footerMeta={meta.reusedFromCatalog ? `verified view ×${meta.reuseCount}` : "synthesized view"}
+      details={
+        <div className="space-y-1">
+          <p>{props.reason}</p>
+          <p className="font-mono text-faint">
+            {meta.gatekeeperModel} → {meta.synthesizerModel}
+            {meta.latencyMs > 0 ? ` · ${(meta.latencyMs / 1000).toFixed(1)}s` : ""}
+          </p>
+        </div>
       }
       tabs={[
-        { id: "all", label: "Full Diagnostic View", badge: props.blocks.length },
-        ...(quotaBlock ? [{ id: "quota-gauges", label: quotaTabLabel, badge: quotaBlock.gauges.length }] : []),
-        ...(policyBlock ? [{ id: "policy-chain", label: "Policy & State Chain", badge: policyBlock.hops.length }] : []),
-        ...(diffBlock ? [{ id: "config-diff", label: diffTabLabel }] : []),
-        ...(eventBlock ? [{ id: "event-stream", label: eventTabLabel, badge: eventBlock.events.length }] : []),
+        { id: "all", label: "All", badge: props.blocks.length },
+        ...(quotaBlock ? [{ id: "quota-gauges", label: "Quota", badge: quotaBlock.gauges.length }] : []),
+        ...(policyBlock ? [{ id: "policy-chain", label: "Policy", badge: policyBlock.hops.length }] : []),
+        ...(tableBlock ? [{ id: "data-table", label: "Table", badge: tableBlock.rows.length }] : []),
+        ...(diffBlock ? [{ id: "config-diff", label: "Diff" }] : []),
+        ...(eventBlock ? [{ id: "event-stream", label: "Activity", badge: eventBlock.events.length }] : []),
       ]}
-      summary={<div className="text-[12.5px] leading-snug text-text">{props.headline}</div>}
-      primaryAction={
-        <div className="flex flex-nowrap items-center gap-1.5">
-          <input
-            type="search"
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            placeholder={dynamicFilterPlaceholder}
-            className="h-6 w-[140px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[11px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
-          />
-          <Button
-            size="xs"
-            variant="outline"
-            icon={<GitCompareArrows />}
-            data-testid="synth-diff-btn"
-            onClick={() => {
-              openRemediation({ tab: "terraform", focusBanner: `Focused: ${diffCtaLabel}` });
-            }}
-          >
-            {diffCtaLabel}
-          </Button>
-          <Button
-            size="xs"
-            variant="meta"
-            icon={<Wrench />}
-            data-testid="synth-stage-fix-btn"
-            onClick={() =>
-              openRemediation({
-                tab: "powershell",
-                focusBanner: `Focused: ${primaryCtaLabel}`,
-              })
-            }
-          >
-            {primaryCtaLabel}
-          </Button>
-        </div>
+      summary={props.headline}
+      toolbar={
+        tableBlock && (
+          <label className="flex items-center gap-1 text-faint focus-within:text-text">
+            <Search aria-hidden className="size-3 shrink-0" />
+            <input
+              type="search"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder={dynamicFilterPlaceholder}
+              aria-label="Filter table rows"
+              className="h-6 w-[150px] border-b border-hairline bg-transparent text-12 text-text placeholder:text-faint focus:border-signal focus:outline-none"
+            />
+          </label>
+        )
       }
     >
       {(tab) => {
-        const blocksToRender =
-          tab === "all" ? props.blocks : props.blocks.filter((b) => b.kind === tab);
-
+        const blocksToRender = tab === "all" ? props.blocks : props.blocks.filter((b) => b.kind === tab);
         return (
-          <div className="space-y-2.5">
-            {blocksToRender.map((b) => renderBlock(b, filterText))}
+          <div>
+            <div className="space-y-2">{blocksToRender.map((b) => renderBlock(b, filterText))}</div>
+            {/* The section's one action row. */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-hairline-2 pt-2">
+              <Button
+                size="xs"
+                variant="outline"
+                icon={<Wrench />}
+                data-testid="synth-stage-fix-btn"
+                onClick={() => openRemediation({ tab: "powershell", focusBanner: `Focused: ${primaryCtaLabel}` })}
+              >
+                {primaryCtaLabel}
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                icon={<GitCompareArrows />}
+                data-testid="synth-diff-btn"
+                onClick={() => openRemediation({ tab: "terraform", focusBanner: `Focused: ${diffCtaLabel}` })}
+              >
+                {diffCtaLabel}
+              </Button>
+            </div>
           </div>
         );
       }}
-    </CardShell>
+    </Section>
   );
 }
 export default SynthesizedDynamicCard;
