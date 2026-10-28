@@ -231,7 +231,14 @@ export async function transcribeAudio(
     });
     if (!response.ok) throw new ProviderHttpError(provider.id, response.status, await response.text());
     const json = (await response.json()) as { text?: string; transcript?: string };
-    return { text: (json.transcript ?? json.text ?? "").trim(), latencyMs: Math.round(performance.now() - started) };
+    const text = (json.transcript ?? json.text ?? "").trim();
+    const latencyMs = Math.round(performance.now() - started);
+    if (process.env.CTX_ROUTER_DEBUG) {
+      mkdirSync(DEBUG_DIR, { recursive: true });
+      // Transcript length only: the spoken command may name users.
+      appendFileSync(join(DEBUG_DIR, "router-debug.jsonl"), `${JSON.stringify({ at: new Date().toISOString(), provider: provider.id, model, tool: "asr-transcribe", latencyMs, transcriptChars: text.length })}\n`);
+    }
+    return { text, latencyMs };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw new ProviderTimeoutError(provider.id, timeoutMs);
     throw error;

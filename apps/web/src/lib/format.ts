@@ -85,8 +85,9 @@ export const TIER_COLOR: Record<RouterTier, string> = {
 /** How each tier routes on the Meta Model API + Modal stack (HUD tier pill and router savings panel). */
 export const TIER_ROUTE: Record<RouterTier, { label: string; route: string }> = {
   "Tier 0": { label: "Tier 0 · Recipe / SSE", route: "0 tokens · Local" },
-  "Tier 1A": { label: "Tier 1A · Hover", route: "muse-glimmer-30b · Modal → muse-spark-1.3 · Meta" },
-  "Tier 1B": { label: "Tier 1B · Catalog", route: "muse-glimmer-30b · Modal → muse-spark-1.3 · Meta" },
+  "Tier 1A": { label: "Tier 1A · Hover", route: "muse-glimmer-30b open weights · Modal → muse-spark-1.3 · Meta" },
+  // Open weights serve Tier 1B only with CTX_OPEN_WEIGHT_TIERS=…,catalog, which the demo config does not set.
+  "Tier 1B": { label: "Tier 1B · Catalog", route: "muse-spark-1.3 · Meta API" },
   "Tier 2": { label: "Tier 2 · Correlate", route: "muse-spark-1.3 · Meta API" },
   "Tier 3A": { label: "Tier 3 · Remediate", route: "muse-wonder-1.0 · Meta · Modal Verified" },
   "Tier 3B": { label: "Tier 3 · Remediate", route: "muse-wonder-1.0 · Meta · Modal Verified" },
