@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { WorkingMark } from "./Pill";
 
 type Variant = "primary" | "ghost" | "outline" | "danger" | "meta" | "healthy";
 type Size = "xs" | "sm" | "md";
@@ -14,9 +15,9 @@ const VARIANT: Record<Variant, string> = {
 };
 
 const SIZE: Record<Size, string> = {
-  xs: "h-6 px-2 text-[11px] gap-1 [&>svg]:size-3",
-  sm: "h-7 px-2.5 text-xs gap-1.5 [&>svg]:size-3.5",
-  md: "h-9 px-3.5 text-[13px] gap-2 [&>svg]:size-4",
+  xs: "h-6 px-2 text-11 gap-1 [&>svg]:size-3",
+  sm: "h-7 px-2.5 text-12 gap-1.5 [&>svg]:size-3.5",
+  md: "h-9 px-3.5 text-13 gap-2 [&>svg]:size-4",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -34,7 +35,7 @@ export function Button({ variant = "outline", size = "sm", icon, loading = false
       className={`inline-flex items-center justify-center rounded-md border transition-colors duration-120 whitespace-nowrap disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-signal ${VARIANT[variant]} ${SIZE[size]} ${className}`}
       {...rest}
     >
-      {loading ? <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" /> : icon}
+      {loading ? <WorkingMark className={variant === "primary" || variant === "healthy" ? "text-current" : ""} /> : icon}
       {children}
     </button>
   );

@@ -183,7 +183,7 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
       <div className="space-y-2">
         <RolePermissionCardContent entry={rolePerm} />
         {entry?.popover && entry.popover.quickActions.length > 0 && (
-          <div className="flex flex-wrap gap-1 border-t border-border-subtle pt-1.5">
+          <div className="flex flex-wrap gap-1 border-t border-hairline-2 pt-1.5">
             {entry.popover.quickActions.map((a) => (
               <QuickActionButton key={a.id} action={a} onDone={onClose} />
             ))}
@@ -196,7 +196,7 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
     return (
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className="font-mono text-[11px] text-muted">{entityId}</span>
+          <span className="font-mono text-11 text-muted">{entityId}</span>
           <Pill tone="meta" icon={<Sparkles />} mono={false}>
             Live Context
           </Pill>
@@ -208,33 +208,33 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
     );
   }
   if (entry.status === "error" || !entry.popover) {
-    return <div className="text-xs text-critical">{entry.error ?? "diagnostic unavailable"}</div>;
+    return <div className="text-12 text-critical">{entry.error ?? "diagnostic unavailable"}</div>;
   }
   const p = entry.popover;
   const t = p.providerTelemetry;
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-[11px] text-muted" title={p.entityId}>
+        <span className="truncate font-mono text-11 text-muted" title={p.entityId}>
           {p.entityId}
         </span>
         <Pill tone={tone}>{humanizeStatus(p.status)}</Pill>
       </div>
-      <div className="text-[13px] font-medium leading-snug">{p.headline}</div>
+      <div className="text-13 font-medium leading-snug">{p.headline}</div>
       {p.errorCodeTranslation && (
-        <div className="rounded-md border border-critical/30 bg-critical/8 p-2 text-[11px]">
+        <div className="rounded-md border border-critical/30 bg-critical/8 p-2 text-11">
           <div className="font-mono text-critical">{p.errorCodeTranslation.code}</div>
           <div className="mt-0.5 text-text">{p.errorCodeTranslation.meaning}</div>
           <div className="mt-1 text-muted">{p.errorCodeTranslation.likelyCause}</div>
           {p.errorCodeTranslation.docsUrl && (
-            <a href={p.errorCodeTranslation.docsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary hover:underline">
+            <a href={p.errorCodeTranslation.docsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-signal hover:underline">
               Microsoft Learn <ExternalLink className="size-3" />
             </a>
           )}
         </div>
       )}
       {p.facts.length > 0 && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-11">
           {p.facts.map((f) => (
             <FactRow key={`${f.label}-${f.value}`} label={f.label} value={f.value} mono={f.mono} tone={f.tone ? healthTone(f.tone) : undefined} />
           ))}
@@ -256,10 +256,10 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
 function HoverProvenance({ telemetry, serveMs }: { telemetry: ProviderTelemetry; serveMs: number | undefined }) {
   const badge = provenanceBadge(telemetry);
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-1.5 text-[11px] text-faint" data-testid="hover-provenance">
+    <div className="flex items-center justify-between gap-2 border-t border-hairline-2 pt-1.5 text-11 text-faint" data-testid="hover-provenance">
       <span className="inline-flex min-w-0 items-center gap-1" title={badge.title}>
-        <Cpu className={`size-3 shrink-0 ${badge.tone === "healthy" ? "text-healthy" : badge.tone === "meta" ? "text-meta" : ""}`} />
-        <span className={`truncate ${badge.tone === "healthy" ? "text-healthy" : badge.tone === "meta" ? "text-meta" : ""}`}>{badge.label}</span>
+        <Cpu className={`size-3 shrink-0 ${badge.tone === "healthy" ? "text-healthy" : badge.tone === "meta" ? "text-dom-intune" : ""}`} />
+        <span className={`truncate ${badge.tone === "healthy" ? "text-healthy" : badge.tone === "meta" ? "text-dom-intune" : ""}`}>{badge.label}</span>
       </span>
       {serveMs !== undefined && serveMs > 1 && <span className="shrink-0 font-mono">{serveMs} ms</span>}
     </div>

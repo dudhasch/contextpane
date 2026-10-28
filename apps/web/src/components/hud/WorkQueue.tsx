@@ -6,7 +6,7 @@ import { ORIGIN_META, ORIGIN_ORDER, matchesFilter, matchesQuery, relativeAge, st
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Kbd } from "../ui/Kbd";
-import { Pill, type Tone } from "../ui/Pill";
+import { Pill, TONE_TEXT } from "../ui/Pill";
 
 /**
  * The unified work queue. One button in the top bar names the item on screen; its popover is the
@@ -121,61 +121,69 @@ export function WorkQueue() {
         aria-expanded={open}
         title="Work queue · Ctrl+K"
         data-testid="work-queue-button"
-        className="relative flex h-7 min-w-0 max-w-[560px] items-center gap-2 rounded-md border border-border bg-elevated pr-2 pl-2 text-[12px] text-text hover:border-primary/50 focus:outline-2 focus:outline-primary"
+        className="relative flex h-7 min-w-0 max-w-[560px] items-center gap-2 rounded-md border border-hairline bg-raised pr-2 pl-2 text-12 whitespace-nowrap text-text hover:border-signal/50 focus:outline-2 focus:outline-signal"
       >
         {!freeRoamOpen && current ? (
           <>
             <span className={`inline-flex shrink-0 [&>svg]:size-3.5 ${TONE_TEXT[ORIGIN_META[current.origin].tone]}`}>{ORIGIN_ICON[current.origin]}</span>
             <span className="shrink-0 font-mono font-semibold">{current.displayId}</span>
-            <span className="truncate text-muted">{current.title}</span>
-            {status && <span className={`ml-1 shrink-0 rounded-pill border px-1.5 font-mono text-[10px] ${TONE_CLASS[status.tone]}`}>{status.label}</span>}
+            <span className="min-w-0 truncate text-muted">{current.title}</span>
+            {status && (
+              <Pill variant="status" tone={status.tone} mono={false} className="ml-1 shrink-0">
+                {status.label}
+              </Pill>
+            )}
           </>
         ) : (
-          <span className="text-muted">
-            {freeRoamOpen ? `Work Queue (${queue.length} items) · Ctrl+K` : "Work queue…"}
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-muted">
+            {freeRoamOpen ? `Work queue · ${queue.length}` : "Work queue"}
+            <Kbd>Ctrl K</Kbd>
           </span>
         )}
         <ChevronDown className="size-3.5 shrink-0 text-muted" />
-        {unseen.length > 0 && <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-meta font-mono text-[10px] font-semibold text-canvas" title={`${unseen.length} new ERP drop(s)`} data-testid="queue-unseen">{unseen.length}</span>}
+        {unseen.length > 0 && <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-signal font-mono text-11 font-semibold text-signal-ink" title={`${unseen.length} new ERP drop(s)`} data-testid="queue-unseen">{unseen.length}</span>}
       </button>
 
       {open && (
         <FloatingPortal>
-          <div className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-md" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div ref={refs.setFloating} style={floatingStyles} className="z-50 w-[680px] max-w-[95vw] animate-fade-in rounded-[10px] border border-border bg-surface shadow-popover" role="listbox" aria-label="Work queue" data-testid="work-queue" onKeyDown={onKey}>
-            <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
+          {/* Transparent click-catcher: the popover closes on an outside click without dimming the deck. */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div ref={refs.setFloating} style={floatingStyles} className="z-50 w-[680px] max-w-[95vw] animate-fade-in rounded-md border border-hairline bg-surface shadow-popover" role="listbox" aria-label="Work queue" data-testid="work-queue" onKeyDown={onKey}>
+            <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
               <Search className="size-3.5 shrink-0 text-muted" />
-              <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search id, customer, requester, error code, intent…" className="h-6 min-w-0 flex-1 bg-transparent text-[12px] text-text placeholder:text-faint focus:outline-none" data-testid="work-queue-search" />
+              <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search id, customer, requester, error code, intent…" className="h-6 min-w-0 flex-1 bg-transparent text-12 text-text placeholder:text-faint focus:outline-none" data-testid="work-queue-search" />
               <Kbd>Ctrl K</Kbd>
             </div>
-            <div className="flex flex-wrap items-center gap-1 border-b border-border-subtle px-3 py-1.5">
-              <button
-                type="button"
-                onClick={() => void setIncludeSeeded(!includeSeeded)}
-                aria-pressed={includeSeeded}
-                title={includeSeeded ? "Seeded demo tickets (INC-4092, INC-4099, ANOM-*) are listed first · click to hide them" : "Show the seeded demo tickets (INC-4092, INC-4099, ANOM-*) at the top of the queue"}
-                data-testid="queue-seeded-chip"
-                className={`mr-1 inline-flex h-5 items-center gap-1 rounded-pill border px-2 font-mono text-[10.5px] transition-colors [&>svg]:size-3 ${includeSeeded ? "border-meta/50 bg-meta/15 text-meta" : "border-dashed border-border text-muted hover:text-text"}`}
-              >
-                <FlaskConical /> Seeded demo tickets {includeSeeded ? "on" : "off"}
-              </button>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-3 py-1.5">
               {FILTERS.map((f) => (
                 <button
                   key={f.id}
                   type="button"
                   onClick={() => setFilter(f.id)}
                   data-queue-filter={f.id}
-                  className={`inline-flex h-5 items-center gap-1.5 rounded-pill border px-2 font-mono text-[11px] transition-colors ${filter === f.id ? "border-primary/50 bg-primary/15 text-primary" : "border-border text-muted hover:text-text"}`}
+                  aria-pressed={filter === f.id}
+                  className={`relative inline-flex h-6 items-center gap-1 text-12 transition-colors ${filter === f.id ? "text-text" : "text-muted hover:text-text"}`}
                 >
-                  {f.label} <span className={`rounded px-1 text-[10px] font-semibold ${filter === f.id ? "bg-primary/20 text-primary" : "bg-elevated text-text/90"}`}>{counts[f.id] ?? 0}</span>
+                  {f.label} <span className="font-mono text-11 text-faint">{counts[f.id] ?? 0}</span>
+                  {filter === f.id && <span aria-hidden className="absolute inset-x-0 -bottom-1.5 h-0.5 bg-signal" />}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => void setIncludeSeeded(!includeSeeded)}
+                aria-pressed={includeSeeded}
+                title={includeSeeded ? "Seeded demo tickets (INC-4092, INC-4099, ANOM-*) are listed first · click to hide them" : "Show the seeded demo tickets (INC-4092, INC-4099, ANOM-*) at the top of the queue"}
+                data-testid="queue-seeded-chip"
+                className={`ml-auto inline-flex h-6 items-center gap-1 text-12 transition-colors [&>svg]:size-3 ${includeSeeded ? "text-text" : "text-muted hover:text-text"}`}
+              >
+                <FlaskConical className={includeSeeded ? "text-signal" : ""} /> Seeded demo tickets {includeSeeded ? "on" : "off"}
+              </button>
             </div>
-            <ul className="max-h-[360px] overflow-y-auto py-1">
+            <ul className="max-h-[360px] divide-y divide-hairline-2 overflow-y-auto">
               {rows.length === 0 && (
-                <li className="px-3 py-4 text-center text-[12px] text-faint">
+                <li className="px-3 py-4 text-center text-12 text-faint">
                   {dataMode === "real-tenant" && !includeSeeded
-                    ? "No custom tickets or live anomalies in queue yet. Turn on [Seeded demo tickets], click [Scan for Anomalies] or [+ Triage Unscripted Ticket]."
+                    ? "No custom tickets or live anomalies in the queue yet. Turn on seeded demo tickets, scan for anomalies or triage an unscripted ticket."
                     : "No work items match."}
                 </li>
               )}
@@ -183,23 +191,23 @@ export function WorkQueue() {
                 <QueueRow key={item.scenarioId} item={item} active={!freeRoamOpen && item.scenarioId === scenarioId} index={queue.indexOf(item) + 1} unseen={unseen.includes(item.scenarioId)} closed={closedId === item.scenarioId} onSelect={() => void select(item.scenarioId)} />
               ))}
             </ul>
-            <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-hairline px-3 py-2">
               <Button variant="outline" icon={<FilePlus2 />} onClick={() => { setOpen(false); setComposerOpen(true); }} title="Paste any support ticket and triage it live (n)" data-testid="new-ticket-button">
-                Triage Unscripted Ticket
+                Triage unscripted ticket
               </Button>
               <Button
-                variant="primary"
+                variant="outline"
                 icon={<Radar />}
                 loading={scanningAnomalies}
                 onClick={() => void scanAnomalies()}
                 title="Scan live MCP tenant endpoints for license drift, Conditional Access posture issues, expired secrets, and NSG drift"
                 data-testid="queue-scan-anomalies-button"
               >
-                Scan for Anomalies
+                Scan for anomalies
               </Button>
               {dataMode !== "real-tenant" && (
-                <Button variant="meta" icon={<Dices />} loading={dropStatus === "loading"} onClick={() => void simulateDrop()} title="Write a random #2026xxx/ticketbody.json + attachment1.png into input/tickets/ and let the inbox watcher ingest it (g)" data-testid="drop-erp-button">
-                  Drop Random ERP Ticket
+                <Button variant="outline" icon={<Dices />} loading={dropStatus === "loading"} onClick={() => void simulateDrop()} title="Write a random #2026xxx/ticketbody.json + attachment1.png into input/tickets/ and let the inbox watcher ingest it (g)" data-testid="drop-erp-button">
+                  Drop random ERP ticket
                 </Button>
               )}
               <Button
@@ -209,9 +217,9 @@ export function WorkQueue() {
                   openFreeRoam();
                 }}
               >
-                Free-Roam Startpage
+                Free-Roam start page
               </Button>
-              <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-faint">
+              <span className="ml-auto shrink-0 whitespace-nowrap text-11 text-faint">
                 <Kbd>1</Kbd>–<Kbd>9</Kbd> open · <Kbd>j</Kbd> <Kbd>k</Kbd> step · <Kbd>Esc</Kbd> close
               </span>
             </div>
@@ -222,15 +230,6 @@ export function WorkQueue() {
   );
 }
 
-const TONE_TEXT: Record<Tone, string> = { primary: "text-primary", healthy: "text-healthy", warning: "text-warning", critical: "text-critical", meta: "text-meta", muted: "text-muted" };
-const TONE_CLASS: Record<Tone, string> = {
-  primary: "border-primary/40 bg-primary/12 text-primary",
-  healthy: "border-healthy/40 bg-healthy/12 text-healthy",
-  warning: "border-warning/40 bg-warning/12 text-warning",
-  critical: "border-critical/40 bg-critical/12 text-critical",
-  meta: "border-meta/40 bg-meta/12 text-meta",
-  muted: "border-border bg-elevated text-muted",
-};
 
 function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: ScenarioListItem; active: boolean; index: number; unseen: boolean; closed: boolean; onSelect: () => void }) {
   const prewarmQueue = useWorkbench((s) => s.prewarmQueueScenario);
@@ -250,29 +249,25 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
           }
         }}
         data-work-item={item.scenarioId}
-        className={`grid w-full grid-cols-[18px_18px_auto_1fr_auto_auto] items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-elevated ${active ? "bg-primary/8" : ""}`}
+        className={`grid w-full grid-cols-[18px_18px_auto_1fr_auto_auto] items-center gap-2 px-3 py-1.5 text-left text-12 transition-colors hover:bg-raised ${active ? "bg-signal/8" : ""}`}
       >
-        <span className="font-mono text-[10px] text-faint">{index <= 9 ? index : ""}</span>
+        <span className="font-mono text-11 text-faint">{index <= 9 ? index : ""}</span>
         <span className={`inline-flex [&>svg]:size-3.5 ${TONE_TEXT[meta.tone]}`} title={meta.label}>
           {ORIGIN_ICON[item.origin]}
         </span>
         <span className="font-mono font-semibold">
           {item.displayId}
-          {unseen && !active && <span className="ml-1 inline-block size-1.5 rounded-full bg-meta align-middle" aria-label="new" />}
+          {unseen && !active && <span className="ml-1 inline-block size-1.5 rounded-full bg-signal align-middle" aria-label="new" />}
         </span>
         <span className="min-w-0">
           <span className="block truncate">{item.title}</span>
-          <span className="block truncate text-[11px] text-faint">
+          <span className="block truncate text-11 text-faint">
             {meta.label} · {item.tenantName}
             {item.custom?.ticket.requester ? ` · ${item.custom.ticket.requester.displayName}` : ""}
           </span>
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-faint">
-          {active && (
-            <span className="rounded-pill border border-primary/40 bg-primary/15 px-1.5 font-mono text-[10px] font-medium text-primary">
-              Current
-            </span>
-          )}
+        <span className="inline-flex items-center gap-1.5 text-11 text-faint">
+          {active && <span className="font-medium text-signal">current</span>}
           {attachments > 0 && (
             <span className="inline-flex items-center gap-0.5" title={item.custom?.erpDrop?.attachments.map((a) => a.fileName).join(", ")}>
               <ImageIcon className="size-3" />
@@ -281,7 +276,9 @@ function QueueRow({ item, active, index, unseen, closed, onSelect }: { item: Sce
           )}
           {relativeAge(item.createdAt)}
         </span>
-        <span className={`rounded-pill border px-1.5 font-mono text-[10px] ${TONE_CLASS[status.tone]}`}>{status.label}</span>
+        <Pill variant="status" tone={status.tone} mono={false} className="justify-self-end">
+          {status.label}
+        </Pill>
       </button>
     </li>
   );

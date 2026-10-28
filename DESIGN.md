@@ -123,8 +123,8 @@ Four steps, nothing in between. Each utility carries its line-height.
 | Identifiers, code | **JetBrains Mono** (variable) | 11px or 12px / 400 |
 
 Numerals are tabular everywhere (`font-variant-numeric: tabular-nums` on `body`), so counts,
-latencies and timestamps line up in columns. Legacy `text-[..px]` sizes still present in
-components are collapsed onto this scale in WP8.
+latencies and timestamps line up in columns. WP8 collapsed every legacy `text-[..px]` size in
+components onto this scale; nothing else is used.
 
 **Rule:** anything an engineer would copy into a terminal is monospace. That means UPNs,
 object IDs, tenant IDs, SKU part numbers (`SPE_E5`), `AADSTS` codes, resource names,

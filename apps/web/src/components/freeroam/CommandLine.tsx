@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ContextViewMode } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
+import { WorkingMark } from "../ui/Pill";
 import { CONTEXT_MODE_LIST, ContextModeIcon } from "../ui/ContextModeIcons";
 import { OVERVIEW_PROMPT, QUICK_TENANT_CHIPS, TRY_CHIP_COUNT, type QuickChip } from "./chips";
 
@@ -16,8 +17,8 @@ const SCOPES = [
 /** Short visible labels for the inline "Try:" suggestions; the testid keeps the full chip label. */
 const TRY_LABEL: Record<string, string> = {
   "Azure VMs (Get-AzVM)": "Azure VMs",
-  "Users & License Drift": "License drift",
-  "Workload Identities & OIDC": "Workload identities",
+  "Users & license drift": "License drift",
+  "Workload identities & OIDC": "Workload identities",
 };
 
 /**
@@ -106,7 +107,7 @@ export function CommandLine() {
             data-testid="free-roam-spawn-button"
             className="inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 font-mono text-11 whitespace-nowrap text-muted transition-colors hover:bg-raised hover:text-text focus-visible:outline-2 focus-visible:outline-signal disabled:opacity-60 disabled:hover:bg-transparent"
           >
-            {loading ? <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <span aria-hidden>↵</span>}
+            {loading ? <WorkingMark className="text-current" /> : <span aria-hidden>↵</span>}
             open lens
           </button>
         </div>

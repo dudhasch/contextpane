@@ -8,22 +8,22 @@ import type { Tone } from "@/components/ui/Pill";
  */
 
 export const ORIGIN_META: Record<WorkItemOrigin, { label: string; short: string; tone: Tone }> = {
-  psa: { label: "PSA Ticket", short: "Ticket", tone: "primary" },
-  anomaly: { label: "Live Graph Anomaly", short: "Anomaly", tone: "warning" },
-  "erp-drop": { label: "ERP File Drop", short: "ERP Drop", tone: "meta" },
-  unscripted: { label: "Ad-Hoc Triage", short: "Unscripted", tone: "healthy" },
+  psa: { label: "PSA ticket", short: "Ticket", tone: "primary" },
+  anomaly: { label: "Live Graph anomaly", short: "Anomaly", tone: "warning" },
+  "erp-drop": { label: "ERP file drop", short: "ERP drop", tone: "meta" },
+  unscripted: { label: "Ad-hoc triage", short: "Unscripted", tone: "healthy" },
 };
 
 export const ORIGIN_ORDER: WorkItemOrigin[] = ["psa", "anomaly", "erp-drop", "unscripted"];
 
-export type WorkItemStatus = "NEW" | "OPEN" | "ACTIVE DRIFT" | "RESOLVED ✓" | "CLOSED ✓";
+export type WorkItemStatus = "New" | "Open" | "Active drift" | "Resolved" | "Closed";
 
 export function statusOf(item: Pick<ScenarioListItem, "origin" | "resolved">, closed = false): { label: WorkItemStatus; tone: Tone } {
-  if (closed) return { label: "CLOSED ✓", tone: "healthy" };
-  if (item.resolved) return { label: "RESOLVED ✓", tone: "healthy" };
-  if (item.origin === "erp-drop") return { label: "NEW", tone: "meta" };
-  if (item.origin === "anomaly") return { label: "ACTIVE DRIFT", tone: "warning" };
-  return { label: "OPEN", tone: "critical" };
+  if (closed) return { label: "Closed", tone: "muted" };
+  if (item.resolved) return { label: "Resolved", tone: "healthy" };
+  if (item.origin === "erp-drop") return { label: "New", tone: "primary" };
+  if (item.origin === "anomaly") return { label: "Active drift", tone: "warning" };
+  return { label: "Open", tone: "critical" };
 }
 
 /** Newest first; resolved items sink to the bottom. Position = numeric hotkey (1-9). */

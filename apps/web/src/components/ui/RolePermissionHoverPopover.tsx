@@ -30,7 +30,7 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
     <div className="space-y-2 text-left">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="flex items-center gap-1.5 font-mono text-[12px] font-semibold text-text">
+          <div className="flex items-center gap-1.5 font-mono text-12 font-semibold text-text">
             {entry.riskTier === "Critical Tier-0" ? (
               <ShieldAlert className="size-3.5 shrink-0 text-critical" />
             ) : entry.riskTier === "Least-Privilege" ? (
@@ -40,15 +40,15 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
             )}
             <span>{entry.displayName}</span>
           </div>
-          <div className="mt-0.5 font-mono text-[10px] text-muted">
+          <div className="mt-0.5 font-mono text-11 text-muted">
             GUID: <span className="text-signal">{entry.guid}</span>
           </div>
         </div>
         <Pill tone={tone}>{entry.riskTier}</Pill>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="rounded border border-border-subtle bg-elevated px-1.5 py-0.5 font-medium text-muted">
+      <div className="flex flex-wrap items-center gap-1.5 text-11">
+        <span className="rounded border border-hairline-2 bg-raised px-1.5 py-0.5 font-medium text-muted">
           {entry.category}
         </span>
         <span className="rounded border border-signal/30 bg-signal/10 px-1.5 py-0.5 font-mono text-signal-strong">
@@ -56,13 +56,11 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         </span>
       </div>
 
-      <p className="text-[11.5px] leading-relaxed text-text/95">{entry.summary}</p>
+      <p className="text-11 leading-relaxed text-text/95">{entry.summary}</p>
 
-      <div className="rounded-md border border-border-subtle bg-surface/90 p-2">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">
-          Allowed Actions &amp; API Calls
-        </div>
-        <ul className="mt-1 space-y-0.5 font-mono text-[11px] text-muted">
+      <div className="border-t border-hairline-2 pt-1.5">
+        <div className="section-label">Allowed actions &amp; API calls</div>
+        <ul className="mt-1 space-y-0.5 font-mono text-11 text-muted">
           {entry.allowedActions.map((act) => (
             <li key={act} className="truncate" title={act}>
               • {act}
@@ -71,15 +69,13 @@ export function RolePermissionCardContent({ entry }: { entry: RolePermissionEntr
         </ul>
       </div>
 
-      <div className="rounded-md border border-healthy/25 bg-healthy/8 p-2 text-[11px]">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-healthy-strong">
-          Recommended Least-Privilege Alternative
-        </div>
+      <div className="border-t border-hairline-2 pt-1.5 text-11">
+        <div className="section-label !text-healthy">Least-privilege alternative</div>
         <div className="mt-0.5 text-text">{entry.leastPrivilegeAlternative}</div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[11px]">
-        <span className="text-faint">Role &amp; Permission Inspector</span>
+      <div className="flex items-center justify-between border-t border-hairline-2 pt-1.5 text-11">
+        <span className="text-faint">Role &amp; permission inspector</span>
         <a
           href={entry.referenceUrl}
           target="_blank"

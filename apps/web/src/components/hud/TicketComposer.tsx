@@ -4,7 +4,6 @@ import type { ClarifyingQuestion } from "@contextpane/catalog";
 import { api, type SampleTicket } from "@/lib/api";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
-import { Pill } from "../ui/Pill";
 
 const FEATURED_GOAL_PRESETS: Array<{ id: string; badge: string; title: string; body: string; customerName: string }> = [
   {
@@ -97,24 +96,24 @@ export function TicketComposer() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 backdrop-blur-md" onClick={() => setOpen(false)}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ground/80" onClick={() => setOpen(false)}>
       <div
-        className="max-h-[92vh] w-[780px] max-w-[95vw] overflow-y-auto animate-fade-in card shadow-popover"
+        className="max-h-[92vh] w-[780px] max-w-[95vw] animate-fade-in overflow-y-auto rounded-md border border-hairline bg-surface px-4 py-3 shadow-popover"
         onClick={(e) => e.stopPropagation()}
         data-testid="ticket-composer"
       >
         <div className="flex items-center gap-2">
-          <FilePlus2 className="size-4 text-primary" />
-          <span className="text-[13px] font-semibold">New Ticket / Outline Cloud Project Goal</span>
-          <span className="text-[11px] text-faint">Live Tenant Triage · c4a8shili.onmicrosoft.com</span>
+          <FilePlus2 className="size-4 text-signal" />
+          <span className="text-13 font-semibold">New ticket or project goal</span>
+          <span className="font-mono text-11 text-faint">c4a8shili.onmicrosoft.com</span>
           <button type="button" onClick={() => setOpen(false)} className="ml-auto text-faint hover:text-text" aria-label="Close">
             <X className="size-4" />
           </button>
         </div>
 
-        <div className="mt-3 space-y-1.5">
-          <span className="block text-[11px] font-medium text-muted">Featured Incident &amp; Project Goal Presets (1-click populate):</span>
-          <div className="grid gap-1.5 sm:grid-cols-3">
+        <div className="mt-3">
+          <span className="section-label">Presets</span>
+          <div className="mt-1 grid border-t border-hairline sm:grid-cols-3 sm:divide-x sm:divide-hairline">
             {FEATURED_GOAL_PRESETS.map((p) => (
               <button
                 key={p.id}
@@ -127,78 +126,77 @@ export function TicketComposer() {
                   setQuestions([]);
                   setAnswers({});
                 }}
-                className="flex flex-col items-start gap-0.5 rounded-md border border-primary/35 bg-primary/8 px-2.5 py-1.5 text-left text-[11px] leading-snug transition-colors hover:border-primary hover:bg-primary/14"
+                className="flex flex-col items-start gap-0.5 px-2.5 py-1.5 text-left text-12 transition-colors first:pl-0 hover:bg-raised"
                 title={p.body}
               >
-                <span className="font-mono text-[10px] font-semibold tracking-wider text-primary uppercase">{p.badge}</span>
-                <span className="font-medium text-text">{p.title}</span>
+                <span className="text-11 font-medium text-signal">{p.badge}</span>
+                <span className="line-clamp-2 text-text">{p.title}</span>
               </button>
             ))}
           </div>
         </div>
 
         {samples.length > 0 && (
-          <div className="mt-2.5 space-y-1">
-            <span className="block text-[11px] font-medium text-faint">Additional lab incident samples:</span>
-            <div className="grid max-h-28 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-3">
+          <div className="mt-2.5">
+            <span className="section-label">Lab samples</span>
+            <ul className="mt-1 max-h-28 divide-y divide-hairline-2 overflow-y-auto border-y border-hairline">
               {samples.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  data-sample={s.id}
-                  onClick={() => {
-                    setTitle(s.title);
-                    setBody(s.body);
-                    setCustomer(s.customerName);
-                    setQuestions([]);
-                    setAnswers({});
-                  }}
-                  className="flex min-h-7 items-start rounded-md border border-border bg-surface/70 px-2.5 py-1 text-left text-[11px] leading-snug whitespace-normal text-muted transition-colors hover:border-primary/50 hover:bg-elevated hover:text-text"
-                  title={s.body}
-                >
-                  {s.title}
-                </button>
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    data-sample={s.id}
+                    onClick={() => {
+                      setTitle(s.title);
+                      setBody(s.body);
+                      setCustomer(s.customerName);
+                      setQuestions([]);
+                      setAnswers({});
+                    }}
+                    className="block w-full truncate px-1 py-1 text-left text-12 text-muted transition-colors hover:bg-raised hover:text-text"
+                    title={s.body}
+                  >
+                    {s.title}
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         )}
 
-        <label className="mt-3 block text-[11px] text-muted">
-          Subject / Project Goal Title
+        <label className="mt-3 block text-11 text-muted">
+          Subject or project goal
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Federated Credentials on my spn stopped working… or Outline project: Migrate ERP sync to OIDC"
-            className="mt-1 h-8 w-full rounded-md border border-border bg-canvas px-2.5 text-[12.5px] text-text focus:outline-2 focus:outline-primary"
+            className="mt-1 h-8 w-full rounded-md border border-hairline bg-ground px-2.5 text-12 text-text focus:outline-2 focus:outline-signal"
             data-testid="composer-title"
           />
         </label>
-        <label className="mt-2 block text-[11px] text-muted">
-          Ticket Description / Project Requirements
+        <label className="mt-2 block text-11 text-muted">
+          Description or requirements
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={4}
             placeholder="Paste the customer's incident description or outline your cloud engineering project goal. You can also scope parameters with clarifying questions before or after triage."
-            className="mt-1 w-full resize-y rounded-md border border-border bg-canvas px-2.5 py-2 text-[12.5px] leading-relaxed text-text focus:outline-2 focus:outline-primary"
+            className="mt-1 w-full resize-y rounded-md border border-hairline bg-ground px-2.5 py-2 text-12 leading-relaxed text-text focus:outline-2 focus:outline-signal"
             data-testid="composer-body"
           />
         </label>
 
         {questions.length > 0 && (
-          <div className="mt-3 rounded-lg border border-primary/40 bg-primary/6 p-2.5 space-y-2" data-testid="composer-clarifier-panel">
+          <div className="mt-3 border-t border-dashed border-hairline pt-2" data-testid="composer-clarifier-panel">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-primary">
-                <MessageSquare className="size-3.5" />
-                Goal &amp; Scope Clarifier ({questions.length} targeted questions)
-              </span>
-              {clarifierModel && (
-                <span className="rounded border border-primary/30 bg-canvas/80 px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                  Scope Analysis
+              <span className="inline-flex items-center gap-1.5 text-12 font-medium text-text">
+                <span aria-hidden className="text-signal">
+                  ✦
                 </span>
-              )}
+                Scope questions · {questions.length}
+              </span>
+              {clarifierModel && <span className="font-mono text-11 text-faint">{clarifierModel}</span>}
             </div>
-            <div className="space-y-2">
+            <div className="mt-1 divide-y divide-hairline-2">
               {questions.map((q, idx) => {
                 const currentVal = answers[q.id] ?? q.options[0]?.label ?? q.selectedValue ?? "";
                 const isPresetOption = q.options.some(
@@ -208,8 +206,8 @@ export function TicketComposer() {
                     currentVal.toLowerCase() === opt.id.toLowerCase(),
                 );
                 return (
-                  <div key={q.id} className="rounded border border-border-subtle bg-canvas/85 p-2 text-[11.5px]">
-                    <div className="font-medium text-text">
+                  <div key={q.id} className="py-2 text-12">
+                    <div className="text-text">
                       {idx + 1}. {q.question}
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -223,10 +221,8 @@ export function TicketComposer() {
                             type="button"
                             onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.label }))}
                             title={opt.description}
-                            className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-colors ${
-                              active
-                                ? "border-primary bg-primary/20 font-semibold text-primary"
-                                : "border-border bg-surface text-muted hover:border-primary/40 hover:text-text"
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-11 transition-colors ${
+                              active ? "border-signal/50 text-signal" : "border-hairline text-muted hover:text-text"
                             }`}
                           >
                             {active && <Check className="size-3 shrink-0" />}
@@ -239,8 +235,8 @@ export function TicketComposer() {
                       type="text"
                       value={isPresetOption ? "" : currentVal}
                       onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                      placeholder={q.customHint ?? "Or type custom parameter…"}
-                      className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-sans text-[11px] text-text focus:outline-1 focus:outline-primary"
+                      placeholder={q.customHint ?? "Or type a custom value…"}
+                      className="mt-1.5 h-6 w-full rounded border border-hairline bg-ground px-2 font-sans text-11 text-text focus:outline-1 focus:outline-signal"
                     />
                   </div>
                 );
@@ -249,18 +245,18 @@ export function TicketComposer() {
           </div>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="flex min-w-[180px] flex-1 items-center gap-2 text-[11px] text-muted">
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
+          <label className="flex min-w-[180px] flex-1 items-center gap-2 text-11 text-muted">
             Customer
             <input
               value={customer}
               onChange={(e) => setCustomer(e.target.value)}
               placeholder="Contoso Finance"
-              className="h-7 min-w-0 flex-1 rounded-md border border-border bg-canvas px-2 text-[12px] text-text focus:outline-2 focus:outline-primary"
+              className="h-7 min-w-0 flex-1 rounded-md border border-hairline bg-ground px-2 text-12 text-text focus:outline-2 focus:outline-signal"
             />
           </label>
           <Button
-            variant="outline"
+            variant="ghost"
             size="md"
             icon={<MessageSquare />}
             loading={clarifying}
@@ -268,9 +264,8 @@ export function TicketComposer() {
             onClick={() => void askClarifyingQuestions()}
             data-testid="composer-ask-questions"
           >
-            Ask Clarifying Questions to Scope Goal
+            Ask scope questions
           </Button>
-          <Pill tone="muted">Live Graph &amp; Azure</Pill>
           <Button
             variant="primary"
             size="md"
@@ -279,8 +274,9 @@ export function TicketComposer() {
             disabled={!ready}
             onClick={() => void submit()}
             data-testid="composer-submit"
+            title="Triage against Live Graph and Azure"
           >
-            Triage Live
+            Triage live
           </Button>
         </div>
       </div>

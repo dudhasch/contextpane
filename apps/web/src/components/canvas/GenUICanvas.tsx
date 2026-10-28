@@ -11,6 +11,7 @@ import { ProgressRail } from "./ProgressRail";
 import { RowFilterPill } from "./TableFilter";
 import { SynthesizedDynamicCard } from "../cards/SynthesizedDynamicCard";
 import { CommandLine, LensList } from "../freeroam";
+import { WorkingMark } from "../ui/Pill";
 
 /**
  * Right pane. Mounts only catalog components the orchestrator returned and Zod
@@ -93,11 +94,11 @@ export function GenUICanvas() {
 }
 
 const SUB_AGENT_SYNTHESIS_STAGES = [
-  { step: 1, name: "Scope Check", role: "Target Scope & Clarifying Options", source: "Ticket & Tenant" },
-  { step: 2, name: "Live Telemetry", role: "Live Graph, ARM & Cloud Status Correlation", source: "Graph & ARM" },
-  { step: 3, name: "View Layout", role: "Diagnostic Card & Block Layout", source: "Live Context" },
-  { step: 4, name: "Remediation Plan", role: "PowerShell 7, Graph JSON & Terraform Diff", source: "Idempotent Fix" },
-  { step: 5, name: "Pre-Flight Safety", role: "AST, -WhatIf Guard & 1-Click Undo Verification", source: "Safety Prover" },
+  { step: 1, name: "Scope check", role: "Target scope and clarifying options", source: "Ticket and tenant" },
+  { step: 2, name: "Live telemetry", role: "Live Graph, ARM and cloud status correlation", source: "Graph and ARM" },
+  { step: 3, name: "View layout", role: "Diagnostic card and block layout", source: "Live context" },
+  { step: 4, name: "Remediation plan", role: "PowerShell 7, Graph JSON and Terraform diff", source: "Idempotent fix" },
+  { step: 5, name: "Pre-flight safety", role: "AST, -WhatIf guard and 1-click undo verification", source: "Safety prover" },
 ] as const;
 
 function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine"; title: string }) {
@@ -120,16 +121,16 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="size-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <Bot className="size-4 text-primary" />
-          <span className="text-[12.5px] font-semibold text-text">
+          <WorkingMark className="w-3.5 text-center" />
+          <Bot className="size-4 text-signal" />
+          <span className="text-12 font-semibold text-text">
             {mode === "triage"
-              ? "5-Stage Triage Pipeline · Analyzing Ticket & Live Tenant State"
-              : "Updating Resolution Plan, Diagnostic View & Remediation Scripts"}
+              ? "5-stage triage pipeline · analyzing the ticket and live tenant state"
+              : "Updating the plan, diagnostic view and remediation scripts"}
           </span>
         </div>
         <span
-          className="inline-flex items-center gap-1.5 rounded-pill border border-primary/45 bg-primary/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-primary"
+          className="inline-flex items-center gap-1.5 rounded-pill border border-signal/45 bg-signal/15 px-2 py-0.5 font-mono text-11 font-semibold text-signal"
           data-testid="synthesis-elapsed-timer"
         >
           <Sparkles className="size-3 animate-pulse" />
@@ -137,7 +138,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
         </span>
       </div>
 
-      <div className="mt-1 truncate text-[11.5px] text-muted">
+      <div className="mt-1 truncate text-11 text-muted">
         Target: <span className="font-medium text-text">{title}</span>
       </div>
 
@@ -148,42 +149,42 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
           return (
             <div
               key={st.step}
-              className={`rounded-md border p-2 text-[11px] transition-all ${
+              className={`rounded-md border p-2 text-11 transition-all ${
                 done
                   ? "border-healthy/40 bg-healthy/10 text-healthy-strong"
                   : active
                     ? "animate-pulse border-signal bg-signal/15 text-text shadow-[0_0_12px_color-mix(in_oklab,var(--signal)_20%,transparent)]"
-                    : "border-border-subtle bg-canvas/60 text-faint"
+                    : "border-hairline-2 bg-ground/60 text-faint"
               }`}
             >
-              <div className="flex items-center justify-between gap-1 font-mono text-[10px]">
+              <div className="flex items-center justify-between gap-1 font-mono text-11">
                 <span className="font-semibold">
                   {done ? "✓" : active ? "●" : st.step} {st.name}
                 </span>
               </div>
-              <div className="mt-0.5 truncate text-[11px] opacity-85">{st.role}</div>
-              <div className="mt-1 font-mono text-[10px] text-primary/90">{st.source}</div>
+              <div className="mt-0.5 truncate text-11 opacity-85">{st.role}</div>
+              <div className="mt-1 font-mono text-11 text-signal/90">{st.source}</div>
             </div>
           );
         })}
       </div>
 
       {/* Shimmer skeleton preview of upcoming SynthesizedDynamicCard */}
-      <div className="mt-2.5 grid grid-cols-3 gap-2 rounded-md border border-border-subtle bg-canvas/60 p-2.5">
-        <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
-          <div className="h-2.5 w-2/3 animate-pulse rounded bg-elevated" />
-          <div className="h-2 w-full animate-pulse rounded bg-primary/25" />
-          <div className="h-2 w-4/5 animate-pulse rounded bg-elevated" />
+      <div className="mt-2.5 grid grid-cols-3 gap-2 rounded-md border border-hairline-2 bg-ground/60 p-2.5">
+        <div className="space-y-1.5 rounded border border-hairline-2/70 bg-surface/70 p-2">
+          <div className="h-2.5 w-2/3 animate-pulse rounded bg-raised" />
+          <div className="h-2 w-full animate-pulse rounded bg-signal/25" />
+          <div className="h-2 w-4/5 animate-pulse rounded bg-raised" />
         </div>
-        <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
-          <div className="h-2.5 w-3/4 animate-pulse rounded bg-elevated" />
+        <div className="space-y-1.5 rounded border border-hairline-2/70 bg-surface/70 p-2">
+          <div className="h-2.5 w-3/4 animate-pulse rounded bg-raised" />
           <div className="h-2 w-full animate-pulse rounded bg-dom-azure/25" />
-          <div className="h-2 w-1/2 animate-pulse rounded bg-elevated" />
+          <div className="h-2 w-1/2 animate-pulse rounded bg-raised" />
         </div>
-        <div className="space-y-1.5 rounded border border-border-subtle/70 bg-surface/70 p-2">
-          <div className="h-2.5 w-1/2 animate-pulse rounded bg-elevated" />
+        <div className="space-y-1.5 rounded border border-hairline-2/70 bg-surface/70 p-2">
+          <div className="h-2.5 w-1/2 animate-pulse rounded bg-raised" />
           <div className="h-2 w-full animate-pulse rounded bg-healthy/25" />
-          <div className="h-2 w-3/5 animate-pulse rounded bg-elevated" />
+          <div className="h-2 w-3/5 animate-pulse rounded bg-raised" />
         </div>
       </div>
     </section>
@@ -203,25 +204,25 @@ function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }
 
   return (
     <div
-      className="space-y-2 rounded-md border border-l-4 border-hairline border-l-signal bg-surface p-3 text-[12px] text-signal"
+      className="space-y-2 rounded-md border border-l-4 border-hairline border-l-signal bg-surface p-3 text-12 text-signal"
       data-testid="mini-dashboard-loading"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-medium">
-          <span className="size-3.5 animate-spin rounded-full border-2 border-selection border-t-transparent" />
+          <WorkingMark className="w-3.5 text-center" />
           <span>
             Analyzing live tenant context for &quot;{selectionText}&quot;...
           </span>
         </div>
-        <span className="rounded-pill border border-selection/40 bg-selection/12 px-2 py-0.5 font-mono text-[11px]">
+        <span className="rounded-pill border border-signal/40 bg-signal/12 px-2 py-0.5 font-mono text-11">
           {elapsedSec}s elapsed · Live Query
         </span>
       </div>
       <div className="grid grid-cols-4 gap-1.5">
         {[1, 2, 3, 4].map((k) => (
-          <div key={k} className="rounded border border-border-subtle bg-canvas/70 p-2">
-            <div className="h-2 w-1/2 animate-pulse rounded bg-elevated" />
-            <div className="mt-1.5 h-3.5 w-2/3 animate-pulse rounded bg-selection/25" />
+          <div key={k} className="rounded border border-hairline-2 bg-ground/70 p-2">
+            <div className="h-2 w-1/2 animate-pulse rounded bg-raised" />
+            <div className="mt-1.5 h-3.5 w-2/3 animate-pulse rounded bg-signal/25" />
           </div>
         ))}
       </div>

@@ -1,8 +1,7 @@
-import { PiggyBank } from "lucide-react";
 import { TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens, isOpenWeightProvider } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import type { RouterTier } from "@contextpane/catalog";
-import { Dot, Pill, TONE_DOT, TONE_TEXT, type Tone } from "../ui/Pill";
+import { Dot, TONE_DOT, TONE_TEXT, type Tone } from "../ui/Pill";
 
 /** Fallback when the orchestrator has not sent a price yet (mirrors CTX_PRICE_USD_PER_1M_TOKENS default). */
 const DEFAULT_USD_PER_1M_TOKENS = 1.0;
@@ -76,32 +75,33 @@ export function RouterSavingsBody() {
 
   return (
     <div>
-      <div className="mb-2 flex items-center gap-2">
-        <PiggyBank className="size-4 text-primary" />
-        <span className="text-[13px] font-semibold">Router savings</span>
-        <Pill tone="primary">vs Tier 2 · {fmtTokens(baseline.tokens)} tok / {fmtMs(baseline.ms)}</Pill>
+      <div className="mb-2 flex items-baseline gap-2">
+        <span className="text-13 font-semibold">Router savings</span>
+        <span className="font-mono text-11 text-faint">
+          vs Tier 2 · {fmtTokens(baseline.tokens)} tok / {fmtMs(baseline.ms)}
+        </span>
       </div>
 
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-5 divide-x divide-hairline border-y border-hairline py-2">
         <Stat label="0-token req" value={`${zero}`} sub={`${pct}% of ${total}`} tone="primary" />
-        <Stat label="Tokens saved" value={fmtTokens(saved.tokens)} sub={`${fmtTokens(spent)} spent`} tone="healthy" />
-        <Stat label="Latency saved" value={fmtMs(saved.ms)} sub="cumulative" tone="healthy" />
-        <Stat label="API credit saved" value={fmtUsd(usdSaved)} sub={`@ $${pricePer1M.toFixed(2)}/1M tok`} tone="healthy" title="Estimated: tokens saved × blended price (CTX_PRICE_USD_PER_1M_TOKENS)" />
+        <Stat label="Tokens saved" value={fmtTokens(saved.tokens)} sub={`${fmtTokens(spent)} spent`} tone="muted" />
+        <Stat label="Latency saved" value={fmtMs(saved.ms)} sub="cumulative" tone="muted" />
+        <Stat label="API credit saved" value={fmtUsd(usdSaved)} sub={`@ $${pricePer1M.toFixed(2)}/1M tok`} tone="muted" title="Estimated: tokens saved × blended price (CTX_PRICE_USD_PER_1M_TOKENS)" />
         <Stat
           label="Open weights"
           value={`${openPct}%`}
           sub={`${openWeightAnswers} of ${modelAnswers} answers`}
-          tone="healthy"
+          tone="muted"
           title="Share of model answers (live or served from the persisted cache) produced by Muse Glimmer 30B open weights"
         />
       </div>
 
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-surface">
-        <div className="h-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
+      <div className="mt-3 h-1 w-full overflow-hidden rounded bg-raised">
+        <div className="h-full bg-signal transition-all duration-300" style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-1 text-[11px] text-faint">share of requests answered without a model</div>
+      <div className="mt-1 text-11 text-faint">share of requests answered without a model</div>
 
-      <table className="mt-3 w-full text-[11px]">
+      <table className="mt-3 w-full text-11">
         <thead className="text-faint">
           <tr>
             <th className="py-1 text-left font-medium">Tier · route</th>
@@ -113,13 +113,13 @@ export function RouterSavingsBody() {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key} className={`border-t border-border-subtle ${r.requests === 0 ? "text-faint" : ""}`}>
+            <tr key={r.key} className={`border-t border-hairline-2 ${r.requests === 0 ? "text-faint" : ""}`}>
               <td className="py-1 pr-2">
                 <span className="flex items-center gap-1.5">
                   <Dot tone={r.tone} />
                   <span className="font-medium text-text">{r.label}</span>
                 </span>
-                <span className="block pl-3.5 font-mono text-[10px] text-faint">{r.route}</span>
+                <span className="block pl-3.5 font-mono text-11 text-faint">{r.route}</span>
               </td>
               <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{r.requests}</td>
               <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{r.requests ? r.avgMs : "–"}</td>
@@ -132,13 +132,13 @@ export function RouterSavingsBody() {
             </tr>
           ))}
           {extras.map(({ tier, label, s }) => (
-            <tr key={tier} className="border-t border-border-subtle">
+            <tr key={tier} className="border-t border-hairline-2">
               <td className="py-1 pr-2">
                 <span className="flex items-center gap-1.5">
                   <Dot tone="meta" />
                   <span className="font-medium text-text">{label}</span>
                 </span>
-                <span className="block pl-3.5 font-mono text-[10px] text-faint">{TIER_ROUTE[tier].route}</span>
+                <span className="block pl-3.5 font-mono text-11 text-faint">{TIER_ROUTE[tier].route}</span>
               </td>
               <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{s.requests}</td>
               <td className="py-1 pl-3 text-right font-mono whitespace-nowrap">{s.avgLatencyMs}</td>
@@ -171,10 +171,10 @@ export function RouterSavingsBody() {
 
 function Stat({ label, value, sub, tone, title }: { label: string; value: string; sub: string; tone: Tone; title?: string }) {
   return (
-    <div className="rounded-md border border-border-subtle bg-surface p-2" title={title}>
-      <div className="truncate text-[10px] uppercase tracking-wider text-faint">{label}</div>
-      <div className={`truncate font-mono text-lg leading-tight ${TONE_TEXT[tone]}`}>{value}</div>
-      <div className="truncate text-[11px] text-muted">{sub}</div>
+    <div className="min-w-0 px-2 first:pl-0" title={title}>
+      <div className="truncate text-11 text-faint">{label}</div>
+      <div className={`truncate font-mono text-15 font-semibold ${tone === "muted" ? "text-text" : TONE_TEXT[tone]}`}>{value}</div>
+      <div className="truncate text-11 text-muted">{sub}</div>
     </div>
   );
 }

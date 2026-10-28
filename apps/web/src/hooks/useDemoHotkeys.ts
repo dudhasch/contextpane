@@ -33,7 +33,6 @@ export function useDemoHotkeys() {
           break;
         case "Escape":
           s.setHotkeysOpen(false);
-          s.setDrawerOpen(false);
           s.setDiffOpen(false);
           s.setVoiceOpen(false);
           s.setSystemOpen(false);

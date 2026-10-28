@@ -156,6 +156,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   "deterministic-router": "Deterministic router",
   "live-graph": "Live Graph read",
   "live-arm": "Live ARM read",
+  "seeded-manifest": "Lab",
   "real-tenant": "Real tenant",
   "simulated-lab": "Simulated lab",
   symbolic: "Symbolic model",
@@ -189,6 +190,10 @@ export const STATUS_LABEL: Record<string, string> = {
   simulated: "Simulated",
   "rolled-back": "Rolled back",
   approved: "Approved",
+  "report-only": "Report-only",
+  enabledForReportingButNotEnforced: "Report-only",
+  "break-glass": "Break-glass",
+  gitops: "GitOps",
   rejected: "Rejected",
   exchangeActiveSync: "Exchange ActiveSync",
   browser: "Browser",
@@ -220,3 +225,61 @@ export function humanizeSlug(raw: string): string {
 
 /** SKU part numbers → product names; shared with the orchestrator so server-built labels match. */
 export { humanizeSku } from "@contextpane/catalog";
+
+/** Sub-agents of the custom-ticket pipeline, by the index in their `agent:<n>:…` stage id. */
+const AGENT_LABEL: Record<string, string> = {
+  "0": "Scope",
+  "1": "Clarifier",
+  "2": "Telemetry scout",
+  "3": "UI architect",
+  "4": "Coder",
+  "5": "Safety verifier",
+};
+
+/** Fixed progress stage ids (SSE `progress` events) → short ticker labels. */
+const STAGE_LABEL: Record<string, string> = {
+  "plan:start": "Planning",
+  "plan:done": "Plan ready",
+  "plan:fallback": "Plan fallback",
+  "code:start": "Writing code",
+  "code:done": "Code ready",
+  "code:fallback": "Code fallback",
+  "bundle:ready": "Bundle ready",
+  "preflight:start": "Pre-flight",
+  "preflight:done": "Pre-flight done",
+  "preflight:fallback": "Pre-flight fallback",
+  "stage:start": "Staging",
+  "stage:done": "Staged",
+  "mcp:start": "MCP query",
+  "mcp:done": "MCP data in",
+  mcp_ready: "Cards painted",
+  "llm:attempt": "Model call",
+  "llm:step": "Model step",
+  "llm:skip": "No model call",
+  "dataplane:bind": "Data bound",
+  dataplane: "Data plane",
+  validate: "Validating",
+  repair: "Repair",
+  complete: "Complete",
+  remediate: "Remediate",
+  refine: "Refine",
+  approve: "Approve",
+  rollback: "Rollback",
+  log: "Log",
+};
+
+/** `agent:3:routed` → "Plan routed", `plan:start` → "Planning"; unknown ids fall back to sentence case. */
+export function stageLabel(stage: string): string {
+  const fixed = STAGE_LABEL[stage];
+  if (fixed) return fixed;
+  const agent = /^agent:(\d+):(start|done|routed)$/.exec(stage);
+  if (agent) {
+    if (agent[2] === "routed") return "Plan routed";
+    const name = AGENT_LABEL[agent[1]!] ?? `Agent ${agent[1]}`;
+    return agent[2] === "done" ? `${name} done` : name;
+  }
+  const [head, tail] = stage.split(":", 2);
+  if (tail === "start") return humanizeSlug(head!);
+  if (tail === "done") return `${humanizeSlug(head!)} done`;
+  return humanizeSlug(stage.replace(/:/g, " "));
+}

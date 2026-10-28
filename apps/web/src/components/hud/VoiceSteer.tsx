@@ -1,5 +1,6 @@
-import { Mic, MicOff, Send, Sparkles, X } from "lucide-react";
+import { Mic, MicOff, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { humanizeSlug } from "@/lib/format";
 import { toWav16k } from "@/lib/wav";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -151,14 +152,16 @@ export function VoiceSteerPanel() {
 
   if (!open) return null;
   return (
-    <aside ref={panelRef} className="absolute top-14 right-3 z-30 w-[420px] animate-fade-in card shadow-popover" data-testid="voice-steer-panel">
+    <aside
+      ref={panelRef}
+      className="absolute top-14 right-3 z-30 w-[420px] animate-fade-in rounded-md border border-hairline bg-surface px-3 py-2.5 shadow-popover"
+      data-testid="voice-steer-panel"
+    >
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Mic className="size-4 text-meta" />
-          <span className="text-[13px] font-semibold">Voice Steer</span>
-          <Pill tone="meta" icon={<Sparkles />}>
-            Live Voice &amp; Text Command
-          </Pill>
+          <Mic className="size-4 text-signal" />
+          <span className="text-13 font-semibold">Voice steer</span>
+          <span className="text-11 text-faint">voice or text command</span>
         </div>
         <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-text" aria-label="Close">
           <X className="size-3.5" />
@@ -167,7 +170,7 @@ export function VoiceSteerPanel() {
 
       <div className="flex items-center gap-2">
         <Button
-          variant={recording ? "danger" : "meta"}
+          variant={recording ? "danger" : "primary"}
           size="md"
           icon={recording ? <MicOff /> : <Mic />}
           onClick={() => (recording ? stopRecording(true) : void startRecording())}
@@ -187,37 +190,33 @@ export function VoiceSteerPanel() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="or type a command…"
-            className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-[13px] focus:outline-2 focus:outline-meta"
+            className="h-9 min-w-0 flex-1 rounded-md border border-hairline bg-ground px-2.5 text-13 focus:outline-2 focus:outline-signal"
           />
           <Button type="submit" variant="outline" size="md" icon={<Send />} disabled={!text.trim() || busy} aria-label="Send" />
         </form>
       </div>
       {(recording || liveTranscript) && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+        <div className="mt-2 flex items-center gap-2 text-12 text-muted">
           {recording && <span className="size-2 animate-pulse-dot rounded-full bg-critical" />}
           <span className="font-mono">{liveTranscript || "listening…"}</span>
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap gap-1">
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
+        <span className="text-11 text-faint">Try:</span>
         {EXAMPLES.map((ex) => (
-          <button
-            key={ex}
-            type="button"
-            onClick={() => void submit(ex)}
-            className="rounded-md border border-border-subtle bg-surface px-2 py-1 text-[11px] text-muted hover:border-meta/50 hover:text-text"
-          >
+          <button key={ex} type="button" onClick={() => void submit(ex)} className="text-11 text-muted hover:text-signal">
             “{ex}”
           </button>
         ))}
       </div>
 
       {last && (
-        <div className="mt-3 rounded-md border border-border-subtle bg-surface p-2 text-[11px]">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-muted">“{last.transcript}”</span>
-            <Pill tone={last.intent.intent === "unknown" ? "warning" : "meta"}>
-              {last.intent.intent} · {Math.round(last.intent.confidence * 100)}%
+        <div className="mt-3 border-t border-hairline pt-2 text-11">
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate font-mono text-muted">“{last.transcript}”</span>
+            <Pill variant="status" tone={last.intent.intent === "unknown" ? "warning" : "primary"} mono={false}>
+              {humanizeSlug(last.intent.intent)} · {Math.round(last.intent.confidence * 100)}%
             </Pill>
           </div>
           <div className="mt-1 text-faint">

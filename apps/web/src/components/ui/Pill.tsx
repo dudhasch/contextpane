@@ -66,7 +66,7 @@ export function Pill({ tone = "muted", icon, children, mono = true, className = 
 
   if (variant === "status") {
     return (
-      <span key={flashKey} title={title} style={flashStyle} className={`inline-flex items-center gap-1.5 text-[11px] leading-snug whitespace-nowrap ${font} ${TONE_TEXT[tone]} ${flash} ${className}`}>
+      <span key={flashKey} title={title} style={flashStyle} className={`inline-flex items-center gap-1.5 text-11 leading-snug whitespace-nowrap ${font} ${TONE_TEXT[tone]} ${flash} ${className}`}>
         <span aria-hidden className={`inline-block size-1.5 shrink-0 rounded-full ${TONE_DOT[tone]}`} />
         <span className="truncate">{children}</span>
       </span>
@@ -79,7 +79,7 @@ export function Pill({ tone = "muted", icon, children, mono = true, className = 
         key={flashKey}
         title={title}
         style={{ ["--flash-color" as string]: "var(--cat, var(--hairline))" }}
-        className={`inline-flex items-center gap-1 text-[11px] leading-snug whitespace-nowrap text-text ${font} ${flash} ${className}`}
+        className={`inline-flex items-center gap-1 text-11 leading-snug whitespace-nowrap text-text ${font} ${flash} ${className}`}
       >
         {icon && <span className="inline-flex shrink-0 text-[color:var(--cat,currentColor)] [&>svg]:size-3">{icon}</span>}
         <span className="truncate underline decoration-[color:var(--cat,currentColor)] decoration-2 underline-offset-[3px]">{children}</span>
@@ -92,7 +92,7 @@ export function Pill({ tone = "muted", icon, children, mono = true, className = 
       key={flashKey}
       title={title}
       style={flashStyle}
-      className={`inline-flex h-6 items-center gap-1.5 rounded-pill border px-2 text-[11px] leading-snug whitespace-nowrap ${font} ${TONE_CLASS[tone]} ${flash} ${className}`}
+      className={`inline-flex h-6 items-center gap-1.5 rounded-pill border px-2 text-11 leading-snug whitespace-nowrap ${font} ${TONE_CLASS[tone]} ${flash} ${className}`}
     >
       {icon && <span className="inline-flex shrink-0 [&>svg]:size-3">{icon}</span>}
       <span className="truncate py-0.5 leading-snug">{children}</span>
@@ -102,6 +102,15 @@ export function Pill({ tone = "muted", icon, children, mono = true, className = 
 
 export function Dot({ tone, pulse = false }: { tone: Tone; pulse?: boolean }) {
   return <span className={`inline-block size-2 shrink-0 rounded-full ${TONE_DOT[tone]} ${pulse ? "animate-pulse-dot" : ""}`} />;
+}
+
+/** Agent work in flight: a pulsing `✦` in the signal colour (the app has no spinners). */
+export function WorkingMark({ className = "" }: { className?: string }) {
+  return (
+    <span aria-hidden className={`inline-block shrink-0 leading-none text-signal motion-safe:animate-pulse-dot ${className}`}>
+      ✦
+    </span>
+  );
 }
 
 export function Mono({ children, className = "" }: { children: ReactNode; className?: string }) {

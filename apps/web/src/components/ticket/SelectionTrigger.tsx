@@ -263,7 +263,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
             }
             data-selection-bar="true"
             data-testid="selection-trigger-bar"
-            className="z-[10001] inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-signal/40 bg-raised p-1 text-[11.5px] text-signal shadow-popover"
+            className="z-[10001] inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-signal/40 bg-raised p-1 text-11 text-signal shadow-popover"
           >
             {/* Primary Generate button */}
             <button
@@ -274,7 +274,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
               data-testid="selection-trigger"
               data-selection-trigger-button="true"
               title={`Generate ${activeModeMeta.label} for "${pending.text}"${refinement.trim() ? ` + "${refinement.trim()}"` : ""} (Enter)`}
-              className="inline-flex h-6 max-w-[290px] items-center gap-1.5 rounded-md px-2 font-medium text-selection transition-colors hover:bg-selection/18 disabled:opacity-60"
+              className="inline-flex h-6 max-w-[290px] items-center gap-1.5 rounded-md px-2 font-medium text-signal transition-colors hover:bg-signal/18 disabled:opacity-60"
             >
               <Sparkles className="size-3.5 shrink-0" />
               <span data-testid="selection-trigger-button" className="truncate">
@@ -282,7 +282,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
               </span>
             </button>
 
-            <span className="h-4 w-px bg-selection/25" aria-hidden="true" />
+            <span className="h-4 w-px bg-signal/25" aria-hidden="true" />
 
             {/* Auto-focused inline refinement input */}
             <div className="relative inline-flex items-center">
@@ -295,7 +295,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
                 aria-label="Additional context or query refinement"
                 data-testid="selection-refinement-input"
                 maxLength={120}
-                className="h-6 w-[235px] rounded border border-selection/35 bg-canvas/85 pr-6 pl-2 font-sans text-[11px] text-text placeholder:text-muted/75 focus:border-selection focus:outline-none focus:ring-1 focus:ring-selection/50"
+                className="h-6 w-[235px] rounded border border-signal/35 bg-ground/85 pr-6 pl-2 font-sans text-11 text-text placeholder:text-muted/75 focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal/50"
               />
               <button
                 type="button"
@@ -303,23 +303,23 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => generate()}
                 title="Press Enter to generate"
-                className="absolute right-1 inline-flex size-4 items-center justify-center rounded text-selection/80 hover:bg-selection/20 hover:text-selection"
+                className="absolute right-1 inline-flex size-4 items-center justify-center rounded text-signal/80 hover:bg-signal/20 hover:text-signal"
               >
                 <CornerDownLeft className="size-2.5" />
               </button>
             </div>
 
-            <span className="h-4 w-px bg-selection/25" aria-hidden="true" />
+            <span className="h-4 w-px bg-signal/25" aria-hidden="true" />
 
             {/* VectorCraft 4-mode SVG icon selector (Tab cycles between modes) */}
             <div
               role="radiogroup"
               aria-label="Context UI view mode (press Tab to cycle)"
               data-testid="selection-mode-group"
-              className="inline-flex items-center gap-0.5 rounded-md border border-border-subtle bg-canvas/70 px-1 py-0.5"
+              className="inline-flex items-center gap-0.5 rounded-md border border-hairline-2 bg-ground/70 px-1 py-0.5"
             >
               <span
-                className="mr-0.5 rounded border border-selection/30 bg-selection/10 px-1 py-0.2 font-mono text-[9px] tracking-tight text-selection/85"
+                className="mr-0.5 rounded border border-signal/30 bg-signal/10 px-1 py-0.2 font-mono text-11 tracking-tight text-signal/85"
                 title="Press Tab to cycle between the 4 UI modes"
               >
                 Tab ⇥
@@ -342,14 +342,14 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
                     }}
                     onDoubleClick={() => generate(m.mode)}
                     title={`${m.label} — ${m.hint} (Tab to select, Enter to generate)`}
-                    className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[11px] transition-all ${
+                    className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-11 transition-all ${
                       active
-                        ? "border border-selection/70 bg-selection/22 font-medium text-selection shadow-[0_0_8px_rgba(6,182,212,0.3)]"
-                        : "border border-transparent text-muted hover:bg-elevated/70 hover:text-text"
+                        ? "border border-signal/70 bg-signal/22 font-medium text-signal shadow-[0_0_8px_rgba(6,182,212,0.3)]"
+                        : "border border-transparent text-muted hover:bg-raised/70 hover:text-text"
                     }`}
                   >
                     <ContextModeIcon mode={m.mode} className="size-3.5 shrink-0" />
-                    {active && <span className="whitespace-nowrap text-[11px]">{m.shortLabel}</span>}
+                    {active && <span className="whitespace-nowrap text-11">{m.shortLabel}</span>}
                   </button>
                 );
               })}

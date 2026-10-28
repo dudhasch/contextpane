@@ -1,6 +1,8 @@
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ProgressEvent } from "@/lib/api";
+import { stageLabel } from "@/lib/format";
+import { WorkingMark } from "../ui/Pill";
 
 export function cleanProgressMessage(msg: string): string {
   return msg
@@ -31,7 +33,7 @@ export function ProgressRail({ events, title, busy }: { events: ProgressEvent[];
   return (
     <div className="animate-fade-in">
       <div className="mb-2 flex items-center gap-2 text-13 font-medium text-text">
-        {busy ? <Loader2 className="size-3.5 animate-spin text-signal" /> : <Check className="size-3.5 text-healthy" />}
+        {busy ? <WorkingMark className="w-3.5 text-center" /> : <Check className="size-3.5 text-healthy" />}
         {title}
         {busy && (
           <span className="ml-auto font-mono text-11 font-normal text-muted" data-testid="progress-elapsed">
@@ -47,7 +49,9 @@ export function ProgressRail({ events, title, busy }: { events: ProgressEvent[];
           return (
             <li key={`${e.stage}-${i}`} className="flex items-start gap-2">
               <span className="w-16 shrink-0 text-right text-faint">+{shownMs >= 10_000 ? `${(shownMs / 1000).toFixed(1)} s` : `${shownMs} ms`}</span>
-              <span className={`w-24 shrink-0 truncate ${last && busy ? "text-signal" : "text-muted"}`}>{e.stage.replace(/_/g, " ")}</span>
+              <span className={`w-24 shrink-0 truncate ${last && busy ? "text-signal" : "text-muted"}`} title={e.stage}>
+                {stageLabel(e.stage)}
+              </span>
               <span className={`min-w-0 break-words ${last && busy ? "text-text" : "text-muted"}`}>{cleanProgressMessage(e.message)}</span>
             </li>
           );
