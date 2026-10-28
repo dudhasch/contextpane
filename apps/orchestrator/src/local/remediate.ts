@@ -812,7 +812,7 @@ export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
       requiredCommands:
         cr.requiredCommands && cr.requiredCommands.length > 0
           ? cr.requiredCommands.map((c) => c.toLowerCase())
-          : ["get-azvmusage", "new-azpolicyexemption", "new-azresourcegroupdeployment"],
+          : [...new Set((cr.powershellScript.match(/\b(Get|Set|New|Update|Remove|Undo|Invoke)-[A-Za-z0-9]+\b/g) ?? []).map((c) => c.toLowerCase()))],
       remediatedUpns: [],
       reclaimedUpns: [],
     };

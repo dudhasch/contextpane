@@ -173,39 +173,36 @@ export const ERROR_CODE_ENCYCLOPEDIA: Record<string, ErrorCodeReference> = {
     ],
     docsUrl: "https://learn.microsoft.com/en-us/entra/identity/users/licensing-groups-resolve-problems",
   },
+  ConflictError: {
+    code: "ConflictError",
+    symbolicName: "KeyVaultSoftDeleteNameConflict",
+    explanation:
+      "Azure Key Vault creation failed with 409 ConflictError because a soft-deleted vault with the same global DNS name still exists in InRemovedState under Soft-Delete retention or Purge Protection.",
+    troubleshootingChecks: [
+      "Run Get-AzKeyVault -InRemovedState to check whether the deleted vault name is held in soft-delete retention",
+      "Use Undo-AzKeyVaultRemoval to recover the existing vault and its secrets/keys/certificates intact",
+      "If Purge Protection is disabled and a clean vault is required, run Remove-AzKeyVault -InRemovedState -Force before recreating",
+    ],
+    docsUrl: "https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview",
+  },
 };
 
 const ERROR_CODE_PATTERNS: Array<{ key: keyof typeof ERROR_CODE_ENCYCLOPEDIA; re: RegExp }> = [
   { key: "AADSTS53003", re: /aadsts53003|\b53003\b|blockedbyconditionalaccess/i },
   { key: "AADSTS53000", re: /aadsts53000|\b53000\b|devicenotcompliant/i },
   { key: "AADSTS7000222", re: /aadsts7000222|\b7000222\b|invalidclientsecretexpiredkeysprovided/i },
-  { key: "AADSTS70021", re: /aadsts70021|\b70021\b|nomatchingfederatedidentityrecord/i },
+  { key: "AADSTS70021", re: /aadsts70021|\b70021\b|nomatchingfederatedidentityrecord|subject\s+identifier/i },
   { key: "AADSTS50020", re: /aadsts50020|\b50020\b|useraccountnotintenant/i },
   { key: "0x87D1FDE8", re: /0x87d1fde8|mdm_bitlocker_policy_conflict/i },
   { key: "QuotaExceeded", re: /quotaexceeded|computeregionalquotaexceeded/i },
   { key: "RequestDisallowedByPolicy", re: /requestdisallowedbypolicy|azurepolicydenyeffect/i },
   { key: "CountViolation", re: /countviolation|entragrouplicensecountviolation/i },
+  { key: "ConflictError", re: /conflicterror|keyvaultsoftdeletenameconflict/i },
 ];
 
-export function lookupErrorCodeReference(text: string, rows: Row[] = []): ErrorCodeReference | undefined {
+export function lookupErrorCodeReference(text: string, _rows: Row[] = []): ErrorCodeReference | undefined {
   for (const { key, re } of ERROR_CODE_PATTERNS) {
     if (re.test(text)) return ERROR_CODE_ENCYCLOPEDIA[key];
-  }
-  if (rows.length > 0) {
-    const matchedKeys = new Set<string>();
-    for (const r of rows) {
-      const candidate = [r.errorCodeLabel, r.headroom, r.driftStatus, r.state, r.detail]
-        .filter(Boolean)
-        .map((v) => String(v))
-        .join(" ");
-      for (const { key, re } of ERROR_CODE_PATTERNS) {
-        if (re.test(candidate)) matchedKeys.add(key);
-      }
-    }
-    if (matchedKeys.size === 1) {
-      const onlyKey = [...matchedKeys][0]!;
-      return ERROR_CODE_ENCYCLOPEDIA[onlyKey];
-    }
   }
   return undefined;
 }
@@ -225,7 +222,7 @@ const DATASET_WORDS: Record<SliceKind, RegExp[]> = {
   "entra-groups": [/legacy block group/i, /legacy group/i, /block group/i, /security group/i, /\bentra group/i, /^sg-$/i, /sg-contoso-finance-legacy/i, /sg-contoso-f3-frontline/i, /sg-fabrikam-legacy-bitlocker/i],
   "intune-devices": [/\bdevice/, /laptop/, /workstation/, /compliance/, /compliant/, /uncompliant/, /non-?compliant/, /check[- ]?in/, /grace period/, /managed ?device/, /enrol/],
   "intune-settings": [/bitlocker/, /0x87d/, /\basr\b/, /attack surface/, /lsass/, /\bsetting/, /baseline/, /conflict/, /\bprofile/, /settings catalog/, /endpoint security/, /encryption/, /\bcsp\b/, /tattoo/],
-  "workload-identity": [/\bsecret/, /expired/, /service principal/, /\bspn\b/, /\bappid\b/, /44b8e1a7/, /7c1d2e3f/, /8d2e3f4a/, /app registration/, /\boauth/, /\bowner/, /same owner/, /other apps?/, /peer apps?/, /\bscope/, /aadsts7000222/, /aadsts70021/, /\b70021\b/, /subject identifier/, /token\.actions\.githubusercontent\.com/, /federatedidentitycredential/, /federat/, /\boidc\b/, /github actions/, /workload identity/, /enterprise app/, /erp[- ]sync/, /api permission/, /consent/],
+  "workload-identity": [/client\s+secret/, /passwordcredential/, /service principal/, /\bspn-/, /\bappid\b/, /44b8e1a7/, /7c1d2e3f/, /8d2e3f4a/, /app registration/, /\boauth/, /same owner/, /other apps?/, /peer apps?/, /aadsts7000222/, /aadsts70021/, /\b70021\b/, /subject identifier/, /token\.actions\.githubusercontent\.com/, /federatedidentitycredential/, /federat/, /\boidc\b/, /github actions/, /workload identity/, /enterprise app/, /erp[- ]sync/, /api permission/, /consent/],
   "azure-nsg-rules": [/\bnsg\b/, /\b3389\b/, /\brdp\b/, /\bport\b/, /security rule/, /inbound/, /network security/, /firewall port/, /0\.0\.0\.0/, /terraform/, /\btag\b/, /rogue/, /\bhcl\b/],
   "avd-session-hosts": [/\bavd\b/, /host ?pool/, /session host/, /virtual desktop/, /vdpool/, /fslogix/, /\bvm\b/],
   "azure-policies": [/azure policy/, /policy assignments?/, /non-?compliant resource/, /audit effect/, /resource health/, /allowed[- ]locations/, /requestdisallowedbypolicy/, /require[- ]tag/, /policyinsights/, /availabilitystatus/],
@@ -1088,7 +1085,7 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
   // and adding "other apps with the same owner" (or switching to comparison mode on an app/owner).
   const wantsPeerApps =
     /other\s+apps?|same\s+owner|owned\s+by|peer\s+apps?|apps?\s+with|shadow[- ]admin\s+apps?/i.test(combined) ||
-    (Boolean(ctx.workloadIdentity) && viewMode === "comparison" && /\bappid\b|44b8e1a7|spn|owner|alex\.wilber/i.test(combined));
+    (Boolean(ctx.workloadIdentity) && viewMode === "comparison" && /\bappid\b|44b8e1a7|spn-contoso-erp-sync|alex\.wilber/i.test(combined));
 
   if (wantsPeerApps && (ctx.workloadIdentity || WORKLOAD_IDENTITY.peerApps?.length)) {
     const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
@@ -1109,7 +1106,7 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     for (const ds of sets) {
       searched.push({ kind: ds.kind, rows: ds.rows.length, matched: ds.kind === "workload-identity" ? rows.length : 0 });
     }
-    const errorCodeReference = lookupErrorCodeReference(combined, rows);
+    const errorCodeReference = lookupErrorCodeReference(combined);
     return {
       kind: "workload-identity",
       score: 260,
@@ -1159,7 +1156,7 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     const refHits = refinement ? datasetHits(refinement, ds.kind) : 0;
     const matched = ds.rows.filter((r) => rowMatches(selection, r));
     const refMatched = refinement ? ds.rows.filter((r) => rowMatches(refinement, r)) : [];
-    searched.push({ kind: ds.kind, rows: ds.rows.length, matched: matched.length || refMatched.length });
+    searched.push({ kind: ds.kind, rows: ds.rows.length, matched: matched.length });
     let score = 0;
     let matchedBy: "rows" | "dataset" = "rows";
     let rows = matched;
@@ -1169,14 +1166,12 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
       (ds.kind === "entra-groups" && isConceptualGroupSelection) ||
       (ds.kind === "azure-policies" && isAzurePolicySelection) ||
       (ds.kind === "workload-identity" && isOidcSelection)
-        ? 180
+        ? 220
         : 0;
 
     if (matched.length) {
-      // A row match counts only when the phrase is specific: a lone dataset word like "device" matches via the dataset path below.
       score = 100 + domainBoost + (hits + refHits) * 20 + Math.min(matched.length, 40) - (matched.length === ds.rows.length && hits === 0 ? 60 : 0);
       if (ds.kind === "azure-quota-capacity" && isQuotaSelection) {
-        // Always show all 6 quota & peer region rows unless narrowed by refinement
         rows = refMatched.length ? refMatched : ds.focus;
       } else if (ds.kind === "entra-groups" && isConceptualGroupSelection) {
         rows = refMatched.length ? refMatched : ds.focus;
@@ -1188,10 +1183,9 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
       } else if ((wantsCohortExpansion || viewMode === "comparison" || viewMode === "blast-radius") && matched.length === 1 && ds.focus.length > 1) {
         rows = [matched[0]!, ...ds.focus.filter((r) => r !== matched[0])];
       }
-    } else if (hits || refHits || refMatched.length || domainBoost) {
-      // A phrase made of a dataset's own vocabulary ("AVD host pool", "disabled accounts") beats an incidental substring hit elsewhere.
+    } else if (hits || domainBoost) {
       score = 50 + domainBoost + (hits + refHits) * 45 + (refMatched.length ? 35 : 0);
-      matchedBy = refMatched.length ? "rows" : "dataset";
+      matchedBy = "dataset";
       if (ds.kind === "workload-identity" && isOidcSelection) {
         const oidcRows = ds.rows.filter((r) => /federated|oidc/i.test(String(r.kind)));
         rows = oidcRows.length ? oidcRows : ds.focus;
@@ -1205,7 +1199,6 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
   }
 
   if (!best) {
-    // Route to the closest domain dataset instead of returning a dead-end "No live object matches" or Get-MgUser -Search fallback
     const pickKind = (): SliceKind => {
       if (/quota|capacity|vcpu|westeurope|germanywestcentral|northeurope|standard_d/i.test(combined)) return "azure-quota-capacity";
       if (/policy|resource|health|location|allow|deny|arm|az/i.test(combined)) return "azure-policies";
@@ -1218,7 +1211,7 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     const targetKind = pickKind();
     const fallbackDs = sets.find((d) => d.kind === targetKind) ?? sets.find((d) => d.kind === "azure-policies") ?? sets[0]!;
     const fallbackRows = fallbackDs.focus.slice(0, 5);
-    const errorCodeReference = lookupErrorCodeReference(combined, fallbackRows);
+    const errorCodeReference = lookupErrorCodeReference(combined);
     return {
       kind: fallbackDs.kind,
       score: 0,
@@ -1271,7 +1264,7 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
           scriptPreview: `${baseAction.scriptPreview}\n# Refined filter: ${sanitizedRef}`.slice(0, 1200),
         }
       : baseAction;
-  const errorCodeReference = lookupErrorCodeReference(combined, rows);
+  const errorCodeReference = lookupErrorCodeReference(combined);
 
   return {
     kind: best.ds.kind,
@@ -1295,7 +1288,7 @@ export function sliceToCard(ctx: CorrelationContext, selectedText: string, slice
   const refinement = options.refinementText?.trim() ? options.refinementText.trim().slice(0, 120) : undefined;
   const viewMode = options.viewMode;
   const hash = selectionHash(ctx.ticketId, selectedText, refinement, viewMode);
-  const errorCodeReference = slice.errorCodeReference ?? lookupErrorCodeReference(refinement ? `${selectedText} ${refinement}` : selectedText, slice.rows);
+  const errorCodeReference = lookupErrorCodeReference(refinement ? `${selectedText} ${refinement}` : selectedText);
   return ContextualMiniDashboardSchema.parse({
     id: `selection-${hash}`,
     selectionText: selectedText.trim().slice(0, 120),

@@ -25,7 +25,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
               <Cpu className="size-3.5 text-teal-400" />
               {block.title}
             </span>
-            <Pill tone="meta">ARM Compute Usages</Pill>
+            <Pill tone="meta">Resource &amp; State Metrics</Pill>
           </div>
           <div className="grid gap-2.5 sm:grid-cols-2">
             {block.gauges.map((g) => {
@@ -170,6 +170,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
     }
 
     case "event-stream": {
+      const isArm = /\barm\b/i.test(block.title);
       return (
         <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
           <div className="flex items-center justify-between gap-2">
@@ -177,10 +178,18 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
               <Activity className="size-3.5 text-amber-400" />
               {block.title}
             </span>
-            <Pill tone="muted">{block.events.length} ARM events</Pill>
+            <Pill tone="muted">
+              {block.events.length} {isArm ? "ARM events" : "audit events"}
+            </Pill>
           </div>
           <DataTable
-            head={["Timestamp (UTC)", "ARM Operation", "Status", "Error / Code", "Caller & Detail"]}
+            head={[
+              "Timestamp (UTC)",
+              isArm ? "ARM Operation" : "Operation / Event",
+              "Status",
+              "Error / Code",
+              "Caller & Detail",
+            ]}
             rows={block.events.map((ev) => [
               <span className="font-mono text-[10.5px] text-faint">
                 {ev.timestamp.replace("T", " ").replace("Z", "")}
@@ -208,14 +217,32 @@ export function SynthesizedDynamicCard({
   triggeredBy: string[];
 }) {
   const openRemediation = useWorkbench((s) => s.openRemediation);
-  const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
   const [filterText, setFilterText] = useState("");
 
   const meta = props.synthesisMeta;
   const quotaBlock = props.blocks.find((b) => b.kind === "quota-gauges");
   const policyBlock = props.blocks.find((b) => b.kind === "policy-chain");
+  const tableBlock = props.blocks.find((b) => b.kind === "data-table");
   const diffBlock = props.blocks.find((b) => b.kind === "config-diff");
   const eventBlock = props.blocks.find((b) => b.kind === "event-stream");
+
+  const stageAction =
+    props.recommendedActions.find((a) => a.kind === "stage-fix") ?? props.recommendedActions[0];
+  const diffAction = props.recommendedActions.find((a) => a.kind === "view-diff");
+
+  const primaryCtaLabel = stageAction?.label ?? "Stage Remediation Fix";
+  const diffCtaLabel = diffAction?.label ?? "Inspect Configuration & IaC Diff";
+
+  const dynamicFilterPlaceholder =
+    tableBlock && tableBlock.columns.length >= 2
+      ? `Filter ${tableBlock.columns
+          .slice(0, 2)
+          .map((c) => c.label.toLowerCase())
+          .join(" / ")}...`
+      : "Filter items...";
+
+  const eventTabLabel = "Activity & Audit Log";
+  const diffTabLabel = "Configuration & IaC Diff";
 
   return (
     <CardShell
@@ -228,10 +255,10 @@ export function SynthesizedDynamicCard({
       codeLens={props.sourceRef}
       tabs={[
         { id: "all", label: "Full Diagnostic View", badge: props.blocks.length },
-        ...(quotaBlock ? [{ id: "quota-gauges", label: "Regional Quotas", badge: quotaBlock.gauges.length }] : []),
-        ...(policyBlock ? [{ id: "policy-chain", label: "Policy Evaluation Chain", badge: policyBlock.hops.length }] : []),
-        ...(diffBlock ? [{ id: "config-diff", label: "Terraform / ARM Diff" }] : []),
-        ...(eventBlock ? [{ id: "event-stream", label: "ARM Activity Log", badge: eventBlock.events.length }] : []),
+        ...(quotaBlock ? [{ id: "quota-gauges", label: "Quota & Capacity", badge: quotaBlock.gauges.length }] : []),
+        ...(policyBlock ? [{ id: "policy-chain", label: "Policy & State Chain", badge: policyBlock.hops.length }] : []),
+        ...(diffBlock ? [{ id: "config-diff", label: diffTabLabel }] : []),
+        ...(eventBlock ? [{ id: "event-stream", label: eventTabLabel, badge: eventBlock.events.length }] : []),
       ]}
       summary={
         <div className="space-y-1.5">
@@ -256,20 +283,26 @@ export function SynthesizedDynamicCard({
             size="xs"
             variant="outline"
             icon={<GitCompareArrows />}
+            data-testid="synth-diff-btn"
             onClick={() => {
-              setDiffOpen(true, "SynthesizedDynamicCard");
-              openRemediation({ tab: "terraform", focusBanner: "Focused: Azure VM Region & Policy Terraform Fix" });
+              openRemediation({ tab: "terraform", focusBanner: `Focused: ${diffCtaLabel} (${props.elementId})` });
             }}
           >
-            Open Terraform Diff &amp; Fix
+            {diffCtaLabel}
           </Button>
           <Button
             size="xs"
             variant="meta"
             icon={<Wrench />}
-            onClick={() => openRemediation({ tab: "powershell", focusBanner: `Focused: Azure VM Quota & Policy Remediation (${props.elementId})` })}
+            data-testid="synth-stage-fix-btn"
+            onClick={() =>
+              openRemediation({
+                tab: "powershell",
+                focusBanner: `Focused: ${primaryCtaLabel} (${props.elementId})`,
+              })
+            }
           >
-            Stage Azure VM Fix
+            {primaryCtaLabel}
           </Button>
         </div>
       }
@@ -293,7 +326,7 @@ export function SynthesizedDynamicCard({
                 type="search"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
-                placeholder="Filter regions / SKUs..."
+                placeholder={dynamicFilterPlaceholder}
                 className="h-6 rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[11px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
               />
             </div>

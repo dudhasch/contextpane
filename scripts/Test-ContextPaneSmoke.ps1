@@ -61,7 +61,7 @@ if ($Mode -ieq 'GitOps') { $Mode = 'gitops' }
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
-$AllowedComponents = @('LicenseDriftCard', 'EntraSignInTimeline', 'IntuneDriftCard', 'IaCDriftBanner', 'HoverDiagnosticPopover', 'ActionApprovalDrawer')
+$AllowedComponents = @('LicenseDriftCard', 'EntraSignInTimeline', 'IntuneDriftCard', 'IaCDriftBanner', 'SynthesizedDynamicCard', 'HoverDiagnosticPopover', 'ActionApprovalDrawer')
 # Mirrors SCENARIO_REGISTRY in packages/catalog/src/scenarios.ts.
 $ScenarioCards = @{
     'INC-4092'     = @('LicenseDriftCard', 'EntraSignInTimeline', 'IaCDriftBanner')

@@ -895,7 +895,8 @@ app.post("/api/lab/reset-drift", async (c) => {
     }),
   );
   if (!body.scenarioId && !body.tenantId) {
-    clearCustomTickets("unscripted");
+    clearCustomTickets();
+    scanInbox();
   }
   return c.json({ ok: results.every((r) => r.failed.length === 0), latencyMs: Math.round(performance.now() - started), results });
 });

@@ -183,8 +183,8 @@ export const config = {
     /** Background pre-warm of the hover cache: a cold GPU container plus a full reasoning pass. */
     openWeightWarmMs: envInt("CTX_OPEN_WEIGHT_WARM_TIMEOUT_MS", 90000),
     correlateMs: envInt("CTX_CORRELATE_TIMEOUT_MS", 20000),
-    /** Highlight → Generate Context UI: muse-spark-1.3 at minimal effort composes a mini-dashboard in ~2-5 s. */
-    exploreMs: envInt("CTX_EXPLORE_TIMEOUT_MS", 8000),
+    /** Highlight → Generate Context UI: muse-wonder-1.0 composes a bespoke mini-dashboard in ~3-8 s. */
+    exploreMs: envInt("CTX_EXPLORE_TIMEOUT_MS", 12000),
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
     visionMs: envInt("CTX_VISION_TIMEOUT_MS", 30000),

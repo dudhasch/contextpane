@@ -23,6 +23,7 @@ export function GenUICanvas() {
   const filter = useWorkbench((s) => s.filter);
   const miniDashboards = useWorkbench((s) => s.miniDashboards);
   const exploreStatus = useWorkbench((s) => s.exploreStatus);
+  const activeExploreText = useWorkbench((s) => s.activeExploreText);
   const components = visibleComponents(layout, filter);
 
   return (
@@ -31,9 +32,11 @@ export function GenUICanvas() {
       <TimeTravelScrubber />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2">
         {exploreStatus === "loading" && (
-          <div className="card flex items-center gap-2 border-l-4 border-l-selection text-[12px] text-muted" data-testid="mini-dashboard-loading">
+          <div className="card flex items-center gap-2 border-l-4 border-l-selection text-[12px] text-selection" data-testid="mini-dashboard-loading">
             <span className="size-3 animate-spin rounded-full border-2 border-selection border-t-transparent" />
-            Generating Context UI from the live tenant slice…
+            <span>
+              🧠 muse-wonder-1.0 is synthesizing custom context UI for &quot;{activeExploreText ?? "selection"}&quot;...
+            </span>
           </div>
         )}
         {miniDashboards.map((m) => (

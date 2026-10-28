@@ -8,10 +8,10 @@
   ],
   "dynamicElements": [
     {
-      "elementId": "AzureVmDeploymentQuotaAndPolicyCard",
-      "title": "Azure VM Regional Quota & Policy Blocker (westeurope)",
+      "elementId": "CantRecreateMyKeyvaultAfterCard",
+      "title": "Can't Recreate Key Vault After Deletion",
       "domain": "azure",
-      "reason": "None of the 4 static catalog cards inspect Azure subscription regional vCPU quotas (Standard_D4s_v5 in westeurope), ARM RequestDisallowedByPolicy (Allowed Locations), or Compute AllocationFailed activity logs.",
+      "reason": "No existing catalog element handles soft-deleted Key Vault blocking recreation - requires recovery or purge workflow",
       "requiredPrimitives": [
         "quota-gauges",
         "policy-chain",
@@ -19,18 +19,18 @@
         "config-diff",
         "event-stream"
       ],
-      "createdAt": "2026-10-27T23:12:40.534Z",
-      "lastUsedAt": "2026-10-27T23:35:05.529Z",
-      "reuseCount": 4,
+      "createdAt": "2026-10-28T01:07:13.344Z",
+      "lastUsedAt": "2026-10-28T01:07:29.051Z",
+      "reuseCount": 2,
       "gatekeeperModel": "muse-spark-1.3",
       "synthesizerModel": "muse-wonder-1.0",
-      "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentQuotaAndPolicyCard.tsx",
+      "tsxStubPath": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",
       "cardTemplate": {
-        "elementId": "AzureVmDeploymentQuotaAndPolicyCard",
-        "title": "Azure VM Regional Quota & Policy Blocker (westeurope)",
-        "headline": "ARM Deployment Failed in westeurope · Standard_D4s_v5 Regional vCPUs 20/20 (100% QuotaExceeded) · Blocked by Azure Policy 'Allowed-Locations-EU-Sovereign'",
+        "elementId": "CantRecreateMyKeyvaultAfterCard",
+        "title": "Can't Recreate Key Vault After Deletion",
+        "headline": "Soft-deleted vault with purge protection is holding the name — purge it in removed state, then recreate clean",
         "domain": "azure",
-        "reason": "None of the 4 static catalog cards inspect Azure subscription regional vCPU quotas (Standard_D4s_v5 in westeurope), ARM RequestDisallowedByPolicy (Allowed Locations), or Compute AllocationFailed activity logs.",
+        "reason": "No existing catalog element handles soft-deleted Key Vault blocking recreation - requires recovery or purge workflow",
         "state": "critical",
         "requiredPrimitives": [
           "quota-gauges",
@@ -42,250 +42,443 @@
         "blocks": [
           {
             "kind": "quota-gauges",
-            "title": "Azure Compute Regional vCPU Quotas (sub-contoso-prod-01 · westeurope vs Approved Peers)",
+            "title": "Can't Recreate Key Vault After Deletion · Resource & State Metrics",
             "gauges": [
               {
-                "id": "quota-dv5-westeurope",
-                "label": "Standard_D4s_v5 (StandardDSv5Family) Regional vCPUs (westeurope)",
-                "region": "westeurope",
-                "used": 20,
-                "limit": 20,
-                "unit": "vCPUs",
+                "id": "soft-deleted-blocking",
+                "label": "Soft-deleted vaults holding name",
+                "used": 1,
+                "limit": 1,
+                "unit": "vaults",
                 "status": "critical",
-                "errorCode": "QuotaExceeded (100% Full)",
-                "detail": "5x Standard_D4s_v5 VMs active in westeurope; 0 vCPUs remaining for new deployment"
+                "detail": "1 vault in removed state reserves the requested name globally"
               },
               {
-                "id": "quota-total-westeurope",
-                "label": "Total Regional Compute vCPUs (westeurope)",
-                "region": "westeurope",
-                "used": 48,
-                "limit": 50,
-                "unit": "vCPUs",
+                "id": "retention-window",
+                "label": "Soft-delete retention remaining",
+                "used": 90,
+                "limit": 90,
+                "unit": "days",
                 "status": "warning",
-                "errorCode": "96% Utilized",
-                "detail": "Only 2 total vCPUs left across all VM families in westeurope"
+                "detail": "Retention up to 90 days; name stays reserved until purge or expiry"
               },
               {
-                "id": "quota-dv5-gwc",
-                "label": "Standard_D4s_v5 Regional vCPUs (germanywestcentral — Recommended)",
-                "region": "germanywestcentral",
-                "used": 4,
-                "limit": 20,
-                "unit": "vCPUs",
-                "status": "healthy",
-                "errorCode": "16 vCPUs Free",
-                "detail": "Policy-compliant sovereign EU region with 4x Standard_D4s_v5 capacity available immediately"
-              },
-              {
-                "id": "quota-dv5-neu",
-                "label": "Standard_D4s_v5 Regional vCPUs (northeurope — Approved Backup)",
-                "region": "northeurope",
-                "used": 6,
-                "limit": 20,
-                "unit": "vCPUs",
-                "status": "healthy",
-                "errorCode": "14 vCPUs Free",
-                "detail": "Policy-compliant backup region with 14 vCPUs available"
+                "id": "name-availability",
+                "label": "Name availability for recreation",
+                "used": 0,
+                "limit": 1,
+                "unit": "names",
+                "status": "critical",
+                "detail": "VaultAlreadyExists until the removed vault is purged"
               }
             ]
           },
           {
             "kind": "policy-chain",
-            "title": "ARM Pre-Flight & Governance Evaluation Chain",
+            "title": "Can't Recreate Key Vault After Deletion · Control-Plane Evaluation Chain",
             "hops": [
               {
-                "step": "Hop 1 · Azure RBAC",
-                "node": "Subscription: sub-contoso-prod-01 (Virtual Machine Contributor)",
-                "effect": "Allow",
-                "code": "Microsoft.Compute/virtualMachines/write",
-                "detail": "Caller holds Virtual Machine Contributor (9980e02c-c2be-4d73-94e8-173b1dc7cf3c) on rg-contoso-avd-prod.",
-                "policyId": "9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+                "step": "1",
+                "node": "ARM Key Vault Create",
+                "effect": "Pass",
+                "code": "CreateRequestAccepted",
+                "detail": "New-AzKeyVault / az keyvault create request is well-formed for the target resource group and location"
               },
               {
-                "step": "Hop 2 · Azure Policy",
-                "node": "Azure Policy: Allowed Locations [germanywestcentral, northeurope]",
+                "step": "2",
+                "node": "Global Name Uniqueness",
                 "effect": "Deny",
-                "code": "RequestDisallowedByPolicy",
-                "detail": "Deny: Microsoft.Compute/virtualMachines in 'westeurope' [RequestDisallowedByPolicy]. Policy assignment 'Allowed-Locations-EU-Sovereign' permits only ['germanywestcentral', 'northeurope'].",
-                "policyId": "e56962a6-4747-49cd-b67b-bf8b01975c4c"
+                "code": "VaultAlreadyExists",
+                "detail": "Key Vault names are globally unique; a soft-deleted vault still owns the name and blocks same-name recreation"
               },
               {
-                "step": "Hop 3 · Regional Quota Gate",
-                "node": "Compute Quota Check: Microsoft.Compute/locations/westeurope/usages",
+                "step": "3",
+                "node": "Soft-Delete Retention",
                 "effect": "Deny",
-                "code": "OperationNotAllowed / QuotaExceeded",
-                "detail": "Requested 4 vCPUs (Standard_D4s_v5) exceeds available StandardDSv5Family quota in westeurope (Current: 20, Limit: 20, Additional Required: 4)."
+                "code": "SoftDeletedVaultExists",
+                "detail": "Deleted vault is retained in removed state for the configured retention period unless explicitly purged"
               },
               {
-                "step": "Hop 4 · Capacity Fabric",
-                "node": "Regional Cluster Allocator (westeurope AZ-1..3)",
+                "step": "4",
+                "node": "Purge Protection",
                 "effect": "Audit",
-                "code": "AZ-WEU-CAP-409",
-                "detail": "Upstream Azure status advisory AZ-WEU-CAP-409 reports constrained on-demand Dv5 allocation in westeurope; germanywestcentral has unrestricted AZ capacity."
+                "code": "PurgeProtectionEnabled",
+                "detail": "Purge protection was enabled — purge may be blocked until scheduledPurgeDate; verify before forcing purge, as purge is irreversible"
               }
             ]
           },
           {
             "kind": "data-table",
-            "title": "Regional Deployment Readiness & Policy Comparison Matrix",
+            "title": "Soft-deleted vaults blocking recreation",
             "columns": [
               {
-                "key": "region",
-                "label": "Azure Region",
+                "key": "vaultName",
+                "label": "Vault Name",
                 "mono": true
               },
               {
-                "key": "sku",
-                "label": "Target VM SKU",
+                "key": "location",
+                "label": "Location",
                 "mono": true
               },
               {
-                "key": "quotaUsed",
-                "label": "vCPU Quota",
-                "mono": true
-              },
-              {
-                "key": "policyState",
-                "label": "Allowed Locations Policy",
+                "key": "state",
+                "label": "State",
                 "mono": false
               },
               {
-                "key": "upstreamStatus",
-                "label": "Cloud Capacity",
+                "key": "purgeProtection",
+                "label": "Purge Protection",
                 "mono": false
               },
               {
-                "key": "verdict",
-                "label": "Deployment Verdict",
+                "key": "action",
+                "label": "Required Action",
                 "mono": false
               }
             ],
             "rows": [
               {
-                "region": "westeurope",
-                "sku": "Standard_D4s_v5",
-                "quotaUsed": "20 / 20 (100% Full)",
-                "policyState": "Denied (RequestDisallowedByPolicy)",
-                "upstreamStatus": "Advisory (AZ-WEU-CAP-409)",
-                "verdict": "Blocked (Quota + Policy)"
+                "vaultName": "kv-prod-01",
+                "location": "eastus",
+                "state": "Soft-deleted (InRemovedState)",
+                "purgeProtection": "Enabled",
+                "action": "Purge with Remove-AzKeyVault -InRemovedState, then recreate"
               },
               {
-                "region": "germanywestcentral",
-                "sku": "Standard_D4s_v5",
-                "quotaUsed": "4 / 20 (20% Used)",
-                "policyState": "Allowed (EU Sovereign)",
-                "upstreamStatus": "Operational (3 AZs)",
-                "verdict": "Ready to Deploy (<2 min)"
+                "vaultName": "kv-prod-01 (requested)",
+                "location": "eastus",
+                "state": "Create failed — VaultAlreadyExists",
+                "purgeProtection": "n/a",
+                "action": "Retry New-AzKeyVault only after purge completes"
               },
               {
-                "region": "northeurope",
-                "sku": "Standard_D4s_v5",
-                "quotaUsed": "6 / 20 (30% Used)",
-                "policyState": "Allowed (EU Sovereign)",
-                "upstreamStatus": "Operational (3 AZs)",
-                "verdict": "Ready to Deploy (Secondary)"
+                "vaultName": "kv-prod-01 (target)",
+                "location": "eastus",
+                "state": "Not yet created",
+                "purgeProtection": "Enable on recreate",
+                "action": "Recreate clean with -EnablePurgeProtection -SoftDeleteRetentionInDays 90"
               }
             ]
           },
           {
             "kind": "config-diff",
-            "title": "IaC Remediation Diff (demo-iac/vm-deployment.tf)",
-            "filePath": "demo-iac/vm-deployment.tf",
-            "language": "terraform",
-            "diff": "--- a/demo-iac/vm-deployment.tf (failing deployment)\n+++ b/demo-iac/vm-deployment.tf (policy & quota compliant)\n@@ -8,11 +8,12 @@ resource \"azurerm_linux_virtual_machine\" \"workload_vm\" {\n   name                = \"vm-contoso-workload-01\"\n   resource_group_name = azurerm_resource_group.avd_prod.name\n-  location            = \"westeurope\" # BLOCKED: RequestDisallowedByPolicy & 20/20 vCPU QuotaExceeded\n+  location            = \"germanywestcentral\" # ALLOWED: EU-Sovereign Policy & 16 free Dv5 vCPUs\n   size                = \"Standard_D4s_v5\"\n+  zone                = \"1\"\n   admin_username      = \"azureadmin\"\n   tags = {\n     Environment = \"Production\"\n     ManagedBy   = \"ContextPane-GitOps\"\n   }\n }"
+            "title": "Purge soft-deleted vault and recreate clean",
+            "filePath": "recreate-keyvault.ps1",
+            "language": "powershell",
+            "diff": "# Blocked: VaultAlreadyExists on recreate\n- New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus'\n+ # Confirm the soft-deleted vault holding the name\n+ Get-AzKeyVault -InRemovedState | Where-Object VaultName -eq 'kv-prod-01'\n+ # Purge the soft-deleted vault (irreversible)\n+ Remove-AzKeyVault -VaultName 'kv-prod-01' -Location 'eastus' -InRemovedState -Force\n+ # Verify the name is released\n+ Get-AzKeyVault -InRemovedState -VaultName 'kv-prod-01' -Location 'eastus' # expect no result\n+ # Recreate clean vault\n+ New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus' -EnablePurgeProtection -SoftDeleteRetentionInDays 90\n+ Get-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod'\n+ # az keyvault create --name kv-prod-01 --resource-group rg-prod --location eastus --enable-purge-protection"
           },
           {
             "kind": "event-stream",
-            "title": "Azure Activity Log & ARM Deployment Trail (Correlation ID: 8f4c2e19-7a0b-4d12-9e55-001122334455)",
+            "title": "Can't Recreate Key Vault After Deletion · Audit & Activity Log",
             "events": [
               {
-                "id": "evt-arm-01",
-                "timestamp": "2026-10-27T14:18:42Z",
-                "operation": "Microsoft.Resources/deployments/validate/action",
-                "status": "Failed",
-                "code": "RequestDisallowedByPolicy",
-                "caller": "cloudadmin@c4a8shili.onmicrosoft.com",
-                "detail": "Resource 'vm-contoso-workload-01' in 'westeurope' was disallowed by policy 'Allowed-Locations-EU-Sovereign' (permitted: germanywestcentral, northeurope)."
-              },
-              {
-                "id": "evt-arm-02",
-                "timestamp": "2026-10-27T14:18:44Z",
-                "operation": "Microsoft.Compute/virtualMachines/write",
-                "status": "Failed",
-                "code": "OperationNotAllowed (QuotaExceeded)",
-                "caller": "cloudadmin@c4a8shili.onmicrosoft.com",
-                "detail": "Operation results in exceeding quota limits of StandardDSv5Family vCPUs in region 'westeurope'. Current Limit: 20, Current Usage: 20, Additional Required: 4."
-              },
-              {
-                "id": "evt-arm-03",
-                "timestamp": "2026-10-27T14:19:05Z",
-                "operation": "Microsoft.Compute/locations/usages/read",
+                "id": "evt-delete-001",
+                "timestamp": "2026-10-28T09:12:00Z",
+                "operation": "Microsoft.KeyVault/vaults/delete",
                 "status": "Succeeded",
-                "code": "RegionalQuotaCheck",
-                "caller": "ContextPane-MCP-Azure",
-                "detail": "Verified germanywestcentral has 16/20 free Standard_D4s_v5 vCPUs and passes Allowed-Locations-EU-Sovereign pre-flight."
+                "code": "SoftDeleteRetained",
+                "caller": "operator@contoso.com",
+                "detail": "Vault deleted but moved to soft-deleted state; name, keys, secrets and certificates retained for recovery"
+              },
+              {
+                "id": "evt-create-002",
+                "timestamp": "2026-10-28T09:20:00Z",
+                "operation": "Microsoft.KeyVault/vaults/write",
+                "status": "Failed",
+                "code": "VaultAlreadyExists",
+                "caller": "operator@contoso.com",
+                "detail": "Same-name create failed: a vault with the same name exists in soft-deleted state in eastus"
+              },
+              {
+                "id": "evt-list-003",
+                "timestamp": "2026-10-28T09:24:00Z",
+                "operation": "Microsoft.KeyVault/vaults/read (InRemovedState)",
+                "status": "Warning",
+                "code": "PurgeProtectionEnabled",
+                "caller": "operator@contoso.com",
+                "detail": "Get-AzKeyVault -InRemovedState confirms blocking vault with purge protection enabled; purge is irreversible and may wait until scheduledPurgeDate"
               }
             ]
           }
         ],
         "recommendedActions": [
           {
-            "id": "switch-region-gwc",
-            "label": "Re-Target VM to germanywestcentral & Fix",
-            "description": "Update Terraform/ARM location to germanywestcentral (passes policy & has 16 free vCPUs)",
-            "command": "New-AzResourceGroupDeployment -ResourceGroupName \"rg-contoso-avd-prod\" -TemplateFile ./vm-deploy.bicep -Location \"germanywestcentral\" -VmSku \"Standard_D4s_v5\" -WhatIf",
-            "kind": "view-diff"
+            "id": "purge-and-recreate",
+            "label": "Purge Soft-Deleted Vault & Recreate",
+            "description": "Irreversibly purge the removed vault to release the name, verify release, then recreate a clean vault with purge protection and 90-day retention",
+            "command": "Remove-AzKeyVault -VaultName 'kv-prod-01' -Location 'eastus' -InRemovedState -Force; New-AzKeyVault -VaultName 'kv-prod-01' -ResourceGroupName 'rg-prod' -Location 'eastus' -EnablePurgeProtection -SoftDeleteRetentionInDays 90",
+            "kind": "stage-fix"
           },
           {
-            "id": "exempt-and-quota-weu",
-            "label": "Exempt Policy & Request westeurope Quota",
-            "description": "Create scoped Azure Policy exemption and request StandardDSv5Family quota increase (20 -> 40 vCPUs) in westeurope",
-            "command": "Get-AzVMUsage -Location \"westeurope\" | Where-Object { $_.Name.Value -eq \"standardDSv5Family\" }",
-            "kind": "stage-fix"
+            "id": "inspect-removed-vaults",
+            "label": "Inspect Soft-Deleted Vaults",
+            "description": "List all vaults in removed state to confirm name, location, retention and scheduled purge date before purging",
+            "command": "Get-AzKeyVault -InRemovedState | Format-List VaultName,Location,EnablePurgeProtection,ScheduledPurgeDate; az keyvault list-deleted --query \"[].{name:name,location:properties.location,purgeDate:properties.scheduledPurgeDate}\" -o table",
+            "kind": "inspect"
           }
         ],
         "synthesisMeta": {
           "gatekeeperModel": "muse-spark-1.3",
           "synthesizerModel": "muse-wonder-1.0",
-          "latencyMs": 4,
-          "reusedFromCatalog": true,
-          "reuseCount": 4,
-          "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentQuotaAndPolicyCard.tsx",
-          "synthesizedAt": "2026-10-27T23:35:05.529Z"
+          "latencyMs": 13734,
+          "reusedFromCatalog": false,
+          "reuseCount": 1,
+          "tsxStubPath": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",
+          "synthesizedAt": "2026-10-28T01:07:29.051Z"
         },
         "sourceRef": {
-          "file": "data/synthesized-elements/AzureVmDeploymentQuotaAndPolicyCard.tsx",
+          "file": "data/synthesized-elements/CantRecreateMyKeyvaultAfterCard.tsx",
           "startLine": 1,
-          "endLine": 26,
+          "endLine": 12,
           "ref": "dynamic-catalog"
         }
       }
     },
     {
-      "elementId": "EntraOidcFederatedCredentialMismatchCard",
-      "title": "Entra ID Workload Identity Federation (OIDC Subject Claim Mismatch)",
-      "domain": "identity",
-      "reason": "Static EntraSignInTimeline inspects CA policies and expired client secrets (AADSTS7000222), not OIDC JWT subject claim diffs (sub vs federatedIdentityCredential.subject) or GitHub Actions workflow ref/environment mismatches (AADSTS70021).",
+      "elementId": "AzureStorageBlobUploadFailingCard",
+      "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch",
+      "domain": "azure",
+      "reason": "Ticket \"Azure Storage blob upload failing with AuthorizationPermissionMismatch despite C\" requires a bespoke diagnostic and remediation card.",
+      "requiredPrimitives": [
+        "quota-gauges",
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ],
+      "createdAt": "2026-10-28T01:07:46.846Z",
+      "lastUsedAt": "2026-10-28T01:07:46.846Z",
+      "reuseCount": 1,
+      "gatekeeperModel": "muse-spark-1.3",
+      "synthesizerModel": "muse-wonder-1.0",
+      "tsxStubPath": "data/synthesized-elements/AzureStorageBlobUploadFailingCard.tsx",
+      "cardTemplate": {
+        "elementId": "AzureStorageBlobUploadFailingCard",
+        "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch",
+        "headline": "spn-contoso-datalake-ingest has Contributor (control-plane only) on stcontosofinlake01 — PutBlob requires Storage Blob Data Contributor data-plane role",
+        "domain": "azure",
+        "reason": "Ticket \"Azure Storage blob upload failing with AuthorizationPermissionMismatch despite C\" requires a bespoke diagnostic and remediation card.",
+        "state": "critical",
+        "requiredPrimitives": [
+          "quota-gauges",
+          "policy-chain",
+          "data-table",
+          "config-diff",
+          "event-stream"
+        ],
+        "blocks": [
+          {
+            "kind": "quota-gauges",
+            "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch · Resource & State Metrics",
+            "gauges": [
+              {
+                "id": "data-plane-roles",
+                "label": "Data-Plane Roles Assigned",
+                "used": 0,
+                "limit": 1,
+                "unit": "roles",
+                "status": "critical",
+                "detail": "0 Storage Blob Data * roles for spn-contoso-datalake-ingest on stcontosofinlake01"
+              },
+              {
+                "id": "putblob-failures",
+                "label": "PutBlob 403 Failures (1h)",
+                "used": 94,
+                "limit": 100,
+                "unit": "% failed",
+                "status": "critical",
+                "detail": "94% of PutBlob calls since 09:15 UTC return AuthorizationPermissionMismatch"
+              },
+              {
+                "id": "control-plane-roles",
+                "label": "Control-Plane Contributor",
+                "used": 1,
+                "limit": 1,
+                "unit": "assignments",
+                "status": "warning",
+                "detail": "Contributor present but grants Microsoft.Storage/storageAccounts/write, not blob data actions"
+              }
+            ]
+          },
+          {
+            "kind": "policy-chain",
+            "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch · Control-Plane Evaluation Chain",
+            "hops": [
+              {
+                "step": "1",
+                "node": "Azure RBAC — ARM Control Plane",
+                "effect": "Pass",
+                "code": "Contributor",
+                "detail": "spn-contoso-datalake-ingest authenticated; Contributor allows management of stcontosofinlake01, not data operations"
+              },
+              {
+                "step": "2",
+                "node": "Storage Data-Plane Authorization",
+                "effect": "Deny",
+                "code": "AuthorizationPermissionMismatch",
+                "detail": "PutBlob requires Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write — absent without Storage Blob Data Contributor/Owner"
+              },
+              {
+                "step": "3",
+                "node": "Storage Account stcontosofinlake01",
+                "effect": "Deny",
+                "code": "HTTP 403",
+                "detail": "Blob service rejects request at container scope; no SAS/SharedKey fallback permitted by pipeline (AAD auth-mode login)"
+              },
+              {
+                "step": "4",
+                "node": "Remediation Scope Check",
+                "effect": "Audit",
+                "code": "LeastPrivilege",
+                "detail": "Grant Storage Blob Data Contributor at storage-account (or ingest container) scope only — do not elevate to Owner"
+              }
+            ]
+          },
+          {
+            "kind": "data-table",
+            "title": "RBAC Assignments — spn-contoso-datalake-ingest on stcontosofinlake01",
+            "columns": [
+              {
+                "key": "principal",
+                "label": "Principal",
+                "mono": true
+              },
+              {
+                "key": "role",
+                "label": "Role",
+                "mono": false
+              },
+              {
+                "key": "scope",
+                "label": "Scope",
+                "mono": true
+              },
+              {
+                "key": "dataAction",
+                "label": "Blob Write DataAction",
+                "mono": false
+              }
+            ],
+            "rows": [
+              {
+                "principal": "spn-contoso-datalake-ingest",
+                "role": "Contributor",
+                "scope": "storageAccounts/stcontosofinlake01",
+                "dataAction": "No — control-plane only"
+              },
+              {
+                "principal": "spn-contoso-datalake-ingest",
+                "role": "Storage Blob Data Contributor",
+                "scope": "(missing)",
+                "dataAction": "Required: blobs/write — NOT ASSIGNED"
+              },
+              {
+                "principal": "spn-contoso-datalake-ingest",
+                "role": "Reader",
+                "scope": "resourceGroups/rg-contoso-fin-data (inherited)",
+                "dataAction": "No — read control-plane only"
+              }
+            ]
+          },
+          {
+            "kind": "config-diff",
+            "title": "Grant Storage Blob Data Contributor (PowerShell 7 / Azure CLI)",
+            "filePath": "remediation/grant-blob-data-contributor.ps1",
+            "language": "powershell",
+            "diff": "- # Contributor cannot PutBlob: it has no Microsoft.Storage/.../blobs/write dataAction\n- az role assignment list --assignee spn-contoso-datalake-ingest --scope $scope -o table\n+ $scope = \"/subscriptions/<sub-id>/resourceGroups/rg-contoso-fin-data/providers/Microsoft.Storage/storageAccounts/stcontosofinlake01\"\n+ $spId = (Get-AzADServicePrincipal -DisplayName \"spn-contoso-datalake-ingest\").Id\n+ # Least-privilege data-plane grant at storage-account scope (narrow to container if possible)\n+ New-AzRoleAssignment -ObjectId $spId -RoleDefinitionName \"Storage Blob Data Contributor\" -Scope $scope\n+ # Azure CLI equivalent:\n+ # az role assignment create --assignee-object-id $spId --assignee-principal-type ServicePrincipal --role \"Storage Blob Data Contributor\" --scope $scope\n+ Get-AzRoleAssignment -ObjectId $spId -Scope $scope | Format-Table RoleDefinitionName, Scope\n+ # Wait 5-10 min for RBAC propagation, then verify with AAD login:\n+ az storage blob upload --account-name stcontosofinlake01 --container-name ingest --name smoke.txt --file ./smoke.txt --auth-mode login"
+          },
+          {
+            "kind": "event-stream",
+            "title": "Azure Storage Blob Upload Failing — AuthorizationPermissionMismatch · Audit & Activity Log",
+            "events": [
+              {
+                "id": "evt-0915-putblob",
+                "timestamp": "2026-10-28T09:15:00Z",
+                "operation": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write (PutBlob)",
+                "status": "Failed",
+                "code": "AuthorizationPermissionMismatch",
+                "caller": "spn-contoso-datalake-ingest",
+                "detail": "HTTP 403: This request is not authorized to perform this operation using this permission — first failure after 09:15 UTC"
+              },
+              {
+                "id": "evt-0917-rbac-list",
+                "timestamp": "2026-10-28T09:17:00Z",
+                "operation": "Microsoft.Authorization/roleAssignments/read",
+                "status": "Succeeded",
+                "code": "200",
+                "caller": "spn-contoso-datalake-ingest",
+                "detail": "Role list confirms only Contributor + inherited Reader; no Storage Blob Data Contributor/Owner assignment found"
+              },
+              {
+                "id": "evt-0922-retry",
+                "timestamp": "2026-10-28T09:22:00Z",
+                "operation": "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write (PutBlob)",
+                "status": "Failed",
+                "code": "AuthorizationPermissionMismatch",
+                "caller": "spn-contoso-datalake-ingest",
+                "detail": "Pipeline retry to container 'ingest' fails identically — deterministic RBAC denial, not transient/network"
+              }
+            ]
+          }
+        ],
+        "recommendedActions": [
+          {
+            "id": "stage-grant",
+            "label": "Stage Blob Data Contributor Grant",
+            "description": "Create Storage Blob Data Contributor assignment for spn-contoso-datalake-ingest at stcontosofinlake01 scope, then wait for propagation",
+            "command": "New-AzRoleAssignment -ObjectId (Get-AzADServicePrincipal -DisplayName 'spn-contoso-datalake-ingest').Id -RoleDefinitionName 'Storage Blob Data Contributor' -Scope '/subscriptions/<sub-id>/resourceGroups/rg-contoso-fin-data/providers/Microsoft.Storage/storageAccounts/stcontosofinlake01'",
+            "kind": "stage-fix"
+          },
+          {
+            "id": "inspect-assignments",
+            "label": "Inspect Current Assignments & Verify",
+            "description": "List effective assignments and retry PutBlob with AAD login after 5-10 minutes to confirm 403 is cleared",
+            "command": "az role assignment list --assignee spn-contoso-datalake-ingest --include-inherited --query '[].{Role:roleDefinitionName,Scope:scope}' -o table; az storage blob upload --account-name stcontosofinlake01 --container-name ingest --name smoke.txt --file ./smoke.txt --auth-mode login",
+            "kind": "inspect"
+          }
+        ],
+        "synthesisMeta": {
+          "gatekeeperModel": "muse-spark-1.3",
+          "synthesizerModel": "muse-wonder-1.0",
+          "latencyMs": 13466,
+          "reusedFromCatalog": false,
+          "reuseCount": 1,
+          "tsxStubPath": "data/synthesized-elements/AzureStorageBlobUploadFailingCard.tsx",
+          "synthesizedAt": "2026-10-28T01:07:46.846Z"
+        },
+        "sourceRef": {
+          "file": "data/synthesized-elements/AzureStorageBlobUploadFailingCard.tsx",
+          "startLine": 1,
+          "endLine": 12,
+          "ref": "dynamic-catalog"
+        }
+      }
+    },
+    {
+      "elementId": "AzureVmDeploymentFailedInCard",
+      "title": "Azure VM deployment failed in westeurope",
+      "domain": "azure",
+      "reason": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
       "requiredPrimitives": [
         "policy-chain",
         "data-table",
         "config-diff",
         "event-stream"
       ],
-      "createdAt": "2026-10-27T23:22:10.375Z",
-      "lastUsedAt": "2026-10-27T23:35:08.280Z",
-      "reuseCount": 3,
+      "createdAt": "2026-10-28T01:15:05.194Z",
+      "lastUsedAt": "2026-10-28T01:15:05.194Z",
+      "reuseCount": 1,
       "gatekeeperModel": "muse-spark-1.3",
       "synthesizerModel": "muse-wonder-1.0",
-      "tsxStubPath": "data/synthesized-elements/EntraOidcFederatedCredentialMismatchCard.tsx",
+      "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
       "cardTemplate": {
-        "elementId": "EntraOidcFederatedCredentialMismatchCard",
-        "title": "Entra ID Workload Identity Federation (OIDC Subject Claim Mismatch)",
-        "headline": "OIDC Token Exchange Failed (AADSTS70021) on spn-contoso-erp-sync · Presented JWT sub 'repo:contoso/erp-sync:environment:production' != Configured 'repo:contoso/erp-sync:ref:refs/heads/main'",
-        "domain": "identity",
-        "reason": "Static EntraSignInTimeline inspects CA policies and expired client secrets (AADSTS7000222), not OIDC JWT subject claim diffs (sub vs federatedIdentityCredential.subject) or GitHub Actions workflow ref/environment mismatches (AADSTS70021).",
-        "state": "critical",
+        "elementId": "AzureVmDeploymentFailedInCard",
+        "title": "Azure VM deployment failed in westeurope",
+        "headline": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+        "domain": "azure",
+        "reason": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+        "state": "warning",
         "requiredPrimitives": [
           "policy-chain",
           "data-table",
@@ -294,157 +487,492 @@
         ],
         "blocks": [
           {
+            "kind": "quota-gauges",
+            "title": "Azure VM deployment failed in westeurope · Resource Utilization",
+            "gauges": [
+              {
+                "id": "g1",
+                "label": "AzureVmDeploymentFailedInCard",
+                "used": 1,
+                "limit": 1,
+                "unit": "state",
+                "status": "warning"
+              }
+            ]
+          },
+          {
             "kind": "policy-chain",
-            "title": "OIDC Token Exchange Evaluation Chain (Entra STS <- GitHub Actions OIDC Provider)",
+            "title": "Azure VM deployment failed in westeurope · Evaluation Chain",
             "hops": [
               {
-                "step": "Hop 1 · Issuer Verification (https://token.actions.githubusercontent.com)",
-                "node": "OIDC Discovery & JWKS Signature Validation",
-                "effect": "Pass",
-                "code": "IssuerMatched",
-                "detail": "Presented JWT 'iss' claim matches configured federatedIdentityCredential.issuer ('https://token.actions.githubusercontent.com').",
-                "policyId": "fic-spn-contoso-erp-sync-01"
-              },
-              {
-                "step": "Hop 2 · Audience Verification (api://AzureADTokenExchange)",
-                "node": "Entra Workload Identity Token Exchange Audience Gate",
-                "effect": "Pass",
-                "code": "AudienceMatched",
-                "detail": "Presented JWT 'aud' claim matches configured federatedIdentityCredential.audiences (['api://AzureADTokenExchange']).",
-                "policyId": "fic-spn-contoso-erp-sync-01"
-              },
-              {
-                "step": "Hop 3 · Subject Identifier Match (sub claim)",
-                "node": "Entra federatedIdentityCredential.subject Strict String Comparison",
-                "effect": "Deny",
-                "code": "AADSTS70021",
-                "detail": "Deny (AADSTS70021: Presented 'repo:contoso/erp-sync:environment:production' != Configured 'repo:contoso/erp-sync:ref:refs/heads/main'). Adding 'environment: production' to the GitHub Actions job altered the OIDC subject claim.",
-                "policyId": "44b8e1a7-9c2d-4d6a-8f11-001122334455"
+                "step": "Step 1 · Control-Plane Check",
+                "node": "Azure VM deployment failed in westeurope",
+                "effect": "Audit",
+                "code": "DiagnosticCheck",
+                "detail": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
               }
             ]
           },
           {
             "kind": "data-table",
-            "title": "OIDC JWT Token Claim vs. Entra federatedIdentityCredential Comparison Matrix",
+            "title": "Azure VM deployment failed in westeurope · Posture",
             "columns": [
               {
-                "key": "claim",
-                "label": "OIDC Claim / Field",
+                "key": "item",
+                "label": "Target",
                 "mono": true
               },
               {
-                "key": "presentedJwt",
-                "label": "Presented GitHub Actions JWT",
-                "mono": true
-              },
-              {
-                "key": "configuredEntra",
-                "label": "Configured Entra federatedIdentityCredential",
-                "mono": true
-              },
-              {
-                "key": "verdict",
-                "label": "STS Match Verdict",
+                "key": "state",
+                "label": "Observed State",
                 "mono": false
               }
             ],
             "rows": [
               {
-                "claim": "issuer",
-                "presentedJwt": "https://token.actions.githubusercontent.com",
-                "configuredEntra": "https://token.actions.githubusercontent.com",
-                "verdict": "Pass (Exact Match)"
-              },
-              {
-                "claim": "audience (aud)",
-                "presentedJwt": "api://AzureADTokenExchange",
-                "configuredEntra": "api://AzureADTokenExchange",
-                "verdict": "Pass (Exact Match)"
-              },
-              {
-                "claim": "repository",
-                "presentedJwt": "contoso/erp-sync",
-                "configuredEntra": "contoso/erp-sync",
-                "verdict": "Pass (Same Repo)"
-              },
-              {
-                "claim": "subject (sub)",
-                "presentedJwt": "repo:contoso/erp-sync:environment:production",
-                "configuredEntra": "repo:contoso/erp-sync:ref:refs/heads/main",
-                "verdict": "Mismatch (Triggers AADSTS70021)"
-              },
-              {
-                "claim": "tokenEndpointResult",
-                "presentedJwt": "POST /4cc41c20.../oauth2/v2.0/token",
-                "configuredEntra": "App ID 44b8e1a7-9c2d-4d6a-8f11-001122334455",
-                "verdict": "HTTP 400 invalid_client (AADSTS70021)"
+                "item": "AzureVmDeploymentFailedInCard",
+                "state": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
               }
             ]
           },
           {
             "kind": "config-diff",
-            "title": "IaC Remediation Diff (golden-tenant/entra/apps/spn-contoso-erp-sync-oidc.tf)",
-            "filePath": "golden-tenant/entra/apps/spn-contoso-erp-sync-oidc.tf",
-            "language": "terraform",
-            "diff": "--- a/golden-tenant/entra/apps/spn-contoso-erp-sync-oidc.tf (branch-scoped subject)\n+++ b/golden-tenant/entra/apps/spn-contoso-erp-sync-oidc.tf (production environment subject)\n@@ -1,9 +1,9 @@\n resource \"azuread_application_federated_identity_credential\" \"github_actions_prod\" {\n   application_id = \"/applications/44b8e1a7-9c2d-4d6a-8f11-001122334455\"\n-  display_name   = \"github-actions-erp-sync-main\"\n+  display_name   = \"github-actions-erp-sync-production\"\n   description    = \"GitHub Actions OIDC Workload Identity Federation for spn-contoso-erp-sync\"\n   audiences      = [\"api://AzureADTokenExchange\"]\n   issuer         = \"https://token.actions.githubusercontent.com\"\n-  subject        = \"repo:contoso/erp-sync:ref:refs/heads/main\"\n+  subject        = \"repo:contoso/erp-sync:environment:production\"\n }"
+            "title": "Azure VM deployment failed in westeurope · Remediation Diff",
+            "filePath": "remediation.ps1",
+            "language": "powershell",
+            "diff": "- # Current state\n+ Get-AzResource -WhatIf"
           },
           {
             "kind": "event-stream",
-            "title": "Entra Workload Identity Sign-In & Audit Log (spn-contoso-erp-sync)",
+            "title": "Azure VM deployment failed in westeurope · Activity & Audit Log",
             "events": [
               {
-                "id": "evt-oidc-01",
-                "timestamp": "2026-10-27T14:22:11Z",
-                "operation": "ServicePrincipalSignIn / OAuth2TokenExchange",
-                "status": "Failed",
-                "code": "AADSTS70021",
-                "caller": "spn-contoso-erp-sync (44b8e1a7-9c2d-4d6a-8f11-001122334455)",
-                "detail": "No matching federated identity record found for presented assertion subject 'repo:contoso/erp-sync:environment:production'."
-              },
-              {
-                "id": "evt-oidc-02",
-                "timestamp": "2026-10-27T14:22:14Z",
-                "operation": "GET /v1.0/applications/44b8e1a7-9c2d-4d6a-8f11-001122334455/federatedIdentityCredentials",
-                "status": "Succeeded",
-                "code": "SubjectDriftDetected",
-                "caller": "ContextPane-MCP-MsGraph",
-                "detail": "Inspected federatedIdentityCredentials on spn-contoso-erp-sync: found subject 'repo:contoso/erp-sync:ref:refs/heads/main', missing 'repo:contoso/erp-sync:environment:production'."
+                "id": "ev1",
+                "timestamp": "2026-10-28T01:15:05.195Z",
+                "operation": "AzureVmDeploymentFailedInCard",
+                "status": "Warning",
+                "code": "DiagnosticEvent",
+                "caller": "ControlPlane",
+                "detail": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
               }
             ]
           }
         ],
         "recommendedActions": [
           {
-            "id": "update-fic-subject",
-            "label": "Update Federated Credential Subject to environment:production",
-            "description": "Patch federatedIdentityCredential subject on spn-contoso-erp-sync to match GitHub Actions production environment",
-            "command": "Update-MgApplicationFederatedIdentityCredential -ApplicationId \"44b8e1a7-9c2d-4d6a-8f11-001122334455\" -FederatedIdentityCredentialId \"fic-spn-contoso-erp-sync-01\" -Subject \"repo:contoso/erp-sync:environment:production\" -WhatIf",
+            "id": "stage-fix",
+            "label": "Stage Remediation Fix",
+            "description": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+            "command": "Get-AzResource -WhatIf",
             "kind": "stage-fix"
-          },
-          {
-            "id": "add-fic-prod-env",
-            "label": "Add Dedicated Production Environment Federated Credential",
-            "description": "Create a new federatedIdentityCredential for repo:contoso/erp-sync:environment:production alongside main branch credential",
-            "command": "New-MgApplicationFederatedIdentityCredential -ApplicationId \"44b8e1a7-9c2d-4d6a-8f11-001122334455\" -Name \"github-actions-erp-sync-production\" -Issuer \"https://token.actions.githubusercontent.com\" -Subject \"repo:contoso/erp-sync:environment:production\" -Audiences @(\"api://AzureADTokenExchange\") -WhatIf",
-            "kind": "view-diff"
           }
         ],
         "synthesisMeta": {
           "gatekeeperModel": "muse-spark-1.3",
           "synthesizerModel": "muse-wonder-1.0",
-          "latencyMs": 4,
-          "reusedFromCatalog": true,
-          "reuseCount": 3,
-          "tsxStubPath": "data/synthesized-elements/EntraOidcFederatedCredentialMismatchCard.tsx",
-          "synthesizedAt": "2026-10-27T23:35:08.280Z"
+          "latencyMs": 12,
+          "reusedFromCatalog": false,
+          "reuseCount": 1,
+          "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
+          "synthesizedAt": "2026-10-28T01:15:05.195Z"
         },
         "sourceRef": {
-          "file": "data/synthesized-elements/EntraOidcFederatedCredentialMismatchCard.tsx",
+          "file": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
           "startLine": 1,
-          "endLine": 26,
+          "endLine": 12,
+          "ref": "dynamic-catalog"
+        }
+      }
+    },
+    {
+      "elementId": "FederatedCredentialsOnMySpnCard",
+      "title": "Federated Credentials on my spn stopped working",
+      "domain": "azure",
+      "reason": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+      "requiredPrimitives": [
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ],
+      "createdAt": "2026-10-28T01:15:05.213Z",
+      "lastUsedAt": "2026-10-28T01:15:05.213Z",
+      "reuseCount": 1,
+      "gatekeeperModel": "muse-spark-1.3",
+      "synthesizerModel": "muse-wonder-1.0",
+      "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
+      "cardTemplate": {
+        "elementId": "FederatedCredentialsOnMySpnCard",
+        "title": "Federated Credentials on my spn stopped working",
+        "headline": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+        "domain": "azure",
+        "reason": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+        "state": "warning",
+        "requiredPrimitives": [
+          "policy-chain",
+          "data-table",
+          "config-diff",
+          "event-stream"
+        ],
+        "blocks": [
+          {
+            "kind": "quota-gauges",
+            "title": "Federated Credentials on my spn stopped working · Resource Utilization",
+            "gauges": [
+              {
+                "id": "g1",
+                "label": "FederatedCredentialsOnMySpnCard",
+                "used": 1,
+                "limit": 1,
+                "unit": "state",
+                "status": "warning"
+              }
+            ]
+          },
+          {
+            "kind": "policy-chain",
+            "title": "Federated Credentials on my spn stopped working · Evaluation Chain",
+            "hops": [
+              {
+                "step": "Step 1 · Control-Plane Check",
+                "node": "Federated Credentials on my spn stopped working",
+                "effect": "Audit",
+                "code": "DiagnosticCheck",
+                "detail": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          },
+          {
+            "kind": "data-table",
+            "title": "Federated Credentials on my spn stopped working · Posture",
+            "columns": [
+              {
+                "key": "item",
+                "label": "Target",
+                "mono": true
+              },
+              {
+                "key": "state",
+                "label": "Observed State",
+                "mono": false
+              }
+            ],
+            "rows": [
+              {
+                "item": "FederatedCredentialsOnMySpnCard",
+                "state": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          },
+          {
+            "kind": "config-diff",
+            "title": "Federated Credentials on my spn stopped working · Remediation Diff",
+            "filePath": "remediation.ps1",
+            "language": "powershell",
+            "diff": "- # Current state\n+ Get-AzResource -WhatIf"
+          },
+          {
+            "kind": "event-stream",
+            "title": "Federated Credentials on my spn stopped working · Activity & Audit Log",
+            "events": [
+              {
+                "id": "ev1",
+                "timestamp": "2026-10-28T01:15:05.213Z",
+                "operation": "FederatedCredentialsOnMySpnCard",
+                "status": "Warning",
+                "code": "DiagnosticEvent",
+                "caller": "ControlPlane",
+                "detail": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          }
+        ],
+        "recommendedActions": [
+          {
+            "id": "stage-fix",
+            "label": "Stage Remediation Fix",
+            "description": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+            "command": "Get-AzResource -WhatIf",
+            "kind": "stage-fix"
+          }
+        ],
+        "synthesisMeta": {
+          "gatekeeperModel": "muse-spark-1.3",
+          "synthesizerModel": "muse-wonder-1.0",
+          "latencyMs": 12,
+          "reusedFromCatalog": false,
+          "reuseCount": 1,
+          "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
+          "synthesizedAt": "2026-10-28T01:15:05.213Z"
+        },
+        "sourceRef": {
+          "file": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
+          "startLine": 1,
+          "endLine": 12,
+          "ref": "dynamic-catalog"
+        }
+      }
+    },
+    {
+      "elementId": "AzureVmDeploymentFailedInCard",
+      "title": "Azure VM deployment failed in westeurope",
+      "domain": "azure",
+      "reason": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+      "requiredPrimitives": [
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ],
+      "createdAt": "2026-10-28T01:15:48.776Z",
+      "lastUsedAt": "2026-10-28T01:15:48.776Z",
+      "reuseCount": 1,
+      "gatekeeperModel": "muse-spark-1.3",
+      "synthesizerModel": "muse-wonder-1.0",
+      "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
+      "cardTemplate": {
+        "elementId": "AzureVmDeploymentFailedInCard",
+        "title": "Azure VM deployment failed in westeurope",
+        "headline": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+        "domain": "azure",
+        "reason": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+        "state": "warning",
+        "requiredPrimitives": [
+          "policy-chain",
+          "data-table",
+          "config-diff",
+          "event-stream"
+        ],
+        "blocks": [
+          {
+            "kind": "quota-gauges",
+            "title": "Azure VM deployment failed in westeurope · Resource Utilization",
+            "gauges": [
+              {
+                "id": "g1",
+                "label": "AzureVmDeploymentFailedInCard",
+                "used": 1,
+                "limit": 1,
+                "unit": "state",
+                "status": "warning"
+              }
+            ]
+          },
+          {
+            "kind": "policy-chain",
+            "title": "Azure VM deployment failed in westeurope · Evaluation Chain",
+            "hops": [
+              {
+                "step": "Step 1 · Control-Plane Check",
+                "node": "Azure VM deployment failed in westeurope",
+                "effect": "Audit",
+                "code": "DiagnosticCheck",
+                "detail": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          },
+          {
+            "kind": "data-table",
+            "title": "Azure VM deployment failed in westeurope · Posture",
+            "columns": [
+              {
+                "key": "item",
+                "label": "Target",
+                "mono": true
+              },
+              {
+                "key": "state",
+                "label": "Observed State",
+                "mono": false
+              }
+            ],
+            "rows": [
+              {
+                "item": "AzureVmDeploymentFailedInCard",
+                "state": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          },
+          {
+            "kind": "config-diff",
+            "title": "Azure VM deployment failed in westeurope · Remediation Diff",
+            "filePath": "remediation.ps1",
+            "language": "powershell",
+            "diff": "- # Current state\n+ Get-AzResource -WhatIf"
+          },
+          {
+            "kind": "event-stream",
+            "title": "Azure VM deployment failed in westeurope · Activity & Audit Log",
+            "events": [
+              {
+                "id": "ev1",
+                "timestamp": "2026-10-28T01:15:48.776Z",
+                "operation": "AzureVmDeploymentFailedInCard",
+                "status": "Warning",
+                "code": "DiagnosticEvent",
+                "caller": "ControlPlane",
+                "detail": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          }
+        ],
+        "recommendedActions": [
+          {
+            "id": "stage-fix",
+            "label": "Stage Remediation Fix",
+            "description": "Ticket \"Azure VM deployment failed in westeurope\" requires a bespoke diagnostic and remediation card.",
+            "command": "Get-AzResource -WhatIf",
+            "kind": "stage-fix"
+          }
+        ],
+        "synthesisMeta": {
+          "gatekeeperModel": "muse-spark-1.3",
+          "synthesizerModel": "muse-wonder-1.0",
+          "latencyMs": 12,
+          "reusedFromCatalog": false,
+          "reuseCount": 1,
+          "tsxStubPath": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
+          "synthesizedAt": "2026-10-28T01:15:48.776Z"
+        },
+        "sourceRef": {
+          "file": "data/synthesized-elements/AzureVmDeploymentFailedInCard.tsx",
+          "startLine": 1,
+          "endLine": 12,
+          "ref": "dynamic-catalog"
+        }
+      }
+    },
+    {
+      "elementId": "FederatedCredentialsOnMySpnCard",
+      "title": "Federated Credentials on my spn stopped working",
+      "domain": "azure",
+      "reason": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+      "requiredPrimitives": [
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ],
+      "createdAt": "2026-10-28T01:15:48.794Z",
+      "lastUsedAt": "2026-10-28T01:15:48.794Z",
+      "reuseCount": 1,
+      "gatekeeperModel": "muse-spark-1.3",
+      "synthesizerModel": "muse-wonder-1.0",
+      "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
+      "cardTemplate": {
+        "elementId": "FederatedCredentialsOnMySpnCard",
+        "title": "Federated Credentials on my spn stopped working",
+        "headline": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+        "domain": "azure",
+        "reason": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+        "state": "warning",
+        "requiredPrimitives": [
+          "policy-chain",
+          "data-table",
+          "config-diff",
+          "event-stream"
+        ],
+        "blocks": [
+          {
+            "kind": "quota-gauges",
+            "title": "Federated Credentials on my spn stopped working · Resource Utilization",
+            "gauges": [
+              {
+                "id": "g1",
+                "label": "FederatedCredentialsOnMySpnCard",
+                "used": 1,
+                "limit": 1,
+                "unit": "state",
+                "status": "warning"
+              }
+            ]
+          },
+          {
+            "kind": "policy-chain",
+            "title": "Federated Credentials on my spn stopped working · Evaluation Chain",
+            "hops": [
+              {
+                "step": "Step 1 · Control-Plane Check",
+                "node": "Federated Credentials on my spn stopped working",
+                "effect": "Audit",
+                "code": "DiagnosticCheck",
+                "detail": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          },
+          {
+            "kind": "data-table",
+            "title": "Federated Credentials on my spn stopped working · Posture",
+            "columns": [
+              {
+                "key": "item",
+                "label": "Target",
+                "mono": true
+              },
+              {
+                "key": "state",
+                "label": "Observed State",
+                "mono": false
+              }
+            ],
+            "rows": [
+              {
+                "item": "FederatedCredentialsOnMySpnCard",
+                "state": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          },
+          {
+            "kind": "config-diff",
+            "title": "Federated Credentials on my spn stopped working · Remediation Diff",
+            "filePath": "remediation.ps1",
+            "language": "powershell",
+            "diff": "- # Current state\n+ Get-AzResource -WhatIf"
+          },
+          {
+            "kind": "event-stream",
+            "title": "Federated Credentials on my spn stopped working · Activity & Audit Log",
+            "events": [
+              {
+                "id": "ev1",
+                "timestamp": "2026-10-28T01:15:48.794Z",
+                "operation": "FederatedCredentialsOnMySpnCard",
+                "status": "Warning",
+                "code": "DiagnosticEvent",
+                "caller": "ControlPlane",
+                "detail": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card."
+              }
+            ]
+          }
+        ],
+        "recommendedActions": [
+          {
+            "id": "stage-fix",
+            "label": "Stage Remediation Fix",
+            "description": "Ticket \"Federated Credentials on my spn stopped working\" requires a bespoke diagnostic and remediation card.",
+            "command": "Get-AzResource -WhatIf",
+            "kind": "stage-fix"
+          }
+        ],
+        "synthesisMeta": {
+          "gatekeeperModel": "muse-spark-1.3",
+          "synthesizerModel": "muse-wonder-1.0",
+          "latencyMs": 12,
+          "reusedFromCatalog": false,
+          "reuseCount": 1,
+          "tsxStubPath": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
+          "synthesizedAt": "2026-10-28T01:15:48.794Z"
+        },
+        "sourceRef": {
+          "file": "data/synthesized-elements/FederatedCredentialsOnMySpnCard.tsx",
+          "startLine": 1,
+          "endLine": 12,
           "ref": "dynamic-catalog"
         }
       }
     }
   ]
 }
+
+
+

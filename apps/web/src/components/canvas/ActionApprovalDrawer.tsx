@@ -726,7 +726,8 @@ export function CommercialTab() {
 
 function CommercialCallout({ ticketId }: { ticketId: string }) {
   const rec = useWorkbench((s) => s.commercial);
-  const isLicenseTicket = ticketId === "INC-4092" || ticketId === "ANOM-LIC-101" || Boolean(rec?.neededSeats && rec.neededSeats > 0);
+  const isCustomTicket = ticketId.startsWith("CUSTOM-");
+  const isLicenseTicket = !isCustomTicket && (ticketId === "INC-4092" || ticketId === "ANOM-LIC-101" || Boolean(rec?.neededSeats && rec.neededSeats > 0));
   if (!rec && !isLicenseTicket) return null;
 
   return (

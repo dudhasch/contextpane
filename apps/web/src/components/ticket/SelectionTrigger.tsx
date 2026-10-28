@@ -67,7 +67,9 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
     setPending({ text, rect });
     setRefinement("");
     setViewMode("dashboard");
-    void prewarmSelection(text, { viewMode: "dashboard" });
+    if (/@|[0-9a-f]{8}-[0-9a-f]{4}/i.test(text)) {
+      void prewarmSelection(text, { viewMode: "dashboard" });
+    }
   }, [prewarmSelection]);
 
   // Listen for mouseup and keyup on document so selections inside portal hover popovers also trigger the floating bar
@@ -88,7 +90,7 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
     };
   }, [readSelection, refs.floating]);
 
-  // Silent kinematic pre-fetch on selectionchange (debounced 90ms when 3-120 chars are highlighted)
+  // Silent kinematic pre-fetch on selectionchange ONLY for literal UPN/GUID selections without refinement
   useEffect(() => {
     const onSelectionChange = () => {
       if (debounceRef.current !== null) {
@@ -108,11 +110,9 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
       if (!isWithinSelectableSurface(range.commonAncestorContainer, rootRef.current)) return;
       const text = sel.toString().replace(/\s+/g, " ").trim();
       if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return;
+      if (!/@|[0-9a-f]{8}-[0-9a-f]{4}/i.test(text) || refinement.trim().length > 0) return;
       debounceRef.current = window.setTimeout(() => {
-        void prewarmSelection(text, {
-          viewMode,
-          ...(refinement.trim() ? { refinementText: refinement.trim() } : {}),
-        });
+        void prewarmSelection(text, { viewMode });
       }, 90);
     };
     document.addEventListener("selectionchange", onSelectionChange);
@@ -121,18 +121,6 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
       document.removeEventListener("selectionchange", onSelectionChange);
     };
   }, [prewarmSelection, viewMode, refinement]);
-
-  // Re-prewarm when viewMode or refinement changes while toolbar is open
-  useEffect(() => {
-    if (!pending) return;
-    const timer = window.setTimeout(() => {
-      void prewarmSelection(pending.text, {
-        viewMode,
-        ...(refinement.trim() ? { refinementText: refinement.trim() } : {}),
-      });
-    }, 90);
-    return () => window.clearTimeout(timer);
-  }, [pending, viewMode, refinement, prewarmSelection]);
 
   useEffect(() => {
     if (!pending) return;

@@ -7,10 +7,13 @@ const TONE_MAP: Record<string, Tone> = { info: "primary", healthy: "healthy", wa
 export function Toasts() {
   const toasts = useWorkbench((s) => s.toasts);
   const dismiss = useWorkbench((s) => s.dismissToast);
+  const drawerOpen = useWorkbench((s) => s.drawerOpen);
   if (!toasts.length) return null;
   return (
     <div
-      className="pointer-events-none fixed bottom-4 left-1/2 z-[10000] flex w-80 max-w-sm -translate-x-1/2 flex-col gap-2"
+      className={`pointer-events-none fixed bottom-4 z-[10000] flex w-80 max-w-sm -translate-x-1/2 flex-col gap-2 transition-[left] duration-150 ${
+        drawerOpen ? "left-[360px]" : "left-1/2"
+      }`}
       data-testid="toast-container"
     >
       {toasts.map((t) => (

@@ -114,8 +114,17 @@ export function normalizeSpeculativeText(rawText: string): string {
   return rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS).toLowerCase();
 }
 
-export function buildSpeculativeSelectionKey(scenarioId: string, epoch: number, rawText: string): string {
-  return `${scenarioId}:${epoch}:${normalizeSpeculativeText(rawText)}`;
+export function buildSpeculativeSelectionKey(
+  scenarioId: string,
+  epoch: number,
+  rawText: string,
+  refinementText?: string,
+  viewMode?: string,
+): string {
+  const ref = refinementText ? normalizeSpeculativeText(refinementText) : "";
+  const mode = viewMode ?? "dashboard";
+  const base = `${scenarioId}:${epoch}:${normalizeSpeculativeText(rawText)}`;
+  return ref || mode !== "dashboard" ? `${base}:${ref}:${mode}` : base;
 }
 
 /** Cross-card identity highlight: one UPN or device lit on every open card. */
@@ -235,6 +244,7 @@ interface WorkbenchState {
   selections: Record<string, Array<{ id: string; text: string; refinementText?: string; viewMode?: ContextViewMode; index: number }>>;
   exploreStatus: CanvasStatus;
   exploreError: string | null;
+  activeExploreText: string | null;
   /** Mini-dashboard the pointer-hovered selection pill links to (pulses cyan). */
   linkedSelection: string | null;
   composerOpen: boolean;
@@ -447,6 +457,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   selections: {},
   exploreStatus: "idle",
   exploreError: null,
+  activeExploreText: null,
   linkedSelection: null,
   composerOpen: false,
   triageStatus: "idle",
@@ -645,6 +656,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       linkedSelection: null,
       exploreStatus: "idle",
       exploreError: null,
+      activeExploreText: null,
       rowFilter: null,
       resolutionNote: null,
       resolutionNoteStatus: "idle",
@@ -1328,14 +1340,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const scenarioId = get().scenarioId;
     const epoch = get().speculativeEpoch;
     const normalizedText = normalizeSpeculativeText(text);
-    const key = buildSpeculativeSelectionKey(scenarioId, epoch, text);
+    const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
+    const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
+    const key = buildSpeculativeSelectionKey(scenarioId, epoch, text, refinementText, viewMode);
     const existing = get().speculativeSelectionCache[key];
     if (existing && existing.epoch === epoch && existing.scenarioId === scenarioId && existing.status !== "failed") {
       return existing.promise;
     }
 
-    const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
-    const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
     const startedAt = performance.now();
     const customText = get().brief?.extraction ? get().brief?.body : undefined;
 
@@ -1572,7 +1584,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (text.length < SELECTION_MIN_CHARS || get().exploreStatus === "loading") return;
 
     const clickStartedAt = performance.now();
-    const specKey = buildSpeculativeSelectionKey(scenarioId, epoch, text);
+    const specKey = buildSpeculativeSelectionKey(scenarioId, epoch, text, refinementText, viewMode);
     const cachedSlot = get().speculativeSelectionCache[specKey];
     // Validate epoch & scenario fence on speculative slot
     const validSpecSlot =
@@ -1580,11 +1592,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       cachedSlot.epoch === epoch &&
       cachedSlot.scenarioId === scenarioId &&
       cachedSlot.status !== "failed" &&
-      (!refinementText || cachedSlot.refinementText === refinementText)
+      (cachedSlot.refinementText ?? undefined) === refinementText
         ? cachedSlot
         : null;
 
-    set({ exploreStatus: "loading", exploreError: null });
+    set({ exploreStatus: "loading", exploreError: null, activeExploreText: refinementText ? `${text} (${refinementText})` : text });
     try {
       let result: import("./lib/api").ExploreSelectionResponse | null = null;
       let speculativeHit = false;
@@ -1648,6 +1660,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           selections,
           miniDashboards: [entry, ...s.miniDashboards.filter((m) => m.id !== entry.id)].slice(0, 6),
           exploreStatus: "ready",
+          activeExploreText: null,
           linkedSelection: entry.id,
           speculativeSelectionCache: nextCache,
           kinematicMetrics: speculativeHit
@@ -1679,7 +1692,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         detail: `${rowCount} rows · Live Tenant Query · Matched in ${elapsedSec}s`,
       });
     } catch (error) {
-      set({ exploreStatus: "error", exploreError: error instanceof Error ? error.message : String(error) });
+      set({ exploreStatus: "error", activeExploreText: null, exploreError: error instanceof Error ? error.message : String(error) });
       get().toast({ tone: "critical", title: "Generate Context UI failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },

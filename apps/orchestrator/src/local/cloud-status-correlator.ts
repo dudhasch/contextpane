@@ -35,7 +35,7 @@ export function extractPrimaryAzureRegion(text: string): string {
   if (lower.includes("north europe")) return "northeurope";
   if (lower.includes("germany west central")) return "germanywestcentral";
   if (lower.includes("east us")) return "eastus";
-  return "westeurope";
+  return "Global";
 }
 
 /**
@@ -255,10 +255,11 @@ async function probeAzureStatus(
     });
   }
 
+  const isGlobal = region === "Global";
   return {
     service: {
       serviceId: "azure-regional",
-      label: `Azure (${region})`,
+      label: isGlobal ? "Azure ARM / Global" : `Azure (${region})`,
       status: isVmOrDeployIssue && region === "westeurope" ? "advisory" : rssHasIncident ? "degraded" : "operational",
       statusLabel:
         isVmOrDeployIssue && region === "westeurope"
@@ -269,7 +270,9 @@ async function probeAzureStatus(
       summary:
         isVmOrDeployIssue && region === "westeurope"
           ? `ARM control plane healthy in ${region}; Standard_D4s_v5 regional vCPU pool constrained + tenant policy/quota gate active`
-          : `Azure Resource Manager & Compute healthy in ${region}`,
+          : isGlobal
+            ? "Azure Resource Manager & Global Control Plane operational"
+            : `Azure Resource Manager & Compute healthy in ${region}`,
       sourceUrl: "https://azure.status.microsoft/en-us/status/feed/",
       probeSource: res ? "live-status-api" : "seeded-status-feed",
       latencyMs,

@@ -193,6 +193,29 @@ function SubAgentTaskStrip({ tasks }: { tasks: SubAgentTaskRecord[] }) {
   );
 }
 
+function humanizeClarifierSlug(raw: string, q?: ClarifyingQuestion): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (q) {
+    const matchedOpt = q.options.find(
+      (o) =>
+        o.value.toLowerCase() === trimmed.toLowerCase() ||
+        o.id.toLowerCase() === trimmed.toLowerCase() ||
+        o.label.toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (matchedOpt && !/^[a-z0-9]+(?:[_-][a-z0-9]+)+$/i.test(matchedOpt.label)) {
+      return matchedOpt.label;
+    }
+  }
+  if (/^[a-z0-9]+(?:[_-][a-z0-9]+)+$/i.test(trimmed)) {
+    return trimmed
+      .split(/[_-]+/)
+      .map((w) => (w.length <= 3 && /^(vm|rg|az|ca|spn|sku|dns|bgp|iam|pim|mfa|arm)$/i.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+      .join(" ");
+  }
+  return trimmed;
+}
+
 /** Interactive Project & Goal Clarifier card allowing 1-click option pill selection or custom input to regenerate the plan & remediation. */
 function ProjectGoalClarifierCard({
   scenarioId,
@@ -209,7 +232,8 @@ function ProjectGoalClarifierCard({
   const [draft, setDraft] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const q of questions) {
-      init[q.id] = clarifiedAnswers[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+      const raw = clarifiedAnswers[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
+      init[q.id] = humanizeClarifierSlug(raw, q);
     }
     return init;
   });
@@ -217,7 +241,8 @@ function ProjectGoalClarifierCard({
   useEffect(() => {
     const synced: Record<string, string> = {};
     for (const q of questions) {
-      synced[q.id] = clarifiedAnswers[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+      const raw = clarifiedAnswers[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
+      synced[q.id] = humanizeClarifierSlug(raw, q);
     }
     setDraft(synced);
   }, [scenarioId, questions, clarifiedAnswers]);
@@ -233,7 +258,7 @@ function ProjectGoalClarifierCard({
           Interactive Goal &amp; Scope Clarifier
         </span>
         <span className="rounded border border-primary/35 bg-canvas/75 px-1.5 py-0.5 font-mono text-[10px] text-primary">
-          Sub-Agent 1 · muse-spark-1.3
+          Sub-Agent 1 · muse-wonder-1.0
         </span>
         <button
           type="button"
@@ -251,7 +276,14 @@ function ProjectGoalClarifierCard({
           </p>
           <div className="space-y-1.5">
             {questions.map((q, idx) => {
-              const currentVal = draft[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? "";
+              const rawVal = draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
+              const currentVal = humanizeClarifierSlug(rawVal, q);
+              const isPresetOption = q.options.some(
+                (opt) =>
+                  currentVal.toLowerCase() === humanizeClarifierSlug(opt.label, q).toLowerCase() ||
+                  rawVal.toLowerCase() === opt.value.toLowerCase() ||
+                  rawVal.toLowerCase() === opt.id.toLowerCase(),
+              );
               return (
                 <div
                   key={q.id}
@@ -266,13 +298,16 @@ function ProjectGoalClarifierCard({
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {q.options.map((opt) => {
-                      const active = currentVal === opt.value;
+                      const cleanLabel = humanizeClarifierSlug(opt.label, q);
+                      const active =
+                        currentVal.toLowerCase() === cleanLabel.toLowerCase() ||
+                        rawVal.toLowerCase() === opt.value.toLowerCase();
                       return (
                         <button
                           key={opt.id}
                           type="button"
                           data-testid={`clarifier-opt-${q.id}-${opt.id}`}
-                          onClick={() => setDraft((prev) => ({ ...prev, [q.id]: opt.value }))}
+                          onClick={() => setDraft((prev) => ({ ...prev, [q.id]: cleanLabel }))}
                           title={opt.description}
                           className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-colors ${
                             active
@@ -281,18 +316,18 @@ function ProjectGoalClarifierCard({
                           }`}
                         >
                           {active && <Check className="size-3 shrink-0" />}
-                          <span>{opt.label}</span>
+                          <span>{cleanLabel}</span>
                         </button>
                       );
                     })}
                   </div>
                   <input
                     type="text"
-                    value={currentVal}
+                    value={isPresetOption ? "" : currentVal}
                     onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
                     placeholder={q.customHint ?? "Or type custom parameter…"}
                     data-testid={`clarifier-input-${q.id}`}
-                    className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-mono text-[10.5px] text-text focus:outline-1 focus:outline-primary"
+                    className="mt-1.5 h-6 w-full rounded border border-border-subtle bg-surface px-2 font-sans text-[10.5px] text-text focus:outline-1 focus:outline-primary"
                   />
                 </div>
               );
@@ -352,7 +387,9 @@ function UpstreamCloudStatusBanner({ correlation }: { correlation: UpstreamCloud
                   : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
             const shortLabel =
               p.serviceId === "azure-regional"
-                ? `Azure (${correlation.primaryRegion})`
+                ? !correlation.primaryRegion || correlation.primaryRegion === "Global"
+                  ? "Azure ARM / Global"
+                  : `Azure (${correlation.primaryRegion})`
                 : p.serviceId === "entra-id"
                   ? "Entra ID"
                   : p.serviceId === "intune"

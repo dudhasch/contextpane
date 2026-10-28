@@ -12,8 +12,8 @@ const TONE: Record<MetricTone, Tone> = { default: "muted", warning: "warning", c
 const TONE_TEXT: Record<MetricTone, string> = { default: "text-text", warning: "text-warning", critical: "text-critical", success: "text-healthy" };
 const TONE_BAR: Record<MetricTone, string> = { default: "bg-primary/70", warning: "bg-warning", critical: "bg-critical", success: "bg-healthy" };
 
-const BAD = /noncompliant|conflict|error|drifted|orphaned|failure|expired|rogue|critical|high|report|unverified|disabled|missing|countviolation|shadow|quotaexceeded|near limit|high usage|rejected|mismatch|blocking/i;
-const GOOD = /^(compliant|active|reclaimed|success|in-sync|available|enabled|low|verified|healthy|allow|golden.*|\d+\s+vcpus?\s+free|active entitlement group)$/i;
+const BAD = /noncompliant|conflict|error|drifted|orphaned|failure|expired|rogue|critical|high|report|unverified|disabled|missing|countviolation|shadow|quotaexceeded|near limit|high usage|rejected|mismatch|blocking|permanent|standing|inherited/i;
+const GOOD = /^(compliant|active|reclaimed|success|in-sync|available|enabled|low|verified|healthy|allow|golden.*|\d+\s+vcpus?\s+free|active entitlement group|.*pim eligible.*|.*workload identity.*|.*least-privilege.*)$/i;
 
 function classify(row: Record<string, unknown>): RowStatus {
   const values = Object.values(row).map((v) => String(v ?? ""));
@@ -581,6 +581,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
       return String(goldenRow[key]);
     }
     if (/currentsku|assignedsku/i.test(key)) return "SPE_E5";
+    if (/assignmenttype|posture/i.test(key)) return "PIM Eligible (JIT 4h · MFA Required)";
     if (/state|status|compliance/i.test(key)) return "Compliant / Healthy (Golden Baseline)";
     if (/headroom/i.test(key)) return "16 vCPUs Free (germanywestcentral)";
     if (/usage|utilization/i.test(key)) return "4/20 (20% · Healthy)";

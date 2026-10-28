@@ -27,7 +27,6 @@ import { config } from "../config.ts";
 import { correlateUpstreamCloudStatus, correlateUpstreamCloudStatusSync } from "./cloud-status-correlator.ts";
 import {
   assessTicketElementNeeds,
-  buildCustomTicketRemediationTemplate,
   buildDeterministicRoutingDecision,
   synthesizeAndPersistMissingElements,
   synthesizeAndPersistMissingElementsSync,
@@ -35,9 +34,13 @@ import {
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 import {
   applyClarifiedAnswersToEntry,
+  buildCustomTicketRemediationSync,
   buildSubAgentPipelineRecords,
+  enrichRemediationFromCard,
   generateClarifyingQuestions,
   generateClarifyingQuestionsSync,
+  refineEntryWithSubAgentsAsync,
+  synthesizeCustomRemediation,
 } from "./subagent-orchestrator.ts";
 
 /**
@@ -382,11 +385,22 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
   const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
   const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
 
-  const routingDecision = buildDeterministicRoutingDecision({
-    title,
-    body: probe,
-    matchedSeededComponents: rawExtraction.components,
-  });
+  const hasSeededFixtureEntities =
+    options.origin === "erp-drop" ||
+    rawExtraction.entities.some((e) => e.resolvedTo !== null);
+
+  const routingDecision = hasSeededFixtureEntities
+    ? {
+        matchedExistingElements: rawExtraction.components,
+        missingElements: [],
+        extractedEntities: [],
+        customBrief: { summary: "", steps: [] },
+      }
+    : buildDeterministicRoutingDecision({
+        title,
+        body: probe,
+        matchedSeededComponents: rawExtraction.components,
+      });
 
   const hasMissingElements = routingDecision.missingElements.length > 0;
   const finalComponents: CanvasComponentType[] = hasMissingElements
@@ -424,7 +438,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
   });
 
   const customRemediation = hasMissingElements
-    ? buildCustomTicketRemediationTemplate({
+    ? buildCustomTicketRemediationSync({
         scenarioId: id,
         ticketTitle: title,
         ticketBody: body,
@@ -499,21 +513,33 @@ export async function triageCustomTicketAsync(
 ): Promise<CustomScenarioEntry> {
   const title = input.title.trim().slice(0, 140);
   const body = input.body.trim().slice(0, 6000);
+  if (options.origin === "erp-drop" || SAMPLE_UNSCRIPTED_TICKETS.slice(0, 3).some((s) => s.title.toLowerCase() === title.toLowerCase())) {
+    return registerCustomTicket(input, options);
+  }
   const createdAt = options.createdAt ?? new Date().toISOString();
   const probe = input.requester ? `${body}\n${input.requester.displayName} ${input.requester.upn}` : body;
   const rawExtraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
   const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
   const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
 
+  const seedDecision = buildDeterministicRoutingDecision({
+    title,
+    body: probe,
+    matchedSeededComponents: rawExtraction.components,
+  });
+
   const [
     { decision: routingDecision, modelUsed: gatekeeperModel },
     cloudStatusCorrelation,
     { questions: clarifyingQuestions },
+    synthesizedElements,
+    rawRemediation,
   ] = await Promise.all([
     assessTicketElementNeeds({
       title,
       body: probe,
       matchedSeededComponents: rawExtraction.components,
+      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
     }),
     correlateUpstreamCloudStatus({
       ticketText: `${title}\n${body}`,
@@ -524,29 +550,34 @@ export async function triageCustomTicketAsync(
       body,
       ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
     }),
+    synthesizeAndPersistMissingElements({
+      ticketId: id,
+      ticketPrompt: `${title}\n${body}`,
+      decision: seedDecision,
+      gatekeeperModel: "muse-spark-1.3",
+      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    }),
+    synthesizeCustomRemediation({
+      scenarioId: id,
+      ticketTitle: title,
+      ticketBody: body,
+      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    }),
   ]);
+  const customRemediation = enrichRemediationFromCard(rawRemediation, synthesizedElements?.[0]);
 
+  if (synthesizedElements?.[0] && routingDecision.missingElements[0]) {
+    routingDecision.missingElements[0].elementId = synthesizedElements[0].elementId;
+    routingDecision.missingElements[0].title = synthesizedElements[0].title;
+  }
   const hasMissingElements = routingDecision.missingElements.length > 0;
   const finalComponents: CanvasComponentType[] = hasMissingElements
     ? ["SynthesizedDynamicCard"]
     : rawExtraction.components;
 
-  const synthesizedElements = hasMissingElements
-    ? await synthesizeAndPersistMissingElements({
-        ticketId: id,
-        ticketPrompt: `${title}\n${body}`,
-        decision: routingDecision,
-        gatekeeperModel,
-      })
-    : undefined;
-
-  const customRemediation = hasMissingElements
-    ? buildCustomTicketRemediationTemplate({
-        scenarioId: id,
-        ticketTitle: title,
-        ticketBody: body,
-      })
-    : undefined;
+  const initialAnswers: Record<string, string> = Object.fromEntries(
+    clarifyingQuestions.map((q) => [q.id, input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""]),
+  );
 
   const extraction: TicketExtraction = hasMissingElements
     ? {
@@ -565,9 +596,6 @@ export async function triageCustomTicketAsync(
       }
     : rawExtraction;
 
-  const initialAnswers: Record<string, string> = Object.fromEntries(
-    clarifyingQuestions.map((q) => [q.id, input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""]),
-  );
   const subAgentTasks = buildSubAgentPipelineRecords({
     scenarioId: id,
     title,
@@ -608,12 +636,7 @@ export async function triageCustomTicketAsync(
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
   };
 
-  const finalizedEntry =
-    input.clarifiedAnswers && Object.keys(input.clarifiedAnswers).length > 0
-      ? applyClarifiedAnswersToEntry(rawEntry, input.clarifiedAnswers)
-      : rawEntry;
-
-  const entry = registerCustomScenario(finalizedEntry);
+  const entry = registerCustomScenario(rawEntry);
   save();
   return entry;
 }
@@ -628,7 +651,7 @@ export async function refineCustomTicketGoal(
 ): Promise<CustomScenarioEntry | null> {
   const existing = getCustomScenario(scenarioId);
   if (!existing) return null;
-  const updated = applyClarifiedAnswersToEntry(existing, clarifiedAnswers);
+  const updated = await refineEntryWithSubAgentsAsync(existing, clarifiedAnswers);
   registerCustomScenario(updated);
   save();
   return updated;

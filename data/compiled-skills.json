@@ -93,7 +93,7 @@
     },
     "tier": 0,
     "tokenCost": 0,
-    "latencyMs": 0.03,
+    "latencyMs": 0.031,
     "fuzz": {
       "cases": 100,
       "passed": 100
@@ -101,7 +101,7 @@
     "invariantProofMask": 127,
     "minPerturbationCost": 6.5,
     "schemaSignature": "pcc-v3-inc-4092-0x7f-h3dbc0763",
-    "createdAt": "2026-10-27T23:33:20.971Z",
+    "createdAt": "2026-10-28T01:30:00.585Z",
     "version": 1
   },
   {
