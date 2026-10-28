@@ -220,7 +220,11 @@ function UnifiedStatusAndAgentBar({
           onClick={() => setAgentsExpanded((v) => !v)}
           data-testid="subagent-strip-toggle"
           className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-left font-medium text-text transition-colors hover:bg-elevated"
-          title="Click to inspect the 5 automated triage & safety checks"
+          title={
+            displayTasks.length > 0 && !allReal
+              ? `${displayTasks.length - completedCount} of ${displayTasks.length} checks fell back or were not attempted — click to inspect`
+              : "Click to inspect the automated triage & safety checks"
+          }
         >
           <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
           <span
@@ -231,9 +235,7 @@ function UnifiedStatusAndAgentBar({
               ? "● Running Triage Checks…"
               : displayTasks.length === 0
                 ? "Triage pipeline not run"
-                : `${allReal ? "✓" : "⚠"} ${completedCount}/${displayTasks.length} Triage Checks${
-                    allReal ? "" : ` · ${displayTasks.length - completedCount} fallback`
-                  }${totalLatencyMs > 0 ? ` (${fmtMs(totalLatencyMs)})` : ""}`}
+                : `${allReal ? "✓" : "⚠"} ${completedCount}/${displayTasks.length} Triage Checks${totalLatencyMs > 0 ? ` (${fmtMs(totalLatencyMs)})` : ""}`}
           </span>
           <span className="font-mono text-[10px] text-muted">{agentsExpanded || isBusy ? "▴" : "▾"}</span>
         </button>
@@ -246,7 +248,7 @@ function UnifiedStatusAndAgentBar({
               onClick={() => setCloudExpanded((v) => !v)}
               data-testid="upstream-cloud-status-banner"
               className="ml-auto inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-elevated"
-              title={`Correlated at incident time (${correlation.correlatedAtLabel}) — click for details`}
+              title={`${correlation.services.map((p) => cloudServiceLabel(p.serviceId, correlation.primaryRegion)).join(", ")} · correlated at incident time (${correlation.correlatedAtLabel}) — click for details`}
             >
               <Cloud className={`size-3.5 shrink-0 ${hasAdvisory ? "text-amber-400" : "text-emerald-400"}`} />
               <span className={`size-1.5 rounded-full ${hasAdvisory ? "bg-amber-400" : "bg-emerald-400"}`} />
@@ -254,7 +256,7 @@ function UnifiedStatusAndAgentBar({
                 {hasAdvisory
                   ? `Cloud Status: ${correlation.advisories[0]?.region ?? correlation.primaryRegion ?? "Regional"} Advisory`
                   : correlation.services.length > 0
-                    ? `Cloud Status: ${correlation.services.map((p) => cloudServiceLabel(p.serviceId, correlation.primaryRegion)).join(", ")} OK`
+                    ? `Cloud Status: ${correlation.services.length} services OK`
                     : "Cloud Status: no services correlated"}
               </span>
               <span className="font-mono text-[10px] text-muted">{cloudExpanded ? "▴" : "▾"}</span>
