@@ -12,13 +12,15 @@ const CANARY_STAGE_LABEL: Record<string, string> = {
   CONVERGED: "Converged",
   AUTO_ROLLED_BACK: "Auto-rolled back",
 };
-import { ScriptCode } from "./ScriptCode";
-import { VERDICT_TONE, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, type Drawer } from "./shared";
+import { RAIL_FRAME, RAIL_INSET_X, ScriptCode } from "./ScriptCode";
+import { VERDICT_SHORT, VERDICT_TONE, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, type Drawer } from "./shared";
 
 /**
- * Always-visible prover strip under the rail tabs: verdict, proof, blast radius and undo as status words
- * on one row (`rollback-tab` expands it in place), the canary trace on a second line once a run reports
- * one, and the pre-flight failure as an inline critical state with Auto-Fix / Override.
+ * Always-visible prover strip under the rail tabs, framed as its own module: verdict, proof, blast
+ * radius and undo as short status words on one row (`rollback-tab` expands it in place; the full
+ * wording sits in each pill's title, and the row wraps instead of truncating), the canary trace on a
+ * second line once a run reports one, and the pre-flight failure as an inline critical state with
+ * Auto-Fix / Override.
  */
 export function ProverStrip({ drawer }: { drawer: Drawer }) {
   const formal = useWorkbench((s) => s.formal);
@@ -39,28 +41,57 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
   const targets = formal?.blastRadius.rows.find((r) => r.cohort === "target")?.entities.length;
 
   return (
-    <div className="shrink-0 border-b border-hairline" data-strip={preflight.failed ? "critical" : "ok"}>
+    <div
+      className={`${RAIL_INSET_X} mt-2 shrink-0 overflow-hidden ${RAIL_FRAME} bg-ground ${preflight.failed ? "!border-critical/50" : ""}`}
+      data-strip={preflight.failed ? "critical" : "ok"}
+      data-rail-frame="prover"
+      data-testid="prover-strip"
+    >
       <button
         type="button"
         onClick={toggle}
         aria-expanded={expanded}
         title={expanded ? "Collapse proof, blast radius and undo" : "Show proof, blast radius and undo"}
         data-testid="rollback-tab"
-        className="flex h-[30px] w-full min-w-0 items-center gap-3 overflow-hidden px-3 text-left transition-colors duration-120 hover:bg-raised focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal"
+        className="flex min-h-[30px] w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-2.5 py-1 text-left transition-colors duration-120 hover:bg-raised focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal"
       >
         <Pill variant="status" tone={VERDICT_TONE[verdict]} mono={false} className="shrink-0" title={`Pre-flight: ${verdict}`}>
-          {verdict}
+          {VERDICT_SHORT[verdict]}
         </Pill>
-        <Pill variant="status" tone={!formal || notProvable ? "muted" : proofOk ? "healthy" : "critical"} mono={false} className="min-w-0" title="Formal safety invariants">
+        <Pill
+          variant="status"
+          tone={!formal || notProvable ? "muted" : proofOk ? "healthy" : "critical"}
+          mono={false}
+          className="shrink-0"
+          title={
+            !formal
+              ? "Formal safety invariants: proving…"
+              : notProvable
+                ? "Formal safety invariants: no symbolic model for this ticket, so none is claimed"
+                : `Formal safety invariants: ${proven} of ${invariants.length} proven`
+          }
+        >
           {!formal ? "proving…" : notProvable ? "not provable" : `${proven}/${invariants.length} proven`}
         </Pill>
         {formal && (
-          <Pill variant="status" tone="healthy" mono={false} className="min-w-0" title={blastSummarySentence(drawer.ticketId)}>
-            {targets !== undefined ? `${targets} targets · 0 collateral` : "0 collateral"}
+          <Pill
+            variant="status"
+            tone="healthy"
+            mono={false}
+            className="shrink-0"
+            title={`Blast radius: ${blastSummarySentence(drawer.ticketId)}`}
+          >
+            {targets !== undefined ? `${targets} target${targets === 1 ? "" : "s"} · 0 collateral` : "0 collateral"}
           </Pill>
         )}
         {formal && (
-          <Pill variant="status" tone={formal.rollback.powershellScript ? "healthy" : "warning"} mono={false} className="min-w-0">
+          <Pill
+            variant="status"
+            tone={formal.rollback.powershellScript ? "healthy" : "warning"}
+            mono={false}
+            className="shrink-0"
+            title={formal.rollback.powershellScript ? "1-click undo script ready" : "No undo script for this bundle"}
+          >
             {formal.rollback.powershellScript ? "undo ready" : "no undo"}
           </Pill>
         )}
@@ -82,7 +113,7 @@ function CanaryTrace() {
   const reverted = useWorkbench((s) => s.liveConsoleReverted || s.drawer?.approval.state === "rolled-back");
   if (!canary) return null;
   return (
-    <div className="-mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden px-3 pb-1.5 font-mono text-11 whitespace-nowrap" data-testid="canary-trace">
+    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden px-2.5 pb-1.5 font-mono text-11 whitespace-nowrap" data-testid="canary-trace">
       <span className="shrink-0 font-sans text-faint">Health check</span>
       {reverted ? (
         <span className="truncate font-semibold text-warning">ROLLED_BACK · previous state restored</span>
@@ -132,7 +163,7 @@ function PreflightFailure({ reasons }: { reasons: string[] }) {
   };
 
   return (
-    <div className="border-t border-critical/40 px-3 pt-1.5 pb-2" data-testid="preflight-failure-banner" role="alert">
+    <div className="border-t border-critical/40 px-2.5 pt-1.5 pb-2" data-testid="preflight-failure-banner" role="alert">
       <div className="flex items-center gap-1.5 text-12 font-medium text-critical">
         <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
         Pre-flight failed: fix or justify before running
@@ -244,7 +275,7 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
         )}
       </section>
 
-      <section className="border-t border-hairline-2 pt-2">
+      <section className="border-t border-hairline-2 pt-2 pb-3">
         <div className="flex h-6 items-center gap-1 px-3">
           <span className="section-label text-faint">1-click undo</span>
           <Button size="xs" variant="ghost" icon={<ClipboardCopy />} className="ml-auto" onClick={() => void copy(formal.rollback.powershellScript, "1-Click Undo script")}>
@@ -255,7 +286,7 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
           </Button>
         </div>
         <p className="px-3 pb-1.5 text-12 text-muted">If anything goes wrong after applying, this script restores the exact previous state.</p>
-        <ScriptCode code={formal.rollback.powershellScript} name="rollback.ps1" maxHeight="max-h-64" />
+        <ScriptCode code={formal.rollback.powershellScript} name="rollback.ps1" maxHeight="max-h-64" inset="mx-3" />
       </section>
     </div>
   );

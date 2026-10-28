@@ -51,13 +51,16 @@ export function TopBar() {
       </button>
 
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {/* Pressed (signal fill) only while Free-Roam is the view; with a ticket open it is a plain outline
+            control. No colour transition: a throttled frame must never show the fill on a ticket. */}
         <Button
           variant={freeRoamOpen ? "primary" : "outline"}
           icon={<Compass />}
           onClick={() => openFreeRoam()}
           title="Open the Free-Roam start page: open any lens without a ticket"
           data-testid="topbar-freeroam-button"
-          className="shrink-0"
+          data-active={freeRoamOpen || undefined}
+          className="shrink-0 !transition-none"
         >
           Free-Roam
         </Button>

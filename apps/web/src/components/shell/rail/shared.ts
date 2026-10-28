@@ -13,6 +13,33 @@ export const VERDICT_TONE: Record<Drawer["verificationStatus"]["verdict"], Tone>
   Overridden: "warning",
 };
 
+/** Short verdict words for the 440 px prover strip; the full verdict stays in the pill's title. */
+export const VERDICT_SHORT: Record<Drawer["verificationStatus"]["verdict"], string> = {
+  "Verified Safe": "Safe",
+  "Verified With Warnings": "Warnings",
+  "Verification Failed": "Failed",
+  Pending: "Pending",
+  Overridden: "Overridden",
+};
+
+/* State-changing PowerShell: Set-/New-/Remove-/Update-/Add-/Start-/Stop-/Restart- cmdlets, or a Graph /
+ * REST call with a mutating method. Session-local helpers (New-Object, Add-Member, Start-Sleep …) do
+ * not touch the tenant and are ignored. */
+const MUTATING_CMDLET = /\b(?:Set|New|Remove|Update|Add|Start|Stop|Restart)-(?!(?:StrictMode|Variable|Location|Object|TimeSpan|Member|Type|Sleep|Transcript|Alias)\b)[A-Za-z]\w*/i;
+const MUTATING_REQUEST = /\bInvoke-\w*(?:Method|Request)\b[^\n]*-Method\s+['"]?(?:PATCH|POST|PUT|DELETE)\b/i;
+
+/**
+ * True when a staged bundle only reads (a Free-Roam inventory query). The orchestrator puts no
+ * read-only marker on the drawer, so it is derived here: a `FREE-` bundle whose PowerShell (comments
+ * stripped) has no state-changing cmdlet and no mutating Graph / REST request. Scenario fixes never are.
+ */
+export function isReadOnlyBundle(drawer: Pick<Drawer, "ticketId" | "powershellScript">): boolean {
+  if (!drawer.ticketId.startsWith("FREE-")) return false;
+  const code = drawer.powershellScript.replace(/<#[\s\S]*?#>/g, "").replace(/(^|\s)#.*$/gm, "$1");
+  if (!code.trim()) return false;
+  return !MUTATING_CMDLET.test(code) && !MUTATING_REQUEST.test(code);
+}
+
 export function cleanDrawerTitle(drawer: Drawer): string {
   switch (drawer.ticketId) {
     case "INC-4092":

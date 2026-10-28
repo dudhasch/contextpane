@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RailStream } from "@/store";
 import { GHOST_CLASS } from "../../canvas/Section";
+import { RAIL_FRAME, RAIL_INSET } from "./ScriptCode";
 
 /** Reveal pace: ~12 ms per line, the whole script within 1.2 s however long it is. */
 const LINE_MS = 12;
@@ -37,7 +38,7 @@ export function StreamingScript({ stream, ticketId, busy }: { stream: RailStream
 
   return (
     <div className="flex flex-col pb-3" data-testid="rail-stream" data-source={stream.source} data-lines-shown={shown} data-lines-total={writing ? 0 : lines.length}>
-      <div className="px-3 pt-2.5 pb-2.5">
+      <div className="px-3 pt-2.5 pb-2">
         <p className="flex min-w-0 items-baseline gap-1.5 text-12 text-muted">
           <span aria-hidden className={`text-signal ${writing || !doneRevealing || busy ? "motion-safe:animate-pulse-dot" : ""}`}>
             ✦
@@ -51,29 +52,31 @@ export function StreamingScript({ stream, ticketId, busy }: { stream: RailStream
           </span>
         </p>
       </div>
-      <div className="flex h-9 items-center gap-2 border-y border-hairline bg-surface px-3 font-mono text-11 text-faint">
-        <span className="min-w-0 truncate">{ticketId.toLowerCase()}-fix.ps1 · PowerShell 7</span>
-        <span className="ml-auto shrink-0" aria-live="polite">
-          {status}
-        </span>
+      <div className={`${RAIL_INSET} min-w-0 overflow-hidden ${RAIL_FRAME} bg-ground`} data-rail-frame="code">
+        <div className="flex h-9 items-center gap-2 border-b border-hairline bg-surface px-3 font-mono text-11 text-faint">
+          <span className="min-w-0 truncate">{ticketId.toLowerCase()}-fix.ps1 · PowerShell 7</span>
+          <span className="ml-auto shrink-0" aria-live="polite">
+            {status}
+          </span>
+        </div>
+        <pre className="bg-ground py-2 font-mono text-11 leading-[1.55] text-text" aria-busy={writing || !doneRevealing || undefined}>
+          {writing
+            ? ghostSource(stream.previous).map((line, i) => <GhostLine key={`g-${i}`} line={line} />)
+            : lines.map((line, i) =>
+                i < shown ? (
+                  <div
+                    key={`l-${stream.seq}-${i}`}
+                    data-line=""
+                    className={`px-3 whitespace-pre-wrap break-words ${previous && line.trim() && !previous.has(line.trim()) ? "diff-line-add" : ""}`}
+                  >
+                    {line || " "}
+                  </div>
+                ) : (
+                  <GhostLine key={`g-${stream.seq}-${i}`} line={line} />
+                ),
+              )}
+        </pre>
       </div>
-      <pre className="border-b border-hairline bg-ground py-2 font-mono text-11 leading-[1.55] text-text" aria-busy={writing || !doneRevealing || undefined}>
-        {writing
-          ? ghostSource(stream.previous).map((line, i) => <GhostLine key={`g-${i}`} line={line} />)
-          : lines.map((line, i) =>
-              i < shown ? (
-                <div
-                  key={`l-${stream.seq}-${i}`}
-                  data-line=""
-                  className={`px-3 whitespace-pre-wrap break-words ${previous && line.trim() && !previous.has(line.trim()) ? "diff-line-add" : ""}`}
-                >
-                  {line || " "}
-                </div>
-              ) : (
-                <GhostLine key={`g-${stream.seq}-${i}`} line={line} />
-              ),
-            )}
-      </pre>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { useWorkbench, type CodeRailTab } from "@/store";
 import { SmartTechPath } from "../../canvas/Section";
 import { DiffView } from "../../canvas/DiffView";
 import { Pill } from "../../ui/Pill";
-import { ScriptCode } from "./ScriptCode";
+import { RAIL_FRAME, RAIL_INSET, ScriptCode } from "./ScriptCode";
 import { cleanDrawerTitle, useHasIntune, type Drawer } from "./shared";
 
 const TAB_NAME: Record<CodeRailTab, string> = {
@@ -15,7 +15,10 @@ const TAB_NAME: Record<CodeRailTab, string> = {
   devicehealth: "Intune detect & fix scripts",
 };
 
-/** Rail `staging` body: what the fix does, how it applies, and the script of the active tab, full-bleed. */
+/**
+ * Rail `staging` body as bounded modules 8px apart: the action summary box (title, summary, mode
+ * switch) on `bg-raised`, then the framed script of the active tab on `bg-ground`.
+ */
 export function ScriptsTab({ drawer }: { drawer: Drawer }) {
   const rawTab = useWorkbench((s) => s.codeRailTab);
   const focusUpn = useWorkbench((s) => s.drawerFocusUpn);
@@ -29,8 +32,8 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
   const prUrl = drawer.staging?.prUrl;
 
   return (
-    <div className="flex flex-col pb-3">
-      <div className="space-y-1.5 px-3 pt-2.5 pb-2.5">
+    <div className="flex flex-col gap-2 pt-2 pb-3">
+      <div className={`${RAIL_INSET} min-w-0 space-y-1.5 ${RAIL_FRAME} bg-raised px-3 pt-2 pb-1.5`} data-testid="action-summary" data-rail-frame="summary">
         {focusBanner && (
           <p className="flex min-w-0 items-baseline gap-1.5 text-11" data-testid="drawer-focus-banner">
             <span aria-hidden className="text-signal">
@@ -80,18 +83,18 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
             <ScriptCode
               code={drawer.terraformDiff}
               name="main.tf · OpenTofu plan diff"
-              render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="" wrap={wrap} edges="b" />}
+              render={(wrap) => <DiffView diff={drawer.terraformDiff} maxHeight="" wrap={wrap} edges="none" />}
             />
           ) : (
-            <p className="border-y border-hairline px-3 py-2 text-12 text-muted">This fix changes no OpenTofu-managed resource.</p>
+            <p className={`${RAIL_INSET} ${RAIL_FRAME} bg-ground px-3 py-2 text-12 text-muted`}>This fix changes no OpenTofu-managed resource.</p>
           ))}
         {tab === "devicehealth" && <DeviceHealthScript />}
       </div>
 
-      <CommercialCallout ticketId={drawer.ticketId} />
+      <CommercialCallout ticketId={drawer.ticketId} className={`${RAIL_INSET} ${RAIL_FRAME} px-3 py-2`} />
 
       {approveLog.length > 0 && (
-        <section className="mx-3 mt-3 border-t border-hairline pt-2">
+        <section className={`${RAIL_INSET} ${RAIL_FRAME} px-3 py-2`}>
           <div className="section-label text-faint">Last run</div>
           <div className="mt-1 space-y-0.5 font-mono text-11 break-words text-muted">
             {approveLog.map((l, i) => (
@@ -104,7 +107,7 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
   );
 }
 
-/** One row of text toggles: apply live now or stage a PR only, plus the audit-PR box in break-glass mode. */
+/** One row of text toggles: live (break-glass) or GitOps PR mode, plus the audit-PR box in break-glass mode. The CTA lives in the footer. */
 function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
   const selected = useWorkbench((s) => s.executionMode);
   const setMode = useWorkbench((s) => s.setExecutionMode);
@@ -115,12 +118,12 @@ function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
   const locked = drawer.approval.state !== "pending" && drawer.approval.state !== "rolled-back";
   const current = locked ? (drawer.approval.mode ?? selected) : selected;
   const options: Array<{ id: ExecutionMode; label: string; icon: ReactNode }> = [
-    { id: "break-glass", label: "Apply live now", icon: <Zap className="size-3" aria-hidden="true" /> },
-    { id: "gitops", label: "Stage PR only", icon: <GitPullRequest className="size-3" aria-hidden="true" /> },
+    { id: "break-glass", label: "Live mode (Break-glass)", icon: <Zap className="size-3" aria-hidden="true" /> },
+    { id: "gitops", label: "GitOps PR mode", icon: <GitPullRequest className="size-3" aria-hidden="true" /> },
   ];
   return (
-    <div className="flex min-w-0 items-center gap-3 pt-0.5">
-      <div role="radiogroup" aria-label="How to apply" className="flex items-center gap-3" data-testid="execution-mode">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 pt-0.5">
+      <div role="radiogroup" aria-label="Execution mode" className="flex items-center gap-3" data-testid="execution-mode">
         {options.map((o) => {
           const active = o.id === current;
           return (
@@ -166,13 +169,13 @@ function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
   );
 }
 
-export function CommercialCallout({ ticketId }: { ticketId: string }) {
+export function CommercialCallout({ ticketId, className = "mx-3 mt-3 border-t border-hairline pt-2" }: { ticketId: string; className?: string }) {
   const rec = useWorkbench((s) => s.commercial);
   const isCustomTicket = ticketId.startsWith("CUSTOM-");
   const isLicenseTicket = !isCustomTicket && (ticketId === "INC-4092" || ticketId === "ANOM-LIC-101" || Boolean(rec?.neededSeats && rec.neededSeats > 0));
   if (!rec && !isLicenseTicket) return null;
   return (
-    <section className="mx-3 mt-3 border-t border-hairline pt-2 text-12" data-testid="commercial-reconciler">
+    <section className={`${className} text-12`} data-testid="commercial-reconciler">
       <p className="text-text">
         <Lightbulb className="mr-1 inline size-3.5 align-[-2px] text-healthy" aria-hidden="true" />
         <span className="font-medium text-healthy">License &amp; cost impact</span>{" "}
@@ -187,20 +190,19 @@ export function CommercialCallout({ ticketId }: { ticketId: string }) {
 
 function DeviceHealthScript() {
   const health = useWorkbench((s) => s.intuneHealth);
-  if (!health) return <p className="border-y border-hairline px-3 py-2 text-12 text-muted">Loading Intune remediation scripts…</p>;
+  if (!health) return <p className={`${RAIL_INSET} ${RAIL_FRAME} bg-ground px-3 py-2 text-12 text-muted`}>Loading Intune remediation scripts…</p>;
   const verified = health.verification.passed && health.verification.detectReadOnly;
   return (
-    <div data-testid="device-health-script">
-      <div className="border-t border-hairline px-3 py-1.5">
+    <div className="flex flex-col gap-2" data-testid="device-health-script">
+      <div className="px-3">
         <Pill variant="status" tone={verified ? "healthy" : "critical"} mono={false}>
           {verified ? "Detection script verified read-only" : "Detection script check failed"}
         </Pill>
       </div>
       <ScriptCode code={health.detect} name="Detect.ps1 · read-only check" maxHeight="max-h-56" />
-      <div className="h-2" />
       <ScriptCode code={health.remediate} name="Remediate.ps1 · registry & policy fix" maxHeight="max-h-64" />
       {health.csp.length > 0 && (
-        <section className="px-3 pt-2.5">
+        <section className="px-3 pt-0.5">
           <div className="section-label text-faint">Affected Windows settings &amp; registry keys</div>
           <ul className="mt-1">
             {health.csp.map((c) => (

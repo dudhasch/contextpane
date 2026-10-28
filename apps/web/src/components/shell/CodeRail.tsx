@@ -45,9 +45,11 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   const refineProgress = useWorkbench((s) => s.refineProgress);
   const railStream = useWorkbench((s) => s.railStream);
   const scenarioId = useWorkbench((s) => s.scenarioId);
+  const resolved = useWorkbench((s) => Boolean(s.convergence[s.scenarioId]));
   const hasIntune = useHasIntune();
-  // Free-Roam keeps the rail quiet unless it staged its own action (FREE-… bundle or one in flight).
-  const freeRoamStaged = Boolean(drawer?.ticketId.startsWith("FREE-")) || remediateStatus === "loading";
+  // Free-Roam keeps the rail quiet unless it staged its own action (FREE-… bundle or one in flight);
+  // a ticket's auto-staged bundle still streaming in the background stays out of it.
+  const freeRoamStaged = Boolean(drawer?.ticketId.startsWith("FREE-")) || (remediateStatus === "loading" && Boolean(railStream?.freeRoam));
   const mode: CodeRailMode = forceIdle && !freeRoamStaged ? "idle" : storeMode;
   const tabs = hasIntune ? [...TABS, DEVICE_HEALTH_TAB] : TABS;
   const activeTab: CodeRailTab = tab === "devicehealth" && !hasIntune ? "powershell" : tab;
@@ -90,6 +92,8 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
             <p>Open a lens to stage an action.</p>
             <p>The staged script for the newest lens lands here.</p>
           </>
+        ) : resolved ? (
+          <p data-testid="rail-resolved-idle">Resolved · reopen to stage again</p>
         ) : (
           <>
             <p>No remediation staged.</p>
@@ -173,7 +177,7 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
           {drawer && mode !== "idle" && <ProverStrip drawer={drawer} />}
 
           {drawer && mode !== "idle" && mode !== "review" && (
-            <div className="flex h-8 shrink-0 items-center gap-4 border-b border-hairline px-3" role="tablist" aria-label="Rail view">
+            <div className="mt-1 flex h-8 shrink-0 items-center gap-4 border-b border-hairline px-3" role="tablist" aria-label="Rail view">
               <ViewToggle active={mode === "staging"} onClick={goScripts} data-testid="code-rail-open-scripts">
                 Scripts
               </ViewToggle>
@@ -189,7 +193,7 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
           )}
 
           <div className="flex min-h-0 flex-1 flex-col" data-testid="code-rail-body">
-            <div className="min-h-0 flex-1 overflow-y-auto" data-testid="drawer-scroll-viewport">
+            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]" data-testid="drawer-scroll-viewport">
               {body}
             </div>
           </div>

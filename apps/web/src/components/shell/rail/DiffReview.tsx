@@ -96,7 +96,7 @@ function IaCReview() {
               ))}
             </ul>
           )}
-          <ScriptCode code={props.hclDiff} name={props.summary.replace(/^State: /, "")} render={(wrap) => <DiffView diff={props.hclDiff} maxHeight="" wrap={wrap} edges="b" />} />
+          <ScriptCode code={props.hclDiff} name={props.summary.replace(/^State: /, "")} render={(wrap) => <DiffView diff={props.hclDiff} maxHeight="" wrap={wrap} edges="none" />} />
         </>
       ) : (
         <p className="px-3 text-12 text-muted">No IaC component on the canvas yet.</p>
@@ -158,7 +158,7 @@ function BaselineReview({ card }: { card: "EntraSignInTimeline" | "IntuneDriftCa
         </ul>
       )}
       {diff ? (
-        <ScriptCode code={diff} name="baseline.diff" render={(wrap) => <DiffView diff={diff} maxHeight="" wrap={wrap} edges="b" />} />
+        <ScriptCode code={diff} name="baseline.diff" render={(wrap) => <DiffView diff={diff} maxHeight="" wrap={wrap} edges="none" />} />
       ) : (
         <p className="px-3 text-12 text-muted">The live configuration matches the golden baseline.</p>
       )}

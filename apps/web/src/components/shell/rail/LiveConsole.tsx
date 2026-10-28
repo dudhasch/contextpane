@@ -28,11 +28,11 @@ export function LiveConsole() {
         </Button>
       </div>
       {step && (
-        <div className={`border-t border-hairline px-3 py-1.5 font-mono text-12 break-words ${stepTone}`} data-testid="live-console-step-header">
+        <div className={`px-3 pb-1.5 font-mono text-12 break-words ${stepTone}`} data-testid="live-console-step-header">
           {step}
         </div>
       )}
-      <div className="space-y-0.5 border-y border-hairline bg-ground px-3 py-2 font-mono text-11 leading-[1.6]">
+      <div className="ml-2.5 space-y-0.5 rounded-md border border-hairline bg-ground px-3 py-2 font-mono text-11 leading-[1.6]" data-rail-frame="console">
         {lines.length === 0 && !streaming && <div className="text-faint">No output reported.</div>}
         {lines.map((line, i) => {
           const isSuccess = line.includes("✓") || line.includes("PASSED");

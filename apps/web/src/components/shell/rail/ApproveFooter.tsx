@@ -1,10 +1,10 @@
-import { Check, FlaskConical, GitPullRequest, RotateCcw, Undo2, Zap } from "lucide-react";
+import { Check, FlaskConical, GitPullRequest, Play, RotateCcw, Undo2, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../../ui/Button";
 import { OtherTenantsPopover } from "./OtherTenantsPopover";
-import { usePreflight } from "./shared";
+import { isReadOnlyBundle, usePreflight } from "./shared";
 
 /* One 32px action row under a 20px control row: the footer stays at 70px. */
 const ACTION = "!h-8 !text-12";
@@ -86,6 +86,8 @@ export function ApproveFooter() {
       </Button>
     );
   } else if (drawer.approval.state === "pending") {
+    // A read-only bundle (a Free-Roam inventory query) runs a query live; it fixes nothing.
+    const liveQuery = mode === "break-glass" && !simulate && isReadOnlyBundle(drawer);
     actions = (
       <Button
         variant={simulate ? "primary" : "healthy"}
@@ -94,9 +96,11 @@ export function ApproveFooter() {
         disabled={preflight.blocked || regenerating}
         title={regenerating ? "The fix is being regenerated for the new scope" : preflight.blocked ? "Fix or override the pre-flight first" : undefined}
         onClick={() => void approve("approve")}
-        icon={simulate ? <FlaskConical /> : mode === "break-glass" ? <Zap /> : <GitPullRequest />}
+        icon={simulate ? <FlaskConical /> : liveQuery ? <Play /> : mode === "break-glass" ? <Zap /> : <GitPullRequest />}
+        data-testid="approve-primary"
+        data-read-only={liveQuery || undefined}
       >
-        {simulate ? "Run rollback drill" : mode === "break-glass" ? "Apply fix now" : "Create pull request"}
+        {simulate ? "Run rollback drill" : liveQuery ? "Run live query" : mode === "break-glass" ? "Apply fix now" : "Create pull request"}
       </Button>
     );
   } else {

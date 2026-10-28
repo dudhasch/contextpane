@@ -262,12 +262,14 @@ export interface RailStream {
   script: string | null;
   /** Script on screen when the run started; lines not in it render as `+` additions. */
   previous: string | null;
+  /** A Free-Roam action's script (not the open ticket's), so the Free-Roam rail shows only its own. */
+  freeRoam?: boolean;
 }
 
 /** Same script keeps the stream (no second reveal); a new one bumps `seq`. */
 function withRailScript(stream: RailStream | null, script: string, source: RailStream["source"]): RailStream {
   if (stream?.script === script) return stream;
-  return { seq: (stream?.seq ?? 0) + 1, source, script, previous: stream?.previous ?? null };
+  return { seq: (stream?.seq ?? 0) + 1, source, script, previous: stream?.previous ?? null, ...(stream?.freeRoam ? { freeRoam: true } : {}) };
 }
 
 /** Swaps the synthesized section's props in place: the component id (its React key) never changes mid-refine. */
@@ -485,6 +487,14 @@ interface WorkbenchState {
   unpinRecipe(): void;
   hover(entityId: string, entityType?: EntityType): Promise<void>;
   remediate(): Promise<void>;
+  /** WP10-B: opening a ticket stages its primary fix by itself (`AUTO_STAGE`; tests switch it off here). */
+  autoStageRemediation: boolean;
+  /**
+   * Stages the primary fix of the ticket that just loaded: the rail opens on the PowerShell tab and
+   * `remediate()` streams the bundle. No-op in Free-Roam, while a bundle is in flight, when a pending
+   * bundle for the ticket is already staged, and (silently) when the ticket is already resolved.
+   */
+  autoStage(scenarioId: ScenarioId): void;
   approve(decision?: "approve" | "reject"): Promise<void>;
   /** Server-side guard repair + pre-flight re-run; the drawer shows whatever verdict comes back. */
   autofixPreflight(): Promise<void>;
@@ -562,6 +572,15 @@ interface WorkbenchState {
 
 let toastSeq = 0;
 let telemetryDisposer: (() => void) | null = null;
+
+/** WP10-B: a selected ticket stages its primary remediation on load (seeds `autoStageRemediation`). */
+export const AUTO_STAGE = true;
+/**
+ * Bumps whenever a run starts to own the rail's bundle (`remediate()`, a Free-Roam stage). A
+ * `/api/remediate` result whose run is no longer current, or whose ticket is no longer on screen, is
+ * discarded instead of landing in another ticket's rail.
+ */
+let remediateRun = 0;
 
 const hoverKey = (scenarioId: string, entityId: string) => `${scenarioId}|${entityId.toLowerCase()}`;
 
@@ -649,6 +668,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
   refineProgress: [],
   pendingRefine: NO_PENDING_REFINE,
   railStream: null,
+  autoStageRemediation: AUTO_STAGE,
   approveLog: [],
   filter: null,
   lastVoice: null,
@@ -917,8 +937,10 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       approveLog: [],
       drawerTab: "powershell",
       drawerFocusBanner: `Free-Roam staged action · ${input.title ?? input.prompt.slice(0, 60)}`,
-      railStream: { seq: (s.railStream?.seq ?? 0) + 1, source: "remediate", script: null, previous: s.drawer?.ticketId.startsWith("FREE-") ? s.drawer.powershellScript : null },
+      railStream: { seq: (s.railStream?.seq ?? 0) + 1, source: "remediate", script: null, previous: s.drawer?.ticketId.startsWith("FREE-") ? s.drawer.powershellScript : null, freeRoam: true },
     }));
+    // A ticket bundle still in flight no longer owns the rail.
+    remediateRun++;
     try {
       const result = await streamPost<RemediateResponse>("/api/free-roam/remediate", input, (event) =>
         set((s) => {
@@ -1189,6 +1211,8 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     }));
     const { activeRecipeId } = get();
     await Promise.all([get().loadBrief(scenarioId), activeRecipeId ? get().hydrateRecipe(activeRecipeId, scenarioId) : get().correlate()]);
+    // WP10-B: brief and canvas landed (a pasted ticket was triaged before this call): stage the fix.
+    get().autoStage(scenarioId);
   },
 
   async loadBrief(scenarioId = get().scenarioId, fresh = false) {
@@ -1350,6 +1374,23 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     }
   },
 
+  autoStage(scenarioId) {
+    const s = get();
+    if (!s.autoStageRemediation || s.freeRoamOpen || s.scenarioId !== scenarioId) return;
+    if (s.remediateStatus === "loading" || s.refiningGoal) return;
+    // The orchestrator was unreachable for the brief or the canvas: a remediate would only fail loudly.
+    if (s.briefStatus === "error" || s.canvasStatus === "error") return;
+    const staged = s.drawer?.ticketId === scenarioId ? s.drawer : null;
+    if (s.convergence[scenarioId]) {
+      // Already resolved: no warning toast. Show what ran if it is here; the idle rail says "Resolved".
+      if (staged) set({ codeRailMode: "staging" });
+      return;
+    }
+    if (staged?.approval.state === "pending") return;
+    set({ codeRailOpen: true, codeRailMode: "staging", codeRailTab: "powershell", drawerTab: "powershell", liveConsoleOpen: false });
+    void get().remediate();
+  },
+
   async remediate() {
     const scenarioId = get().scenarioId;
     const epoch = get().speculativeEpoch;
@@ -1391,6 +1432,12 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       void get().loadDrawerExtras();
       return;
     }
+    // From here this run owns the rail; a newer run or another ticket makes its result stale.
+    const run = ++remediateRun;
+    const startedInFreeRoam = get().freeRoamOpen;
+    const current = () => run === remediateRun && get().scenarioId === scenarioId && get().freeRoamOpen === startedInFreeRoam;
+    // A prewarmed bundle still in flight (plan-step hover) is awaited instead of asking twice.
+    const inflightSlot = get().speculativeBuffer.find((b) => b.kind === "remediation" && b.scenarioId === scenarioId && b.epoch === epoch && b.status === "inflight");
     set((s) => ({
       remediateStatus: "loading",
       remediateProgress: [],
@@ -1404,12 +1451,21 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         : { seq: (s.railStream?.seq ?? 0) + 1, source: "remediate", script: null, previous: s.drawer?.ticketId === scenarioId ? s.drawer.powershellScript : (s.railStream?.previous ?? null) },
     }));
     try {
-      const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) =>
-        set((s) => {
-          const script = event.stage === "bundle:ready" && typeof event.data?.powershellScript === "string" ? event.data.powershellScript : null;
-          return { remediateProgress: [...s.remediateProgress, event], ...(script && s.scenarioId === scenarioId ? { railStream: withRailScript(s.railStream, script, "remediate") } : {}) };
-        }),
-      );
+      const prewarmed = inflightSlot ? ((await inflightSlot.promise) as RemediateResponse | null) : null;
+      const result =
+        prewarmed ??
+        (await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) =>
+          set((s) => {
+            if (!current()) return {};
+            const script = event.stage === "bundle:ready" && typeof event.data?.powershellScript === "string" ? event.data.powershellScript : null;
+            return { remediateProgress: [...s.remediateProgress, event], ...(script ? { railStream: withRailScript(s.railStream, script, "remediate") } : {}) };
+          }),
+        ));
+      // Scenario guard: the operator moved on (another ticket, Free-Roam, or a newer run): never land here.
+      if (!current()) {
+        settleStaleRemediation(run);
+        return;
+      }
       // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
       const github = get().health?.github;
       set({
@@ -1422,6 +1478,10 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       });
       void get().loadDrawerExtras();
     } catch (error) {
+      if (!current()) {
+        settleStaleRemediation(run);
+        return;
+      }
       set({ remediateStatus: "error", railStream: null });
       get().toast({ tone: "critical", title: "Remediation failed", detail: error instanceof Error ? error.message : String(error) });
     }
@@ -2122,6 +2182,8 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     const scenarioId = targetScenarioId ?? get().scenarioId;
     const epoch = get().speculativeEpoch;
     if (get().drawer?.ticketId === scenarioId || get().convergence[scenarioId]) return;
+    // The auto-staged bundle for this ticket is already streaming: a prewarm would ask the coder twice.
+    if (get().scenarioId === scenarioId && get().remediateStatus === "loading") return;
     const slotKey = `remediation:${scenarioId}:${epoch}`;
     if (get().speculativeBuffer.some((b) => b.slotKey === slotKey)) return;
     const startedAt = performance.now();
@@ -2395,8 +2457,9 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         speculativeEpoch: s.speculativeEpoch + 1,
         speculativeBuffer: s.speculativeBuffer.filter((b) => b.scenarioId !== scenarioId),
       }));
-      // The fix regenerates while the canvas re-correlates; both keep their sections mounted.
-      if (wasDrawerOpen) {
+      // The fix regenerates while the canvas re-correlates; both keep their sections mounted. Staging
+      // is the default now (WP10-B), so a refined scope always re-stages unless the ticket is resolved.
+      if (wasDrawerOpen || (get().autoStageRemediation && !get().convergence[scenarioId])) {
         void get().remediate();
       }
       await get().correlate({ fresh: true, keepMounted: true });
@@ -2471,6 +2534,17 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 })));
+
+/**
+ * A discarded remediate run that still holds the rail's loading state (no newer run started, e.g. the
+ * operator opened Free-Roam mid-stream) lets go of it, so nothing spins forever.
+ */
+function settleStaleRemediation(run: number): void {
+  if (run !== remediateRun) return;
+  const s = useWorkbench.getState();
+  if (s.remediateStatus !== "loading" || s.railStream?.freeRoam) return;
+  useWorkbench.setState({ remediateStatus: "idle", remediateProgress: [], railStream: null });
+}
 
 let convergedCache: {
   layout: Layout | null;
