@@ -636,7 +636,20 @@ app.post("/api/rollback", async (c) => {
   const rollback = buildInverseRollback(requested);
   const check = verifyIdempotency(targetId);
   if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
-  return c.json({ ok: true, executed: "simulated", latencyMs: Math.round((performance.now() - started) * 10) / 10, rollback, idempotency: check });
+  // No inverse is executed yet (U-5 derives it from a pre-change snapshot): the script is staged and nothing is claimed (L-09).
+  const reason = "Revert is staged, not executed: no inverse write is wired to the tenant yet";
+  return c.json({
+    ok: true,
+    executed: false,
+    reason,
+    latencyMs: Math.round((performance.now() - started) * 10) / 10,
+    rollback,
+    idempotency: check,
+    executionLog: [
+      `Revert script staged for ${requested}: ${rollback.restores.length} restore step${rollback.restores.length === 1 ? "" : "s"}, ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
+      `${reason}. Review it, run it with -WhatIf, then run it as the delegated admin.`,
+    ],
+  });
 });
 
 app.get("/api/intune/health-script/:scenarioId", (c) => {

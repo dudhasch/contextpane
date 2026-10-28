@@ -497,7 +497,8 @@ export const api = {
   timeline: (scenarioId: string) => request<TimelineResponse>(`/api/timeline/${scenarioId}`),
   skills: () => request<{ skills: SkillDef[] }>("/api/skills"),
   compileSkill: (scenarioId: string) => request<{ skill: SkillDef; promoted: boolean }>("/api/skills/compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
-  rollback: (scenarioId: string) => request<{ ok: boolean; latencyMs: number }>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
+  rollback: (scenarioId: string) =>
+    request<{ ok: boolean; executed: boolean; reason?: string; latencyMs: number; executionLog?: string[] }>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   dataplaneDetail: (scenarioId: string) => request<DataPlaneDetailResponse>(`/api/dataplane/${scenarioId}`),
   commercial: (scenarioId: string) => request<{ reconciliation: Commercial }>(`/api/reconcile/commercial/${scenarioId}`),
   reverseCompile: (scenarioId: string) => request<{ result: ReverseResult }>("/api/iac/reverse-compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),

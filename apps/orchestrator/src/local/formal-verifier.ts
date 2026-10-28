@@ -797,7 +797,7 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
             `if ($PSCmdlet.ShouldProcess('intune-bitlocker-legacy-v1', 'Restore legacy Fabrikam-Win10-Legacy-BitLocker-AES128 assignment to SG-Fabrikam-Legal-Workstations')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/intune-bitlocker-legacy-v1/assign' -Body @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = 'b1c2d3e4-1111-4222-8333-444455556666' } }) } | Out-Null }`,
             ...pre.affected.map(
               (a) =>
-                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation BitLocker policy state (${a.pre})')) { Invoke-MgDeviceManagementManagedDeviceSyncDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
+                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation BitLocker policy state (${a.pre})')) { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
             ),
           ]
         : effectiveId === "ANOM-LIC-101"
@@ -820,7 +820,7 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
                   `if ($PSCmdlet.ShouldProcess('Contoso-FW-Legacy-v1', 'Restore legacy Windows Firewall profile assignment')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/fw-contoso-legacy-v1/assign' -Body @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = 'c3d4e5f6-2222-4333-8444-555566667777' } }) } | Out-Null }`,
                   ...pre.affected.map(
                     (a) =>
-                      `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation state (${a.pre})')) { Invoke-MgDeviceManagementManagedDeviceSyncDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
+                      `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation state (${a.pre})')) { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
                   ),
                 ]
               : (effectiveId as string) === SHADOW_ADMIN_SCENARIO_ID
@@ -829,7 +829,7 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
                   ]
                 : pre.affected.map((a) =>
                     a.kind === "device"
-                      ? `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation device configuration state (${a.pre})')) { Invoke-MgDeviceManagementManagedDeviceSyncDevice -ManagedDeviceId '${a.id}' | Out-Null }`
+                      ? `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation device configuration state (${a.pre})')) { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId '${a.id}' | Out-Null }`
                       : `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation principal state (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
                   );
 

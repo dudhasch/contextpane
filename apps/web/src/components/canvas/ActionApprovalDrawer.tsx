@@ -447,7 +447,7 @@ export function ActionApprovalDrawerSheet() {
                     data-testid="console-revert-button"
                     className="font-semibold"
                   >
-                    Revert Change Now
+                    Stage Revert Script
                   </Button>
                   <Button
                     variant="healthy"
@@ -502,7 +502,7 @@ export function ActionApprovalDrawerSheet() {
                     onClick={() => void revertFromConsole()}
                     data-testid="console-revert-button"
                   >
-                    Revert Change Now
+                    Stage Revert Script
                   </Button>
                   <Button
                     variant="healthy"

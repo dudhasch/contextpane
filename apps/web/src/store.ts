@@ -1246,16 +1246,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const { drawer } = get();
     if (!drawer) return;
     const domain = get().brief?.verifiedDomain ?? "c4a8shili.onmicrosoft.com";
+    // The console shows only what the orchestrator reports; nothing here is scripted (L-09).
     if (decision === "approve") {
       set({
         liveConsoleOpen: true,
         liveConsoleStreaming: true,
         liveConsoleReverted: false,
-        liveConsoleStep: `⏳ Executing Step 1 of 3 against ${domain}...`,
-        liveConsoleLines: [
-          `[00:00.12] Connecting to Microsoft Graph v1.0 & Azure ARM (${domain})...`,
-          `[00:00.34] Verifying pre-flight safety invariants & RBAC lease for #${drawer.ticketId}...`,
-        ],
+        liveConsoleStep: "⏳ Waiting for the orchestrator…",
+        liveConsoleLines: [],
       });
     }
     try {
@@ -1266,16 +1264,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode, simulateCanaryFailure: get().simulateCanaryFailure } : {}),
       });
       const { executionLog, ...updated } = result.drawer;
-      const stampedLines = [
-        `[00:00.12] Connecting to Microsoft Graph v1.0 & Azure ARM (${domain})...`,
-        ...executionLog.map((line, idx) => {
-          const sec = (0.38 + idx * 0.24).toFixed(2).padStart(5, "0");
-          return `[00:${sec}] ${line}`;
-        }),
-        result.canary?.finalState === "AUTO_ROLLED_BACK"
-          ? `[00:01.64] ⚠ Canary health check failed — 1-Click Undo script executed automatically · Previous state restored`
-          : `[00:01.40] ✓ All steps completed · Post-Check Invariants: PASSED`,
-      ];
+      const state = updated.approval.state;
       set({
         drawer: updated,
         approveLog: executionLog,
@@ -1284,9 +1273,15 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         liveConsoleStreaming: false,
         liveConsoleStep:
           result.canary?.finalState === "AUTO_ROLLED_BACK"
-            ? "⚠ Canary Health Check Failed — Auto-Rollback Completed"
-            : `✓ Execution Complete against ${domain} — Review Output & Confirm (OK) or Revert (REVERT)`,
-        liveConsoleLines: stampedLines,
+            ? "⚠ Canary health check failed — see the rollback lines below"
+            : state === "executed"
+              ? `✓ Executed against ${domain} — review the output below`
+              : state === "staged"
+                ? "Staged for the pipeline — nothing written to the tenant"
+                : state === "simulated"
+                  ? "Approval recorded — simulated, nothing written to the tenant"
+                  : `Approval ${state}`,
+        liveConsoleLines: executionLog,
       });
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
         get().toast({
@@ -1312,7 +1307,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({
         tone: "healthy",
         title: `${c.execution === "live-graph" ? "Executed live" : "Approved (simulated)"} · ${c.scenarioId} resolved in ${c.latencyMs} ms`,
-        detail: `${executionLog.find((l) => l.startsWith("Graph")) ?? "Canvas converged"} · Verified safe${c.gitBranch ? ` · ${c.gitBranch}` : ""}`,
+        detail: `${executionLog.find((l) => l.startsWith("Graph")) ?? "Canvas converged"} · ${updated.verificationStatus.verdict}${c.gitBranch ? ` · ${c.gitBranch}` : ""}`,
         ...(c.prUrl ? { href: c.prUrl, hrefLabel: `GitHub PR #${c.prUrl.split("/pull/")[1] ?? ""}` } : {}),
       });
       // Keep the drawer & Live Execution Console open so the operator can inspect output and click [Confirm & Close (OK)] or [Revert Change Now (REVERT)].
@@ -1484,32 +1479,25 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
   async revertFromConsole() {
     const scenarioId = get().scenarioId;
-    const domain = get().brief?.verifiedDomain ?? "c4a8shili.onmicrosoft.com";
-    set((s) => ({
-      liveConsoleOpen: true,
-      liveConsoleStreaming: true,
-      liveConsoleStep: `⏳ Reverting change on ${domain} via 1-Click Undo Script...`,
-      liveConsoleLines: [
-        ...s.liveConsoleLines,
-        `[00:01.85] ↩ Operator triggered [REVERT] — executing 1-Click Undo Script for #${scenarioId}...`,
-      ],
-    }));
+    set({ liveConsoleOpen: true, liveConsoleStreaming: true, liveConsoleStep: "⏳ Asking the orchestrator for the revert…" });
     try {
       const r = await api.rollback(scenarioId);
-      get().applyConvergence(scenarioId, null);
+      // Only an executed revert changes the tenant, the canvas or the drawer; a staged one says so (L-09).
+      const executed = r.executed === true;
+      if (executed) get().applyConvergence(scenarioId, null);
       set((s) => ({
         liveConsoleStreaming: false,
-        liveConsoleReverted: true,
-        liveConsoleStep: `↩ Change Reverted in ${r.latencyMs} ms — Previous Tenant State Restored`,
-        liveConsoleLines: [
-          ...s.liveConsoleLines,
-          `[00:02.18] Restoring Microsoft Graph & Azure resource state to pre-change snapshot...`,
-          `[00:02.45] ✓ Rollback verified in ${r.latencyMs} ms · Canvas & tenant restored to previous state.`,
-        ],
-        drawer: s.drawer ? { ...s.drawer, approval: { ...s.drawer.approval, state: "pending" } } : null,
+        liveConsoleReverted: executed,
+        liveConsoleStep: executed ? `↩ Revert executed in ${r.latencyMs} ms` : "Revert script staged — nothing was executed against the tenant",
+        liveConsoleLines: [...s.liveConsoleLines, ...(r.executionLog ?? [])],
+        drawer: executed && s.drawer ? { ...s.drawer, approval: { ...s.drawer.approval, state: "pending" } } : s.drawer,
       }));
-      get().toast({ tone: "healthy", title: `Undo completed in ${r.latencyMs} ms`, detail: "Previous tenant state restored; canvas reverted." });
-      void get().correlate({ fresh: true });
+      get().toast(
+        executed
+          ? { tone: "healthy", title: `Revert executed in ${r.latencyMs} ms`, detail: "Canvas reverted." }
+          : { tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." },
+      );
+      if (executed) void get().correlate({ fresh: true });
     } catch (e) {
       set({ liveConsoleStreaming: false });
       get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) });
@@ -1663,8 +1651,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   async rollbackNow() {
     try {
       const r = await api.rollback(get().scenarioId);
+      if (r.executed !== true) {
+        get().toast({ tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." });
+        return;
+      }
       get().applyConvergence(get().scenarioId, null);
-      get().toast({ tone: "healthy", title: `Undo completed in ${r.latencyMs} ms`, detail: "Previous tenant state restored; canvas reverted." });
+      get().toast({ tone: "healthy", title: `Revert executed in ${r.latencyMs} ms`, detail: "Canvas reverted." });
       void get().correlate({ fresh: true });
     } catch (e) { get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
