@@ -61,7 +61,7 @@ export function GenUICanvas() {
       <HistoricalSnapshotBanner />
       {/* Borderless sections separated by one hairline; non-section blocks get the same 16px gutter. */}
       <div className="flex min-h-0 flex-1 flex-col divide-y divide-hairline overflow-y-auto" data-lens-list="">
-        {(triageStatus === "loading" || refiningGoal) && (
+        {triageStatus === "loading" && (
           <div className="px-4 py-3">
             <SubAgentSynthesisSkeleton
               mode={triageStatus === "loading" ? "triage" : "refine"}
