@@ -37,6 +37,7 @@ import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
 import { patchCustomTicketPipeline } from "../local/custom-ticket.ts";
 import { runRepairLoop } from "./repair-loop.ts";
+import { captureEntitySnapshot, compareSnapshots } from "../local/snapshot.ts";
 import { auditLedger } from "../store/audit.ts";
 import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
@@ -827,9 +828,15 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let writeSummary = "";
   let write: LabWriteOutcome | null = null;
   let verification = drawer.verificationStatus;
+  // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
+  const preSnapshot = mode === "break-glass" && before ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
 
   if (mode === "break-glass") {
     log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
+    if (preSnapshot) {
+      const captured = [preSnapshot.users.length ? `${preSnapshot.users.length} user${preSnapshot.users.length === 1 ? "" : "s"}` : null, preSnapshot.caPolicies.length ? `${preSnapshot.caPolicies.length} CA polic${preSnapshot.caPolicies.length === 1 ? "y" : "ies"}` : null, preSnapshot.nsg ? `NSG ${preSnapshot.nsg.name} (${preSnapshot.nsg.rules.length} rules)` : null, preSnapshot.intune ? "Intune assignments" : null, preSnapshot.workloadIdentity ? "workload identity" : null].filter(Boolean);
+      log.push(`Pre-change snapshot captured (${captured.join(", ") || "no entity"}) for f⁻¹ and the read-back probe`);
+    }
     if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
       // A custom bundle has no lab write behind it: it is only executed when the approved script really runs.
       const plannedSteps = before.custom.customRemediation.executionSteps ?? [];
@@ -843,11 +850,31 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         log.push(...script.log);
       }
       if (scriptRan?.ok) {
-        writeSummary = `${drawer.title} (approved script exited 0)`;
-        write = { source: "live-graph", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: [] };
-        state = "executed";
-        execution = "live-graph";
+        // Exit code 0 is not "executed": the read-back probe against the pre-change snapshot decides (HARD_CASES 2).
         invalidateContext(scenarioId);
+        let changed: string[] | null = null;
+        if (preSnapshot) {
+          try {
+            const after = await gatherContext(scenarioId, { fresh: true });
+            const post = await captureEntitySnapshot(after, remediatedUpns);
+            changed = compareSnapshots(preSnapshot, post).differences.map((d) => d.path);
+          } catch {
+            changed = null;
+          }
+        }
+        if (changed && changed.length) {
+          writeSummary = `${drawer.title} (approved script exited 0; read-back shows ${changed.length} changed entit${changed.length === 1 ? "y" : "ies"})`;
+          write = { source: "live-graph", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: changed.map((id) => ({ id, ok: true, status: 200 })) };
+          state = "executed";
+          execution = "live-graph";
+          log.push(`Read-back probe: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ", …" : ""} changed against the pre-change snapshot → executed`);
+        } else {
+          writeSummary = `${drawer.title} (approved script exited 0; read-back shows no change in the snapshotted entities)`;
+          write = { source: "simulated", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: [], fallbackReason: changed === null ? "read-back probe unavailable" : "read-back probe found no change in the snapshotted entities (licences, Conditional Access, NSG, Intune)" };
+          state = "approved";
+          execution = "simulated";
+          log.push(`Approved script exited 0, but ${write.fallbackReason}; it is not reported as executed and the ticket stays open.`);
+        }
       } else {
         const fallbackReason = scriptRan ? "approved script failed; nothing reported as executed" : "custom bundles are staged, not executed";
         writeSummary = `${drawer.title} · staged, not executed`;
@@ -856,8 +883,10 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         execution = "simulated";
         log.push(`No Graph or ARM write: ${fallbackReason}. The ticket stays open.`);
       }
-    } else if (isLiveCloudMode() && labScenarioId) {
-      if (config.allowExecute) {
+    } else if (labScenarioId) {
+      // The lab write runs in every mode; outside live mode the services simulate it and the in-process lab state
+      // follows, so the read-back probe and the inverse have something real to compare against (U-5).
+      if (isLiveCloudMode() && config.allowExecute) {
         log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
         const script = await runApprovedScript(drawer);
         log.push(...script.log);
@@ -948,9 +977,14 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
           execution,
           remediatedUpns,
           reclaimedUpns,
+          preSnapshotAt: preSnapshot?.capturedAt ?? null,
+          // Revert can execute only what approve could: a live write path (lab scenario) or, under CTX_ALLOW_EXECUTE, the inverse script.
+          inverseExecutable: Boolean(preSnapshot) && execution === "live-graph" && isLiveCloudMode() && (labScenarioId !== null || config.allowExecute),
+          inverseReason: !preSnapshot ? "no pre-change snapshot" : execution !== "live-graph" ? "nothing was written live" : !isLiveCloudMode() ? "LIVE_CLOUD_MODE=false" : labScenarioId === null && !config.allowExecute ? "custom ticket without CTX_ALLOW_EXECUTE" : "inverse derived from the pre-change snapshot",
         }
       : null;
   if (convergence) {
+    if (preSnapshot) convergenceStore.setSnapshot(scenarioId, preSnapshot);
     convergenceStore.set(convergence);
     log.push(`Canvas converged via notifications/resources/updated (Tier 0, 0 tokens) · ${latencyMs} ms end to end`);
   }
@@ -1079,9 +1113,14 @@ export function overrideRemediation(remediationId: string, justification: string
 }
 
 async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: boolean; log: string[] }> {
+  return runScriptText(drawer.powershellScript, `Invoke-Remediate-${drawer.ticketId}`);
+}
+
+/** CTX_ALLOW_EXECUTE only: runs a script as the signed-in delegated identity; the inverse rollback uses the same runner (U-5). */
+export async function runScriptText(script: string, name: string): Promise<{ ok: boolean; log: string[] }> {
   const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
-  const file = join(dir, `Invoke-Remediate-${drawer.ticketId}.ps1`);
-  writeFileSync(file, drawer.powershellScript, "utf8");
+  const file = join(dir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.ps1`);
+  writeFileSync(file, script, "utf8");
   try {
     const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
     const log = result.stdout.split("\n").filter(Boolean).slice(-20);

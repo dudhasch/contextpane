@@ -18,6 +18,7 @@ import {
   displayScenarioId,
   getScenarioEntry,
   isAnyScenarioId,
+  isFreeRoamActionId,
   isScenarioId,
   isTenantId,
   type ComponentType,
@@ -71,6 +72,8 @@ import { closureStore } from "./store/closure.ts";
 import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
 import { approve, autofixRemediation, overrideRemediation, remediate, restageRemediationForSteering } from "./tiers/tier3-remediate.ts";
+import { executeInverse, rollbackRemediation } from "./tiers/tier3-rollback.ts";
+import { buildInverseFromSnapshot } from "./local/inverse-rollback.ts";
 import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
@@ -697,29 +700,18 @@ app.get("/api/formal/:scenarioId", (c) => {
   return c.json({ scenarioId: requested, baseScenarioId: base, formal, blastRadius: counterfactualReplay(targetId), rollback: buildInverseRollback(requested), idempotency: verifyIdempotency(targetId), asrBlast: base === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
 });
 
+/**
+ * Revert (U-5): the inverse is derived from the pre-change snapshot the approval captured and
+ * executed through the same write path approve used; the console prints the server's log and
+ * the read-back against the snapshot. Nothing is claimed that did not happen (L-09).
+ */
 app.post("/api/rollback", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
-  const requested = scenarioOf(body);
-  const targetId = baseScenarioOf(requested) ?? requested;
-  const started = performance.now();
-  const rollback = buildInverseRollback(requested);
-  // null: no symbolic model (ad-hoc ticket), so there is no fixture transform to check (HARD_CASES 5).
-  const check = verifyIdempotency(targetId);
-  if (check && !check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
-  // No inverse is executed yet (U-5 derives it from a pre-change snapshot): the script is staged and nothing is claimed (L-09).
-  const reason = "Revert is staged, not executed: no inverse write is wired to the tenant yet";
-  return c.json({
-    ok: true,
-    executed: false,
-    reason,
-    latencyMs: Math.round((performance.now() - started) * 10) / 10,
-    rollback,
-    idempotency: check,
-    executionLog: [
-      `Revert script staged for ${requested}: ${rollback.restores.length} restore step${rollback.restores.length === 1 ? "" : "s"}, ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
-      `${reason}. Review it, run it with -WhatIf, then run it as the delegated admin.`,
-    ],
-  });
+  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string; approvedBy?: string };
+  // A staged Free-Roam action is not a registered scenario, but it may be reverted (to "nothing to revert").
+  const requested = isFreeRoamActionId(body.scenarioId) ? body.scenarioId : scenarioOf(body);
+  const result = await rollbackRemediation(requested, body.approvedBy ? { approvedBy: body.approvedBy } : {});
+  if (result.idempotency && !result.idempotency.passed) return c.json({ ...result, ok: false, error: "inverse rollback idempotency check failed" }, 422);
+  return c.json(result);
 });
 
 app.get("/api/intune/health-script/:scenarioId", (c) => {
@@ -978,10 +970,14 @@ const approveHandler = async (c: Context) => {
   // A rollback drill still runs so the operator can see the dead-man's switch, labelled as a drill.
   if (!liveWriteApplied && !drill) return c.json({ drawer, convergence, canary: null });
   const canaryTarget = baseScenarioOf(scenarioId) ?? scenarioId;
-  // A drill after a live write reverts first, so the canary reports what happened, not the request flag (M-15).
-  const baseForRevert = baseScenarioOf(scenarioId);
-  const revertWrite = drill && liveWriteApplied && baseForRevert ? await applyScenarioState(baseForRevert, "drifted") : null;
-  const revertLanded = revertWrite?.source === "live-graph" && revertWrite.results.every((r) => r.ok);
+  // A drill after a live write reverts first through the snapshot inverse (U-5), so the canary reports what happened, not the request flag (M-15).
+  const preSnapshot = convergenceStore.snapshot(scenarioId);
+  const revertRun =
+    drill && liveWriteApplied && preSnapshot
+      ? await executeInverse({ scenarioId, snapshot: preSnapshot, drawer: remediationStore.get(drawer.remediationId), inverse: buildInverseFromSnapshot(preSnapshot, drawer) })
+      : null;
+  const revertWrite = revertRun?.write ?? null;
+  const revertLanded = Boolean(revertRun?.landed);
   const canary = {
     ...runCanaryConvergence(canaryTarget, {
       mode: body.mode ?? "break-glass",

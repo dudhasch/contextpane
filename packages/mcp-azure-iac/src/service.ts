@@ -414,12 +414,27 @@ export const azureIacService = {
    * Writes run one after another; ARM serialises operations on one NSG anyway.
    */
   async setNsgState(tenantId: string, state: "remediated" | "drifted"): Promise<NsgWriteResult> {
+    const tenant = getManifestAzure(tenantId);
+    const baseline = getTerraformBaseline(tenant);
+    return azureIacService.reconcileNsgTo(tenantId, state === "remediated" ? baseline.nsg : manifestNsgState(tenant), state === "remediated");
+  },
+
+  /**
+   * Snapshot-driven restore (U-5): the live NSG is put back to the captured rule set and tags
+   * (rules the fix added are deleted, captured ones re-put), through the same ARM calls as the
+   * forward write. Simulated outside live mode.
+   */
+  async restoreNsgState(tenantId: string, target: Pick<NsgState, "rules" | "tags">): Promise<NsgWriteResult> {
+    const tenant = getManifestAzure(tenantId);
+    return azureIacService.reconcileNsgTo(tenantId, { ...manifestNsgState(tenant), rules: target.rules, tags: target.tags }, true);
+  },
+
+  /** Reconciles the live NSG to `target`: delete rules not in it when `deleteExtra`, put missing or changed ones, patch tags. */
+  async reconcileNsgTo(tenantId: string, target: NsgState, deleteExtra: boolean): Promise<NsgWriteResult> {
     const started = performance.now();
     const tenant = getManifestAzure(tenantId);
     const { resourceGroup } = tenant.azure;
     const nsgName = tenant.azure.nsg.name;
-    const baseline = getTerraformBaseline(tenant);
-    const target: NsgState = state === "remediated" ? baseline.nsg : manifestNsgState(tenant);
     const done = (source: NsgWriteResult["source"], results: NsgWriteResult["results"], fallbackReason?: string): NsgWriteResult => ({
       source,
       latencyMs: Math.round(performance.now() - started),
@@ -437,7 +452,7 @@ export const azureIacService = {
     const targetByName = new Map(target.rules.map((r) => [r.name, r]));
     const liveByName = new Map(live.rules.map((r) => [r.name, r]));
     const ops: Array<{ id: string; run: () => Promise<number> }> = [];
-    if (state === "remediated") {
+    if (deleteExtra) {
       for (const r of live.rules.filter((x) => !targetByName.has(x.name))) {
         ops.push({ id: `delete ${r.name}`, run: () => deleteNsgRuleLive(tenant.subscriptionId, resourceGroup, nsgName, r.name, WRITE_TIMEOUT_MS) });
       }

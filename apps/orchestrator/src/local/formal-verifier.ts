@@ -952,7 +952,8 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
                 ? [
                     `$ApplicationObjectId = ${psq(WORKLOAD_IDENTITY.spn.objectId)}`,
                     `$ServicePrincipalId = ${psq(WORKLOAD_IDENTITY.spn.servicePrincipalId)}`,
-                    sp(WORKLOAD_IDENTITY.federatedCredential.name, "Remove the GitHub Actions federated identity credential created by f", `Remove-MgApplicationFederatedIdentityCredential -ApplicationId $ApplicationObjectId -FederatedIdentityCredentialId ${psq(WORKLOAD_IDENTITY.federatedCredential.name)}`),
+                    // The FIC is removed by the id Graph returns for its name, never by the name used as an id (H-19).
+                    sp(WORKLOAD_IDENTITY.federatedCredential.name, "Remove the GitHub Actions federated identity credential created by f", `$fic = Get-MgApplicationFederatedIdentityCredential -ApplicationId $ApplicationObjectId | Where-Object Name -eq ${psq(WORKLOAD_IDENTITY.federatedCredential.name)} | Select-Object -First 1; if ($fic) { Remove-MgApplicationFederatedIdentityCredential -ApplicationId $ApplicationObjectId -FederatedIdentityCredentialId $fic.Id } else { Write-Warning ${psq(`Federated credential '${WORKLOAD_IDENTITY.federatedCredential.name}' not found`)} }`),
                     sp(WORKLOAD_IDENTITY.owner.upn, "Restore the pre-remediation app owner", `$owner = Get-MgUser -UserId ${psq(WORKLOAD_IDENTITY.owner.upn)} -Property Id; New-MgApplicationOwnerByRef -ApplicationId $ApplicationObjectId -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($owner.Id)" }`),
                     "$graphSp = Get-MgServicePrincipal -Filter \"appId eq '00000003-0000-0000-c000-000000000000'\" -Top 1",
                     `foreach ($roleName in @(${WORKLOAD_IDENTITY.appPermissions.map(psq).join(", ")})) {`,

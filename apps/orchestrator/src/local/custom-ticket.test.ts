@@ -316,8 +316,17 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
       expect(cardJson).not.toContain("alex.wilber");
     }
 
-    // Verify remediation bundle and pre-flight verification pass with zero westeurope or alex.wilber contamination
-    const remResult = await remediate({ scenarioId: entry.scenarioId });
+    // Verify remediation bundle and pre-flight verification pass with zero westeurope or alex.wilber contamination.
+    // No Modal warm-up and no fix/* worktree from the tests (HARD_CASES 11): the sandbox and git staging are spied away.
+    const { spyOn } = await import("bun:test");
+    const modal = await import("../preflight/modal.ts");
+    const staging = await import("../preflight/staging.ts");
+    const modalSpy = spyOn(modal, "modalConfigured").mockReturnValue(false);
+    const stageSpy = spyOn(staging, "stageRemediationBranch").mockRejectedValue(new Error("git staging disabled in tests"));
+    const remResult = await remediate({ scenarioId: entry.scenarioId }).finally(() => {
+      modalSpy.mockRestore();
+      stageSpy.mockRestore();
+    });
     expect(["Verified Safe", "Verified With Warnings"]).toContain(remResult.drawer.verificationStatus.verdict);
     expect(remResult.drawer.powershellScript).not.toContain("westeurope");
     expect(remResult.drawer.powershellScript).not.toContain("Standard_D4s_v5");

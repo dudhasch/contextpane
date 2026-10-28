@@ -327,6 +327,24 @@ export interface SteerResponse {
   telemetry: RouterTelemetry;
 }
 
+/** POST /api/rollback (U-5): what the server did, and the read-back against the pre-change snapshot. */
+export interface RollbackResponse {
+  ok: boolean;
+  scenarioId: string;
+  /** True only when a live inverse landed and the read-back matches the snapshot. */
+  executed: boolean;
+  execution: "live-graph" | "simulated" | "none";
+  reason: string;
+  latencyMs: number;
+  inverseSource: "pre-snapshot" | "static-reference" | "none";
+  rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[]; note?: string; sections?: string[] };
+  executionLog: string[];
+  canary: { probeSource: "live-read" | "simulated-read"; matchesPreSnapshot: boolean; differences: Array<{ path: string; before: unknown; after: unknown }>; capturedAt: string } | null;
+  preSnapshotAt: string | null;
+  convergenceCleared: boolean;
+  error?: string;
+}
+
 export interface SampleTicket { id: string; title: string; body: string; customerName: string }
 
 /* ERP inbox: input/tickets/#<id>/ticketbody.json + images */
@@ -546,8 +564,7 @@ export const api = {
   timeline: (scenarioId: string) => request<TimelineResponse>(`/api/timeline/${scenarioId}`),
   skills: () => request<{ skills: SkillDef[] }>("/api/skills"),
   compileSkill: (scenarioId: string) => request<{ skill: SkillDef; promoted: boolean }>("/api/skills/compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
-  rollback: (scenarioId: string) =>
-    request<{ ok: boolean; executed: boolean; reason?: string; latencyMs: number; executionLog?: string[] }>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
+  rollback: (scenarioId: string) => request<RollbackResponse>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   dataplaneDetail: (scenarioId: string) => request<DataPlaneDetailResponse>(`/api/dataplane/${scenarioId}`),
   commercial: (scenarioId: string) => request<{ reconciliation: Commercial }>(`/api/reconcile/commercial/${scenarioId}`),
   reverseCompile: (scenarioId: string) => request<{ result: ReverseResult }>("/api/iac/reverse-compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),

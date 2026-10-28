@@ -15,6 +15,7 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "ticket-reopened": { label: "Ticket reopened", tone: "warning", icon: <RotateCcw /> },
   "preflight-autofix": { label: "Auto-Fix + pre-flight re-run", tone: "primary", icon: <FileCheck2 /> },
   "preflight-override": { label: "Pre-flight overridden (justified)", tone: "warning", icon: <ShieldX /> },
+  "hitl-rollback": { label: "Revert (inverse from pre-change snapshot)", tone: "warning", icon: <RotateCcw /> },
 };
 
 function check(v: boolean | null): { text: string; className: string } {

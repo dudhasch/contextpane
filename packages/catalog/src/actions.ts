@@ -24,6 +24,7 @@ export const AuditActionTypeSchema = z.enum([
   "ticket-reopened",
   "preflight-autofix",
   "preflight-override",
+  "hitl-rollback",
 ]);
 export type AuditActionType = z.infer<typeof AuditActionTypeSchema>;
 
@@ -95,6 +96,11 @@ export const ConvergenceSchema = z.object({
   remediatedUpns: z.array(z.string()),
   /** Disabled accounts whose licenses the fix reclaimed. */
   reclaimedUpns: z.array(z.string()).default([]),
+  /** When the pre-change entity snapshot was captured (U-5); null when none could be read. */
+  preSnapshotAt: z.string().nullable().optional(),
+  /** True when Revert can execute an inverse derived from that snapshot through the live write path; the button says so. */
+  inverseExecutable: z.boolean().optional(),
+  inverseReason: z.string().max(200).optional(),
 });
 export type Convergence = z.infer<typeof ConvergenceSchema>;
 

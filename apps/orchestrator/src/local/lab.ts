@@ -2,6 +2,7 @@ import type { ScenarioId } from "@contextpane/catalog";
 import { azureIacService, type NsgWriteResult } from "@contextpane/mcp-azure-iac";
 import { WORKLOAD_IDENTITY, getManifestTenant, msgraphService, type LabLicenseState } from "@contextpane/mcp-msgraph";
 import { SCENARIO_REGISTRY } from "@contextpane/catalog";
+import type { EntitySnapshot, SnapshotInverseSections } from "./snapshot.ts";
 
 /**
  * The lab writes behind an Emergency Break-Glass approval (state "remediated") and
@@ -96,6 +97,81 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
       return { ...pick(w), results: w.results, summary };
     }
   }
+}
+
+/**
+ * f⁻¹ through the forward write path (U-5): every section of the captured pre-change snapshot
+ * is written back through the same service methods the approve path writes through, so the
+ * rollback honours LIVE_CLOUD_MODE and the live-capable tenant list exactly as approve does.
+ * Outside live mode the writes are simulated and the in-memory lab state follows the snapshot.
+ */
+export async function applySnapshotState(snapshot: EntitySnapshot, sections?: SnapshotInverseSections): Promise<LabWriteOutcome> {
+  const started = performance.now();
+  const want = (s: SnapshotInverseSections[number]) => !sections || sections.includes(s);
+  const results: LabWriteOutcome["results"] = [];
+  const summaries: string[] = [];
+  const reasons: string[] = [];
+  let liveWrites = 0;
+  let arm: NsgWriteResult | undefined;
+  const note = (source: "live-graph" | "simulated", fallbackReason: string | undefined) => {
+    if (source === "live-graph") liveWrites += 1;
+    else if (fallbackReason) reasons.push(fallbackReason);
+  };
+  if (want("users") && snapshot.users.length) {
+    const w = await msgraphService.restoreLicenseExtensions(
+      snapshot.tenantId,
+      snapshot.users.map((u) => ({
+        upn: u.upn,
+        fields: {
+          currentSku: u.currentSku,
+          expectedSku: u.expectedSku,
+          driftStatus: u.driftStatus,
+          assignmentState: u.assignmentState,
+          assignmentPath: u.assignmentPath,
+          entraAssignedSku: u.currentSku,
+          avdEntitlementStatus: u.driftStatus === "compliant" ? "Compliant" : "Drift_Missing_E5_SKU",
+        },
+      })),
+    );
+    note(w.source, w.fallbackReason);
+    results.push(...w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })));
+    summaries.push(`${w.results.filter((r) => r.ok).length}/${w.results.length} users → captured licence state`);
+  }
+  if (want("conditional-access") && snapshot.caPolicies.length) {
+    const w = await msgraphService.restoreConditionalAccessPolicies(snapshot.tenantId, snapshot.caPolicies);
+    note(w.source, w.fallbackReason);
+    results.push(...w.results.map((r) => ({ id: `ca ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })));
+    summaries.push(`${snapshot.caPolicies.length} CA polic${snapshot.caPolicies.length === 1 ? "y" : "ies"} → captured state`);
+  }
+  if (want("nsg") && snapshot.nsg) {
+    const w = await azureIacService.restoreNsgState(snapshot.tenantId, { rules: snapshot.nsg.rules, tags: snapshot.nsg.tags });
+    arm = w;
+    if (w.source === "live-azure") liveWrites += 1;
+    else if (w.fallbackReason) reasons.push(w.fallbackReason);
+    results.push(...w.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })));
+    summaries.push(`NSG ${snapshot.nsg.name} → ${snapshot.nsg.rules.length} captured rules${w.source === "live-azure" ? ` (ARM: ${w.results.map((r) => r.id).join(", ") || "already at target"})` : " (simulated)"}`);
+  }
+  if (want("intune") && snapshot.intune) {
+    const w = await msgraphService.restoreIntuneAssignments(snapshot.intune.key, { policies: snapshot.intune.policies, settings: snapshot.intune.settings });
+    note(w.source, w.fallbackReason);
+    results.push(...w.results);
+    summaries.push("Intune assignments and settings → captured state");
+  }
+  if (want("workload-identity") && snapshot.workloadIdentity) {
+    // Fixture-only estate: no lab SPN exists to write to (same as the forward write for ANOM-APP-401).
+    reasons.push("workload identity fixture (no lab SPN seeded)");
+    results.push({ id: snapshot.workloadIdentity.displayName, ok: true, status: 0 });
+    summaries.push(`${snapshot.workloadIdentity.displayName}: owners and app roles → captured state (fixture)`);
+  }
+  const source: LabWriteOutcome["source"] = liveWrites > 0 ? "live-graph" : "simulated";
+  return {
+    source,
+    latencyMs: Math.round(performance.now() - started),
+    results,
+    summary: summaries.join(" · ") || "nothing captured to restore",
+    ...(source === "simulated" ? { fallbackReason: [...new Set(reasons)].join("; ") || "no section to write" } : {}),
+    ...(arm ? { arm } : {}),
+  };
 }
 
 function pick(w: { source: "live-graph" | "simulated"; fallbackReason?: string; latencyMs: number }) {

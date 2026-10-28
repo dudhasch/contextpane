@@ -84,6 +84,9 @@ export function ActionApprovalDrawerSheet() {
   });
   const intuneHealth = useWorkbench((s) => s.intuneHealth);
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
+  // U-5: "Revert Change Now" only when the server can execute an inverse derived from the pre-change snapshot.
+  const inverseExecutable = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]?.inverseExecutable));
+  const revertLabel = inverseExecutable ? "Revert Change Now" : "Stage Revert Script";
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.drawer && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const reopenTicket = useWorkbench((s) => s.reopenTicket);
   // U-1: the script says which steering it was built for; the ticket says where the steering is now.
@@ -489,7 +492,7 @@ export function ActionApprovalDrawerSheet() {
                     data-testid="console-revert-button"
                     className="font-semibold"
                   >
-                    Stage Revert Script
+                    {revertLabel}
                   </Button>
                   <Button
                     variant="healthy"
@@ -545,7 +548,7 @@ export function ActionApprovalDrawerSheet() {
                     onClick={() => void revertFromConsole()}
                     data-testid="console-revert-button"
                   >
-                    Stage Revert Script
+                    {revertLabel}
                   </Button>
                   <Button
                     variant="healthy"

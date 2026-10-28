@@ -1551,22 +1551,29 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ liveConsoleOpen: true, liveConsoleStreaming: true, liveConsoleStep: "⏳ Asking the orchestrator for the revert…" });
     try {
       const r = await api.rollback(scenarioId);
-      // Only an executed revert changes the tenant, the canvas or the drawer; a staged one says so (L-09).
+      // Only what the server reports: a landed live inverse, a simulated one (lab state in memory), or a staged script (L-09, U-5).
       const executed = r.executed === true;
-      if (executed) get().applyConvergence(scenarioId, null);
+      const reverted = executed || (r.execution === "simulated" && r.convergenceCleared);
+      if (r.convergenceCleared) get().applyConvergence(scenarioId, null);
       set((s) => ({
         liveConsoleStreaming: false,
-        liveConsoleReverted: executed,
-        liveConsoleStep: executed ? `↩ Revert executed in ${r.latencyMs} ms` : "Revert script staged — nothing was executed against the tenant",
+        liveConsoleReverted: reverted,
+        liveConsoleStep: executed
+          ? `↩ Inverse executed in ${r.latencyMs} ms · read-back ${r.canary?.matchesPreSnapshot ? "matches the pre-change snapshot" : "still differs from the snapshot"}`
+          : r.execution === "simulated"
+            ? "↩ Inverse simulated against the lab state — nothing written live"
+            : "Revert script staged — nothing was executed against the tenant",
         liveConsoleLines: [...s.liveConsoleLines, ...(r.executionLog ?? [])],
-        drawer: executed && s.drawer ? { ...s.drawer, approval: { ...s.drawer.approval, state: "pending" } } : s.drawer,
+        drawer: reverted && s.drawer ? { ...s.drawer, approval: { ...s.drawer.approval, state: "rolled-back" } } : s.drawer,
       }));
       get().toast(
         executed
-          ? { tone: "healthy", title: `Revert executed in ${r.latencyMs} ms`, detail: "Canvas reverted." }
-          : { tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." },
+          ? { tone: "healthy", title: `Inverse executed in ${r.latencyMs} ms`, detail: r.canary?.matchesPreSnapshot ? `Read-back (${r.canary.probeSource}) matches the pre-change snapshot.` : `Read-back: ${r.canary?.differences.length ?? "?"} difference(s) left — see the console.` }
+          : r.execution === "simulated"
+            ? { tone: "warning", title: "Inverse simulated (LIVE_CLOUD_MODE off)", detail: r.reason }
+            : { tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." },
       );
-      if (executed) void get().correlate({ fresh: true });
+      if (r.convergenceCleared) void get().correlate({ fresh: true });
     } catch (e) {
       set({ liveConsoleStreaming: false });
       get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) });
@@ -1719,14 +1726,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
   async rollbackNow() {
     try {
-      const r = await api.rollback(get().scenarioId);
-      if (r.executed !== true) {
-        get().toast({ tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." });
-        return;
-      }
-      get().applyConvergence(get().scenarioId, null);
-      get().toast({ tone: "healthy", title: `Revert executed in ${r.latencyMs} ms`, detail: "Canvas reverted." });
-      void get().correlate({ fresh: true });
+      const scenarioId = get().scenarioId;
+      const r = await api.rollback(scenarioId);
+      if (r.convergenceCleared) get().applyConvergence(scenarioId, null);
+      set((s) => ({ liveConsoleOpen: true, liveConsoleStreaming: false, liveConsoleReverted: r.executed || r.convergenceCleared, liveConsoleStep: r.executed ? `↩ Inverse executed in ${r.latencyMs} ms` : r.execution === "simulated" ? "↩ Inverse simulated against the lab state — nothing written live" : "Revert script staged — nothing was executed against the tenant", liveConsoleLines: [...s.liveConsoleLines, ...r.executionLog] }));
+      if (r.executed) get().toast({ tone: "healthy", title: `Inverse executed in ${r.latencyMs} ms`, detail: r.canary?.matchesPreSnapshot ? `Read-back (${r.canary.probeSource}) matches the pre-change snapshot.` : "Read-back still differs from the snapshot; see the console." });
+      else if (r.execution === "simulated") get().toast({ tone: "warning", title: "Inverse simulated (LIVE_CLOUD_MODE off)", detail: r.reason });
+      else get().toast({ tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." });
+      if (r.convergenceCleared) void get().correlate({ fresh: true });
     } catch (e) { get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
 
