@@ -635,7 +635,12 @@ export const DATASET_PII_FIELDS: Partial<Record<DatasetKey, PiiField[]>> = {
 
 export interface PiiVaultMetrics {
   piiFieldsVaulted: number;
-  zeroRawPiiInLlmPrompt: true;
+  /** Computed: no outgoing model prompt scanned by `recordPrompt` carried a raw UPN, known person name or public IP. */
+  zeroRawPiiInLlmPrompt: boolean;
+  /** Prompts scanned so far; 0 means the claim above is vacuous. */
+  promptsScanned: number;
+  /** Prompts in which the scan still found raw PII after pseudonymisation. */
+  rawPiiPromptHits: number;
   sampleMappings: Record<string, string>;
   tokenMappings: Record<string, string>;
   orderPreservingCohortSorted?: boolean;
@@ -682,6 +687,40 @@ export function isMachineOrNonPersonalPii(field: string, raw: string, row?: Reco
   return false;
 }
 
+const EMAIL_RE = /[A-Za-z0-9._%+'-]+(?:#EXT#)?@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b(?!\/\d)/g;
+const TOKEN_RE = /\b(?:upn|displayName|ip|userId|device)_tok_\d+\b/;
+
+/** Public addresses only: network plumbing (RFC 1918, 0.0.0.0, CIDR prefixes, GitHub runners) is not personal data. */
+function isPersonalIpv4(ip: string): boolean {
+  const o = ip.split(".").map(Number);
+  if (o.length !== 4 || o.some((n) => !Number.isInteger(n) || n > 255)) return false;
+  const [a, b] = o as [number, number, number, number];
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 169 && b === 254) return false;
+  return !isMachineOrNonPersonalPii("ipAddress", ip);
+}
+
+/** `lynne.robins@contoso.com` → "Lynne Robins" (null for single-token or machine local parts). */
+function personNameFromUpn(upn: string): string | null {
+  const local = upn.split("@")[0]!.replace(/#EXT#$/i, "");
+  if (/^(spn|app|svc|admin|sync|noreply)[-_.]/i.test(local)) return null;
+  const parts = local.split(/[._-]+/).filter((w) => /^[A-Za-z]{2,}$/.test(w));
+  if (parts.length < 2) return null;
+  return parts.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+
+/** Whole-name match: not part of a longer word or an e-mail address. */
+function personNameRe(name: string, flags: string): RegExp {
+  return new RegExp(`(?<![\\w@.])${escapeRegExp(name)}(?![\\w@])`, flags);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function computeEpochSaltedDigest(epoch: number, field: string, value: string): string {
   // Deterministic FNV-1a 64-bit style hex tag salted by epoch and field
   let h1 = 0x811c9dc5 ^ epoch;
@@ -708,6 +747,10 @@ export class PiiVault {
   private realByToken = new Map<string, string>();
   private hmacByToken = new Map<string, string>();
   private counters = new Map<string, number>();
+  /** Person display names known to belong to a UPN (registered from tenant context or derived from UPNs). */
+  private knownPersonNames = new Set<string>();
+  private promptsScanned = 0;
+  private rawPiiPromptHits = 0;
   private epoch: number;
 
   constructor(epoch: number = currentDataPlaneEpoch) {
@@ -791,18 +834,93 @@ export class PiiVault {
   }
 
   pseudonymizeForLlm(value: unknown): unknown { return this.pseudonymize(value); }
+
+  /** Remember `displayName ↔ upn` pairs from any MCP result so free text naming those people can be vaulted. */
+  registerPersonsFrom(value: unknown): void {
+    const walk = (node: unknown, depth: number) => {
+      if (depth > 8 || !node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item, depth + 1);
+        return;
+      }
+      const rec = node as Record<string, unknown>;
+      const upn = typeof rec.upn === "string" ? rec.upn : typeof rec.userPrincipalName === "string" ? rec.userPrincipalName : null;
+      const name = typeof rec.displayName === "string" ? rec.displayName.trim() : null;
+      if (upn && upn.includes("@") && name && name.includes(" ") && !isMachineOrNonPersonalPii("displayName", name, rec)) {
+        this.knownPersonNames.add(name);
+      }
+      for (const v of Object.values(rec)) if (v && typeof v === "object") walk(v, depth + 1);
+    };
+    walk(value, 0);
+  }
+
+  private personNames(): string[] {
+    const names = new Set(this.knownPersonNames);
+    for (const [key] of this.tokenByReal) if (key.startsWith("displayName:")) names.add(key.slice("displayName:".length));
+    // Longest first so "Lynne Robins-Smith" is replaced before "Lynne Robins".
+    return [...names].filter((n) => n.trim().length >= 4).sort((a, b) => b.length - a.length);
+  }
+
+  /**
+   * Free-text pseudonymisation for prompts (ticket bodies, selection text, rendered context):
+   * UPNs / e-mail addresses, the display names of known people (and the "First Last" read
+   * from a `first.last@` UPN) and public IPv4 addresses become stable session tokens.
+   */
+  pseudonymizeText(text: string): string {
+    if (!text) return text;
+    let out = text.replace(EMAIL_RE, (email) => {
+      const derived = personNameFromUpn(email);
+      if (derived) this.knownPersonNames.add(derived);
+      return this.vault(email, "upn");
+    });
+    for (const name of this.personNames()) {
+      const re = personNameRe(name, "gi");
+      out = out.replace(re, (hit) => this.vault(name, "displayName") || hit);
+    }
+    out = out.replace(IPV4_RE, (ip) => (isPersonalIpv4(ip) ? this.vault(ip, "ipAddress") : ip));
+    return out;
+  }
+
+  /** Raw personal data still present in `text`: e-mail addresses, known person names, public IPv4s. */
+  scanForRawPii(text: string): string[] {
+    const hits = new Set<string>();
+    for (const m of text.matchAll(EMAIL_RE)) hits.add(m[0]);
+    for (const name of this.personNames()) {
+      if (personNameRe(name, "i").test(text)) hits.add(name);
+    }
+    for (const m of text.matchAll(IPV4_RE)) if (isPersonalIpv4(m[0])) hits.add(m[0]);
+    return [...hits].filter((h) => !TOKEN_RE.test(h));
+  }
+
+  /** Scan one outgoing model prompt; feeds the computed `zeroRawPiiInLlmPrompt` metric. */
+  recordPrompt(text: string): string[] {
+    const hits = this.scanForRawPii(text);
+    this.promptsScanned += 1;
+    if (hits.length > 0) this.rawPiiPromptHits += 1;
+    return hits;
+  }
+
   depseudonymize(value: unknown): unknown {
     if (typeof value === "string") return this.realByToken.get(value) ?? value.replace(/\b(?:upn|displayName|ip|userId|device)_tok_\d+\b/g, (t) => this.realByToken.get(t) ?? t);
     if (Array.isArray(value)) return value.map((v) => this.depseudonymize(v));
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, this.depseudonymize(v)]));
     return value;
   }
+  /** Map tokens back inside a JSON document (a model's tool-call arguments), escaping each real value for its string. */
+  depseudonymizeJsonText(json: string): string {
+    return json.replace(/\b(?:upn|displayName|ip|userId|device)_tok_\d+\b/g, (t) => {
+      const real = this.realByToken.get(t);
+      return real === undefined ? t : JSON.stringify(real).slice(1, -1);
+    });
+  }
   unvaultValue(value: unknown): unknown { return this.depseudonymize(value); }
   metrics(): PiiVaultMetrics {
     const tokenMappings = Object.fromEntries(this.realByToken);
     return {
       piiFieldsVaulted: this.realByToken.size,
-      zeroRawPiiInLlmPrompt: true,
+      zeroRawPiiInLlmPrompt: this.rawPiiPromptHits === 0,
+      promptsScanned: this.promptsScanned,
+      rawPiiPromptHits: this.rawPiiPromptHits,
       sampleMappings: { ...tokenMappings },
       tokenMappings,
       orderPreservingCohortSorted: true,

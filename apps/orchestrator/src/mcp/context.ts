@@ -6,6 +6,7 @@ import {
   isCustomScenarioId,
   isScenarioId,
   scenarioForTenant,
+  sessionPiiVault,
   type CanvasComponentType,
   type CustomScenarioEntry,
   type ScenarioId,
@@ -123,6 +124,8 @@ export async function gatherContext(scenarioOrTenant: string, options: { fresh?:
     }
   }
   const value = freeRoam ? loadFreeRoam("tenant-contoso-01") : load(cacheKey as WorkbenchScenarioId);
+  // Teach the prompt vault who the tenant's people are, so free text naming them is pseudonymised too.
+  value.then((ctx) => sessionPiiVault.registerPersonsFrom(ctx)).catch(() => undefined);
   cache.set(cacheKey, { at: Date.now(), value, revalidating: false });
   value.catch(() => cache.delete(cacheKey));
   return value;

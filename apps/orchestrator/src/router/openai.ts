@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { OpenAIFunctionTool } from "@contextpane/catalog";
+import { sessionPiiVault, type OpenAIFunctionTool } from "@contextpane/catalog";
 import { config, type ProviderConfig } from "../config.ts";
 import { buildHoverResponseFormat } from "./glimmer-payload.ts";
 
@@ -107,6 +107,26 @@ const autoToolChoiceOnly = new Set<string>(["meta"]);
 /** Open-weight Glimmer hover calls carry the strict HoverDiagnostic JSON schema (GBNF on llama-server). */
 const OPEN_WEIGHT_PROVIDER_IDS = new Set(["modal-open-weights", "runpod", "local-glimmer-30b"]);
 
+/**
+ * Every prompt leaves through here, so this is where the PII vault is applied: UPNs, known
+ * person names and public IPs in any text part become session tokens (`upn_tok_01`), the
+ * pseudonymised payload is scanned (feeding the computed `zeroRawPiiInLlmPrompt`), and the
+ * model's answer is mapped back so scripts and cards carry the real identifiers.
+ */
+export function vaultMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => ({
+    ...m,
+    content:
+      typeof m.content === "string"
+        ? sessionPiiVault.pseudonymizeText(m.content)
+        : m.content.map((part) => (part.type === "text" ? { ...part, text: sessionPiiVault.pseudonymizeText(part.text) } : part)),
+  }));
+}
+
+function promptText(messages: ChatMessage[]): string {
+  return messages.map((m) => (typeof m.content === "string" ? m.content : m.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"))).join("\n");
+}
+
 function rejectsNamedToolChoice(error: unknown): boolean {
   return error instanceof ProviderHttpError && error.status === 400 && /tool_choice/i.test(error.message);
 }
@@ -122,6 +142,8 @@ export async function chatWithForcedTool(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const started = performance.now();
+  const outgoing = vaultMessages(messages);
+  const rawPiiHits = sessionPiiVault.recordPrompt(promptText(outgoing));
   const post = async (named: boolean): Promise<Response> => {
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
@@ -129,7 +151,7 @@ export async function chatWithForcedTool(
       body: JSON.stringify({
         model,
         // With "auto" the single tool is still the only way to answer; say so explicitly.
-        messages: named ? messages : [...messages, { role: "system", content: `Answer by calling the ${tool.function.name} tool exactly once. Do not reply with text.` }],
+        messages: named ? outgoing : [...outgoing, { role: "system", content: `Answer by calling the ${tool.function.name} tool exactly once. Do not reply with text.` }],
         tools: [tool],
         ...(OPEN_WEIGHT_PROVIDER_IDS.has(provider.id) && tool.function.name === "emit_hover_diagnostic" ? { response_format: buildHoverResponseFormat() } : {}),
         tool_choice: named ? { type: "function", function: { name: tool.function.name } } : "auto",
@@ -167,13 +189,14 @@ export async function chatWithForcedTool(
       mkdirSync(DEBUG_DIR, { recursive: true });
       appendFileSync(
         join(DEBUG_DIR, "router-debug.jsonl"),
-        `${JSON.stringify({ at: new Date().toISOString(), provider: provider.id, model, tool: tool.function.name, toolName, finishReason: choice?.finish_reason ?? null, usage: json.usage, latencyMs, argumentsRaw })}\n`,
+        `${JSON.stringify({ at: new Date().toISOString(), provider: provider.id, model, tool: tool.function.name, toolName, finishReason: choice?.finish_reason ?? null, usage: json.usage, latencyMs, rawPiiHits: rawPiiHits.length, argumentsRaw })}\n`,
       );
     }
     if (!argumentsRaw) throw new Error(`${provider.id}: response contained no tool call`);
     return {
       toolName,
-      argumentsRaw,
+      // Logged pseudonymised above (router-debug.jsonl holds no raw UPN); returned with real identifiers.
+      argumentsRaw: sessionPiiVault.depseudonymizeJsonText(argumentsRaw),
       usage: {
         prompt: json.usage?.prompt_tokens ?? 0,
         completion: json.usage?.completion_tokens ?? 0,

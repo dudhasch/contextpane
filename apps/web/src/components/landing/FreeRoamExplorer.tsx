@@ -19,6 +19,7 @@ import {
 import { useState } from "react";
 import type { ContextViewMode } from "@contextpane/catalog";
 import { humanizeSource, SOURCE_LABEL } from "@/lib/format";
+import { displayInventoryItem } from "@/lib/pseudonym";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { CONTEXT_MODE_LIST, ContextModeIcon } from "../ui/ContextModeIcons";
@@ -401,7 +402,9 @@ export function FreeRoamExplorer() {
                           No objects returned by MCP in {humanizeSource(dataMode)} mode.
                         </div>
                       ) : (
-                        cat.items.map((item) => (
+                        cat.items.map((item) => {
+                          const shown = displayInventoryItem(item, cat, dataMode);
+                          return (
                           <button
                             key={item.id}
                             type="button"
@@ -414,12 +417,13 @@ export function FreeRoamExplorer() {
                             className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-selection/10"
                           >
                             <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium text-text">{item.label}</div>
-                              <div className="truncate font-mono text-[10px] text-faint">{item.sublabel}</div>
+                              <div className="truncate font-medium text-text">{shown.label}</div>
+                              <div className="truncate font-mono text-[10px] text-faint">{shown.sublabel}</div>
                             </div>
                             <Pill tone={TONE_MAP[item.tone]}>{item.badge}</Pill>
                           </button>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   )}

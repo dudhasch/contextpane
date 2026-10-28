@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, parseToolArguments, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
+import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool } from "../router/openai.ts";
 
@@ -58,7 +58,8 @@ export function loadSynthesizedElementsLog(): SynthesizedElementAuditRecord[] {
 
 export function appendSynthesizedElementLog(record: SynthesizedElementAuditRecord): void {
   const current = loadSynthesizedElementsLog();
-  current.unshift(record);
+  // The audit log keeps the ticket prompt as the model saw it: pseudonymised, never a raw UPN or name.
+  current.unshift({ ...record, ticketPrompt: sessionPiiVault.pseudonymizeText(record.ticketPrompt) });
   writeFileSync(SYNTHESIZED_LOG_PATH, `${JSON.stringify(current.slice(0, 100), null, 2)}\n`, "utf8");
 }
 

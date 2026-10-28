@@ -178,7 +178,9 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
     layout?.components.filter((c) => c.type === "SynthesizedDynamicCard").length ||
     brief?.elementRouting?.missingElements.length ||
     0;
-  const vaultedFields = pii?.piiFieldsVaulted ?? 12;
+  const vaultedFields = pii?.piiFieldsVaulted ?? 0;
+  const promptsScanned = pii?.promptsScanned ?? 0;
+  const rawPiiPromptHits = pii?.rawPiiPromptHits ?? 0;
 
   return (
     <section className="space-y-2.5 rounded-md border border-border-subtle bg-canvas/50 p-3 text-[11.5px]" data-testid="omega-prime-telemetry">
@@ -231,12 +233,12 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
         </div>
 
         <div className="rounded border border-border-subtle bg-surface p-2" data-testid="pii-redaction-vault-card">
-          <div className="text-[10px] font-semibold tracking-wider text-faint uppercase">PII Redaction Vault (100% Stripped)</div>
-          <div className="mt-0.5 font-mono text-[12px] text-healthy">
-            {vaultedFields} fields vaulted · 0 raw PII
+          <div className="text-[10px] font-semibold tracking-wider text-faint uppercase">PII Redaction Vault</div>
+          <div className={`mt-0.5 font-mono text-[12px] ${rawPiiPromptHits > 0 ? "text-critical" : "text-healthy"}`}>
+            {vaultedFields} fields vaulted · {rawPiiPromptHits} prompt{rawPiiPromptHits === 1 ? "" : "s"} with raw PII
           </div>
           <div className="mt-0.5 text-[11px] text-muted">
-            @pii(EU-GDPR-Personal) · 100% stripped pre-LLM
+            {promptsScanned > 0 ? `${promptsScanned} model prompts scanned after pseudonymisation` : "No model prompt scanned yet"}
           </div>
         </div>
       </div>
@@ -288,7 +290,7 @@ function SkillsPiiBody() {
         <div className="section-label mb-1.5">PII pseudonym vault · @pii(EU-GDPR-Personal)</div>
         {pii ? (
           <div className="space-y-1.5">
-            <div className="flex flex-wrap gap-1.5"><Pill tone="healthy">{pii.piiFieldsVaulted} PII fields vaulted</Pill><Pill tone={pii.zeroRawPiiInLlmPrompt ? "healthy" : "critical"}>zeroRawPiiInLlmPrompt: {String(pii.zeroRawPiiInLlmPrompt)}</Pill></div>
+            <div className="flex flex-wrap gap-1.5"><Pill tone="healthy">{pii.piiFieldsVaulted} PII fields vaulted</Pill><Pill tone={pii.zeroRawPiiInLlmPrompt ? "healthy" : "critical"} title="Computed by scanning every outgoing model prompt after the vault ran">{pii.zeroRawPiiInLlmPrompt ? "No raw PII" : `Raw PII in ${pii.rawPiiPromptHits ?? "?"}`} in {pii.promptsScanned ?? 0} prompts</Pill></div>
             <div className="rounded-md border border-border-subtle p-2 font-mono text-[11px] text-muted">{Object.entries(pii.sampleMappings ?? {}).slice(0, 6).map(([k, v]) => <div key={k}>{k} ↔ {v}</div>)}</div>
           </div>
         ) : <div className="text-muted">Open a scenario to populate the vault.</div>}

@@ -103,6 +103,12 @@ const byContext = new WeakMap<CorrelationContext, DataPlaneSnapshot>();
 /** Keyed by workbench id (INC-4092, ANOM-CA-204, CUSTOM-<hash>). */
 const latest = new Map<string, DataPlaneSnapshot>();
 
+/** Row-vault counts for this snapshot plus the session's computed prompt scan (`router/openai.ts`). */
+function withPromptScan(rowsVaulted: PiiVaultMetrics): PiiVaultMetrics {
+  const live = sessionPiiVault.metrics();
+  return { ...rowsVaulted, zeroRawPiiInLlmPrompt: live.zeroRawPiiInLlmPrompt, promptsScanned: live.promptsScanned, rawPiiPromptHits: live.rawPiiPromptHits };
+}
+
 /** Publishes (once per gathered context) every dataset the scenario's cards are bound from. */
 export function publishDataPlane(ctx: CorrelationContext, options?: { epoch?: number }): DataPlaneSnapshot {
   const hit = byContext.get(ctx);
@@ -139,7 +145,7 @@ export function publishDataPlane(ctx: CorrelationContext, options?: { epoch?: nu
   }
   const piiVault = createPiiVault(epoch);
   for (const value of rows.values()) piiVault.pseudonymize(value);
-  const piiMetrics = piiVault.metrics();
+  const vaultedRows = piiVault.metrics();
   const evidenceGraph = buildEvidenceGraph(ctx, descriptors);
   const snapshot: DataPlaneSnapshot = {
     scenarioId: ctx.ticketId,
@@ -151,8 +157,13 @@ export function publishDataPlane(ctx: CorrelationContext, options?: { epoch?: nu
     rows,
     bytes: descriptors.reduce((n, d) => n + d.bytes, 0),
     piiVault,
-    piiMetrics,
-    vaultMetrics: piiMetrics,
+    // The prompt-side fields come from the router's live scan of every outgoing prompt.
+    get piiMetrics() {
+      return withPromptScan(vaultedRows);
+    },
+    get vaultMetrics() {
+      return withPromptScan(vaultedRows);
+    },
     columnarScanNs: totalColumnarScanNs,
     evidenceGraph,
     informationBottleneck: evidenceGraph.informationBottleneck,
