@@ -194,7 +194,9 @@ export function generateRunbook(scenarioId: string): string {
     ``,
     `## Formal Invariant Proofs`,
     ``,
-    `Prover: symbolic-formal-verifier. Overall: ${verification.passed ? "PASS" : "FAIL"} (${verification.invariants.filter((i) => i.passed).length}/${verification.invariants.length} invariants passed).`,
+    verification.passed === null
+      ? `Prover: symbolic-formal-verifier. Not provable: ${verification.note ?? "no symbolic model for this ticket"}.`
+      : `Prover: symbolic-formal-verifier. Overall: ${verification.passed ? "PASS" : "FAIL"} (${verification.invariants.filter((i) => i.passed).length}/${verification.invariants.length} invariants passed).`,
     ``,
     ...verification.invariants.flatMap((inv) => [
       `### ${inv.id} — ${inv.passed ? "PASS" : "FAIL"}`,

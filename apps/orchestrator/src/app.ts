@@ -61,7 +61,7 @@ import {
   spawnFreeRoamDashboard,
   stageFreeRoamRemediation,
 } from "./local/free-roam.ts";
-import { generateClarifyingQuestions } from "./local/subagent-orchestrator.ts";
+import { generateClarifyingQuestions, telemetryFromSubAgentTasks } from "./local/subagent-orchestrator.ts";
 import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
 import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
@@ -69,7 +69,7 @@ import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
 import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
-import { approve, remediate } from "./tiers/tier3-remediate.ts";
+import { approve, autofixRemediation, overrideRemediation, remediate } from "./tiers/tier3-remediate.ts";
 import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
@@ -354,18 +354,18 @@ app.post("/api/tickets/triage-custom", async (c) => {
   const idempotency = verifyIdempotency(entry.baseScenarioId ?? entry.scenarioId);
   const timeline = getTimeline(entry.baseScenarioId ?? entry.scenarioId);
   const latencyMs = Math.round(performance.now() - started);
-  const hasSynthesized = Boolean(entry.elementRouting && entry.elementRouting.missingElements.length > 0);
+  // Provider, model and tokens come from what the sub-agents actually did; no constant savings (L-06, M-02).
+  const pipeline = telemetryFromSubAgentTasks(entry.subAgentTasks ?? []);
   const event = telemetry.record({
     requestId: telemetry.nextRequestId("t0"),
     endpoint: "/api/tickets/triage-custom",
-    tier: hasSynthesized ? "Tier 2" : "Tier 0",
-    provider: hasSynthesized && providers.meta.hasKey && !config.forceLocal ? "meta" : "local",
-    modelId: hasSynthesized ? "muse-spark-1.3 -> muse-wonder-1.0" : "deterministic-entity-extractor",
+    tier: pipeline.provider === "meta" ? "Tier 2" : "Tier 0",
+    provider: pipeline.provider,
+    modelId: pipeline.modelId,
     latencyMs,
-    tokensUsed: { ...ZERO_USAGE },
-    fallbackChain: [],
+    tokensUsed: pipeline.tokensUsed,
+    fallbackChain: pipeline.fallbackChain,
     tenantId: entry.tenantId,
-    estimatedSavings: { tokens: 1800, ms: 4000, versus: "model-based ticket classification" },
   });
   return c.json(
     {
@@ -636,7 +636,20 @@ app.post("/api/rollback", async (c) => {
   const rollback = buildInverseRollback(requested);
   const check = verifyIdempotency(targetId);
   if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
-  return c.json({ ok: true, executed: "simulated", latencyMs: Math.round((performance.now() - started) * 10) / 10, rollback, idempotency: check });
+  // No inverse is executed yet (U-5 derives it from a pre-change snapshot): the script is staged and nothing is claimed (L-09).
+  const reason = "Revert is staged, not executed: no inverse write is wired to the tenant yet";
+  return c.json({
+    ok: true,
+    executed: false,
+    reason,
+    latencyMs: Math.round((performance.now() - started) * 10) / 10,
+    rollback,
+    idempotency: check,
+    executionLog: [
+      `Revert script staged for ${requested}: ${rollback.restores.length} restore step${rollback.restores.length === 1 ? "" : "s"}, ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
+      `${reason}. Review it, run it with -WhatIf, then run it as the delegated admin.`,
+    ],
+  });
 });
 
 app.get("/api/intune/health-script/:scenarioId", (c) => {
@@ -831,6 +844,24 @@ app.post("/api/remediate", async (c) => {
       await send("error", { error: error instanceof Error ? error.message : String(error) });
     }
   });
+});
+
+/** Auto-Fix: server-side guard repair + a real pre-flight re-run; returns the re-verified drawer. */
+app.post("/api/remediate/:remediationId/autofix", async (c) => {
+  const remediationId = c.req.param("remediationId");
+  if (!remediationStore.get(remediationId)) return c.json({ error: "not found" }, 404);
+  return c.json({ drawer: await autofixRemediation(remediationId) });
+});
+
+const OverrideBodySchema = z.object({ justification: z.string().min(10).max(500), operator: z.string().max(120).optional() });
+
+/** Override with an operator justification, recorded in the audit ledger; the verdict becomes "Overridden". */
+app.post("/api/remediate/:remediationId/override", async (c) => {
+  const remediationId = c.req.param("remediationId");
+  if (!remediationStore.get(remediationId)) return c.json({ error: "not found" }, 404);
+  const parsed = OverrideBodySchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "justification of 10-500 characters required" }, 400);
+  return c.json({ drawer: overrideRemediation(remediationId, parsed.data.justification, parsed.data.operator) });
 });
 
 app.get("/api/remediations", (c) => c.json({ remediations: remediationStore.list(c.req.query("tenantId")) }));

@@ -125,15 +125,16 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     for (const c of layout.components) for (const ptr of Object.values(c.dataPtrs)) expect(ptr.startsWith(prefix)).toBe(true);
   });
 
-  test("remediation verification on arbitrary ticket text: custom bundle, invariants and timeline all hold without baseScenarioId fallback", async () => {
+  test("remediation verification on arbitrary ticket text: custom bundle and timeline hold, and no formal proof is claimed", async () => {
     const entry = registerCustomTicket(erp);
     const ctx = await gatherContext(entry.scenarioId, { fresh: true });
     const plan = buildRemediationPlan(ctx);
     expect(plan.bundle.powershellScript).toContain("ShouldProcess");
     expect(plan.bundle.title).toContain(entry.scenarioId);
+    // No symbolic model exists for an ad-hoc ticket, so nothing is proved (H-04).
     const formal = verifyFormalInvariants(entry.scenarioId);
-    expect(formal.passed).toBe(true);
-    expect(formal.invariants.length).toBe(3);
+    expect(formal.passed).toBeNull();
+    expect(formal.invariants).toEqual([]);
     expect(verifyIdempotency(entry.scenarioId).passed).toBe(true);
     expect(getTimeline(entry.scenarioId)?.slices.length).toBeGreaterThanOrEqual(4);
 
@@ -143,7 +144,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(fabCtx.intune?.data.errorCode).toBe("0x87D1FDE8");
     const fabPlan = buildRemediationPlan(fabCtx);
     expect(fabPlan.bundle.powershellScript).toContain("ShouldProcess");
-    expect(verifyFormalInvariants(fab.scenarioId).passed).toBe(true);
+    expect(verifyFormalInvariants(fab.scenarioId).passed).toBeNull();
   });
 
   test("ANOM-APP-401 and custom ERP ticket brief copy ends cleanly with full words & periods", async () => {
@@ -194,7 +195,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(props.events.filter((e) => /scope audit|Access review/.test(e.appDisplayName)).every((e) => day(e) < day(today))).toBe(true);
   });
 
-  test("N+k Generative UI Engine: unscripted Azure VM westeurope deployment failure synthesizes a dynamic card, persists to data/dynamic-catalog.json, correlates cloud status, and never leaks INC-4092 Finance E5 text", async () => {
+  test("N+k Generative UI Engine: unscripted Azure VM westeurope deployment failure synthesizes a dynamic card, labels it a template, correlates cloud status, and never leaks INC-4092 Finance E5 text", async () => {
     const vmTicket = {
       title: "Azure VM deployment failed in westeurope",
       body: "help my azure subscription wont let me deploy azure vm in westeurope. it says deployment failed since 08:00 UTC.",
@@ -209,12 +210,12 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const elementId = entry.elementRouting?.missingElements[0]?.elementId ?? "";
     expect(elementId.length).toBeGreaterThan(3);
 
-    // Verify persistence on disk
-    const dynCatalog = loadDynamicCatalog();
-    const persisted = dynCatalog.dynamicElements.find((e) => e.elementId === elementId);
-    expect(persisted).toBeDefined();
-    const tsxFullPath = `${process.cwd()}/${persisted!.tsxStubPath}`;
-    expect(existsSync(persisted!.tsxStubPath) || existsSync(tsxFullPath) || existsSync(`../../${persisted!.tsxStubPath}`)).toBe(true);
+    // The offline card is the deterministic template, labelled as such; tests never write the tracked catalog (L-03).
+    const card = entry.synthesizedElements?.[0];
+    expect(card?.elementId).toBe(elementId);
+    expect(card?.synthesisMeta.synthesizerModel).toBe("deterministic-template");
+    expect(card?.synthesisMeta.tsxStubPath).toBe("");
+    expect(loadDynamicCatalog().dynamicElements.some((e) => e.elementId === elementId && e.synthesizerModel !== "deterministic-template")).toBe(false);
 
     // Verify brief & layout have zero INC-4092 Finance leakage and include Upstream Cloud Status correlation
     const ctx = await gatherContext(entry.scenarioId, { fresh: true });
@@ -349,14 +350,23 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(refinedPlan.bundle.powershellScript).not.toContain("alex.wilber");
   }, 15000);
 
-  test("#ERP-* and #CUSTOM-* formal verification passes all pre-flight checks", () => {
+  test("#ERP-* and #CUSTOM-* tickets are not provable: no invariants, no borrowed AVD NSG / CA-204 proof (H-04)", async () => {
     const erpProof = verifyFormalInvariants("ERP-202688511" as any);
-    expect(erpProof.passed).toBe(true);
-    expect(verifyIdempotency("ERP-202688511" as any).passed).toBe(true);
+    expect(erpProof.passed).toBeNull();
+    expect(erpProof.invariants).toEqual([]);
+    expect(erpProof.note).toContain("no symbolic model");
 
     const customProof = verifyFormalInvariants("CUSTOM-14KX82" as any);
-    expect(customProof.passed).toBe(true);
-    expect(verifyIdempotency("CUSTOM-14KX82" as any).passed).toBe(true);
+    expect(customProof.passed).toBeNull();
+    expect(customProof.invariants).toEqual([]);
+
+    const { app } = await import("../app.ts");
+    const registered = registerCustomTicket(avd);
+    const res = await app.request(`/api/formal/${registered.scenarioId}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { formal: { passed: boolean | null; invariants: unknown[] } };
+    expect(body.formal.invariants).toEqual([]);
+    expect(body.formal.passed).toBeNull();
   });
 
   test("Custom ticket mentioning a seeded entity (Lynne Robins + Key Vault soft-delete) mounts SynthesizedDynamicCard instead of LicenseDriftCard and records real sub-agent latencies", async () => {
@@ -371,5 +381,127 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(entry.components).not.toContain("LicenseDriftCard");
     expect(entry.subAgentTasks).toHaveLength(5);
     expect(entry.subAgentTasks?.map((t) => t.latencyMs)).not.toEqual([42, 34, 65, 58, 12]);
+  });
+});
+
+describe("sub-agent pipeline sequencing (L-05, L-07)", () => {
+  test("Key Vault ticket: clarifier answers reach the coder and the gatekeeper's decision reaches the synthesizer", async () => {
+    const { spyOn } = await import("bun:test");
+    const openai = await import("../router/openai.ts");
+    const correlator = await import("./cloud-status-correlator.ts");
+    const { config, providers } = await import("../config.ts");
+    const { buildDeterministicRoutingDecision } = await import("./dynamic-catalog.ts");
+    const { triageCustomTicketAsync, removeCustomTicket } = await import("./custom-ticket.ts");
+
+    // The persisted CUSTOM-13E7NK proof. No answers are passed: the clarifier preselects
+    // "Purge protection is enabled…" and "Recover the old vault", and those must reach the coder.
+    const ticket = {
+      title: "Lynne Robins cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation",
+      body: "Lynne Robins (lynne.robins.contoso@c4a8shili.onmicrosoft.com) cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation in Contoso Finance.",
+      customerName: "Contoso Finance",
+    };
+    const option = (value: string, i: number) => ({ id: `opt-${i}`, label: value, value, description: value });
+    const questions = [
+      { id: "question-1", question: "What is the root cause and scope?", category: "scope", options: ["The original vault was deleted and is in soft-delete state", "A new vault was created but Lynne lacks access permissions", "The name conflicts with a soft-deleted vault elsewhere"].map(option) },
+      { id: "question-2", question: "What is the purge protection state?", category: "security", options: ["Purge protection is enabled and retention has not expired", "Purge protection is disabled and the vault can be purged", "Retention and purge protection status are unknown"].map(option) },
+      { id: "question-3", question: "Preferred resolution strategy?", category: "remediation", options: ["Recover the old vault", "Permanently purge then recreate", "Keep the new vault and fix access for Lynne"].map(option) },
+    ];
+    const gatekeeperDecision = buildDeterministicRoutingDecision({ title: ticket.title, body: ticket.body, matchedSeededComponents: [] });
+    gatekeeperDecision.missingElements[0]!.elementId = "KeyVaultSoftDeleteRecoveryCard";
+    gatekeeperDecision.missingElements[0]!.domain = "identity";
+
+    const calls: Array<{ tool: string; user: string }> = [];
+    const usage = { prompt: 10, completion: 10, total: 20 };
+    const chatSpy = spyOn(openai, "chatWithForcedTool").mockImplementation((async (_provider: unknown, _model: string, messages: Array<{ role: string; content: string }>, tool: { function: { name: string } }) => {
+      const user = messages.find((m) => m.role === "user")?.content ?? "";
+      calls.push({ tool: tool.function.name, user });
+      const respond = (args: unknown) => ({ toolName: tool.function.name, argumentsRaw: JSON.stringify(args), usage, latencyMs: 5, finishReason: "stop" });
+      switch (tool.function.name) {
+        case "emit_clarifying_questions":
+          return respond({ questions });
+        case "emit_element_routing_decision":
+          return respond(gatekeeperDecision);
+        case "emit_synthesized_dynamic_card":
+          return respond({
+            title: "Key Vault soft-delete recovery",
+            headline: "kv-contoso-fin-02 is soft-deleted with purge protection",
+            domain: "identity",
+            state: "warning",
+            gauges: [{ id: "g1", label: "Retention days left", used: 83, limit: 90, unit: "days", status: "warning" }],
+            diff: "- # vault soft-deleted\n+ Undo-AzKeyVaultRemoval -VaultName kv-contoso-fin-02 -ResourceGroupName rg-contoso-fin -Location westeurope",
+            recommendedActions: [{ id: "a1", label: "Recover vault", description: "Recover in place", command: "Undo-AzKeyVaultRemoval -VaultName kv-contoso-fin-02", kind: "stage-fix" }],
+          });
+        case "emit_custom_remediation_template": {
+          const recover = user.includes("Recover the old vault");
+          return respond({
+            title: recover ? "Recover soft-deleted kv-contoso-fin-02" : "Purge and recreate kv-contoso-fin-02",
+            summary: "Key Vault remediation",
+            powershellScript: recover
+              ? "[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$VaultName = 'kv-contoso-fin-02')\nif ($PSCmdlet.ShouldProcess($VaultName, 'Recover')) {\n  Undo-AzKeyVaultRemoval -VaultName $VaultName -ResourceGroupName rg-contoso-fin -Location westeurope\n}\n"
+              : "[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$VaultName = 'kv-contoso-fin-02')\nif ($PSCmdlet.ShouldProcess($VaultName, 'Purge')) {\n  Remove-AzKeyVault -VaultName $VaultName -InRemovedState -Force\n}\n",
+            terraformDiff: "",
+            graphPatch: "{}",
+            rollbackScript: "",
+            executionSteps: ["Recover the vault"],
+          });
+        }
+        default:
+          throw new Error(`unexpected tool ${tool.function.name}`);
+      }
+    }) as never);
+    const statusSpy = spyOn(correlator, "correlateUpstreamCloudStatus").mockImplementation((async (input: { ticketText: string; createdAt?: string }) => correlator.correlateUpstreamCloudStatusSync(input)) as never);
+    const mutableConfig = config as { forceLocal: boolean };
+    const mutableMeta = providers.meta as { hasKey: boolean };
+    const previous = { nodeEnv: process.env.NODE_ENV, forceLocal: mutableConfig.forceLocal, hasKey: mutableMeta.hasKey };
+    // The sub-agents only call models outside the test env with a key; the spy above is the model.
+    process.env.NODE_ENV = "development";
+    mutableConfig.forceLocal = false;
+    mutableMeta.hasKey = true;
+    let scenarioId: string | null = null;
+    try {
+      const entry = await triageCustomTicketAsync(ticket);
+      scenarioId = entry.scenarioId;
+      const script = entry.customRemediation?.powershellScript ?? "";
+      expect(script).toContain("Undo-AzKeyVaultRemoval");
+      expect(script).not.toContain("-InRemovedState");
+      expect(entry.clarifiedAnswers?.["question-2"]).toBe("Purge protection is enabled and retention has not expired");
+      expect(entry.clarifiedAnswers?.["question-3"]).toBe("Recover the old vault");
+
+      const order = calls.map((c) => c.tool);
+      expect(order.indexOf("emit_clarifying_questions")).toBe(0);
+      expect(order.indexOf("emit_element_routing_decision")).toBeLessThan(order.indexOf("emit_synthesized_dynamic_card"));
+      const synthCall = calls.find((c) => c.tool === "emit_synthesized_dynamic_card")!;
+      expect(JSON.parse(synthCall.user).missingElement.elementId).toBe("KeyVaultSoftDeleteRecoveryCard");
+      expect(JSON.parse(synthCall.user).clarifiedAnswers["question-3"]).toBe("Recover the old vault");
+      expect(entry.synthesizedElements?.[0]?.elementId).toBe("KeyVaultSoftDeleteRecoveryCard");
+      expect(entry.synthesizedElements?.[0]?.synthesisMeta.source).toBe("llm");
+      const steps = Object.fromEntries((entry.subAgentTasks ?? []).map((t) => [t.stepIndex, t]));
+      expect(steps[1]?.source).toBe("llm");
+      expect(steps[3]?.source).toBe("llm");
+      expect(steps[4]?.source).toBe("llm");
+    } finally {
+      process.env.NODE_ENV = previous.nodeEnv;
+      mutableConfig.forceLocal = previous.forceLocal;
+      mutableMeta.hasKey = previous.hasKey;
+      chatSpy.mockRestore();
+      statusSpy.mockRestore();
+      if (scenarioId) removeCustomTicket(scenarioId);
+    }
+  });
+});
+
+describe("dynamic catalog honesty (L-03)", () => {
+  test("the deterministic path labels its card a template and never persists it", async () => {
+    const { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElements, TEMPLATE_SYNTHESIZER } = await import("./dynamic-catalog.ts");
+    const before = loadDynamicCatalog().dynamicElements.length;
+    const decision = buildDeterministicRoutingDecision({ title: "Template provenance probe", body: "probe", matchedSeededComponents: [] });
+    // Offline the async synthesizer makes no model call and falls back to the template.
+    const [card] = await synthesizeAndPersistMissingElements({ ticketId: "CUSTOM-PROBE1", ticketPrompt: "probe", decision, gatekeeperModel: "deterministic-router" });
+    expect(card?.synthesisMeta.synthesizerModel).toBe(TEMPLATE_SYNTHESIZER);
+    expect(card?.synthesisMeta.gatekeeperModel).toBe("deterministic-router");
+    expect(card?.synthesisMeta.source).toBe("fallback");
+    expect(card?.synthesisMeta.tsxStubPath).toBe("");
+    expect(loadDynamicCatalog().dynamicElements.length).toBe(before);
+    expect(existsSync("../../data/synthesized-elements/TemplateProvenanceProbeCard.tsx")).toBe(false);
   });
 });

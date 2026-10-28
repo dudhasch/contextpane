@@ -595,7 +595,7 @@ function buildDeterministicFreeRoamKnowledgeCard(
     ...(refinementText ? { refinementText: refinementText.slice(0, 160) } : {}),
     viewMode: viewMode ?? "dashboard",
     title: `Free-Roam Explorer · ${prompt.slice(0, 64)}`.slice(0, 90),
-    subtitle: `Synthesized ${scope} dashboard · ${rows.length} architectural & telemetry vectors`.slice(0, 160),
+    subtitle: `Synthesized ${scope} lens · ${rows.length} architectural & telemetry vectors`.slice(0, 160),
     sourceQuery: `Free-Roam Query (${scope}): "${prompt.slice(0, 90)}"`,
     kpis,
     breakdown,

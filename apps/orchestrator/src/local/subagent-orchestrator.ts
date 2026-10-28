@@ -14,7 +14,7 @@ import { z } from "zod";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool } from "../router/openai.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
-import { assessTicketElementNeeds, buildDeterministicRoutingDecision, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
+import { assessTicketElementNeeds, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
 
 function humanizeSlug(raw: string): string {
   const trimmed = raw.trim();
@@ -240,7 +240,7 @@ export function buildCustomTicketRemediationSync(input: { scenarioId: string; ti
     affectedEntities: [{ type: "resource", id: input.scenarioId, change: `Apply clarified remediation (${scopeText})`.slice(0, 180) }],
     requiredCommands: ["get-azresource"],
     riskNotes: ["All mutating cmdlets are wrapped in $PSCmdlet.ShouldProcess (-WhatIf safe)."],
-    executionSteps: [`[Step 1/2] Inspecting live state for ${input.scenarioId} (${scopeText})...`, `[Step 2/2] Applying verified PowerShell 7 remediation -> Succeeded`],
+    executionSteps: [`[Step 1/2] Inspect live state for ${input.scenarioId} (${scopeText})`, `[Step 2/2] Run the approved PowerShell 7 remediation`],
   };
 }
 
@@ -343,6 +343,18 @@ export interface SafetyVerifierResult {
  * non-empty target parameters, and absence of destructive wildcards like Remove-MgUser -All).
  * If SupportsShouldProcess is missing on an otherwise safe script, repairs it before returning.
  */
+/** Splits a script's leading param(...) block (balanced parentheses) from the statements after it. */
+function splitParamBlock(lines: string[]): { paramLines: string[]; bodyLines: string[] } {
+  const start = lines.findIndex((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+  if (start < 0 || !/^param\s*\(/i.test(lines[start]!.trim())) return { paramLines: [], bodyLines: lines };
+  let depth = 0;
+  for (let i = start; i < lines.length; i++) {
+    for (const ch of lines[i]!) depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    if (depth <= 0) return { paramLines: lines.slice(start, i + 1), bodyLines: [...lines.slice(0, start), ...lines.slice(i + 1)] };
+  }
+  return { paramLines: [], bodyLines: lines };
+}
+
 export function verifyAndRepairGeneratedScript(script: string, scenarioId: string): SafetyVerifierResult {
   const started = performance.now();
   const warnings: string[] = [];
@@ -367,15 +379,17 @@ export function verifyAndRepairGeneratedScript(script: string, scenarioId: strin
   const hasShouldProcessAttr = /SupportsShouldProcess\s*=\s*\$true/i.test(current);
   const hasShouldProcessCall = /\$PSCmdlet\.ShouldProcess\s*\(/i.test(current);
   if ((!hasShouldProcessAttr || !hasShouldProcessCall) && warnings.length === 0) {
-    const bodyLines = current
+    const lines = current
       .split(/\r?\n/)
       .filter((line) => !/^#Requires\b/i.test(line.trim()) && !/^\[CmdletBinding/i.test(line.trim()));
+    // A param() block must stay the first statement: keep it outside the ShouldProcess guard.
+    const { paramLines, bodyLines } = splitParamBlock(lines);
     current = [
       "#Requires -Version 7.0",
       "[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]",
-      `param([string]$Target = "${scenarioId}")`,
+      ...(paramLines.length ? paramLines : [`param([string]$Target = "${scenarioId}")`]),
       "$ErrorActionPreference = 'Stop'",
-      `if ($PSCmdlet.ShouldProcess($Target, "Execute verified remediation for ${scenarioId}")) {`,
+      `if ($PSCmdlet.ShouldProcess("${scenarioId}", "Execute verified remediation for ${scenarioId}")) {`,
       ...bodyLines.map((l) => `  ${l}`),
       "}",
     ].join("\n");
@@ -395,11 +409,38 @@ export function verifyAndRepairGeneratedScript(script: string, scenarioId: strin
 
 export interface SubAgentStepMeasurement {
   latencyMs: number;
+  startOffsetMs?: number;
   modelId?: string;
   tokensUsed?: number;
   status?: "completed" | "running" | "fallback";
-  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error";
+  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error" | "not-attempted";
   outputSummary?: string;
+}
+
+/**
+ * Router telemetry derived from what the sub-agents actually did: provider "meta" and real
+ * token counts only when at least one step called a model (L-04, L-06).
+ */
+export function telemetryFromSubAgentTasks(tasks: SubAgentTaskRecord[]): {
+  provider: "meta" | "local";
+  modelId: string;
+  tokensUsed: { prompt: number; completion: number; total: number };
+  fallbackChain: Array<{ provider: "meta" | "local"; modelId: string; outcome: "ok" | "skipped" | "error"; latencyMs: number }>;
+} {
+  const modelSteps = tasks.filter((t) => t.stepIndex === 1 || t.stepIndex === 3 || t.stepIndex === 4);
+  const llmSteps = modelSteps.filter((t) => t.source === "llm");
+  const total = llmSteps.reduce((sum, t) => sum + (t.tokensUsed ?? 0), 0);
+  return {
+    provider: llmSteps.length ? "meta" : "local",
+    modelId: llmSteps.length ? [...new Set(llmSteps.map((t) => t.modelId))].join(" + ") : "deterministic-router",
+    tokensUsed: { prompt: 0, completion: 0, total },
+    fallbackChain: modelSteps.map((t) => ({
+      provider: t.source === "llm" ? "meta" : "local",
+      modelId: t.modelId,
+      outcome: t.source === "llm" ? "ok" : t.source === "fallback-on-error" ? "error" : "skipped",
+      latencyMs: t.latencyMs,
+    })),
+  };
 }
 
 export function buildSubAgentPipelineRecords(input: {
@@ -424,13 +465,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "scope-and-questions",
       agentName: "1. Goal Clarifier",
       role: "Goal & Scope Clarifier Sub-Agent",
-      modelId: m[1]?.modelId ?? models.metaWonder,
-      status: m[1]?.status ?? "fallback",
-      source: m[1]?.source ?? "fallback-on-error",
-      latencyMs: m[1]?.latencyMs ?? 1,
+      modelId: m[1] ? (m[1].modelId ?? models.metaWonder) : "not run",
+      status: m[1] ? (m[1].status ?? "fallback") : "fallback",
+      source: m[1] ? (m[1].source ?? "fallback-on-error") : "not-attempted",
+      latencyMs: m[1]?.latencyMs ?? 0,
+      ...(m[1]?.startOffsetMs !== undefined ? { startOffsetMs: m[1].startOffsetMs } : {}),
       ...(m[1]?.tokensUsed !== undefined ? { tokensUsed: m[1].tokensUsed } : {}),
       inputSummary: `Ticket "${input.title.slice(0, 70)}"`,
-      outputSummary: m[1]?.outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
+      outputSummary: !m[1] ? "Not run for this ticket" : m[1].outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
       timestamp: now,
     },
     {
@@ -438,13 +480,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "telemetry-and-status",
       agentName: "2. Telemetry Scout",
       role: "Telemetry & Cloud Status Scout Sub-Agent",
-      modelId: m[2]?.modelId ?? "mcp-msgraph + cloud-status",
-      status: m[2]?.status ?? "completed",
-      source: m[2]?.source ?? "mcp-probe",
-      latencyMs: m[2]?.latencyMs ?? 1,
+      modelId: m[2] ? (m[2].modelId ?? "mcp-msgraph + cloud-status") : "not run",
+      status: m[2] ? (m[2].status ?? "completed") : "fallback",
+      source: m[2] ? (m[2].source ?? "mcp-probe") : "not-attempted",
+      latencyMs: m[2]?.latencyMs ?? 0,
+      ...(m[2]?.startOffsetMs !== undefined ? { startOffsetMs: m[2].startOffsetMs } : {}),
       ...(m[2]?.tokensUsed !== undefined ? { tokensUsed: m[2].tokensUsed } : {}),
       inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`,
-      outputSummary: m[2]?.outputSummary ?? "Correlated live tenant objects & health advisories",
+      outputSummary: !m[2] ? "Not run for this ticket" : m[2].outputSummary ?? "Correlated live tenant objects & health advisories",
       timestamp: now,
     },
     {
@@ -452,13 +495,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "ui-element-synthesis",
       agentName: "3. UI Architect",
       role: "UI Architect Sub-Agent (N+k Catalog)",
-      modelId: m[3]?.modelId ?? input.synthesizerModel,
-      status: m[3]?.status ?? "fallback",
-      source: m[3]?.source ?? "fallback-on-error",
-      latencyMs: m[3]?.latencyMs ?? 1,
+      modelId: m[3] ? (m[3].modelId ?? input.synthesizerModel) : "not run",
+      status: m[3] ? (m[3].status ?? "fallback") : "fallback",
+      source: m[3] ? (m[3].source ?? "fallback-on-error") : "not-attempted",
+      latencyMs: m[3]?.latencyMs ?? 0,
+      ...(m[3]?.startOffsetMs !== undefined ? { startOffsetMs: m[3].startOffsetMs } : {}),
       ...(m[3]?.tokensUsed !== undefined ? { tokensUsed: m[3].tokensUsed } : {}),
       inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`,
-      outputSummary: m[3]?.outputSummary ?? `Synthesized ${elementsLabel}`,
+      outputSummary: !m[3] ? "Not run for this ticket" : m[3].outputSummary ?? `Synthesized ${elementsLabel}`,
       timestamp: now,
     },
     {
@@ -466,13 +510,14 @@ export function buildSubAgentPipelineRecords(input: {
       task: "script-and-iac-synthesis",
       agentName: "4. IaC & PS7 Coder",
       role: "Remediation & IaC Coder Sub-Agent",
-      modelId: m[4]?.modelId ?? input.synthesizerModel,
-      status: m[4]?.status ?? "fallback",
-      source: m[4]?.source ?? "fallback-on-error",
-      latencyMs: m[4]?.latencyMs ?? 1,
+      modelId: m[4] ? (m[4].modelId ?? input.synthesizerModel) : "not run",
+      status: m[4] ? (m[4].status ?? "fallback") : "fallback",
+      source: m[4] ? (m[4].source ?? "fallback-on-error") : "not-attempted",
+      latencyMs: m[4]?.latencyMs ?? 0,
+      ...(m[4]?.startOffsetMs !== undefined ? { startOffsetMs: m[4].startOffsetMs } : {}),
       ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
       inputSummary: `Target parameters: ${activePairs.join(", ")}`,
-      outputSummary: m[4]?.outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
+      outputSummary: !m[4] ? "Not run for this ticket" : m[4].outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
       timestamp: now,
     },
     {
@@ -480,16 +525,27 @@ export function buildSubAgentPipelineRecords(input: {
       task: "preflight-and-undo",
       agentName: "5. Safety Verifier",
       role: "Safety & Rollback Verifier Sub-Agent",
-      modelId: m[5]?.modelId ?? "symbolic-formal-verifier",
-      status: m[5]?.status ?? "completed",
-      source: m[5]?.source ?? "symbolic-verifier",
-      latencyMs: m[5]?.latencyMs ?? 1,
+      modelId: m[5] ? (m[5].modelId ?? "symbolic-formal-verifier") : "not run",
+      status: m[5] ? (m[5].status ?? "completed") : "fallback",
+      source: m[5] ? (m[5].source ?? "symbolic-verifier") : "not-attempted",
+      latencyMs: m[5]?.latencyMs ?? 0,
+      ...(m[5]?.startOffsetMs !== undefined ? { startOffsetMs: m[5].startOffsetMs } : {}),
       ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
       inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`,
-      outputSummary: m[5]?.outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
+      outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
       timestamp: now,
     },
   ];
+}
+
+/** The answers the pipeline acts on: the operator's pick, else the clarifier's preselected option. */
+export function effectiveClarifiedAnswers(questions: ClarifyingQuestion[], operatorAnswers?: Record<string, string>): Record<string, string> {
+  const answers: Record<string, string> = { ...(operatorAnswers ?? {}) };
+  for (const q of questions) {
+    const value = operatorAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.value;
+    if (value) answers[q.id] = value;
+  }
+  return answers;
 }
 
 export async function runSubAgentPipeline(input: {
@@ -505,93 +561,84 @@ export async function runSubAgentPipeline(input: {
   gatekeeperModel: string;
   cloudStatusCorrelation: UpstreamCloudStatusCorrelation;
   clarifyingQuestions: ClarifyingQuestion[];
+  clarifiedAnswers: Record<string, string>;
   synthesizedElements: SynthesizedDynamicCard[];
   customRemediation: CustomRemediationTemplate;
   subAgentTasks: SubAgentTaskRecord[];
 }> {
-  const seedDecision = buildDeterministicRoutingDecision({
-    title: input.title,
-    body: input.probeText,
-    matchedSeededComponents: input.matchedSeededComponents,
-  });
-
-  const t1Start = performance.now();
-  const clarifierPromise = generateClarifyingQuestions({
-    title: input.title,
-    body: input.body,
-    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-  }).then((res) => ({ ...res, wallClockMs: Math.max(1, Math.round(performance.now() - t1Start)) }));
-
+  const pipelineStart = performance.now();
+  const offset = (t: number) => Math.round(t - pipelineStart);
+  // S2 needs nothing from the other sub-agents, so it probes telemetry for the whole run.
   const t2Start = performance.now();
   const statusPromise = correlateUpstreamCloudStatus({
     ticketText: `${input.title}\n${input.body}`,
     createdAt: input.createdAt,
   }).then((res) => ({ data: res, wallClockMs: Math.max(1, Math.round(performance.now() - t2Start)) }));
 
+  // S1 first: its answers steer the gatekeeper, the UI architect and the coder (L-05, L-07).
+  const t1Start = performance.now();
+  const clarifierRes = await generateClarifyingQuestions({
+    title: input.title,
+    body: input.body,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+  }).then((res) => ({ ...res, wallClockMs: Math.max(1, Math.round(performance.now() - t1Start)) }));
+  const effectiveAnswers = effectiveClarifiedAnswers(clarifierRes.questions, input.clarifiedAnswers);
+
+  // S3 is a real Spark → Wonder chain: the synthesizer builds what the gatekeeper decided.
+  // The gatekeeper call carries its own 10 s budget and falls back to the deterministic seed.
   const t3Start = performance.now();
-  const uiPromise = Promise.all([
-    assessTicketElementNeeds({
-      title: input.title,
-      body: input.probeText,
-      matchedSeededComponents: input.matchedSeededComponents,
-      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-    }),
-    synthesizeAndPersistMissingElements({
+  const uiPromise = assessTicketElementNeeds({
+    title: input.title,
+    body: input.probeText,
+    matchedSeededComponents: input.matchedSeededComponents,
+    clarifiedAnswers: effectiveAnswers,
+  }).then(async (routing) => {
+    const elements = await synthesizeAndPersistMissingElements({
       ticketId: input.scenarioId,
       ticketPrompt: `${input.title}\n${input.body}`,
-      decision: seedDecision,
-      gatekeeperModel: models.metaCatalog,
-      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-    }),
-  ]).then(([routing, elements]) => ({
-    routing,
-    elements,
-    wallClockMs: Math.max(1, Math.round(performance.now() - t3Start)),
-  }));
+      decision: routing.decision,
+      gatekeeperModel: routing.source === "llm" ? routing.modelUsed : "deterministic-router",
+      clarifiedAnswers: effectiveAnswers,
+    });
+    return { routing, elements, wallClockMs: Math.max(1, Math.round(performance.now() - t3Start)) };
+  });
 
   const t4Start = performance.now();
   const coderPromise = synthesizeCustomRemediation({
     scenarioId: input.scenarioId,
     ticketTitle: input.title,
     ticketBody: input.body,
-    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    clarifiedAnswers: effectiveAnswers,
   }).then((res) => ({ data: res, wallClockMs: Math.max(1, Math.round(performance.now() - t4Start)) }));
 
-  const [clarifierRes, statusRes, uiRes, coderRes] = await Promise.all([
-    clarifierPromise,
-    statusPromise,
-    uiPromise,
-    coderPromise,
-  ]);
+  const [statusRes, uiRes, coderRes] = await Promise.all([statusPromise, uiPromise, coderPromise]);
 
   const routingDecision = uiRes.routing.decision;
-  const gatekeeperModel = uiRes.routing.modelUsed;
+  const gatekeeperModel = uiRes.routing.source === "llm" ? uiRes.routing.modelUsed : "deterministic-router";
   const synthesizedElements = uiRes.elements;
-  if (synthesizedElements[0] && routingDecision.missingElements[0]) {
-    routingDecision.missingElements[0].elementId = synthesizedElements[0].elementId;
-    routingDecision.missingElements[0].title = synthesizedElements[0].title;
-  }
 
   const enrichedRemediation = enrichRemediationFromCard(coderRes.data, synthesizedElements[0]);
+  const t5Start = performance.now();
   const safetyCheck = verifyAndRepairGeneratedScript(enrichedRemediation.powershellScript, input.scenarioId);
   const customRemediation: CustomRemediationTemplate = {
     ...enrichedRemediation,
     powershellScript: safetyCheck.repairedScript,
   };
 
-  const uiUsedLlm = uiRes.routing.source === "llm" && synthesizedElements.some((c) => !c.recommendedActions[0]?.command?.includes("Get-AzResource -WhatIf"));
+  const uiUsedLlm = synthesizedElements.some((c) => c.synthesisMeta.source === "llm");
   const subAgentTasks = buildSubAgentPipelineRecords({
     scenarioId: input.scenarioId,
     title: input.title,
     body: input.body,
     questions: clarifierRes.questions,
-    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    clarifiedAnswers: effectiveAnswers,
     elementIds: synthesizedElements.map((s) => s.elementId),
     gatekeeperModel,
     synthesizerModel: models.metaWonder,
     measurements: {
       1: {
         latencyMs: clarifierRes.wallClockMs,
+        startOffsetMs: offset(t1Start),
         modelId: clarifierRes.modelUsed,
         tokensUsed: clarifierRes.tokensUsed,
         status: clarifierRes.status,
@@ -599,6 +646,7 @@ export async function runSubAgentPipeline(input: {
       },
       2: {
         latencyMs: statusRes.wallClockMs,
+        startOffsetMs: offset(t2Start),
         modelId: "mcp-msgraph + cloud-status",
         status: "completed",
         source: "mcp-probe",
@@ -606,13 +654,15 @@ export async function runSubAgentPipeline(input: {
       },
       3: {
         latencyMs: uiRes.wallClockMs,
-        modelId: `${gatekeeperModel} -> ${models.metaWonder}`,
+        startOffsetMs: offset(t3Start),
+        modelId: `${gatekeeperModel} -> ${uiUsedLlm ? models.metaWonder : "deterministic-template"}`,
         tokensUsed: uiRes.routing.tokensUsed ?? 0,
         status: uiUsedLlm ? "completed" : "fallback",
         source: uiUsedLlm ? "llm" : "fallback-on-error",
       },
       4: {
         latencyMs: coderRes.wallClockMs,
+        startOffsetMs: offset(t4Start),
         modelId: coderRes.data._meta?.modelUsed ?? models.metaWonder,
         tokensUsed: coderRes.data._meta?.tokensUsed ?? 0,
         status: coderRes.data._meta?.status ?? "fallback",
@@ -620,6 +670,7 @@ export async function runSubAgentPipeline(input: {
       },
       5: {
         latencyMs: safetyCheck.latencyMs,
+        startOffsetMs: offset(t5Start),
         modelId: "symbolic-formal-verifier",
         status: safetyCheck.passed ? "completed" : "fallback",
         source: "symbolic-verifier",
@@ -637,6 +688,7 @@ export async function runSubAgentPipeline(input: {
     gatekeeperModel,
     cloudStatusCorrelation: statusRes.data,
     clarifyingQuestions: clarifierRes.questions,
+    clarifiedAnswers: effectiveAnswers,
     synthesizedElements,
     customRemediation,
     subAgentTasks,
@@ -651,7 +703,12 @@ export function applyClarifiedAnswersToEntry(entry: CustomScenarioEntry, clarifi
   const scopeSummary = Object.values(mergedAnswers).join(" · ");
   const updatedRouting = entry.elementRouting ? structuredClone(entry.elementRouting) : undefined;
   if (updatedRouting) updatedRouting.customBrief.summary = `${updatedRouting.customBrief.summary.replace(/\s*\[Clarified Scope:.*\]$/, "")} [Clarified Scope: ${scopeSummary}]`;
-  const updatedRemediation = buildCustomTicketRemediationSync({ scenarioId: entry.scenarioId, ticketTitle: entry.ticket.title, ticketBody: entry.ticket.body, clarifiedAnswers: mergedAnswers });
+  // A model-written script is never swapped for the template offline; the async refine re-runs the coder (H-20).
+  const coderUsedLlm = entry.subAgentTasks?.find((t) => t.stepIndex === 4)?.source === "llm";
+  const updatedRemediation =
+    coderUsedLlm && entry.customRemediation
+      ? entry.customRemediation
+      : buildCustomTicketRemediationSync({ scenarioId: entry.scenarioId, ticketTitle: entry.ticket.title, ticketBody: entry.ticket.body, clarifiedAnswers: mergedAnswers });
   return { ...entry, ...(updatedRouting ? { elementRouting: updatedRouting } : {}), customRemediation: updatedRemediation, clarifyingQuestions: updatedQuestions, clarifiedAnswers: mergedAnswers };
 }
 

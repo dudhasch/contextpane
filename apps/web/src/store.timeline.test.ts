@@ -266,7 +266,7 @@ describe("applyTimelineSliceToLayout sign-in timestamp & badge honesty", () => {
       drawerOpen: true,
       liveConsoleOpen: true,
       liveConsoleStreaming: false,
-      liveConsoleLines: ["[00:00.12] Connecting...", "[00:01.40] ✓ All steps completed · Post-Check Invariants: PASSED"],
+      liveConsoleLines: ["⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch"],
     });
     useWorkbench.getState().confirmAndCloseConsole();
     const st = useWorkbench.getState();

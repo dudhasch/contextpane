@@ -78,3 +78,14 @@ describe("a resolved ticket is not remediated twice", () => {
     expect((await post("/api/tickets/reopen", { scenarioId: SCENARIO })).status).toBe(409);
   });
 });
+
+describe("POST /api/rollback (L-09)", () => {
+  test("stages the revert script and never claims it executed", async () => {
+    const res = await post("/api/rollback", { scenarioId: SCENARIO });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { executed: unknown; reason?: string; executionLog: string[] };
+    expect(body.executed).toBe(false);
+    expect(body.reason).toContain("not executed");
+    expect(body.executionLog.join(" ")).not.toMatch(/restored/i);
+  });
+});

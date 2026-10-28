@@ -12,22 +12,22 @@ export interface ContextModeInfo {
 export const CONTEXT_MODE_LIST: ContextModeInfo[] = [
   {
     mode: "dashboard",
-    label: "Dashboard",
-    shortLabel: "Dashboard",
+    label: "Triage Lens",
+    shortLabel: "Triage Lens",
     hint: "KPI tiles, proportional breakdown & filterable live table",
     svgPath: "/icons/mode-dashboard.svg",
   },
   {
     mode: "full-card",
-    label: "Full Card",
-    shortLabel: "Full Card",
+    label: "Live Inspector",
+    shortLabel: "Inspector",
     hint: "Deep entity posture inspector, attribute cards & full PowerShell remediation script",
     svgPath: "/icons/mode-full-card.svg",
   },
   {
     mode: "comparison",
-    label: "Quick Comparison",
-    shortLabel: "Compare",
+    label: "State Diff",
+    shortLabel: "State Diff",
     hint: "Side-by-side peer cohort & golden baseline comparison matrix",
     svgPath: "/icons/mode-comparison.svg",
   },

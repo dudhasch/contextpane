@@ -122,7 +122,7 @@ Four upgrades, all kept off the main canvas cards (see `DESIGN.md`):
 The last layer makes the workbench answer *any* question an engineer asks of the ticket, not only the scripted ones.
 The default view stays calm: nothing new renders until the engineer highlights text or opens the composer.
 
-1. **`ContextualMiniDashboard` primitive** (`packages/catalog/src/schemas/mini-dashboard.ts`): a Zod-validated, polymorphic card
+1. **Context Lens primitive** (`ContextualMiniDashboard` in `packages/catalog/src/schemas/mini-dashboard.ts`): a Zod-validated, polymorphic card
    (`selectionText`, `title`, `subtitle`, `sourceQuery`, `provenanceCategory: "selection"`, 2–4 `kpis`, 2–5 `breakdown` bars,
    dynamic `columns`, `rowsPtr: ptr://<scenario>/selection/<hash>`, bound `rows`, one `suggestedAction` with a `scriptPreview`).
    `compose_contextual_mini_dashboard` is the forced tool `muse-spark-1.3` answers with; its `rows` slot is `{ dataPtr }` only.

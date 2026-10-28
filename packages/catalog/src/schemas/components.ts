@@ -315,7 +315,8 @@ export type HoverDiagnosticPopover = z.infer<typeof HoverDiagnosticPopoverSchema
 /* -------------------------------------------------------------------------- */
 
 export const VerificationStatusSchema = z.object({
-  verdict: z.enum(["Verified Safe", "Verified With Warnings", "Verification Failed", "Pending"]),
+  /** "Overridden": the pre-flight did not pass and an operator approved it anyway with a recorded justification. */
+  verdict: z.enum(["Verified Safe", "Verified With Warnings", "Verification Failed", "Pending", "Overridden"]),
   astCheckPassed: z.boolean().nullable().describe("PowerShell AST parse result; null if not run"),
   terraformFmtPassed: z.boolean().nullable(),
   terraformValidatePassed: z.boolean().nullable(),
@@ -520,6 +521,8 @@ export const SynthesizedDynamicCardSchema = z.object({
     reuseCount: z.number().int().positive().default(1),
     tsxStubPath: z.string(),
     synthesizedAt: z.string(),
+    /** "llm" when muse-wonder produced the card, "fallback" for the deterministic template. */
+    source: z.enum(["llm", "fallback"]).optional(),
   }),
   sourceRef: SourceRefSchema.nullable().default(null),
 });

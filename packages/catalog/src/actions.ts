@@ -22,6 +22,8 @@ export const AuditActionTypeSchema = z.enum([
   "fleet-campaign",
   "ticket-closed",
   "ticket-reopened",
+  "preflight-autofix",
+  "preflight-override",
 ]);
 export type AuditActionType = z.infer<typeof AuditActionTypeSchema>;
 

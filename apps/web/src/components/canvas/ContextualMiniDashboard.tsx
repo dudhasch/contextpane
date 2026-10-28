@@ -185,7 +185,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
           <button
             type="button"
             onClick={() => dismiss(entry.id)}
-            aria-label="Dismiss mini-dashboard"
+            aria-label="Dismiss context lens"
             className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-border px-1.5 text-[11px] text-muted hover:bg-surface hover:text-text"
           >
             <X className="size-3" /> Dismiss
@@ -348,7 +348,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
             type="text"
             value={followUpText}
             onChange={(e) => setFollowUpText(e.target.value)}
-            placeholder="+ Follow-up / refine this dashboard..."
+            placeholder="+ Follow-up / refine this lens…"
             data-testid="mini-dashboard-followup-input"
             className="h-6 min-w-0 flex-1 rounded border border-border-subtle bg-canvas/70 px-2 text-[11px] text-text placeholder:text-faint focus:border-selection focus:outline-none"
           />

@@ -180,11 +180,16 @@ function UnifiedStatusAndAgentBar({
   const triageStatus = useWorkbench((s) => s.triageStatus);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const isBusy = triageStatus === "loading" || refiningGoal;
+  // No recorded pipeline means none ran: nothing is invented to fill the strip (H-21).
   const displayTasks = tasks;
   const completedCount = displayTasks.filter(taskRanForReal).length;
   const allReal = displayTasks.length > 0 && completedCount === displayTasks.length;
+  // Steps with a start offset ran on one clock (S1, then S2 ∥ S3 ∥ S4, then S5): report wall clock, not the sum.
   const totalLatencyMs = useMemo(
-    () => displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0),
+    () =>
+      displayTasks.some((t) => t.startOffsetMs !== undefined)
+        ? Math.max(...displayTasks.map((t) => (t.startOffsetMs ?? 0) + (t.latencyMs || 0)))
+        : displayTasks.reduce((sum, t) => sum + (t.latencyMs || 0), 0),
     [displayTasks],
   );
   const hasAdvisory = Boolean(
@@ -291,6 +296,7 @@ function UnifiedStatusAndAgentBar({
                     }`}
                   >
                     <span>{isBusy ? "●" : taskRanForReal(t) ? "✓" : "⚠"} {stageName}</span>
+                    {!isBusy && t.startOffsetMs !== undefined && <span className="text-faint">+{t.startOffsetMs}·{t.latencyMs}ms</span>}
                   </button>
                   {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
                 </Fragment>
@@ -308,7 +314,7 @@ function UnifiedStatusAndAgentBar({
                   {STAGE_DISPLAY_META[activeTask.stepIndex]?.name ?? activeTask.agentName} · {STAGE_DISPLAY_META[activeTask.stepIndex]?.role ?? activeTask.role}
                 </span>
                 <span className="font-mono text-[10px] text-muted">
-                  {activeTask.latencyMs} ms · {SOURCE_LABEL[activeTask.source ?? "not-attempted"] ?? activeTask.source}
+                  {activeTask.modelId} · {activeTask.latencyMs} ms · {SOURCE_LABEL[activeTask.source ?? "not-attempted"] ?? activeTask.source}
                 </span>
               </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]">
@@ -787,7 +793,7 @@ function ScenarioText({ brief }: { brief: ScenarioBrief }) {
     <section className="rounded-[10px] border border-border bg-surface px-3 py-2" data-testid="customer-ticket-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <span className="section-label">{brief.originKind === "erp-drop" ? "ERP ticket (file drop)" : brief.kind === "ticket" ? "Customer ticket" : "Anomalous tenant state"}</span>
-        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to spawn a live mini-dashboard">
+        <span className="ml-auto inline-flex items-center gap-1 rounded-pill border border-selection/45 bg-selection/12 px-2 py-0.5 text-[10px] font-medium text-selection" title="Highlight 3-120 characters anywhere on screen, then click the pill to open a live Context Lens">
           <Wand2 className="size-3 text-selection" /> Select any text on screen to generate Context UI
         </span>
       </div>
@@ -980,7 +986,7 @@ function SelectionBadge({ selection, text }: { selection: SelectionItem; text: s
           ? document.getElementById(`mini-${selection.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
           : void explore(selection.text, { ...(selection.refinementText ? { refinementText: selection.refinementText } : {}), ...(selection.viewMode ? { viewMode: selection.viewMode } : {}) })
       }
-      title={mounted ? `Selection #${selection.index}${extra} · click to scroll to its mini-dashboard` : `Selection #${selection.index}${extra} · dismissed; click to generate it again`}
+      title={mounted ? `Selection #${selection.index}${extra} · click to scroll to its Context Lens` : `Selection #${selection.index}${extra} · dismissed; click to generate it again`}
       className={`inline-flex h-5 max-w-full items-center gap-1 rounded border px-1.5 align-middle font-mono text-[11px] transition-colors hover:brightness-125 ${mounted ? "border-selection/60 bg-selection/14 text-selection" : "border-selection/30 bg-selection/6 text-selection/70"}`}
     >
       <Sparkles className="size-3 shrink-0" />

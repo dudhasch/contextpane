@@ -28,8 +28,8 @@ import { correlateUpstreamCloudStatus, correlateUpstreamCloudStatusSync } from "
 import {
   assessTicketElementNeeds,
   buildDeterministicRoutingDecision,
+  buildTemplateCards,
   synthesizeAndPersistMissingElements,
-  synthesizeAndPersistMissingElementsSync,
 } from "./dynamic-catalog.ts";
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 import {
@@ -438,18 +438,12 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     ? {
         ...rawExtraction,
         components: finalComponents,
-        entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, "muse-spark-1.3 · N+k Catalog Gatekeeper"),
-        rationale: `Stage-1 muse-spark-1.3 routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+        entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, "deterministic-router · N+k Catalog Gatekeeper"),
+        rationale: `deterministic-router routed to a dynamic UI element (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) built from the deterministic template; no model call yet`.slice(0, 300),
       }
     : rawExtraction;
 
-  const synthesizedElements = hasMissingElements
-    ? synthesizeAndPersistMissingElementsSync({
-        ticketId: id,
-        ticketPrompt: `${title}\n${body}`,
-        decision: routingDecision,
-      })
-    : undefined;
+  const synthesizedElements = hasMissingElements ? buildTemplateCards(routingDecision) : undefined;
   const t3Ms = Math.max(1, Math.round(performance.now() - t3Start));
 
   const t4Start = performance.now();
@@ -485,13 +479,14 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     questions: clarifyingQuestions,
     clarifiedAnswers: initialAnswers,
     elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
-    gatekeeperModel: "muse-spark-1.3",
-    synthesizerModel: "muse-wonder-1.0",
+    gatekeeperModel: "deterministic-router",
+    synthesizerModel: "deterministic-template",
+    // The sync path makes zero model calls: S1/S3/S4 ran their deterministic templates (L-06).
     measurements: {
-      1: { latencyMs: t1Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
-      2: { latencyMs: t2Ms, status: "completed", source: "mcp-probe", tokensUsed: 0 },
-      3: { latencyMs: t3Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
-      4: { latencyMs: t4Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
+      1: { latencyMs: t1Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
+      2: { latencyMs: t2Ms, modelId: "cloud-status (seeded, sync)", status: "completed", source: "mcp-probe", tokensUsed: 0 },
+      3: { latencyMs: t3Ms, modelId: "deterministic-router -> deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
+      4: { latencyMs: t4Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
       5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "symbolic-verifier", tokensUsed: 0 },
     },
   });
@@ -556,6 +551,7 @@ export async function triageCustomTicketAsync(
     gatekeeperModel,
     cloudStatusCorrelation,
     clarifyingQuestions,
+    clarifiedAnswers: initialAnswers,
     synthesizedElements,
     customRemediation,
     subAgentTasks,
@@ -574,22 +570,12 @@ export async function triageCustomTicketAsync(
     ? ["SynthesizedDynamicCard"]
     : rawExtraction.components;
 
-  const initialAnswers: Record<string, string> = Object.fromEntries(
-    clarifyingQuestions.map((q) => {
-      const raw = input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
-      const matched = q.options.find(
-        (o) => o.value.toLowerCase() === raw.toLowerCase() || o.id.toLowerCase() === raw.toLowerCase() || o.label.toLowerCase() === raw.toLowerCase(),
-      );
-      return [q.id, matched ? matched.label : raw];
-    }),
-  );
-
   const extraction: TicketExtraction = hasMissingElements
     ? {
         ...rawExtraction,
         components: finalComponents,
         entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, `${gatekeeperModel} · N+k Catalog Gatekeeper`),
-        rationale: `Stage-1 ${gatekeeperModel} routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
+        rationale: `Stage-1 ${gatekeeperModel} routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 ${synthesizedElements[0]?.synthesisMeta.synthesizerModel ?? "deterministic-template"} built the dynamic UI element`.slice(0, 300),
       }
     : rawExtraction;
 

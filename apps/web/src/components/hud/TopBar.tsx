@@ -44,7 +44,7 @@ export function TopBar() {
           variant={freeRoamOpen ? "primary" : "outline"}
           icon={<Compass />}
           onClick={() => openFreeRoam()}
-          title="Open Free-Roam Startpage — dynamically spawn any dashboard without a ticket"
+          title="Open Free-Roam Startpage — open any lens without a ticket"
           data-testid="topbar-freeroam-button"
         >
           Free-Roam Startpage

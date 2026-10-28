@@ -13,6 +13,8 @@ const ACTION: Record<AuditActionType, { label: string; tone: Tone; icon: React.R
   "fleet-campaign": { label: "Multi-client fix PRs created", tone: "warning", icon: <Zap /> },
   "ticket-closed": { label: "Ticket closed in PSA", tone: "healthy", icon: <CircleCheckBig /> },
   "ticket-reopened": { label: "Ticket reopened", tone: "warning", icon: <RotateCcw /> },
+  "preflight-autofix": { label: "Auto-Fix + pre-flight re-run", tone: "primary", icon: <FileCheck2 /> },
+  "preflight-override": { label: "Pre-flight overridden (justified)", tone: "warning", icon: <ShieldX /> },
 };
 
 function check(v: boolean | null): { text: string; className: string } {

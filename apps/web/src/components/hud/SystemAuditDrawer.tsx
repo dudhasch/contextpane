@@ -60,7 +60,7 @@ export function SystemAuditDrawer() {
           {tab === "providers" && <ProvidersBody />}
           {tab === "skills" && <SkillsPiiBody />}
           <SynthesizedElementsLedgerSection catalog={catalog} onRefresh={loadCatalog} />
-          <OmegaPrimeTelemetrySection catalogCount={elements.length} />
+          <OmegaPrimeTelemetrySection catalogCount={elements.filter((el) => el.synthesizerModel !== "deterministic-template").length} />
         </div>
       </aside>
     </div>
@@ -95,13 +95,19 @@ function SynthesizedElementsLedgerSection({
   };
 
   const elements = catalog?.catalog?.dynamicElements ?? [];
+  // A template card was built without a model call; only the rest are syntheses (L-03).
+  const isTemplate = (el: { synthesizerModel: string }) => el.synthesizerModel === "deterministic-template";
+  const synthesizedCount = elements.filter((el) => !isTemplate(el)).length;
 
   return (
     <section className="rounded-md border border-border-subtle bg-canvas/50 p-3 text-[11.5px]" data-testid="synthesized-elements-ledger">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <Sparkles className="size-3.5 text-primary" />
-          <span className="section-label">Synthesized UI Elements (N+k Catalog · k={elements.length})</span>
+          <span className="section-label">
+            Synthesized UI Elements (N+k Catalog · k={synthesizedCount}
+            {elements.length > synthesizedCount ? ` · ${elements.length - synthesizedCount} template` : ""})
+          </span>
         </div>
         {elements.length > 0 && (
           <button
@@ -117,8 +123,7 @@ function SynthesizedElementsLedgerSection({
         )}
       </div>
       <div className="mb-2 text-[11px] text-muted">
-        Gatekeeper: <span className="font-mono text-text">muse-spark-1.3</span> → Synthesizer:{" "}
-        <span className="font-mono text-primary">muse-wonder-1.0</span> · Persisted in{" "}
+        Gatekeeper → Synthesizer per element (a <span className="font-mono text-text">deterministic-template</span> entry made no model call) · Persisted in{" "}
         <span className="font-mono text-text">data/dynamic-catalog.json</span>
       </div>
       {elements.length === 0 ? (
@@ -132,8 +137,10 @@ function SynthesizedElementsLedgerSection({
               <div className="flex flex-wrap items-center justify-between gap-1">
                 <span className="font-mono text-[11.5px] font-semibold text-primary">&lt;{el.elementId} /&gt;</span>
                 <div className="flex items-center gap-1">
-                  <Pill tone="meta">{el.synthesizerModel}</Pill>
-                  <Pill tone="healthy">reused {el.reuseCount}×</Pill>
+                  <Pill tone={isTemplate(el) ? "muted" : "meta"} title={`gatekeeper: ${el.gatekeeperModel}`}>
+                    {isTemplate(el) ? "template · no model call" : el.synthesizerModel}
+                  </Pill>
+                  <Pill tone="muted">used {el.reuseCount}×</Pill>
                 </div>
               </div>
               <div className="mt-0.5 text-[11px] font-medium text-text">{el.title}</div>
@@ -146,14 +153,6 @@ function SynthesizedElementsLedgerSection({
     </section>
   );
 }
-
-const DEFAULT_SUB_AGENT_PIPELINE = [
-  { stepIndex: 1, agentName: "Goal Clarifier", role: "Scope & Clarifying Questions", modelId: "muse-spark-1.3", latencyMs: 42 },
-  { stepIndex: 2, agentName: "Telemetry Scout", role: "Live Graph / ARM / Status Scout", modelId: "muse-spark-1.3", latencyMs: 68 },
-  { stepIndex: 3, agentName: "UI Architect", role: "N+k Card & Layout Synthesis", modelId: "muse-wonder-1.0", latencyMs: 115 },
-  { stepIndex: 4, agentName: "IaC & PS7 Coder", role: "PowerShell 7 & Terraform Patch", modelId: "muse-wonder-1.0", latencyMs: 140 },
-  { stepIndex: 5, agentName: "Safety Verifier", role: "AST, -WhatIf & 1-Click Undo Check", modelId: "muse-spark-1.3", latencyMs: 35 },
-] as const;
 
 function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) {
   const brief = useWorkbench((s) => s.brief);
@@ -170,8 +169,10 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           role: t.role,
           modelId: t.modelId,
           latencyMs: t.latencyMs,
+          usedModel: t.source === "llm",
+          source: t.source ?? t.status,
         }))
-      : DEFAULT_SUB_AGENT_PIPELINE;
+      : [];
 
   const synthesizedCount =
     catalogCount ||
@@ -190,10 +191,13 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
       <div className="rounded border border-border-subtle bg-surface p-2.5" data-testid="subagent-task-telemetry">
         <div className="flex items-center justify-between gap-2">
           <div className="text-[10px] font-semibold tracking-wider text-faint uppercase">Sub-Agent Task Telemetry (5-Stage Pipeline)</div>
-          <span className="font-mono text-[11px] text-healthy">
-            {subAgents.length}/5 stages active
+          <span className={`font-mono text-[11px] ${subAgents.some((a) => a.usedModel) ? "text-healthy" : "text-muted"}`}>
+            {subAgents.length ? `${subAgents.filter((a) => a.usedModel).length}/${subAgents.length} called a model` : "pipeline not run"}
           </span>
         </div>
+        {subAgents.length === 0 && (
+          <div className="mt-1.5 text-[11px] text-muted">The sub-agent pipeline runs only for custom and ERP tickets; nothing to report for this one.</div>
+        )}
         <div className="mt-1.5 divide-y divide-border-subtle rounded border border-border-subtle bg-canvas/40">
           {subAgents.map((agent) => (
             <div key={agent.stepIndex} className="flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
@@ -203,7 +207,8 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
                 <span className="truncate text-[11px] text-muted">· {agent.role}</span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10px]">
-                <span className="text-primary">{agent.modelId}</span>
+                <span className={agent.usedModel ? "text-primary" : "text-muted"}>{agent.modelId}</span>
+                {!agent.usedModel && <span className="text-warning">{agent.source}</span>}
                 <span className="text-muted">{agent.latencyMs} ms</span>
               </div>
             </div>

@@ -233,3 +233,131 @@ describe("remediate() unexpected-error path (L-01)", () => {
     }
   });
 });
+
+describe("approve() on a custom ticket (L-02)", () => {
+  test("break-glass with LIVE_CLOUD_MODE records a staged, simulated execution and no convergence", async () => {
+    const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
+    const { config } = await import("../config.ts");
+    const { remediationStore } = await import("../store/remediations.ts");
+    const { auditLedger } = await import("../store/audit.ts");
+    const { approve } = await import("./tier3-remediate.ts");
+    const entry = registerCustomTicket(SAMPLE_UNSCRIPTED_TICKETS[0]!);
+    const mutableConfig = config as { liveCloudMode: boolean; allowExecute: boolean };
+    const previous = { liveCloudMode: mutableConfig.liveCloudMode, allowExecute: mutableConfig.allowExecute };
+    mutableConfig.liveCloudMode = true;
+    mutableConfig.allowExecute = false;
+    try {
+      const drawer = ActionApprovalDrawerSchema.parse({
+        remediationId: `rem-test-custom-${Date.now().toString(36)}`,
+        ticketId: entry.scenarioId,
+        tenantId: entry.tenantId,
+        title: "Custom remediation under test",
+        summary: "Staged custom bundle",
+        synthesizedBy: { planner: "deterministic", coder: "deterministic", provider: "local" },
+        powershellScript: "[CmdletBinding(SupportsShouldProcess)]\nparam()\n",
+        terraformDiff: "",
+        graphPatch: "{}",
+        affectedEntities: [{ type: "resource", id: entry.scenarioId, change: "Apply clarified remediation" }],
+        verificationStatus: { verdict: "Verified Safe", astCheckPassed: true, terraformFmtPassed: null, terraformValidatePassed: null, sandboxProvider: "local-pwsh", validationLatencyMs: 5, whatIfSafe: true, findings: [] },
+        staging: null,
+        approval: { state: "pending", requiredIdentity: "admin@test", approvedBy: null, approvedAt: null },
+        providerTelemetry: { tier: "Tier 3B", provider: "local", modelId: "deterministic", latencyMs: 1, tokensUsed: 0 },
+      });
+      remediationStore.save(drawer);
+      // Capture the ledger entry instead of writing it into the operator's data/audit-log.json.
+      const { spyOn } = await import("bun:test");
+      const appended: Array<{ actionType: string; execution?: string }> = [];
+      const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: { actionType: string; execution?: string }) => {
+        appended.push(input);
+        return input;
+      }) as never);
+      const result = await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" }).finally(() => auditSpy.mockRestore());
+      expect(result.approval.state).toBe("simulated");
+      expect(result.convergence).toBeNull();
+      expect(result.executionLog.join("\n")).not.toContain("HTTP 200");
+      expect(result.executionLog.join("\n")).toContain("staged, not executed");
+      expect(appended.find((a) => a.actionType === "hitl-approval")?.execution).toBe("simulated");
+      remediationStore.clear(entry.scenarioId);
+    } finally {
+      Object.assign(mutableConfig, previous);
+      clearCustomTickets("unscripted");
+    }
+  });
+});
+
+describe("Auto-Fix and Override run on the server (L-08)", () => {
+  async function failingCustomDrawer(script: string) {
+    const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
+    const { remediationStore } = await import("../store/remediations.ts");
+    const entry = registerCustomTicket(SAMPLE_UNSCRIPTED_TICKETS[0]!);
+    const drawer = ActionApprovalDrawerSchema.parse({
+      remediationId: `rem-test-fix-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+      ticketId: entry.scenarioId,
+      tenantId: entry.tenantId,
+      title: "Failing custom bundle",
+      summary: "Pre-flight did not pass",
+      synthesizedBy: { planner: "deterministic", coder: "deterministic", provider: "local" },
+      powershellScript: script,
+      terraformDiff: "",
+      graphPatch: "{}",
+      affectedEntities: [{ type: "resource", id: entry.scenarioId, change: "Grant vault access" }],
+      verificationStatus: { verdict: "Verification Failed", astCheckPassed: null, terraformFmtPassed: null, terraformValidatePassed: null, sandboxProvider: "none", validationLatencyMs: 0, whatIfSafe: null, findings: ["pre-flight not run: test"] },
+      staging: null,
+      approval: { state: "pending", requiredIdentity: "admin@test", approvedBy: null, approvedAt: null },
+      providerTelemetry: { tier: "Tier 3B", provider: "local", modelId: "deterministic", latencyMs: 1, tokensUsed: 0 },
+    });
+    remediationStore.save(drawer);
+    return { drawer, entry, remediationStore };
+  }
+
+  async function withQuietLedgerAndLocalSandbox<T>(run: () => Promise<T>): Promise<T> {
+    const { spyOn } = await import("bun:test");
+    const { auditLedger } = await import("../store/audit.ts");
+    const modal = await import("../preflight/modal.ts");
+    const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: unknown) => input) as never);
+    const modalSpy = spyOn(modal, "modalConfigured").mockReturnValue(false);
+    try {
+      return await run();
+    } finally {
+      auditSpy.mockRestore();
+      modalSpy.mockRestore();
+      clearCustomTickets("unscripted");
+    }
+  }
+
+  test("a failing bundle → Auto-Fix → re-verified by the pre-flight → approve succeeds", async () => {
+    const { autofixRemediation, approve } = await import("./tier3-remediate.ts");
+    await withQuietLedgerAndLocalSandbox(async () => {
+      const script = [
+        "param([string]$VaultName = 'kv-contoso-fin-02')",
+        "Get-AzResource -Name $VaultName | Out-Null",
+        "Set-AzKeyVaultAccessPolicy -VaultName $VaultName -UserPrincipalName 'lynne@contoso.test' -PermissionsToSecrets get",
+      ].join("\n");
+      const { drawer, remediationStore } = await failingCustomDrawer(script);
+      const fixed = await autofixRemediation(drawer.remediationId);
+      expect(fixed.verificationStatus.verdict).not.toBe("Verification Failed");
+      expect(fixed.verificationStatus.whatIfSafe).toBe(true);
+      // The param() block stays the first statement, outside the ShouldProcess guard.
+      expect(fixed.powershellScript.indexOf("param([string]$VaultName")).toBeLessThan(fixed.powershellScript.indexOf("$PSCmdlet.ShouldProcess("));
+      expect(fixed.powershellScript.match(/\bparam\s*\(/gi)?.length).toBe(1);
+      expect(remediationStore.get(drawer.remediationId)?.verificationStatus.verdict).toBe(fixed.verificationStatus.verdict);
+      const approved = await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" });
+      expect(approved.approval.state).toBe("simulated");
+      remediationStore.clear(drawer.ticketId);
+    });
+  });
+
+  test("Override keeps the real check results, records the justification, and unblocks approve", async () => {
+    const { overrideRemediation, approve } = await import("./tier3-remediate.ts");
+    await withQuietLedgerAndLocalSandbox(async () => {
+      const { drawer, remediationStore } = await failingCustomDrawer("Get-AzResource | Out-Null");
+      expect(() => overrideRemediation(drawer.remediationId, "too short")).toThrow();
+      const overridden = overrideRemediation(drawer.remediationId, "Vendor outage, CAB approved emergency change 4711");
+      expect(overridden.verificationStatus.verdict).toBe("Overridden");
+      expect(overridden.verificationStatus.astCheckPassed).toBeNull();
+      expect(overridden.verificationStatus.findings.at(-1)).toContain("CAB approved emergency change 4711");
+      await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" });
+      remediationStore.clear(drawer.ticketId);
+    });
+  });
+});

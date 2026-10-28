@@ -6,6 +6,7 @@ import {
   type ResolutionStep,
   type ScenarioBrief,
   type ScenarioSignal,
+  type SubAgentTaskRecord,
 } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
@@ -374,15 +375,8 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     ticketText: ticket ? `${ticket.title}\n${ticket.description}` : (ctx.custom ? `${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}` : (ctx.scenarioId ?? ctx.ticketId)),
     createdAt: ticket?.openedAt ?? ctx.custom?.createdAt ?? ctx.gatheredAt,
   });
-  const defaultSubAgentTasks = buildSubAgentPipelineRecords({
-    scenarioId: ctx.ticketId,
-    title: ticket?.title ?? scenarioTitle,
-    body: ticket?.description ?? ctx.custom?.ticket.body ?? (ctx.scenarioId ?? ctx.ticketId),
-    questions: [],
-    elementIds: ctx.components,
-    gatekeeperModel: "muse-spark-1.3",
-    synthesizerModel: "muse-wonder-1.0",
-  });
+  // The sub-agent pipeline only runs for custom tickets; a scripted scenario reports none (H-21).
+  const defaultSubAgentTasks: SubAgentTaskRecord[] = [];
   const base = {
     scenarioId: ctx.ticketId,
     kind: ctx.kind,
@@ -571,8 +565,8 @@ function buildCustomBrief(
       clarifiedAnswers,
       elementIds:
         hasSynthesizedElements && routing ? routing.missingElements.map((m) => m.elementId) : custom.components,
-      gatekeeperModel: "muse-spark-1.3",
-      synthesizerModel: "muse-wonder-1.0",
+      gatekeeperModel: "deterministic-router",
+      synthesizerModel: "deterministic-template",
     });
 
   if (hasSynthesizedElements && routing) {

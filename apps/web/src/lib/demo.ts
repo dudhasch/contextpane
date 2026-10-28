@@ -46,7 +46,7 @@ export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> =
   { key: "0", label: "Reset demo drift", beat: "Every scenario back to its drifted state" },
   { key: "r", label: "Re-correlate (fresh)", beat: "Tier 1B/2 forced tool call" },
   { key: "n", label: "Triage an unscripted ticket", beat: "Paste any ticket → CUSTOM-<hash> triaged live" },
-  { key: "u", label: "Generate Context UI for the hero phrase", beat: "Highlight any text → cyan mini-dashboard" },
+  { key: "u", label: "Generate Context UI for the hero phrase", beat: "Highlight any text → cyan Context Lens" },
   { key: "Esc", label: "Close drawers & popovers", beat: "" },
   { key: "?", label: "This overlay", beat: "" },
 ];
