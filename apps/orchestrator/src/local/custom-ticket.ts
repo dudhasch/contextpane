@@ -328,6 +328,31 @@ function shortHash(text: string): string {
   return h.toString(36).toUpperCase().padStart(6, "0").slice(0, 6);
 }
 
+/**
+ * The template clarifier questions (generateClarifyingQuestionsSync) each steer one step of the
+ * synthesized plan, which brief.ts numbers syn-step-1..3 from the routing's customBrief:
+ * scope → 1 "Inspect Control-Plane State", remediation strategy → 2 "Review Synthesized Remediation
+ * Diff", governance posture (what-if first, least privilege) → 3 "Verify & Stage Fix". Model-written
+ * questions and inherited (non-synthesized) plans have no obvious mapping and stay unset.
+ */
+const TEMPLATE_QUESTION_STEP: Record<string, string> = {
+  "target-scope": "syn-step-1",
+  "remediation-strategy": "syn-step-2",
+  "governance-posture": "syn-step-3",
+};
+
+export function withQuestionStepIds(entry: CustomScenarioEntry): CustomScenarioEntry {
+  const synthesizedPlan = Boolean(entry.elementRouting && entry.elementRouting.missingElements.length > 0);
+  if (!synthesizedPlan || !entry.clarifyingQuestions?.length) return entry;
+  return {
+    ...entry,
+    clarifyingQuestions: entry.clarifyingQuestions.map((q) => {
+      const stepId = q.stepId ?? TEMPLATE_QUESTION_STEP[q.id];
+      return stepId ? { ...q, stepId } : q;
+    }),
+  };
+}
+
 const FILE = join(config.dataDir, "custom-scenarios.json");
 const persist = process.env.NODE_ENV !== "test";
 
@@ -360,13 +385,13 @@ export function loadCustomScenarios(): number {
       const extraction = freshExtraction ? { success: true as const, data: freshExtraction } : TicketExtractionSchema.safeParse(s.extraction);
       if (!extraction.success) continue;
       // Entries written before origins existed were all pasted tickets.
-      registerCustomScenario({
+      registerCustomScenario(withQuestionStepIds({
         ...s,
         origin: s.origin ?? (s.scenarioId.startsWith("ERP-") ? "erp-drop" : "unscripted"),
         extraction: extraction.data,
         components: s.components?.length ? s.components : extraction.data.components,
         baseScenarioId: null,
-      });
+      }));
       n++;
     }
     return n;
@@ -525,7 +550,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       ? applyClarifiedAnswersToEntry(rawEntry, input.clarifiedAnswers)
       : rawEntry;
 
-  const entry = registerCustomScenario(finalizedEntry);
+  const entry = registerCustomScenario(withQuestionStepIds(finalizedEntry));
   save();
   return entry;
 }
@@ -608,7 +633,7 @@ export async function triageCustomTicketAsync(
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
   };
 
-  const entry = registerCustomScenario(rawEntry);
+  const entry = registerCustomScenario(withQuestionStepIds(rawEntry));
   save();
   return entry;
 }
@@ -623,7 +648,7 @@ export async function refineCustomTicketGoal(
 ): Promise<CustomScenarioEntry | null> {
   const existing = getCustomScenario(scenarioId);
   if (!existing) return null;
-  const updated = await refineEntryWithSubAgentsAsync(existing, clarifiedAnswers);
+  const updated = withQuestionStepIds(await refineEntryWithSubAgentsAsync(existing, clarifiedAnswers));
   registerCustomScenario(updated);
   save();
   return updated;

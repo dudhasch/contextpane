@@ -1,4 +1,4 @@
-import { CheckCheck, ChevronRight, ClipboardCopy, FileCheck2 } from "lucide-react";
+import { CheckCheck, ChevronRight, ClipboardCopy } from "lucide-react";
 import { useState } from "react";
 import { fmtDateTimeUtc, humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
@@ -19,12 +19,12 @@ export function ResolutionNoteBox() {
   const [open, setOpen] = useState(true);
   if (status === "idle" && !note) {
     return (
-      <button type="button" onClick={() => void load()} className="mt-2 inline-flex h-6 items-center gap-1 rounded border border-healthy/40 bg-healthy/10 px-2 text-[11px] text-healthy" data-testid="resolution-note-load">
-        <FileCheck2 className="size-3" /> Draft Customer & PSA Resolution Note
+      <button type="button" onClick={() => void load()} className="mt-1.5 inline-flex h-6 items-center gap-1 rounded-sm px-1 text-11 text-signal transition-colors hover:bg-raised" data-testid="resolution-note-load">
+        <span aria-hidden>✦</span> Draft Customer & PSA Resolution Note
       </button>
     );
   }
-  if (!note) return <div className="mt-2 text-[11px] text-faint">{status === "loading" ? "Drafting the resolution note…" : "Resolution note unavailable"}</div>;
+  if (!note) return <div className="mt-2 text-11 text-faint">{status === "loading" ? "Drafting the resolution note…" : "Resolution note unavailable"}</div>;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(note.markdown);
@@ -35,22 +35,22 @@ export function ResolutionNoteBox() {
   };
   const closed = Boolean(note.closed);
   return (
-    <section className="mt-2.5 rounded-md border border-healthy/40 bg-healthy/6" data-testid="resolution-note">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-[12px]">
-        <ChevronRight className={`size-3.5 shrink-0 text-healthy transition-transform ${open ? "rotate-90" : ""}`} />
-        <FileCheck2 className="size-3.5 shrink-0 text-healthy" />
-        <span className="font-semibold">Customer &amp; PSA Resolution Note</span>
-        <span className="truncate text-[11px] text-muted">{closed ? "· Closed in PSA" : "· Ready to Close Ticket"}</span>
-        <Pill tone={closed ? "healthy" : "primary"} className="ml-auto">
+    <section className="mt-2 border-t border-dashed border-hairline" data-testid="resolution-note">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-7 w-full min-w-0 items-center gap-1.5 text-left text-12 transition-colors hover:bg-raised">
+        <ChevronRight className={`size-3.5 shrink-0 text-faint transition-transform ${open ? "rotate-90" : ""}`} />
+        <span className="shrink-0 text-signal" aria-hidden>✦</span>
+        <span className="shrink-0 font-semibold">Customer &amp; PSA Resolution Note</span>
+        <span className="min-w-0 truncate text-11 text-faint">{closed ? "· Closed in PSA" : "· Ready to Close Ticket"}</span>
+        <Pill variant="status" tone={closed ? "healthy" : "primary"} className="ml-auto shrink-0">
           {humanizeStatus(note.status)}
         </Pill>
       </button>
       {open && (
-        <div className="border-t border-healthy/25 px-2.5 py-2">
+        <div className="pt-1 pb-2 pl-5">
           <div className="section-label mb-1">For the customer</div>
-          <p className="text-[12px] leading-relaxed text-text">{note.customerSummary}</p>
+          <p className="text-12 text-text">{note.customerSummary}</p>
           <div className="section-label mt-2 mb-1">Technical audit trail</div>
-          <ul className="space-y-0.5 font-mono text-[11px] leading-snug text-muted">
+          <ul className="space-y-0.5 font-mono text-11 leading-snug text-muted">
             {note.technicalAuditTrail.map((line) => (
               <li key={line} className="flex gap-1.5">
                 <CheckCheck className="mt-0.5 size-3 shrink-0 text-healthy" />
@@ -65,7 +65,7 @@ export function ResolutionNoteBox() {
             <Button size="xs" variant="healthy" icon={<CheckCheck />} onClick={() => void close()} disabled={closed} data-testid="close-ticket">
               {closed ? "Ticket Closed in PSA" : "Mark Ticket Closed in PSA"}
             </Button>
-            <span className="ml-auto font-mono text-[10px] text-faint">
+            <span className="ml-auto font-mono text-11 text-faint">
               {closed && note.closed ? `closed ${fmtDateTimeUtc(note.closed.closedAt)} · ${note.closed.closedBy}` : `resolved ${fmtDateTimeUtc(note.resolvedAt)} · ${humanizeStatus(note.execution)}`}
             </span>
           </div>

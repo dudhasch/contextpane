@@ -18,7 +18,7 @@ import { usePopoverPinning } from "@/hooks/usePopoverPinning";
 import { lookupRoleOrPermission, type EnrichedEntity, type EntityType, type ProviderTelemetry, type QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
 import { healthTone, humanizeStatus, provenanceBadge } from "@/lib/format";
-import { CAT_CHIP, catStyle } from "@/lib/provenance";
+import { catStyle } from "@/lib/provenance";
 import { selectActiveTimelineSlice, selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
@@ -74,11 +74,11 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
   const effectiveNote = isTimeTravel && sliceStatus ? sliceStatus : entity.note;
   const sliceRing =
     sliceHealth === "healthy"
-      ? "ring-1 ring-healthy/60 border-healthy/50"
+      ? "rounded-sm ring-1 ring-healthy/60"
       : sliceHealth === "critical"
-        ? "ring-1 ring-critical/60 border-critical/50"
+        ? "rounded-sm ring-1 ring-critical/60"
         : sliceHealth === "warning"
-          ? "ring-1 ring-warning/60 border-warning/50"
+          ? "rounded-sm ring-1 ring-warning/60"
           : "";
 
   const { refs, floatingStyles, context } = useFloating({
@@ -140,11 +140,22 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
         data-entity={entity.id}
         data-slice-status={sliceStatus}
         title={`${entity.id} · click to open its card`}
-        className={`inline-flex max-w-full items-center gap-1 rounded border align-middle font-mono transition-colors hover:brightness-125 focus-visible:outline-2 focus-visible:outline-[var(--cat)] ${CAT_CHIP} ${sliceRing} ${inline ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-[11.5px]"} ${open ? "brightness-125" : ""}`}
+        className={
+          inline
+            ? `inline text-left text-text underline decoration-[color:var(--cat)] decoration-2 underline-offset-[3px] transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-[var(--cat)] ${sliceRing} ${open ? "bg-raised" : ""}`
+            : `inline-flex h-6 max-w-full items-center rounded-sm px-1 align-middle transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-[var(--cat)] ${sliceRing} ${open ? "bg-raised" : ""}`
+        }
       >
-        <span className="shrink-0 [&>svg]:size-3">{ICON[entity.type] ?? <Hash />}</span>
-        <span className="truncate">{label}</span>
-        {effectiveNote && !inline && <span className="shrink-0 font-sans text-[10px] opacity-85">· {effectiveNote}</span>}
+        {inline ? (
+          label
+        ) : (
+          <>
+            <Pill variant="entity" icon={ICON[entity.type] ?? <Hash />} className="max-w-full min-w-0">
+              {label}
+            </Pill>
+            {effectiveNote && <span className="ml-1 shrink-0 text-11 text-faint">· {effectiveNote}</span>}
+          </>
+        )}
       </button>
       {open && hoverable && (
         <FloatingPortal root={typeof document !== "undefined" ? document.body : null}>
@@ -154,7 +165,7 @@ export function EntityPill({ entity, inline = false }: EntityPillProps) {
             {...getFloatingProps({ onPointerDownCapture: pinning.onPointerDownCapture })}
             data-hover-popover="true"
             data-testid="hover-popover"
-            className={`z-[9999] select-text ${lookupRoleOrPermission(entity.id) ? "w-[340px] max-w-[360px]" : "w-[288px] max-w-[300px]"} animate-fade-in rounded-lg border border-sky-500/40 bg-slate-950/[0.98] p-2.5 shadow-[0_24px_60px_rgba(0,0,0,0.95)] ring-1 ring-white/10 backdrop-blur-md`}
+            className={`z-[9999] select-text ${lookupRoleOrPermission(entity.id) ? "w-[340px] max-w-[360px]" : "w-[288px] max-w-[300px]"} animate-fade-in rounded-lg border border-hairline bg-raised p-2.5 shadow-popover`}
           >
             <HoverPopoverBody entityId={entity.id} tone={tone} onClose={() => setOpen(false)} />
           </div>

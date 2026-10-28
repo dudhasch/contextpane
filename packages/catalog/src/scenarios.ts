@@ -219,8 +219,10 @@ export const ClarifyingQuestionSchema = z.object({
   options: z.array(ClarifyingQuestionOptionSchema).min(2).max(5),
   selectedValue: z.string().optional(),
   customHint: z.string().optional(),
+  /** The `ResolutionStep.id` this question steers; the UI renders its scope chips inside that step. */
+  stepId: z.string().optional(),
 });
-export type ClarifyingQuestion = z.infer<typeof ClarifyingQuestionSchema>;
+export type ClarifyingQuestion =z.infer<typeof ClarifyingQuestionSchema>;
 
 export const SubAgentTaskNameSchema = z.enum([
   "scope-and-questions",

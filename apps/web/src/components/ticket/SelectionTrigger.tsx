@@ -263,7 +263,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
             }
             data-selection-bar="true"
             data-testid="selection-trigger-bar"
-            className="z-[10001] inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-selection/65 bg-[#0B1120]/96 p-1 text-[11.5px] text-selection shadow-popover ring-1 ring-white/10 backdrop-blur-xl"
+            className="z-[10001] inline-flex max-w-[96vw] animate-fade-in flex-wrap items-center gap-1 rounded-lg border border-signal/40 bg-raised p-1 text-[11.5px] text-signal shadow-popover"
           >
             {/* Primary Generate button */}
             <button
