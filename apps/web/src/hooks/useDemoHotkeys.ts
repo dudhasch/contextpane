@@ -18,6 +18,12 @@ export function useDemoHotkeys() {
         return;
       }
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      // Ctrl+. / ⌘.: collapse or expand the code rail.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === ".") {
+        e.preventDefault();
+        s.toggleCodeRail();
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const brief = s.brief;
 

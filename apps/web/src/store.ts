@@ -233,6 +233,10 @@ export interface CardLink {
   category: ProvenanceCategory;
 }
 
+/** Code rail (right zone) script tab and body state. WP4 fills the rail; until then `drawerOpen` still drives the drawer. */
+export type CodeRailTab = "powershell" | "opentofu" | "graph";
+export type CodeRailMode = "idle" | "staging" | "review" | "console" | "note";
+
 interface WorkbenchState {
   /* data */
   /** Free-Roam Startpage / Landing Page mode (default true on boot; false when a ticket/scenario is opened). */
@@ -260,6 +264,14 @@ interface WorkbenchState {
   hovers: Record<string, HoverEntry>;
   drawer: ActionApprovalDrawer | null;
   drawerOpen: boolean;
+  /** Code rail: permanent right zone, collapsible to a 36px strip (Ctrl+. / Cmd+.). */
+  codeRailOpen: boolean;
+  codeRailTab: CodeRailTab;
+  codeRailMode: CodeRailMode;
+  setCodeRailOpen(open: boolean): void;
+  toggleCodeRail(): void;
+  setCodeRailTab(tab: CodeRailTab): void;
+  setCodeRailMode(mode: CodeRailMode): void;
   remediateStatus: CanvasStatus;
   remediateProgress: ProgressEvent[];
   approveLog: string[];
@@ -511,6 +523,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   hovers: {},
   drawer: null,
   drawerOpen: false,
+  codeRailOpen: true,
+  codeRailTab: "powershell",
+  codeRailMode: "idle",
+  setCodeRailOpen: (codeRailOpen) => set({ codeRailOpen }),
+  toggleCodeRail: () => set((s) => ({ codeRailOpen: !s.codeRailOpen })),
+  setCodeRailTab: (codeRailTab) => set({ codeRailTab }),
+  setCodeRailMode: (codeRailMode) => set({ codeRailMode }),
   remediateStatus: "idle",
   remediateProgress: [],
   approveLog: [],
@@ -1498,6 +1517,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({ stepsDone: { ...s.stepsDone, [key]: !s.stepsDone[key] } }));
   },
   openRemediation(options = {}) {
+    // The code rail is where staged scripts land; the drawer still opens below until WP4 moves its content.
+    set({ codeRailOpen: true, codeRailMode: "staging" });
     if (get().freeRoamOpen) {
       const top = get().freeRoamDashboards[0];
       void get().stageFreeRoamRemediation({

@@ -3,6 +3,11 @@ import { DEMO_HOTKEYS } from "@/lib/demo";
 import { useWorkbench } from "@/store";
 import { Kbd } from "../ui/Kbd";
 
+/** Shell hotkeys listed right after the work-queue shortcut. */
+const SHELL_HOTKEYS = [{ key: "Ctrl .", label: "Collapse / expand the code rail", beat: "Muse Code rail · ⌘. on macOS" }];
+const queueIdx = DEMO_HOTKEYS.findIndex((h) => h.key === "Ctrl K") + 1;
+const HOTKEYS = [...DEMO_HOTKEYS.slice(0, queueIdx), ...SHELL_HOTKEYS, ...DEMO_HOTKEYS.slice(queueIdx)];
+
 export function HotkeysOverlay() {
   const open = useWorkbench((s) => s.hotkeysOpen);
   const setOpen = useWorkbench((s) => s.setHotkeysOpen);
@@ -22,7 +27,7 @@ export function HotkeysOverlay() {
         </div>
         <table className="w-full text-[12px]">
           <tbody>
-            {DEMO_HOTKEYS.map((h) => (
+            {HOTKEYS.map((h) => (
               <tr key={h.key} className="border-t border-border-subtle">
                 <td className="w-14 py-1.5">
                   <Kbd>{h.key}</Kbd>

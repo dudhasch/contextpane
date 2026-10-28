@@ -2,6 +2,7 @@ import { Activity, Building2, Compass, Database, FilePlus2, Mic, Monitor, Moon, 
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
+import { Pill, type Tone } from "../ui/Pill";
 import { WorkQueue } from "./WorkQueue";
 
 const THEME_LABEL: Record<ThemePreference, string> = { dark: "Dark", light: "Light", system: "System" };
@@ -29,6 +30,11 @@ export function TopBar() {
   const live = useWorkbench((s) => s.health?.liveCloudMode);
   const openCount = useWorkbench((s) => s.scenarios.filter((x) => !x.resolved && !s.convergence[x.scenarioId]).length);
   const theme = useTheme();
+  const connection: { word: string; tone: Tone; title: string } = !wsConnected
+    ? { word: "offline", tone: "critical", title: "Orchestrator websocket disconnected" }
+    : live
+      ? { word: "live", tone: "healthy", title: "Connected · live cloud mode (Microsoft Graph & Azure ARM)" }
+      : { word: "sim", tone: "primary", title: "Connected · simulated lab providers" };
 
   return (
     <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 border-b border-hairline bg-surface px-3">
@@ -41,7 +47,7 @@ export function TopBar() {
         <span className="grid size-6 place-items-center rounded-md bg-signal/15 text-signal">
           <Building2 className="size-3.5" />
         </span>
-        <span className="text-[13px] font-semibold tracking-tight">ContextPane</span>
+        <span className="text-13 font-semibold tracking-tight">ContextPane</span>
       </button>
 
       <div className="flex min-w-0 shrink items-center gap-1.5">
@@ -55,7 +61,7 @@ export function TopBar() {
           Free-Roam Startpage
         </Button>
         <WorkQueue />
-        <span className="shrink-0 font-mono text-[11px] text-faint" title="Open work items in the queue" data-testid="queue-open-count">
+        <span className="shrink-0 font-mono text-11 text-faint" title="Open work items in the queue" data-testid="queue-open-count">
           {openCount} open
         </span>
         <Button
@@ -80,7 +86,7 @@ export function TopBar() {
               : "Active: Simulated Lab Mode (MCP includes seeded Contoso/Fabrikam lab fixtures). Click to enforce Strict Real Tenant Mode."
           }
           data-testid="topbar-datamode-toggle"
-          className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 font-mono text-[11px] font-semibold transition-colors ${
+          className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 font-mono text-11 font-semibold transition-colors ${
             dataMode === "real-tenant"
               ? "border-healthy/50 bg-healthy/15 text-healthy-strong hover:bg-healthy/25"
               : "border-hairline bg-raised text-muted hover:border-signal/40 hover:text-text"
@@ -112,16 +118,19 @@ export function TopBar() {
           title={`Theme: ${THEME_LABEL[theme.preference]}${theme.preference === "system" ? ` (${THEME_LABEL[theme.resolved]})` : ""}. Click for ${THEME_LABEL[THEME_NEXT[theme.preference]]}.`}
           data-testid="topbar-theme-toggle"
         />
-        <Button
-          variant={systemOpen ? "primary" : "ghost"}
-          icon={<Activity />}
-          onClick={() => setSystemOpen(!systemOpen)}
-          title="Router savings, audit log and live provider status (t)"
-          className="relative"
-        >
-          System &amp; Audit
-          <span className={`absolute top-1 right-1 size-1.5 rounded-full ${wsConnected ? (live ? "bg-healthy" : "bg-signal") : "bg-critical"}`} aria-hidden />
-        </Button>
+        <div className="ml-1 flex items-center gap-2 border-l border-hairline pl-2.5 font-mono text-11 text-muted" data-testid="topbar-status-cluster">
+          <Pill variant="status" tone={connection.tone} title={connection.title}>
+            <span data-testid="topbar-connection-status">{connection.word}</span>
+          </Pill>
+          <Button
+            variant={systemOpen ? "primary" : "ghost"}
+            icon={<Activity />}
+            onClick={() => setSystemOpen(!systemOpen)}
+            title="Router savings, audit log and live provider status (t)"
+          >
+            System &amp; Audit
+          </Button>
+        </div>
       </div>
     </header>
   );

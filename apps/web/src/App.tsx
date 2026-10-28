@@ -3,6 +3,7 @@ import { ActionApprovalDrawerSheet } from "./components/canvas/ActionApprovalDra
 import { DiffModal } from "./components/canvas/DiffModal";
 import { GenUICanvas } from "./components/canvas/GenUICanvas";
 import { HotkeysOverlay } from "./components/demo/HotkeysOverlay";
+import { CODE_RAIL_COLLAPSED_PX, CODE_RAIL_OPEN_PX, CodeRail } from "./components/shell/CodeRail";
 import { SystemAuditDrawer } from "./components/hud/SystemAuditDrawer";
 import { TicketComposer } from "./components/hud/TicketComposer";
 import { TopBar } from "./components/hud/TopBar";
@@ -14,17 +15,19 @@ import { Toasts } from "./components/ui/Toasts";
 import { useDemoHotkeys } from "./hooks/useDemoHotkeys";
 import { useWorkbench } from "./store";
 
-const DEFAULT_LEFT_PCT = 40;
-const MIN_LEFT_PCT = 28;
-const MAX_LEFT_PCT = 58;
+/** Context zone width in px (Q1 flight deck: Context 400 · Lens flex · Code rail 440). */
+const DEFAULT_LEFT_PX = 400;
+const MIN_LEFT_PX = 340;
+const MAX_LEFT_PX = 520;
 
 export function App() {
   const boot = useWorkbench((s) => s.boot);
   const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
+  const codeRailOpen = useWorkbench((s) => s.codeRailOpen);
   useDemoHotkeys();
-  const [leftPct, setLeftPct] = useState<number>(DEFAULT_LEFT_PCT);
+  const [leftPx, setLeftPx] = useState<number>(DEFAULT_LEFT_PX);
   const [dragging, setDragging] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const contextRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     void boot();
@@ -35,12 +38,11 @@ export function App() {
     e.stopPropagation();
     setDragging(true);
     const onMove = (ev: MouseEvent) => {
-      const container = containerRef.current ?? document.body;
+      const container = contextRef.current ?? document.body;
       const rect = container.getBoundingClientRect();
       if (rect.width <= 0) return;
-      const rawPct = ((ev.clientX - rect.left) / rect.width) * 100;
-      const clamped = Math.min(MAX_LEFT_PCT, Math.max(MIN_LEFT_PCT, Math.round(rawPct * 10) / 10));
-      setLeftPct(clamped);
+      const raw = Math.round(ev.clientX - rect.left);
+      setLeftPx(Math.min(MAX_LEFT_PX, Math.max(MIN_LEFT_PX, raw)));
     };
     const onUp = () => {
       setDragging(false);
@@ -55,50 +57,53 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   }, []);
 
+  const railPx = codeRailOpen ? CODE_RAIL_OPEN_PX : CODE_RAIL_COLLAPSED_PX;
+
   return (
-    <div ref={containerRef} className="relative flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       <TopBar />
-      <SelectionTrigger
+      {/* Flight deck: [context · hairline · lens] · hairline · code rail. The rail sits outside the
+          selection surface so highlighting script text never opens a Context Lens. */}
+      <div
         className="grid min-h-0 flex-1"
+        data-testid="flight-deck"
         style={{
-          gridTemplateColumns: `minmax(380px, ${leftPct}%) 6px minmax(0, 1fr)`,
+          gridTemplateColumns: `minmax(0, 1fr) 1px ${railPx}px`,
+          transition: "grid-template-columns 140ms var(--ease-ops)",
         }}
       >
-        <section className="flex min-h-0 flex-col bg-surface/40">
-          {freeRoamOpen ? <FreeRoamExplorer /> : <ScenarioPane />}
-        </section>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize scenario and canvas panes"
-          aria-valuenow={Math.round(leftPct)}
-          aria-valuemin={MIN_LEFT_PCT}
-          aria-valuemax={MAX_LEFT_PCT}
-          data-testid="split-pane-resizer"
-          title="Drag to resize panes · Double-click to reset (40/60)"
-          onMouseDown={startResize}
-          onDoubleClick={() => setLeftPct(DEFAULT_LEFT_PCT)}
-          className={`group relative z-10 flex cursor-col-resize items-center justify-center transition-colors ${
-            dragging ? "bg-accent/20" : "hover:bg-accent/10"
-          }`}
+        <SelectionTrigger
+          className="grid min-h-0 min-w-0"
+          style={{ gridTemplateColumns: `${leftPx}px 1px minmax(0, 1fr)` }}
         >
+          <section ref={contextRef} className="flex min-h-0 min-w-0 flex-col bg-surface" data-testid="zone-context">
+            {freeRoamOpen ? <FreeRoamExplorer /> : <ScenarioPane />}
+          </section>
           <div
-            className={`h-full w-px transition-colors ${
-              dragging ? "bg-accent" : "bg-border group-hover:bg-accent/70"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize scenario and canvas panes"
+            aria-valuenow={leftPx}
+            aria-valuemin={MIN_LEFT_PX}
+            aria-valuemax={MAX_LEFT_PX}
+            data-testid="split-pane-resizer"
+            title={`Drag to resize panes · Double-click to reset (${DEFAULT_LEFT_PX}px)`}
+            onMouseDown={startResize}
+            onDoubleClick={() => setLeftPx(DEFAULT_LEFT_PX)}
+            className={`group relative z-10 cursor-col-resize transition-colors duration-120 ${
+              dragging ? "bg-signal" : "bg-hairline hover:bg-signal/70"
             }`}
-          />
-          <div
-            className={`absolute h-8 w-1 rounded-full transition-all ${
-              dragging
-                ? "bg-accent opacity-100 scale-y-110"
-                : "bg-ink-dim/30 opacity-0 group-hover:opacity-100 group-hover:bg-accent/80"
-            }`}
-          />
-        </div>
-        <section className="flex min-h-0 flex-col">
-          <GenUICanvas />
-        </section>
-      </SelectionTrigger>
+          >
+            {/* 9px hit area centred on the 1px hairline. */}
+            <div aria-hidden className="absolute inset-y-0 -left-1 -right-1" />
+          </div>
+          <section className="flex min-h-0 min-w-0 flex-col" data-testid="zone-lens">
+            <GenUICanvas />
+          </section>
+        </SelectionTrigger>
+        <div aria-hidden className="bg-hairline" />
+        <CodeRail forceIdle={freeRoamOpen} />
+      </div>
       <SystemAuditDrawer />
       <TicketComposer />
       <VoiceSteerPanel />
