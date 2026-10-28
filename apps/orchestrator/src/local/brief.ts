@@ -11,6 +11,7 @@ import {
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { correlateUpstreamCloudStatusSync } from "./cloud-status-correlator.ts";
+import { deriveSteeringFromAnswers } from "./steering.ts";
 import { buildSubAgentPipelineRecords, generateClarifyingQuestionsSync } from "./subagent-orchestrator.ts";
 
 /**
@@ -393,6 +394,7 @@ export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
     clarifyingQuestions: [],
     clarifiedAnswers: {},
     subAgentTasks: defaultSubAgentTasks,
+    steering: null,
     originKind: ctx.custom ? ctx.custom.origin : ctx.kind === "ticket" ? ("psa" as const) : ("anomaly" as const),
     displayId: displayScenarioId(ctx.ticketId),
     priority: null,
@@ -555,6 +557,7 @@ function buildCustomBrief(
   const clarifiedAnswers =
     custom.clarifiedAnswers ??
     Object.fromEntries(clarifyingQuestions.map((q) => [q.id, q.selectedValue ?? q.options[0]?.value ?? ""]));
+  const steering = custom.steering ?? deriveSteeringFromAnswers(clarifyingQuestions, clarifiedAnswers);
   const subAgentTasks =
     custom.subAgentTasks ??
     buildSubAgentPipelineRecords({
@@ -609,6 +612,7 @@ function buildCustomBrief(
       clarifyingQuestions,
       clarifiedAnswers,
       subAgentTasks,
+      steering,
       title: custom.ticket.title,
       status: drop ? "New" : "Open",
       openedAt: custom.createdAt,
@@ -667,6 +671,7 @@ function buildCustomBrief(
     clarifyingQuestions,
     clarifiedAnswers,
     subAgentTasks,
+    steering,
     title: custom.ticket.title,
     status: drop ? "New" : "Open",
     openedAt: custom.createdAt,

@@ -284,6 +284,8 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       staging,
       approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },
       providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
+      // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on (U-1).
+      ...(ctx.custom?.steering ? { steering: { version: ctx.custom.steering.version, digest: ctx.custom.steering.digest } } : {}),
     });
     remediationStore.save(drawer);
     auditLedger.append({
@@ -927,6 +929,46 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     tenantId: updated.tenantId,
   });
   return { ...updated, executionLog: log, convergence };
+}
+
+/**
+ * Re-stages a pending drawer after the ticket was steered (U-1): the bundle is rebuilt from the
+ * entry's re-parameterised remediation, the real pre-flight runs again and the drawer records the
+ * steering version it now matches. An approved or executed drawer is never rewritten.
+ */
+export async function restageRemediationForSteering(remediationId: string): Promise<ActionApprovalDrawer> {
+  const started = performance.now();
+  const drawer = remediationStore.get(remediationId);
+  if (!drawer) throw new Error(`Remediation '${remediationId}' not found`);
+  if (drawer.approval.state !== "pending") return drawer;
+  const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
+  const plan = buildRemediationPlan(ctx);
+  const bundle = plan.bundle;
+  const verification = await preflight(bundle, ctx, plan, () => {});
+  const step4 = ctx.custom?.subAgentTasks?.find((t) => t.stepIndex === 4);
+  const usedLlm = step4?.source === "llm";
+  const steering = ctx.custom?.steering;
+  const updated: ActionApprovalDrawer = {
+    ...drawer,
+    title: bundle.title.slice(0, 120),
+    summary: bundle.summary.slice(0, 600),
+    powershellScript: bundle.powershellScript,
+    terraformDiff: bundle.terraformDiff,
+    graphPatch: bundle.graphPatch,
+    affectedEntities: bundle.affectedEntities.slice(0, 20).map((e) => ({ ...e, change: e.change.slice(0, 200) })),
+    verificationStatus: verification,
+    synthesizedBy: { planner: usedLlm ? models.metaWonder : "deterministic", coder: usedLlm ? (step4?.modelId ?? models.metaWonder) : "deterministic", provider: usedLlm ? "meta" : "local" },
+    ...(steering ? { steering: { version: steering.version, digest: steering.digest } } : {}),
+  };
+  remediationStore.save(updated);
+  auditLedger.append({
+    ...verificationProof(updated),
+    actionType: "remediation-verified",
+    delegatedIdentity: updated.approval.requiredIdentity,
+    latencyMs: Math.round(performance.now() - started),
+    detail: `${verification.verdict} · re-staged for steering v${steering?.version ?? 0} · ${verification.sandboxProvider}`.slice(0, 300),
+  });
+  return updated;
 }
 
 /** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the signed-in delegated identity. */

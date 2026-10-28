@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SynthesizedDomainSchema, SynthesizedDynamicCardSchema, SynthesizedPrimitiveKindSchema, type SynthesizedDynamicCard } from "./schemas/components.ts";
 import { CANVAS_COMPONENT_TYPES, type CanvasComponentType } from "./schemas/layout.ts";
 import { EntityTypeSchema, ProvenanceCategorySchema, type ProvenanceCategory } from "./schemas/primitives.ts";
+import { SteeringParamsSchema, type SteeringParams } from "./steering.ts";
 import type { TenantId } from "./tenants.ts";
 
 /**
@@ -291,6 +292,8 @@ export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenar
   clarifiedAnswers?: Record<string, string>;
   /** Per-task sub-agent execution pipeline telemetry for this ticket/project. */
   subAgentTasks?: SubAgentTaskRecord[];
+  /** Typed operator steering (clarifier pills, row clicks, card actions) the coder was last fed (U-1). */
+  steering?: SteeringParams;
 }
 
 export type AnyScenarioEntry = ScenarioRegistryEntry | CustomScenarioEntry;
@@ -568,6 +571,8 @@ export const ScenarioBriefSchema = z.object({
   clarifiedAnswers: z.record(z.string(), z.string()).default({}),
   /** Per-task sub-agent execution pipeline telemetry for this ticket/project. */
   subAgentTasks: z.array(SubAgentTaskRecordSchema).default([]),
+  /** Typed operator steering with provenance; null for built-in scenarios (U-1). */
+  steering: SteeringParamsSchema.nullable().default(null),
   /** The origin badge: psa | anomaly | erp-drop | unscripted. */
   originKind: WorkItemOriginSchema.default("psa"),
   /** `#2026323` for an ERP drop; `#<scenarioId>` otherwise. */

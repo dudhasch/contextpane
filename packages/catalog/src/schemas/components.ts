@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StagedSteeringSchema } from "../steering.ts";
 import {
   DriftStatusSchema,
   EntityTypeSchema,
@@ -380,6 +381,8 @@ export const ActionApprovalDrawerSchema = z.object({
     approvedAt: IsoTimestampSchema.nullable().default(null),
   }),
   providerTelemetry: ProviderTelemetrySchema,
+  /** The steering version / digest this script was built for; stale when the ticket's steering moved on (U-1). */
+  steering: StagedSteeringSchema.optional(),
 });
 export type ActionApprovalDrawer = z.infer<typeof ActionApprovalDrawerSchema>;
 
@@ -455,6 +458,8 @@ export const DataTableBlockSchema = z.object({
   title: z.string(),
   columns: z.array(DataTableColumnSchema).min(1).max(8),
   rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).max(30),
+  /** Column whose cell becomes steering.targetResource when the operator clicks a row (U-1); unset: no row steering. */
+  rowParamKey: z.string().optional(),
 });
 export type DataTableBlock = z.infer<typeof DataTableBlockSchema>;
 
@@ -500,6 +505,8 @@ export const SynthesizedCardActionSchema = z.object({
   description: z.string().optional(),
   command: z.string().optional(),
   kind: z.enum(["stage-fix", "view-diff", "inspect"]).default("stage-fix"),
+  /** Typed steering parameters this action sets before the fix is (re)generated, e.g. { remediationStrategy: "recover" } (U-1). */
+  setsParams: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
 });
 export type SynthesizedCardAction = z.infer<typeof SynthesizedCardActionSchema>;
 

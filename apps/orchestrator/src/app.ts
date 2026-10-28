@@ -11,6 +11,7 @@ import {
   SCENARIO_REGISTRY,
   SELECTION_MAX_CHARS,
   SELECTION_MIN_CHARS,
+  SteeringDeltaSchema,
   TENANT_REGISTRY,
   ViewRecipeSchema,
   baseScenarioOf,
@@ -50,7 +51,7 @@ import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skil
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
-import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, steerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
 import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import {
@@ -69,7 +70,7 @@ import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
 import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
-import { approve, autofixRemediation, overrideRemediation, remediate } from "./tiers/tier3-remediate.ts";
+import { approve, autofixRemediation, overrideRemediation, remediate, restageRemediationForSteering } from "./tiers/tier3-remediate.ts";
 import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
@@ -441,6 +442,60 @@ app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
     subAgentTasks: updated.subAgentTasks ?? [],
     synthesizedElements: updated.synthesizedElements ?? [],
     customRemediation: updated.customRemediation ?? null,
+  });
+});
+
+const SteerBodySchema = SteeringDeltaSchema.extend({ rerun: z.enum(["coder", "coder+ui"]).optional() });
+
+/**
+ * Steering that moves code (U-1): a clarifier pill, a lens row click or a typed parameter becomes a
+ * new steering version; one coder call re-parameterises the script (the previous script is its diff
+ * base), the pending drawer is re-staged through the real pre-flight, and the card's config-diff
+ * block shows the diff. The System & Audit drawer sees the call with its real tokens.
+ */
+app.patch("/api/tickets/:scenarioId/steer", async (c) => {
+  const started = performance.now();
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const body = SteerBodySchema.parse(await c.req.json().catch(() => ({})));
+  const { rerun, ...delta } = body;
+  // The newest pending drawer of this ticket is the diff base and gets re-staged; approved ones stay as they were.
+  const pendingDrawer = remediationStore.list().filter((d) => d.ticketId === scenarioId && d.approval.state === "pending").at(-1) ?? null;
+  const outcome = await steerCustomTicket(scenarioId, delta, { ...(rerun ? { rerun } : {}), ...(pendingDrawer ? { previousScript: pendingDrawer.powershellScript } : {}) });
+  if (!outcome) return c.json({ error: `${scenarioId} is not a custom ticket/project` }, 404);
+  invalidateContext(scenarioId);
+  const drawer = pendingDrawer ? await restageRemediationForSteering(pendingDrawer.remediationId) : null;
+  const ctx = await gatherContext(scenarioId, { fresh: true });
+  const brief = buildScenarioBrief(ctx);
+  const latencyMs = Math.round(performance.now() - started);
+  const usedLlm = outcome.coder.source === "llm";
+  const event = telemetry.record({
+    requestId: telemetry.nextRequestId("t3"),
+    endpoint: "/api/tickets/steer",
+    tier: "Tier 3B",
+    provider: usedLlm ? "meta" : "local",
+    modelId: usedLlm ? outcome.coder.modelUsed : "deterministic-template",
+    latencyMs,
+    tokensUsed: outcome.coder.usage ?? { ...ZERO_USAGE, total: outcome.coder.tokensUsed },
+    fallbackChain: [{ provider: usedLlm ? "meta" : "local", modelId: outcome.coder.modelUsed, outcome: usedLlm ? "ok" : outcome.coder.source === "fallback-on-error" ? "skipped" : "error", latencyMs: outcome.coder.latencyMs }],
+    tenantId: outcome.entry.tenantId,
+  });
+  return c.json({
+    ok: true,
+    scenario: customScenarioListItem(outcome.entry, Boolean(convergenceStore.get(scenarioId))),
+    brief,
+    steering: outcome.steering,
+    previousVersion: outcome.previousSteering.version,
+    clarifiedAnswers: outcome.entry.clarifiedAnswers ?? {},
+    clarifyingQuestions: outcome.entry.clarifyingQuestions ?? [],
+    subAgentTasks: outcome.entry.subAgentTasks ?? [],
+    synthesizedElements: outcome.entry.synthesizedElements ?? [],
+    customRemediation: outcome.entry.customRemediation ?? null,
+    scriptDiff: outcome.scriptDiff,
+    cardResynthesized: outcome.cardResynthesized,
+    drawer,
+    coder: { modelId: outcome.coder.modelUsed, source: outcome.coder.source, latencyMs: outcome.coder.latencyMs, tokensUsed: outcome.coder.tokensUsed, ...(outcome.coder.usage ? { usage: outcome.coder.usage } : {}) },
+    latencyMs,
+    telemetry: event,
   });
 });
 
