@@ -1,5 +1,5 @@
 import { ChevronDown, CircleCheckBig, FileCode2, Link2 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { CATEGORY_META, formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
 import { healthTone } from "@/lib/format";
 import { CAT_CHIP, CAT_TEXT, cardCategory, catStyle } from "@/lib/provenance";
@@ -259,6 +259,7 @@ export function DataTable({
   rowClassName,
   colWidths,
   cellPy = "py-2",
+  onRowClick,
 }: {
   head: string[];
   rows: ReactNode[][];
@@ -266,6 +267,8 @@ export function DataTable({
   rowClassName?: (index: number) => string;
   colWidths?: string[];
   cellPy?: string;
+  /** Rows become buttons: a lens row click steers the fix (U-1). */
+  onRowClick?: (index: number) => void;
 }) {
   return (
     <div className={`overflow-x-auto rounded-md border border-border-subtle ${className}`}>
@@ -288,7 +291,24 @@ export function DataTable({
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className={`border-t border-border-subtle align-middle transition-opacity ${rowClassName?.(i) ?? ""}`}>
+            <tr
+              key={i}
+              className={`border-t border-border-subtle align-middle transition-opacity ${rowClassName?.(i) ?? ""}`}
+              {...(onRowClick
+                ? {
+                    onClick: () => onRowClick(i),
+                    onKeyDown: (e: ReactKeyboardEvent<HTMLTableRowElement>) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onRowClick(i);
+                      }
+                    },
+                    tabIndex: 0,
+                    role: "button",
+                    "data-testid": `lens-row-${i}`,
+                  }
+                : {})}
+            >
               {r.map((cell, j) => (
                 <td key={j} className={`px-2.5 ${cellPy}`}>
                   {cell}

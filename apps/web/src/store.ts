@@ -44,10 +44,12 @@ import {
   type ProgressEvent,
   type PsaResolutionNote,
   type RemediateResponse,
+  type SteerBody,
   type TelemetryStats,
   type VisionResponse,
   type VoiceResponse,
 } from "./lib/api";
+import { fmtMs } from "./lib/format";
 
 export interface SavedFreeRoamBoard {
   id: string;
@@ -319,6 +321,10 @@ interface WorkbenchState {
   pendingTriageTitle: string | null;
   refiningGoal: boolean;
   lastRefinedAt: string | null;
+  /** U-1: a steer is in flight (the pill already flipped, the PowerShell tab shows the re-parameterising shimmer). */
+  steerStatus: "idle" | "pending" | "error";
+  /** The last steer that landed: what changed in the script, which versions, what the coder spent. */
+  lastSteer: { scenarioId: string; fromVersion: number; toVersion: number; diff: string; coder: { modelId: string; source: string; latencyMs: number; tokensUsed: number }; at: string } | null;
   rowFilter: RowFilter | null;
   resolutionNote: PsaResolutionNote | null;
   resolutionNoteStatus: CanvasStatus;
@@ -472,6 +478,11 @@ interface WorkbenchState {
   triageCustom(input: { title: string; body: string; customerName?: string; clarifiedAnswers?: Record<string, string> }): Promise<void>;
   /** Interactive Goal Clarifier: apply clarified answers and regenerate brief, cards, and remediation via Sub-Agents. */
   refineGoal(clarifiedAnswers: Record<string, string>): Promise<void>;
+  /**
+   * Steering that moves code (U-1): a pill toggle, a lens row click or a typed parameter. The pill flips
+   * at once, the PowerShell tab shimmers, then the real re-parameterised script and its diff land.
+   */
+  steer(delta: SteerBody): Promise<void>;
   setRowFilter(filter: RowFilter | null): void;
   loadResolutionNote(): Promise<void>;
   closeTicket(): Promise<void>;
@@ -569,6 +580,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   pendingTriageTitle: null,
   refiningGoal: false,
   lastRefinedAt: null,
+  steerStatus: "idle",
+  lastSteer: null,
   rowFilter: null,
   resolutionNote: null,
   resolutionNoteStatus: "idle",
@@ -2197,6 +2210,51 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         title: "Goal refinement failed",
         detail: error instanceof Error ? error.message : String(error),
       });
+    }
+  },
+  async steer(delta) {
+    const scenarioId = get().scenarioId;
+    const before = get().brief;
+    if (!before || before.scenarioId !== scenarioId) return;
+    if (!isCustomScenarioId(scenarioId)) {
+      get().toast({ tone: "warning", title: "Steering applies to ad-hoc and ERP tickets", detail: "Built-in scenarios carry a fixed bundle." });
+      return;
+    }
+    if (get().steerStatus === "pending") return;
+    // Optimistic: the pill shows the new answer now; the script follows when the coder returns.
+    const optimisticAnswers = { ...(before.clarifiedAnswers ?? {}), ...(delta.clarifier ?? {}) };
+    set({ steerStatus: "pending", brief: { ...before, clarifiedAnswers: optimisticAnswers } });
+    const started = performance.now();
+    try {
+      const result = await api.steer(scenarioId, delta);
+      if (get().scenarioId !== scenarioId) return;
+      set((s) => ({
+        steerStatus: "idle",
+        brief: result.brief,
+        // The staged drawer was re-staged on the server; a drawer of another ticket is left alone.
+        drawer: result.drawer && (!s.drawer || s.drawer.ticketId === scenarioId) ? result.drawer : s.drawer,
+        remediateStatus: result.drawer ? "ready" : s.remediateStatus,
+        lastSteer: { scenarioId, fromVersion: result.previousVersion, toVersion: result.steering.version, diff: result.scriptDiff, coder: result.coder, at: new Date().toISOString().slice(11, 19) + " UTC" },
+        // The card follows the script: replace the synthesized card's props in place, no re-correlate.
+        layout:
+          s.layout && result.synthesizedElements[0]
+            ? { ...s.layout, components: s.layout.components.map((c) => (c.type === "SynthesizedDynamicCard" ? { ...c, props: result.synthesizedElements[0]! } : c)) }
+            : s.layout,
+        speculativeEpoch: s.speculativeEpoch + 1,
+        speculativeBuffer: s.speculativeBuffer.filter((b) => b.scenarioId !== scenarioId),
+      }));
+      void get().loadDrawerExtras();
+      const ms = Math.round(performance.now() - started);
+      const changed = result.scriptDiff.split("\n").filter((l) => /^[+-](?![+-]{2})/.test(l)).length;
+      get().toast({
+        tone: "healthy",
+        title: `Steering v${result.steering.version} · script re-parameterised in ${fmtMs(ms)}`,
+        detail: `${result.coder.source === "llm" ? `${result.coder.modelId} · ${result.coder.tokensUsed} tokens` : "deterministic coder (model offline)"} · ${changed ? `${changed} changed line${changed === 1 ? "" : "s"}` : "no script change"}${result.drawer ? ` · drawer re-staged: ${result.drawer.verificationStatus.verdict}` : ""}`,
+      });
+    } catch (error) {
+      // Roll the pill back: the server did not take the steer.
+      set((s) => ({ steerStatus: "error", brief: s.brief && s.brief.scenarioId === scenarioId ? { ...s.brief, clarifiedAnswers: before.clarifiedAnswers } : s.brief }));
+      get().toast({ tone: "critical", title: "Steering failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
   setRowFilter: (rowFilter) => set((s) => (s.rowFilter?.kind === rowFilter?.kind && s.rowFilter?.value === rowFilter?.value ? {} : { rowFilter })),

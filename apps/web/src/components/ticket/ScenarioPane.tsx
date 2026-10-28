@@ -519,6 +519,11 @@ function ProjectGoalClarifierCard({
   const refineGoal = useWorkbench((s) => s.refineGoal);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const lastRefinedAt = useWorkbench((s) => s.lastRefinedAt);
+  // U-1: a pill toggle steers the script at once (one coder call); "Update Plan & Regenerate" stays the full re-triage.
+  const steer = useWorkbench((s) => s.steer);
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const steeringVersion = useWorkbench((s) => s.brief?.steering?.version ?? 0);
+  const lastSteer = useWorkbench((s) => (s.lastSteer?.scenarioId === scenarioId ? s.lastSteer : null));
   const [expanded, setExpanded] = useState(false);
   useEffect(() => onDemo((beat, claim) => beat.kind === "toggle-clarifier" && claim() && setExpanded((v) => !v)), []);
   useEffect(() => setExpanded(false), [scenarioId]);
@@ -554,6 +559,16 @@ function ProjectGoalClarifierCard({
           <span className="min-w-0 flex-1 truncate font-medium text-primary" title={scopedSummary}>
             {scopedSummary}
           </span>
+          {steerStatus === "pending" ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/12 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary" data-testid="steering-pending-badge">
+              <span className="size-2 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              re-parameterising script…
+            </span>
+          ) : steeringVersion > 0 ? (
+            <span className="shrink-0 rounded border border-border-subtle bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted" title={lastSteer ? `Last steer ${lastSteer.at}: ${lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tokens` : "deterministic coder"}` : "Steering version"} data-testid="steering-version-badge">
+              steering v{steeringVersion}
+            </span>
+          ) : null}
           {lastRefinedAt && !refiningGoal && (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/12 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-300"
@@ -637,7 +652,12 @@ function ProjectGoalClarifierCard({
                             key={opt.id}
                             type="button"
                             data-testid={`clarifier-opt-${q.id}-${opt.id}`}
-                            onClick={() => setDraft((prev) => ({ ...prev, [q.id]: cleanLabel }))}
+                            onClick={() => {
+                              setDraft((prev) => ({ ...prev, [q.id]: cleanLabel }));
+                              // The pill flips now; the PowerShell tab re-parameterises within one coder call (U-1).
+                              if (!active) void steer({ clarifier: { [q.id]: cleanLabel }, source: "clarifier" });
+                            }}
+                            disabled={steerStatus === "pending" && !active}
                             title={opt.description}
                             className={`inline-flex items-center gap-1 rounded-pill border px-2 py-0.5 text-[11px] transition-all ${
                               active
@@ -654,6 +674,11 @@ function ProjectGoalClarifierCard({
                         type="text"
                         value={isPresetOption ? "" : currentVal}
                         onChange={(e) => setDraft((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const typed = (e.target as HTMLInputElement).value.trim();
+                          if (typed && typed !== (clarifiedAnswers[q.id] ?? "")) void steer({ clarifier: { [q.id]: typed }, source: "operator" });
+                        }}
                         placeholder={q.customHint ?? "Or type custom parameter…"}
                         data-testid={`clarifier-input-${q.id}`}
                         className="h-6 min-w-[140px] flex-1 rounded border border-border-subtle bg-surface px-2 font-sans text-[11px] text-text focus:outline-1 focus:outline-primary"
@@ -669,13 +694,22 @@ function ProjectGoalClarifierCard({
                   <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   Updating diagnostic view &amp; remediation scripts...
                 </span>
+              ) : steerStatus === "pending" ? (
+                <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-primary" data-testid="steering-pending-line">
+                  <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  Re-parameterising the PowerShell for steering v{steeringVersion + 1}…
+                </span>
+              ) : lastSteer ? (
+                <span className="font-mono text-[11px] text-emerald-300" data-testid="steering-last-line">
+                  ✓ Steering v{lastSteer.toVersion}: script re-parameterised at {lastSteer.at} ({lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tok` : "deterministic coder"})
+                </span>
               ) : lastRefinedAt ? (
                 <span className="font-mono text-[11px] text-emerald-300">
                   ✓ Plan, Diagnostic View &amp; Remediation updated at {lastRefinedAt}
                 </span>
               ) : (
                 <span className="text-[11px] text-muted">
-                  Click any option or type custom parameters to update plan &amp; scripts.
+                  Click an option: the script re-parameterises at once. Regenerate re-runs the whole pipeline.
                 </span>
               )}
               <Button

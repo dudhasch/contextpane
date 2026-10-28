@@ -15,7 +15,15 @@ function statusTone(state: string): Tone {
   return "muted";
 }
 
-function renderBlock(block: SynthesizedBlock, filterText: string) {
+type RowSteer = (key: string, value: string, label: string) => void;
+
+/** The column a row click steers with: the card's rowParamKey, else the first name/id/resource-like column. */
+function rowSteerColumn(block: Extract<SynthesizedBlock, { kind: "data-table" }>): string | null {
+  if (block.rowParamKey && block.columns.some((c) => c.key === block.rowParamKey)) return block.rowParamKey;
+  return block.columns.find((c) => /^(name|id|resource|resourceName|target|vault|policy|device|user|upn)$/i.test(c.key))?.key ?? null;
+}
+
+function renderBlock(block: SynthesizedBlock, filterText: string, onRowSteer?: RowSteer) {
   switch (block.kind) {
     case "quota-gauges": {
       return (
@@ -122,6 +130,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
             Object.values(r).some((v) => String(v).toLowerCase().includes(q)),
           )
         : block.rows;
+      const steerKey = onRowSteer ? rowSteerColumn(block) : null;
       return (
         <div key={block.title} className="space-y-2 rounded-lg border border-border-subtle bg-surface/60 p-3">
           <div className="flex items-center justify-between gap-2">
@@ -129,10 +138,22 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
               <Database className="size-3.5 text-sky-400" />
               {block.title}
             </span>
-            <span className="font-mono text-[11px] text-faint">{filteredRows.length} rows</span>
+            <span className="font-mono text-[11px] text-faint">
+              {filteredRows.length} rows{steerKey ? " · click a row to target the fix" : ""}
+            </span>
           </div>
           <DataTable
             head={block.columns.map((c) => c.label)}
+            rowClassName={steerKey ? () => "cursor-pointer hover:bg-primary/8" : undefined}
+            onRowClick={
+              steerKey
+                ? (i) => {
+                    const row = filteredRows[i];
+                    const value = row ? String(row[steerKey] ?? "") : "";
+                    if (value) onRowSteer?.("targetResource", value, block.columns.map((c) => String(row?.[c.key] ?? "")).filter(Boolean).join(" · "));
+                  }
+                : undefined
+            }
             rows={filteredRows.map((row) =>
               block.columns.map((col) => {
                 const val = String(row[col.key] ?? "—");
@@ -217,7 +238,15 @@ export function SynthesizedDynamicCard({
   triggeredBy: string[];
 }) {
   const openRemediation = useWorkbench((s) => s.openRemediation);
+  const steer = useWorkbench((s) => s.steer);
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const targetResource = useWorkbench((s) => s.brief?.steering?.targetResource ?? null);
   const [filterText, setFilterText] = useState("");
+  // U-1: a row click narrows the fix to that resource; an action with setsParams steers before it opens the drawer.
+  const onRowSteer = (key: string, value: string, label: string) => {
+    if (steerStatus === "pending") return;
+    void steer({ rowClick: { key, value, label }, source: "row-click" });
+  };
 
   const meta = props.synthesisMeta;
   const quotaBlock = props.blocks.find((b) => b.kind === "quota-gauges");
@@ -300,12 +329,13 @@ export function SynthesizedDynamicCard({
             variant="meta"
             icon={<Wrench />}
             data-testid="synth-stage-fix-btn"
-            onClick={() =>
+            onClick={() => {
+              if (stageAction?.setsParams && Object.keys(stageAction.setsParams).length) void steer({ params: stageAction.setsParams, source: "operator" });
               openRemediation({
                 tab: "powershell",
                 focusBanner: `Focused: ${primaryCtaLabel}`,
-              })
-            }
+              });
+            }}
           >
             {primaryCtaLabel}
           </Button>
@@ -318,7 +348,14 @@ export function SynthesizedDynamicCard({
 
         return (
           <div className="space-y-2.5">
-            {blocksToRender.map((b) => renderBlock(b, filterText))}
+            {targetResource && (
+              <div className="flex items-center gap-1.5 rounded-md border border-primary/35 bg-primary/8 px-2.5 py-1 text-[11px]" data-testid="steering-target-pill">
+                <Pill tone="meta" mono={false}>Fix targets</Pill>
+                <span className="font-mono text-text">{targetResource.value}</span>
+                <span className="text-faint">· {targetResource.source === "row-click" ? "from a row click" : targetResource.source === "clarifier" ? "from the clarifier" : "typed by the operator"}</span>
+              </div>
+            )}
+            {blocksToRender.map((b) => renderBlock(b, filterText, onRowSteer))}
           </div>
         );
       }}

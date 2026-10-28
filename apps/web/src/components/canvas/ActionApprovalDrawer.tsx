@@ -1,6 +1,6 @@
 import { BookOpen, Braces, Check, ClipboardCopy, ExternalLink, FileCode2, FlaskConical, GitMerge, GitPullRequest, HeartPulse, Lightbulb, Mail, RotateCcw, ShieldAlert, ShieldCheck, Sparkles, Terminal, Undo2, Users, Wrench, X, Zap } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import type { ActionApprovalDrawer as Drawer, ExecutionMode } from "@contextpane/catalog";
+import { isSteeringStale, type ActionApprovalDrawer as Drawer, type ExecutionMode } from "@contextpane/catalog";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -86,6 +86,11 @@ export function ActionApprovalDrawerSheet() {
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.drawer && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const reopenTicket = useWorkbench((s) => s.reopenTicket);
+  // U-1: the script says which steering it was built for; the ticket says where the steering is now.
+  const currentSteering = useWorkbench((s) => (s.brief && s.drawer && s.brief.scenarioId === s.drawer.ticketId ? s.brief.steering : null));
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const steer = useWorkbench((s) => s.steer);
+  const steeringStale = Boolean(drawer && currentSteering && isSteeringStale(drawer.steering ?? null, currentSteering));
   const panelRef = useRef<HTMLElement>(null);
   const closeDrawer = useCallback(() => setOpen(false), [setOpen]);
   useFocusTrap(panelRef, open, closeDrawer);
@@ -338,6 +343,31 @@ export function ActionApprovalDrawerSheet() {
               </div>
             )}
 
+            {/* U-1: a staged script that predates the current steering says so and offers one coder call to catch up. */}
+            {(steeringStale || steerStatus === "pending") && !liveConsoleOpen && drawer.approval.state === "pending" && (
+              <div
+                className={`flex shrink-0 items-center justify-between gap-2 border-b px-4 py-1.5 text-[11.5px] ${steerStatus === "pending" ? "border-primary/35 bg-primary/10" : "border-amber-500/40 bg-amber-500/10"}`}
+                data-testid="steering-stale-banner"
+              >
+                {steerStatus === "pending" ? (
+                  <span className="inline-flex items-center gap-1.5 font-mono text-primary">
+                    <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    re-parameterising the script for steering v{(currentSteering?.version ?? 0) + (steeringStale ? 0 : 1)}…
+                  </span>
+                ) : (
+                  <>
+                    <span className="inline-flex items-center gap-1.5 font-mono text-amber-300">
+                      <Sparkles className="size-3.5 shrink-0" />
+                      stale steering · script built for v{drawer.steering?.version ?? 0} · current v{currentSteering?.version ?? 0}
+                    </span>
+                    <Button size="xs" variant="outline" icon={<RotateCcw />} className="border-amber-500/50 text-amber-300 hover:bg-amber-500/15" onClick={() => void steer({ source: "operator" })} data-testid="steering-regenerate-button">
+                      Regenerate
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+
             {focusBanner && !liveConsoleOpen && (
               <div
                 className="flex shrink-0 items-center justify-between gap-2 border-b border-primary/35 bg-primary/10 px-4 py-1.5 text-[11.5px]"
@@ -567,6 +597,9 @@ function ScriptsAndChangesTab({
   liveConsoleReverted: boolean;
 }) {
   const intuneHealth = useWorkbench((s) => s.intuneHealth);
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const lastSteer = useWorkbench((s) => (s.lastSteer?.scenarioId === drawer.ticketId ? s.lastSteer : null));
+  const [showSteerDiff, setShowSteerDiff] = useState(true);
 
   const activeCode =
     subTab === "powershell"
@@ -656,11 +689,41 @@ function ScriptsAndChangesTab({
           ) : (
             <>
               {subTab === "powershell" && (
-                <CodeBlock
-                  code={drawer.powershellScript}
-                  maxHeight="flex-1 min-h-[380px] max-h-[calc(100vh-260px)] overflow-y-auto"
-                  hideToolbar
-                />
+                <div className="relative flex flex-1 flex-col gap-2">
+                  {/* U-1: the diff of the diff — what the last steer changed in this script, built for steering vN -> vM. */}
+                  {lastSteer && lastSteer.diff && steerStatus !== "pending" && (
+                    <div className="rounded-md border border-primary/30 bg-primary/6" data-testid="steering-script-diff">
+                      <button
+                        type="button"
+                        onClick={() => setShowSteerDiff((v) => !v)}
+                        className="flex w-full items-center justify-between gap-2 px-2.5 py-1 text-left text-[11px]"
+                        aria-expanded={showSteerDiff}
+                      >
+                        <span className="font-mono font-semibold text-primary">
+                          What changed · steering v{lastSteer.fromVersion} → v{lastSteer.toVersion}
+                        </span>
+                        <span className="font-mono text-[10px] text-muted">
+                          {lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tok · ${lastSteer.coder.latencyMs} ms` : "deterministic coder"} {showSteerDiff ? "▴" : "▾"}
+                        </span>
+                      </button>
+                      {showSteerDiff && <DiffView diff={lastSteer.diff} maxHeight="max-h-56" className="rounded-t-none border-0 border-t border-primary/20" />}
+                    </div>
+                  )}
+                  <CodeBlock
+                    code={drawer.powershellScript}
+                    className={steerStatus === "pending" ? "opacity-60" : ""}
+                    maxHeight="flex-1 min-h-[380px] max-h-[calc(100vh-260px)] overflow-y-auto"
+                    hideToolbar
+                  />
+                  {steerStatus === "pending" && (
+                    <div className="pointer-events-none absolute inset-0 flex items-start justify-center rounded-md animate-shimmer" data-testid="steering-shimmer">
+                      <span className="mt-3 inline-flex items-center gap-1.5 rounded-pill border border-primary/40 bg-canvas/90 px-2.5 py-1 font-mono text-[11px] text-primary shadow-popover">
+                        <span className="size-2 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        re-parameterising…
+                      </span>
+                    </div>
+                  )}
+                </div>
               )}
               {subTab === "graph" && (
                 <CodeBlock

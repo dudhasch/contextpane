@@ -17,6 +17,9 @@ import type {
   ScenarioBrief,
   ScenarioListItem,
   SteerLayoutArgs,
+  SteeringParams,
+  SteeringSource,
+  SynthesizedDynamicCard,
   ViewRecipe,
   VisionExtraction,
   WorkbenchScenarioId,
@@ -296,6 +299,34 @@ export interface RefineGoalResponse {
   subAgentTasks: SubAgentTaskRecord[];
 }
 
+/** PATCH /api/tickets/:id/steer (U-1): one steering interaction, one coder call, the re-staged drawer. */
+export interface SteerBody {
+  clarifier?: Record<string, string>;
+  params?: Record<string, string | boolean | string[]>;
+  rowClick?: { key: string; value: string; label?: string };
+  source?: SteeringSource;
+  rerun?: "coder" | "coder+ui";
+}
+export interface SteerResponse {
+  ok: boolean;
+  scenario: ScenarioListItem;
+  brief: ScenarioBrief;
+  steering: SteeringParams;
+  previousVersion: number;
+  clarifiedAnswers: Record<string, string>;
+  clarifyingQuestions: ClarifyingQuestion[];
+  subAgentTasks: SubAgentTaskRecord[];
+  synthesizedElements: SynthesizedDynamicCard[];
+  customRemediation: { title: string; summary: string; powershellScript: string } | null;
+  /** Unified diff from the previous script to the re-parameterised one; "" when nothing changed. */
+  scriptDiff: string;
+  cardResynthesized: boolean;
+  drawer: ActionApprovalDrawer | null;
+  coder: { modelId: string; source: string; latencyMs: number; tokensUsed: number; usage?: { prompt: number; completion: number; total: number } };
+  latencyMs: number;
+  telemetry: RouterTelemetry;
+}
+
 export interface SampleTicket { id: string; title: string; body: string; customerName: string }
 
 /* ERP inbox: input/tickets/#<id>/ticketbody.json + images */
@@ -529,6 +560,8 @@ export const api = {
     request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),
   clarifyQuestions: (body: { title: string; body: string; clarifiedAnswers?: Record<string, string> }) =>
     request<ClarifyQuestionsResponse>("/api/tickets/clarify-questions", { method: "POST", body: JSON.stringify(body) }),
+  steer: (scenarioId: string, body: SteerBody) =>
+    request<SteerResponse>(`/api/tickets/${encodeURIComponent(scenarioId)}/steer`, { method: "PATCH", body: JSON.stringify(body) }),
   refineGoal: (scenarioId: string, clarifiedAnswers: Record<string, string>) =>
     request<RefineGoalResponse>(`/api/tickets/${encodeURIComponent(scenarioId)}/refine-goal`, {
       method: "POST",
