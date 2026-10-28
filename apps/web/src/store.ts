@@ -537,7 +537,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           origin: s.custom.origin,
           tenantId: s.tenantId as "tenant-contoso-01" | "tenant-fabrikam-02",
           title: s.title,
-          remediationScope: SCENARIO_REGISTRY[s.custom.baseScenarioId].remediationScope,
+          remediationScope: s.custom.baseScenarioId ? SCENARIO_REGISTRY[s.custom.baseScenarioId].remediationScope : (s.custom.extraction.rationale || s.title),
           components: s.custom.components,
           baseScenarioId: s.custom.baseScenarioId,
           shortHash: s.custom.shortHash,
@@ -784,7 +784,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   unpinRecipe() {
     set({ activeRecipeId: null });
-    get().toast({ tone: "info", title: "Recipe released", detail: "The next scenario switch re-correlates through the model router." });
+    get().toast({ tone: "info", title: "Recipe released", detail: "The next scenario switch refreshes live tenant diagnostics." });
   },
 
   async hover(entityId, entityType) {
@@ -998,8 +998,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       case "switch-tenant":
         if (intent.tenantId) {
           const scenarioId = scenarioForTenant(resolveTenantId(intent.tenantId));
-          get().toast({ tone: "meta", title: "Voice: switch tenant", detail: SCENARIO_REGISTRY[scenarioId].title });
-          await get().selectScenario(scenarioId);
+          if (scenarioId) {
+            get().toast({ tone: "meta", title: "Voice: switch tenant", detail: SCENARIO_REGISTRY[scenarioId].title });
+            await get().selectScenario(scenarioId);
+          }
         }
         break;
       case "pin":
@@ -1663,6 +1665,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         return {
           selections,
           miniDashboards: [entry, ...s.miniDashboards.filter((m) => m.id !== entry.id)].slice(0, 6),
+          expanded: {},
           exploreStatus: "ready",
           activeExploreText: null,
           linkedSelection: entry.id,
@@ -1720,7 +1723,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({
         tone: "healthy",
         title: `${result.scenario.scenarioId} triaged in ${Math.round(performance.now() - started)} ms`,
-        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} entities matched live · intents ${x.intents.join(", ") || "none"} · base ${x.baseScenarioId} · ${result.dataPtrs.length} ptr://custom pointers · formal ${result.verification.formal.passed ? "passed" : "FAILED"}`,
+        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} tenant entities matched live · Pre-flight safety ${result.verification.formal.passed ? "verified" : "flagged"}`,
       });
       await get().selectScenario(result.scenario.scenarioId);
     } catch (error) {
@@ -1752,7 +1755,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const summaryValues = Object.values(result.clarifiedAnswers).slice(0, 3).join(" · ");
       get().toast({
         tone: "healthy",
-        title: "Plan & Remediation Regenerated via Sub-Agents (5/5 ✓)",
+        title: "Plan & Remediation Updated (5/5 checks ✓)",
         detail: `Applied clarified scope: ${summaryValues}`,
       });
     } catch (error) {

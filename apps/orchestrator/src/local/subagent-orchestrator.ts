@@ -4,14 +4,17 @@ import {
   type ClarifyingQuestion,
   type CustomRemediationTemplate,
   type CustomScenarioEntry,
+  type ElementRoutingDecision,
   type OpenAIFunctionTool,
   type SubAgentTaskRecord,
   type SynthesizedDynamicCard,
+  type UpstreamCloudStatusCorrelation,
 } from "@contextpane/catalog";
 import { z } from "zod";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool } from "../router/openai.ts";
-import { assessTicketElementNeeds, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
+import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
+import { assessTicketElementNeeds, buildDeterministicRoutingDecision, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
 
 function humanizeSlug(raw: string): string {
   const trimmed = raw.trim();
@@ -119,16 +122,32 @@ const CLARIFIER_TOOL: OpenAIFunctionTool = {
   },
 };
 
+export interface ClarifierSubAgentResult {
+  questions: ClarifyingQuestion[];
+  modelUsed: string;
+  latencyMs: number;
+  tokensUsed: number;
+  status: "completed" | "fallback";
+  source: "llm" | "fallback-on-error";
+}
+
 export async function generateClarifyingQuestions(input: {
   title: string;
   body: string;
   clarifiedAnswers?: Record<string, string>;
-}): Promise<{ questions: ClarifyingQuestion[]; modelUsed: string; latencyMs: number }> {
+}): Promise<ClarifierSubAgentResult> {
   const started = performance.now();
   const fallback = generateClarifyingQuestionsSync(input);
   const modelId = models.metaWonder;
   if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") {
-    return { questions: fallback, modelUsed: `${modelId} (offline)`, latencyMs: Math.max(1, Math.round(performance.now() - started)) };
+    return {
+      questions: fallback,
+      modelUsed: `${modelId} (offline)`,
+      latencyMs: Math.max(1, Math.round(performance.now() - started)),
+      tokensUsed: 0,
+      status: "fallback",
+      source: "fallback-on-error",
+    };
   }
   try {
     const res = await chatWithForcedTool(
@@ -149,12 +168,26 @@ export async function generateClarifyingQuestions(input: {
     );
     const parsed = z.object({ questions: z.array(ClarifyingQuestionSchema).length(3) }).safeParse(parseToolArguments(res.argumentsRaw));
     if (parsed.success) {
-      return { questions: normalizeQuestionsHumanReadable(parsed.data.questions, input.clarifiedAnswers ?? {}), modelUsed: modelId, latencyMs: res.latencyMs };
+      return {
+        questions: normalizeQuestionsHumanReadable(parsed.data.questions, input.clarifiedAnswers ?? {}),
+        modelUsed: modelId,
+        latencyMs: Math.max(1, Math.round(performance.now() - started)),
+        tokensUsed: res.usage.total,
+        status: "completed",
+        source: "llm",
+      };
     }
   } catch {
     /* fallback below */
   }
-  return { questions: fallback, modelUsed: modelId, latencyMs: Math.max(1, Math.round(performance.now() - started)) };
+  return {
+    questions: fallback,
+    modelUsed: modelId,
+    latencyMs: Math.max(1, Math.round(performance.now() - started)),
+    tokensUsed: 0,
+    status: "fallback",
+    source: "fallback-on-error",
+  };
 }
 
 const REMEDIATION_CODER_TOOL: OpenAIFunctionTool = {
@@ -211,18 +244,41 @@ export function buildCustomTicketRemediationSync(input: { scenarioId: string; ti
   };
 }
 
+export interface RemediationCoderMeta {
+  modelUsed: string;
+  latencyMs: number;
+  tokensUsed: number;
+  status: "completed" | "fallback";
+  source: "llm" | "fallback-on-error";
+}
+
+export type SynthesizedRemediationWithMeta = CustomRemediationTemplate & { _meta?: RemediationCoderMeta };
+
 export async function synthesizeCustomRemediation(input: {
   scenarioId: string;
   ticketTitle: string;
   ticketBody: string;
   clarifiedAnswers?: Record<string, string>;
-}): Promise<CustomRemediationTemplate> {
+}): Promise<SynthesizedRemediationWithMeta> {
+  const started = performance.now();
   const fallback = buildCustomTicketRemediationSync(input);
-  if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") return fallback;
+  const modelId = models.metaWonder;
+  if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") {
+    return {
+      ...fallback,
+      _meta: {
+        modelUsed: `${modelId} (offline)`,
+        latencyMs: Math.max(1, Math.round(performance.now() - started)),
+        tokensUsed: 0,
+        status: "fallback",
+        source: "fallback-on-error",
+      },
+    };
+  }
   try {
     const res = await chatWithForcedTool(
       providers.meta,
-      models.metaWonder,
+      modelId,
       [
         {
           role: "system",
@@ -249,12 +305,101 @@ export async function synthesizeCustomRemediation(input: {
         requiredCommands: Array.isArray(raw.requiredCommands) && raw.requiredCommands.length > 0 ? raw.requiredCommands.map((c) => c.toLowerCase()) : [],
         riskNotes: Array.isArray(raw.riskNotes) && raw.riskNotes.length > 0 ? raw.riskNotes : fallback.riskNotes,
         executionSteps: Array.isArray(raw.executionSteps) && raw.executionSteps.length > 0 ? raw.executionSteps : fallback.executionSteps,
+        _meta: {
+          modelUsed: modelId,
+          latencyMs: Math.max(1, Math.round(performance.now() - started)),
+          tokensUsed: res.usage.total,
+          status: "completed",
+          source: "llm",
+        },
       };
     }
   } catch {
     /* fallback below */
   }
-  return fallback;
+  return {
+    ...fallback,
+    _meta: {
+      modelUsed: modelId,
+      latencyMs: Math.max(1, Math.round(performance.now() - started)),
+      tokensUsed: 0,
+      status: "fallback",
+      source: "fallback-on-error",
+    },
+  };
+}
+
+export interface SafetyVerifierResult {
+  repairedScript: string;
+  passed: boolean;
+  repaired: boolean;
+  warnings: string[];
+  latencyMs: number;
+}
+
+/**
+ * Sub-Agent 5 (Safety & Rollback Verifier): performs real PowerShell AST/safety inspection
+ * on the generated script (checking for -WhatIf / SupportsShouldProcess, balanced braces,
+ * non-empty target parameters, and absence of destructive wildcards like Remove-MgUser -All).
+ * If SupportsShouldProcess is missing on an otherwise safe script, repairs it before returning.
+ */
+export function verifyAndRepairGeneratedScript(script: string, scenarioId: string): SafetyVerifierResult {
+  const started = performance.now();
+  const warnings: string[] = [];
+  let current = script.trim();
+  let repaired = false;
+
+  const openBraces = (current.match(/\{/g) ?? []).length;
+  const closeBraces = (current.match(/\}/g) ?? []).length;
+  if (openBraces !== closeBraces) {
+    warnings.push(`Unbalanced braces detected ({=${openBraces}, }=${closeBraces}).`);
+  }
+
+  const destructiveWildcardRe = /\bRemove-MgUser\s+-All\b|\bRemove-AzResource\b(?![^\n]*-(?:ResourceId|Name|ResourceName))\s+-Force\b|\bFormat-Volume\s+-Force\b/i;
+  if (destructiveWildcardRe.test(current)) {
+    warnings.push("Destructive wildcard command detected (e.g., Remove-MgUser -All or unscoped Remove-AzResource -Force).");
+  }
+
+  if (/\bparam\s*\([^)]*=\s*""\s*\)/i.test(current)) {
+    warnings.push("Empty default target parameter detected in param() block.");
+  }
+
+  const hasShouldProcessAttr = /SupportsShouldProcess\s*=\s*\$true/i.test(current);
+  const hasShouldProcessCall = /\$PSCmdlet\.ShouldProcess\s*\(/i.test(current);
+  if ((!hasShouldProcessAttr || !hasShouldProcessCall) && warnings.length === 0) {
+    const bodyLines = current
+      .split(/\r?\n/)
+      .filter((line) => !/^#Requires\b/i.test(line.trim()) && !/^\[CmdletBinding/i.test(line.trim()));
+    current = [
+      "#Requires -Version 7.0",
+      "[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]",
+      `param([string]$Target = "${scenarioId}")`,
+      "$ErrorActionPreference = 'Stop'",
+      `if ($PSCmdlet.ShouldProcess($Target, "Execute verified remediation for ${scenarioId}")) {`,
+      ...bodyLines.map((l) => `  ${l}`),
+      "}",
+    ].join("\n");
+    repaired = true;
+  } else if (!hasShouldProcessAttr || !hasShouldProcessCall) {
+    warnings.push("Script is missing [CmdletBinding(SupportsShouldProcess = $true)] or $PSCmdlet.ShouldProcess guard.");
+  }
+
+  return {
+    repairedScript: current,
+    passed: warnings.length === 0,
+    repaired,
+    warnings,
+    latencyMs: Math.max(1, Math.round(performance.now() - started)),
+  };
+}
+
+export interface SubAgentStepMeasurement {
+  latencyMs: number;
+  modelId?: string;
+  tokensUsed?: number;
+  status?: "completed" | "running" | "fallback";
+  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error";
+  outputSummary?: string;
 }
 
 export function buildSubAgentPipelineRecords(input: {
@@ -266,18 +411,236 @@ export function buildSubAgentPipelineRecords(input: {
   elementIds: string[];
   gatekeeperModel: string;
   synthesizerModel: string;
+  measurements?: Partial<Record<1 | 2 | 3 | 4 | 5, SubAgentStepMeasurement>>;
 }): SubAgentTaskRecord[] {
   const now = new Date().toISOString();
   const answers = input.clarifiedAnswers ?? {};
   const activePairs = input.questions.map((q) => `${q.id}=${answers[q.id] ?? q.selectedValue ?? q.options[0]?.value ?? ""}`);
   const elementsLabel = input.elementIds.length > 0 ? input.elementIds.join(", ") : "SynthesizedDynamicCard";
+  const m = input.measurements ?? {};
   return [
-    { stepIndex: 1, task: "scope-and-questions", agentName: "1. Goal Clarifier", role: "Goal & Scope Clarifier Sub-Agent", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 42, inputSummary: `Ticket "${input.title.slice(0, 70)}"`, outputSummary: `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`, timestamp: now },
-    { stepIndex: 2, task: "telemetry-and-status", agentName: "2. Telemetry Scout", role: "Telemetry & Cloud Status Scout Sub-Agent", modelId: "mcp-msgraph + cloud-status", status: "completed", latencyMs: 34, inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`, outputSummary: "Correlated live tenant objects & health advisories", timestamp: now },
-    { stepIndex: 3, task: "ui-element-synthesis", agentName: "3. UI Architect", role: "UI Architect Sub-Agent (N+k Catalog)", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 65, inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`, outputSummary: `Synthesized ${elementsLabel}`, timestamp: now },
-    { stepIndex: 4, task: "script-and-iac-synthesis", agentName: "4. IaC & PS7 Coder", role: "Remediation & IaC Coder Sub-Agent", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 58, inputSummary: `Target parameters: ${activePairs.join(", ")}`, outputSummary: "Synthesized PowerShell 7 runbook, REST payload & IaC diff", timestamp: now },
-    { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Safety Verifier", role: "Safety & Rollback Verifier Sub-Agent", modelId: "symbolic-formal-verifier", status: "completed", latencyMs: 12, inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`, outputSummary: "Verified 0 syntax errors & 1-click rollback script ready", timestamp: now },
+    {
+      stepIndex: 1,
+      task: "scope-and-questions",
+      agentName: "1. Goal Clarifier",
+      role: "Goal & Scope Clarifier Sub-Agent",
+      modelId: m[1]?.modelId ?? models.metaWonder,
+      status: m[1]?.status ?? "fallback",
+      source: m[1]?.source ?? "fallback-on-error",
+      latencyMs: m[1]?.latencyMs ?? 1,
+      ...(m[1]?.tokensUsed !== undefined ? { tokensUsed: m[1].tokensUsed } : {}),
+      inputSummary: `Ticket "${input.title.slice(0, 70)}"`,
+      outputSummary: m[1]?.outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
+      timestamp: now,
+    },
+    {
+      stepIndex: 2,
+      task: "telemetry-and-status",
+      agentName: "2. Telemetry Scout",
+      role: "Telemetry & Cloud Status Scout Sub-Agent",
+      modelId: m[2]?.modelId ?? "mcp-msgraph + cloud-status",
+      status: m[2]?.status ?? "completed",
+      source: m[2]?.source ?? "mcp-probe",
+      latencyMs: m[2]?.latencyMs ?? 1,
+      ...(m[2]?.tokensUsed !== undefined ? { tokensUsed: m[2].tokensUsed } : {}),
+      inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`,
+      outputSummary: m[2]?.outputSummary ?? "Correlated live tenant objects & health advisories",
+      timestamp: now,
+    },
+    {
+      stepIndex: 3,
+      task: "ui-element-synthesis",
+      agentName: "3. UI Architect",
+      role: "UI Architect Sub-Agent (N+k Catalog)",
+      modelId: m[3]?.modelId ?? input.synthesizerModel,
+      status: m[3]?.status ?? "fallback",
+      source: m[3]?.source ?? "fallback-on-error",
+      latencyMs: m[3]?.latencyMs ?? 1,
+      ...(m[3]?.tokensUsed !== undefined ? { tokensUsed: m[3].tokensUsed } : {}),
+      inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`,
+      outputSummary: m[3]?.outputSummary ?? `Synthesized ${elementsLabel}`,
+      timestamp: now,
+    },
+    {
+      stepIndex: 4,
+      task: "script-and-iac-synthesis",
+      agentName: "4. IaC & PS7 Coder",
+      role: "Remediation & IaC Coder Sub-Agent",
+      modelId: m[4]?.modelId ?? input.synthesizerModel,
+      status: m[4]?.status ?? "fallback",
+      source: m[4]?.source ?? "fallback-on-error",
+      latencyMs: m[4]?.latencyMs ?? 1,
+      ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
+      inputSummary: `Target parameters: ${activePairs.join(", ")}`,
+      outputSummary: m[4]?.outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
+      timestamp: now,
+    },
+    {
+      stepIndex: 5,
+      task: "preflight-and-undo",
+      agentName: "5. Safety Verifier",
+      role: "Safety & Rollback Verifier Sub-Agent",
+      modelId: m[5]?.modelId ?? "symbolic-formal-verifier",
+      status: m[5]?.status ?? "completed",
+      source: m[5]?.source ?? "symbolic-verifier",
+      latencyMs: m[5]?.latencyMs ?? 1,
+      ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
+      inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`,
+      outputSummary: m[5]?.outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
+      timestamp: now,
+    },
   ];
+}
+
+export async function runSubAgentPipeline(input: {
+  scenarioId: string;
+  title: string;
+  body: string;
+  probeText: string;
+  createdAt: string;
+  matchedSeededComponents: string[];
+  clarifiedAnswers?: Record<string, string>;
+}): Promise<{
+  routingDecision: ElementRoutingDecision;
+  gatekeeperModel: string;
+  cloudStatusCorrelation: UpstreamCloudStatusCorrelation;
+  clarifyingQuestions: ClarifyingQuestion[];
+  synthesizedElements: SynthesizedDynamicCard[];
+  customRemediation: CustomRemediationTemplate;
+  subAgentTasks: SubAgentTaskRecord[];
+}> {
+  const seedDecision = buildDeterministicRoutingDecision({
+    title: input.title,
+    body: input.probeText,
+    matchedSeededComponents: input.matchedSeededComponents,
+  });
+
+  const t1Start = performance.now();
+  const clarifierPromise = generateClarifyingQuestions({
+    title: input.title,
+    body: input.body,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+  }).then((res) => ({ ...res, wallClockMs: Math.max(1, Math.round(performance.now() - t1Start)) }));
+
+  const t2Start = performance.now();
+  const statusPromise = correlateUpstreamCloudStatus({
+    ticketText: `${input.title}\n${input.body}`,
+    createdAt: input.createdAt,
+  }).then((res) => ({ data: res, wallClockMs: Math.max(1, Math.round(performance.now() - t2Start)) }));
+
+  const t3Start = performance.now();
+  const uiPromise = Promise.all([
+    assessTicketElementNeeds({
+      title: input.title,
+      body: input.probeText,
+      matchedSeededComponents: input.matchedSeededComponents,
+      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    }),
+    synthesizeAndPersistMissingElements({
+      ticketId: input.scenarioId,
+      ticketPrompt: `${input.title}\n${input.body}`,
+      decision: seedDecision,
+      gatekeeperModel: models.metaCatalog,
+      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    }),
+  ]).then(([routing, elements]) => ({
+    routing,
+    elements,
+    wallClockMs: Math.max(1, Math.round(performance.now() - t3Start)),
+  }));
+
+  const t4Start = performance.now();
+  const coderPromise = synthesizeCustomRemediation({
+    scenarioId: input.scenarioId,
+    ticketTitle: input.title,
+    ticketBody: input.body,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+  }).then((res) => ({ data: res, wallClockMs: Math.max(1, Math.round(performance.now() - t4Start)) }));
+
+  const [clarifierRes, statusRes, uiRes, coderRes] = await Promise.all([
+    clarifierPromise,
+    statusPromise,
+    uiPromise,
+    coderPromise,
+  ]);
+
+  const routingDecision = uiRes.routing.decision;
+  const gatekeeperModel = uiRes.routing.modelUsed;
+  const synthesizedElements = uiRes.elements;
+  if (synthesizedElements[0] && routingDecision.missingElements[0]) {
+    routingDecision.missingElements[0].elementId = synthesizedElements[0].elementId;
+    routingDecision.missingElements[0].title = synthesizedElements[0].title;
+  }
+
+  const enrichedRemediation = enrichRemediationFromCard(coderRes.data, synthesizedElements[0]);
+  const safetyCheck = verifyAndRepairGeneratedScript(enrichedRemediation.powershellScript, input.scenarioId);
+  const customRemediation: CustomRemediationTemplate = {
+    ...enrichedRemediation,
+    powershellScript: safetyCheck.repairedScript,
+  };
+
+  const uiUsedLlm = uiRes.routing.source === "llm" && synthesizedElements.some((c) => !c.recommendedActions[0]?.command?.includes("Get-AzResource -WhatIf"));
+  const subAgentTasks = buildSubAgentPipelineRecords({
+    scenarioId: input.scenarioId,
+    title: input.title,
+    body: input.body,
+    questions: clarifierRes.questions,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    elementIds: synthesizedElements.map((s) => s.elementId),
+    gatekeeperModel,
+    synthesizerModel: models.metaWonder,
+    measurements: {
+      1: {
+        latencyMs: clarifierRes.wallClockMs,
+        modelId: clarifierRes.modelUsed,
+        tokensUsed: clarifierRes.tokensUsed,
+        status: clarifierRes.status,
+        source: clarifierRes.source,
+      },
+      2: {
+        latencyMs: statusRes.wallClockMs,
+        modelId: "mcp-msgraph + cloud-status",
+        status: "completed",
+        source: "mcp-probe",
+        outputSummary: `Correlated ${statusRes.data.services.length} upstream cloud feeds (${statusRes.data.primaryRegion})`,
+      },
+      3: {
+        latencyMs: uiRes.wallClockMs,
+        modelId: `${gatekeeperModel} -> ${models.metaWonder}`,
+        tokensUsed: uiRes.routing.tokensUsed ?? 0,
+        status: uiUsedLlm ? "completed" : "fallback",
+        source: uiUsedLlm ? "llm" : "fallback-on-error",
+      },
+      4: {
+        latencyMs: coderRes.wallClockMs,
+        modelId: coderRes.data._meta?.modelUsed ?? models.metaWonder,
+        tokensUsed: coderRes.data._meta?.tokensUsed ?? 0,
+        status: coderRes.data._meta?.status ?? "fallback",
+        source: coderRes.data._meta?.source ?? "fallback-on-error",
+      },
+      5: {
+        latencyMs: safetyCheck.latencyMs,
+        modelId: "symbolic-formal-verifier",
+        status: safetyCheck.passed ? "completed" : "fallback",
+        source: "symbolic-verifier",
+        outputSummary: safetyCheck.passed
+          ? safetyCheck.repaired
+            ? "Auto-wrapped script in SupportsShouldProcess (-WhatIf) & verified AST safety"
+            : "Verified 0 syntax errors, SupportsShouldProcess guard & 1-click rollback script ready"
+          : `Flagged ${safetyCheck.warnings.length} pre-flight safety warning(s): ${safetyCheck.warnings.join(" ")}`,
+      },
+    },
+  });
+
+  return {
+    routingDecision,
+    gatekeeperModel,
+    cloudStatusCorrelation: statusRes.data,
+    clarifyingQuestions: clarifierRes.questions,
+    synthesizedElements,
+    customRemediation,
+    subAgentTasks,
+  };
 }
 
 export function applyClarifiedAnswersToEntry(entry: CustomScenarioEntry, clarifiedAnswers: Record<string, string>): CustomScenarioEntry {
@@ -311,17 +674,20 @@ export async function refineEntryWithSubAgentsAsync(entry: CustomScenarioEntry, 
   const synced = applyClarifiedAnswersToEntry(entry, clarifiedAnswers);
   if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") return synced;
   const mergedAnswers = synced.clarifiedAnswers ?? clarifiedAnswers;
-  const seedDecision = synced.elementRouting ?? { matchedExistingElements: [], missingElements: [{ status: "element_not_existent" as const, elementId: "CustomDiagnosticCard", title: entry.ticket.title.slice(0, 80), domain: "azure" as const, reason: entry.ticket.body.slice(0, 200), requiredPrimitives: ["policy-chain" as const, "data-table" as const, "config-diff" as const, "event-stream" as const] }], extractedEntities: [], customBrief: { summary: entry.ticket.title, steps: [] } };
-  const [{ decision: routingDecision, modelUsed: gatekeeperModel }, synthesizedElements, rawRemediation] = await Promise.all([
-    assessTicketElementNeeds({ title: entry.ticket.title, body: entry.ticket.body, matchedSeededComponents: [], clarifiedAnswers: mergedAnswers }),
-    synthesizeAndPersistMissingElements({ ticketId: entry.scenarioId, ticketPrompt: `${entry.ticket.title}\n${entry.ticket.body}`, decision: seedDecision, gatekeeperModel: models.metaCatalog, clarifiedAnswers: mergedAnswers }),
-    synthesizeCustomRemediation({ scenarioId: entry.scenarioId, ticketTitle: entry.ticket.title, ticketBody: entry.ticket.body, clarifiedAnswers: mergedAnswers }),
-  ]);
-  const customRemediation = enrichRemediationFromCard(rawRemediation, synthesizedElements[0]);
-  if (synthesizedElements[0] && routingDecision.missingElements[0]) {
-    routingDecision.missingElements[0].elementId = synthesizedElements[0].elementId;
-    routingDecision.missingElements[0].title = synthesizedElements[0].title;
-  }
-  const subAgentTasks = buildSubAgentPipelineRecords({ scenarioId: entry.scenarioId, title: entry.ticket.title, body: entry.ticket.body, questions: synced.clarifyingQuestions ?? [], clarifiedAnswers: mergedAnswers, elementIds: synthesizedElements.map((s) => s.elementId), gatekeeperModel, synthesizerModel: models.metaWonder });
-  return { ...synced, elementRouting: routingDecision, synthesizedElements, customRemediation, subAgentTasks };
+  const pipeline = await runSubAgentPipeline({
+    scenarioId: entry.scenarioId,
+    title: entry.ticket.title,
+    body: entry.ticket.body,
+    probeText: entry.ticket.body,
+    createdAt: entry.createdAt,
+    matchedSeededComponents: [],
+    clarifiedAnswers: mergedAnswers,
+  });
+  return {
+    ...synced,
+    elementRouting: pipeline.routingDecision,
+    synthesizedElements: pipeline.synthesizedElements,
+    customRemediation: pipeline.customRemediation,
+    subAgentTasks: pipeline.subAgentTasks,
+  };
 }

@@ -174,11 +174,11 @@ export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;
 
 export const TicketExtractionSchema = z.object({
   tenantId: z.string(),
-  baseScenarioId: z.enum(SCENARIO_IDS),
+  baseScenarioId: z.enum(SCENARIO_IDS).nullable().default(null),
   intents: z.array(TicketIntentSchema),
   entities: z.array(ExtractedEntitySchema),
   components: z.array(z.enum(CANVAS_COMPONENT_TYPES)).min(1),
-  /** Why this base scenario won: the intents and entities that voted for it. */
+  /** Why this base scenario won (or why this custom ticket stands on its own). */
   rationale: z.string().max(300),
 });
 export type TicketExtraction = z.infer<typeof TicketExtractionSchema>;
@@ -232,7 +232,9 @@ export const SubAgentTaskRecordSchema = z.object({
   role: z.string(),
   modelId: z.string(),
   status: z.enum(["completed", "running", "fallback"]),
+  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "fallback-on-error"]).optional(),
   latencyMs: z.number().int().nonnegative(),
+  tokensUsed: z.number().int().nonnegative().optional(),
   inputSummary: z.string(),
   outputSummary: z.string(),
   timestamp: z.string(),
@@ -257,7 +259,7 @@ export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenar
   kind: "ticket";
   /** Pasted into the composer, or dropped into input/tickets/ as a folder. */
   origin: "unscripted" | "erp-drop";
-  baseScenarioId: ScenarioId;
+  baseScenarioId: ScenarioId | null;
   shortHash: string;
   createdAt: string;
   ticket: CustomTicketInput;
@@ -348,19 +350,19 @@ export function workItemOrigin(entry: AnyScenarioEntry): WorkItemOrigin {
   return entry.kind === "ticket" ? "psa" : "anomaly";
 }
 
-/** The built-in scenario whose data, remediation template and invariants a workbench id resolves to. */
-export function baseScenarioOf(scenarioId: string, fallback: ScenarioId = "INC-4092"): ScenarioId {
+/** The built-in scenario whose data, remediation template and invariants a workbench id resolves to, or null for custom/unseeded tickets. */
+export function baseScenarioOf(scenarioId: string): ScenarioId | null {
   if (isScenarioId(scenarioId)) return scenarioId;
-  return customRegistry.get(scenarioId)?.baseScenarioId ?? fallback;
+  return customRegistry.get(scenarioId)?.baseScenarioId ?? null;
 }
 
 export function customScenarioId(shortHash: string): CustomScenarioId {
   return `CUSTOM-${shortHash.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12)}`;
 }
 
-/** The ticket scenario of a tenant, for callers that still speak tenant ids. */
-export function scenarioForTenant(tenantId: string): ScenarioId {
-  return SCENARIO_IDS.find((id) => SCENARIO_REGISTRY[id].kind === "ticket" && SCENARIO_REGISTRY[id].tenantId === tenantId) ?? "INC-4092";
+/** The ticket scenario of a tenant, for callers that still speak tenant ids, or null if unknown. */
+export function scenarioForTenant(tenantId: string): ScenarioId | null {
+  return SCENARIO_IDS.find((id) => SCENARIO_REGISTRY[id].kind === "ticket" && SCENARIO_REGISTRY[id].tenantId === tenantId) ?? null;
 }
 
 export function scenariosOfKind(kind: ScenarioKind): ScenarioId[] {
@@ -575,10 +577,10 @@ export interface ScenarioListItem {
   resolved: boolean;
   /** When the item entered the queue: ticket openedAt, anomaly detectedAt, drop ingestedAt or paste time. */
   createdAt: string;
-  /** Set for CUSTOM-<hash> / ERP-<id> tickets, with the built-in scenario they inherit. */
+  /** Set for CUSTOM-<hash> / ERP-<id> tickets, with the optional built-in scenario they inherit (null for standalone custom tickets). */
   custom?: {
     origin: "unscripted" | "erp-drop";
-    baseScenarioId: ScenarioId;
+    baseScenarioId: ScenarioId | null;
     shortHash: string;
     createdAt: string;
     ticket: CustomTicketInput;

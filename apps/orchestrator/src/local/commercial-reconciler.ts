@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { SCENARIO_REGISTRY, isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { SCENARIO_REGISTRY, getCustomScenario, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import { ERP_CONTRACTS } from "@contextpane/mcp-erp";
 import { INTUNE_SCENARIOS, LICENSE_ANOMALY } from "@contextpane/mcp-msgraph";
 
@@ -115,8 +115,9 @@ function countOrphaned(skuPartNumber: string): number {
 
 export function reconcileCommercial(scenarioId: string): CommercialReconciliation {
   const id = typeof scenarioId === "string" ? scenarioId : String(scenarioId ?? "");
-  const effectiveId = id.startsWith("CUSTOM-") || id.startsWith("ERP-") ? "INC-4092" : id;
-  const tenantId = isScenarioId(effectiveId) ? SCENARIO_REGISTRY[effectiveId].tenantId : null;
+  const custom = getCustomScenario(id);
+  const effectiveId = custom?.baseScenarioId ?? id;
+  const tenantId = isScenarioId(effectiveId) ? SCENARIO_REGISTRY[effectiveId].tenantId : (custom?.tenantId ?? null);
   const isLicense = LICENSE_SCENARIOS.has(effectiveId);
   const isInc4092 = effectiveId === "INC-4092";
 
@@ -344,7 +345,8 @@ export function reverseCompile(scenarioIdOrState?: string | { scenarioId?: strin
       : scenarioIdOrState && typeof scenarioIdOrState === "object" && typeof scenarioIdOrState.scenarioId === "string"
         ? scenarioIdOrState.scenarioId
         : "INC-4092";
-  const tenantId = isScenarioId(scenarioId) ? SCENARIO_REGISTRY[scenarioId as ScenarioId].tenantId : "tenant-contoso-01";
+  const custom = getCustomScenario(scenarioId);
+  const tenantId = isScenarioId(scenarioId) ? SCENARIO_REGISTRY[scenarioId as ScenarioId].tenantId : (custom?.tenantId ?? "tenant-contoso-01");
   const subscription = tenantId === "tenant-fabrikam-02" ? "e1c2d3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f" : "20505597-043c-4742-a884-42dc3f621aef";
   const rgName = tenantId === "tenant-fabrikam-02" ? "rg-fabrikam-intune-prod" : "rg-contoso-avd-prod";
   const shadowFindings = detectShadowFindings(scenarioId);

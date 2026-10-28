@@ -33,11 +33,12 @@ interface CardShellProps {
   children: (tab: string) => ReactNode;
 }
 
-/** Card #1 (the primary diagnostic card) opens expanded by default; secondary cards start compact. */
+/** Card #1 (the primary diagnostic card) opens expanded by default; auto-collapses when a Selection Mini-Dashboard is open unless explicitly expanded. */
 function useExpanded(type: CanvasComponentType): boolean {
   return useWorkbench((s) => {
     const explicit = s.expanded[type];
     if (explicit !== undefined) return explicit;
+    if (s.miniDashboards.length > 0) return false;
     if (type === "SynthesizedDynamicCard") return true;
     const canvasCards =
       s.layout?.components.filter(
@@ -138,7 +139,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
 
       {expanded && (
         <div className="mt-2 animate-fade-in">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-y border-border-subtle py-1">
+          <div className="mb-2 flex flex-nowrap items-center justify-between gap-2 border-y border-border-subtle py-1">
             {tabs.length > 1 ? (
               <div className="flex gap-1" role="tablist">
                 {tabs.map((t) => (

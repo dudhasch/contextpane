@@ -75,15 +75,14 @@ export interface PointerBinding {
 /**
  * The data-plane side of the ptr:// protocol: every dataset prop is bound from the rows
  * published under the card's own pointer, so whatever the model put there (a pointer, a
- * wrong pointer, rows) never reaches the client. Props it left out are filled from the
- * deterministic hydrator, and the orchestrator-owned props (triggeredBy, dataPtrs,
- * sourceRef) always come from it.
+ * wrong pointer, rows) never reaches the client. Props the model returned are preserved;
+ * only fields the model omitted are filled from the deterministic fallback.
  */
 export function bindDataPlane(raw: unknown, ctx: CorrelationContext, snapshot: DataPlaneSnapshot): { raw: unknown; binding: PointerBinding } {
-  const binding: PointerBinding = { bound: 0, rejected: [] };
+  const bindingSummary: PointerBinding = { bound: 0, rejected: [] };
   const components = (raw as { components?: unknown })?.components;
-  if (!Array.isArray(components)) return { raw, binding };
-  const bound = components.map((c: { type?: ComponentType; props?: Record<string, unknown> }) => {
+  if (!Array.isArray(components)) return { raw, binding: bindingSummary };
+  const bound = components.map((c: { type?: ComponentType; triggeredBy?: string[]; props?: Record<string, unknown> }) => {
     const reference = c?.type ? buildComponent(c.type, ctx) : null;
     if (!reference || !c.props || typeof c.props !== "object") return c;
     const props = { ...c.props };
@@ -92,23 +91,19 @@ export function bindDataPlane(raw: unknown, ctx: CorrelationContext, snapshot: D
       const ptr = dataPtr(ctx.ticketId, key);
       const sent = props[prop];
       const sentPtr = sent && typeof sent === "object" && !Array.isArray(sent) ? (sent as { dataPtr?: unknown }).dataPtr : undefined;
-      if (sent !== undefined && sent !== null && sentPtr !== ptr) binding.rejected.push(`${reference.type}.${prop}: ${typeof sentPtr === "string" ? sentPtr : "inline rows"}`);
+      if (sent !== undefined && sent !== null && sentPtr !== ptr) bindingSummary.rejected.push(`${reference.type}.${prop}: ${typeof sentPtr === "string" ? sentPtr : "inline rows"}`);
       props[prop] = snapshot.rows.has(ptr) ? snapshot.rows.get(ptr) : (reference.props as Record<string, unknown>)[prop];
-      binding.bound++;
+      bindingSummary.bound++;
     }
     for (const [key, value] of Object.entries(reference.props)) {
-      if (
-        props[key] === undefined ||
-        props[key] === null ||
-        (ORCHESTRATOR_PROPS as readonly string[]).includes(key) ||
-        ((key === "headline" || key === "summary") && props[key] !== "model headline")
-      ) {
+      if (props[key] === undefined || props[key] === null || props[key] === "") {
         props[key] = value;
       }
     }
-    return { ...c, triggeredBy: reference.triggeredBy, dataPtrs: reference.dataPtrs, props };
+    const triggeredBy = Array.isArray(c.triggeredBy) && c.triggeredBy.length > 0 ? c.triggeredBy : reference.triggeredBy;
+    return { ...c, triggeredBy, dataPtrs: reference.dataPtrs, props };
   });
-  return { raw: { ...(raw as Record<string, unknown>), components: bound }, binding };
+  return { raw: { ...(raw as Record<string, unknown>), components: bound }, binding: bindingSummary };
 }
 
 /**
@@ -297,7 +292,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
       transport: ctx.transport,
       sources: ctx.sourcesUsed,
       fallbackReasons,
-      scenarioId: ctx.scenarioId,
+      scenarioId: ctx.scenarioId ?? ctx.ticketId,
       dataPlane: { datasets: snapshot.descriptors.length, rows: datasetRows, bytes: snapshot.bytes, bound: binding.bound, rejected: binding.rejected },
     },
   };

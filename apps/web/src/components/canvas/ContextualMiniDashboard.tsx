@@ -1,5 +1,5 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCopy, ExternalLink, GitCompare, ShieldAlert, Sparkles, Wand2, Wrench, X } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ClipboardCopy, ExternalLink, GitCompare, ShieldAlert, Sparkles, Wand2, Wrench, X } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import type { ContextViewMode, ContextualMiniDashboard as Card, MetricTone } from "@contextpane/catalog";
 import { fmtMs } from "@/lib/format";
 import { selectActiveTimelineSlice, useWorkbench, type MiniDashboardEntry, type RowFilter } from "@/store";
@@ -110,6 +110,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
   };
 
   const modeMeta = CONTEXT_MODE_META[viewMode];
+  const [encyclopediaExpanded, setEncyclopediaExpanded] = useState(true);
 
   return (
     <section
@@ -120,18 +121,30 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
       style={{ ["--cat" as string]: "var(--color-selection)", ["--flash-color" as string]: "var(--color-selection)" }}
       className={`card scroll-mt-2 animate-fade-in border-l-4 border-l-selection transition-[box-shadow] duration-150 ${pulsing ? "ring-2 ring-selection animate-pulse-ring" : ""}`}
     >
-      <header className="flex flex-wrap items-center gap-2">
+      <header className="flex flex-nowrap items-center gap-1.5">
         <Sparkles className="size-4 shrink-0 text-selection" />
-        <h3 className="min-w-[180px] flex-1 text-[13px] font-semibold leading-snug" title={card.title}>
+        <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold" title={card.title}>
           {card.title}
         </h3>
+
+        <span
+          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-selection/45 bg-selection/12 px-1.5 font-mono text-[10px] text-selection"
+          title={`Spawned from selection #${entry.index}: "${card.selectionText}"${refinementText ? ` + "${refinementText}"` : ""} · ${modeMeta.label} · Matched in ${elapsedSec}s`}
+          data-testid="selection-badge"
+        >
+          <Wand2 className="size-3 shrink-0" />
+          <span className="max-w-[140px] truncate">
+            &quot;{card.selectionText}&quot;{refinementText ? ` + "${refinementText}"` : ""}
+          </span>
+          <span className="text-selection/75">· {fmtMs(entry.latencyMs)}</span>
+        </span>
 
         {/* VectorCraft 4-mode switcher on the card */}
         <div
           role="group"
           aria-label="Switch Context UI view mode"
           data-testid="mini-dashboard-mode-switcher"
-          className="inline-flex items-center gap-0.5 rounded-md border border-border-subtle bg-surface p-0.5"
+          className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border-subtle bg-surface p-0.5"
         >
           {CONTEXT_MODE_LIST.map((m) => {
             const active = viewMode === m.mode;
@@ -142,38 +155,28 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
                 onClick={() => setViewMode(entry.id, m.mode)}
                 data-testid={`mini-mode-${m.mode}`}
                 title={`${m.label}: ${m.hint}`}
-                className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] transition-colors ${
+                className={`inline-flex h-5 items-center gap-1 rounded px-1.5 text-[10.5px] whitespace-nowrap transition-colors ${
                   active
                     ? "border border-selection/60 bg-selection/18 font-medium text-selection"
                     : "text-muted hover:bg-elevated/60 hover:text-text"
                 }`}
               >
                 <ContextModeIcon mode={m.mode} className="size-3 shrink-0" />
-                <span className="hidden sm:inline">{m.shortLabel}</span>
+                <span className="hidden md:inline">{m.shortLabel}</span>
               </button>
             );
           })}
         </div>
 
-        <span
-          className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-selection/45 bg-selection/12 px-1.5 font-mono text-[10.5px] text-selection"
-          title={`Selection #${entry.index} · ${modeMeta.label} · Live Tenant Query · Matched in ${elapsedSec}s`}
-          data-testid="selection-badge"
-        >
-          <Wand2 className="size-3" />
-          Spawned from selection: "{card.selectionText.length > 24 ? `${card.selectionText.slice(0, 23)}…` : card.selectionText}"
-          {refinementText ? ` + "${refinementText.length > 22 ? `${refinementText.slice(0, 21)}…` : refinementText}"` : ""} · {fmtMs(entry.latencyMs)}
-        </span>
-
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <Button size="xs" variant="outline" icon={<ClipboardCopy />} onClick={() => void copy(card.sourceQuery, "Graph/PowerShell query")} title={card.sourceQuery}>
-            Copy Graph/PowerShell Query
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="xs" variant="outline" icon={<ClipboardCopy />} onClick={() => void copy(card.sourceQuery, "Graph/PowerShell query")} title={`Copy Graph/PowerShell Query: ${card.sourceQuery}`}>
+            Copy Query
           </Button>
           <button
             type="button"
             onClick={() => dismiss(entry.id)}
             aria-label="Dismiss mini-dashboard"
-            className="inline-flex h-6 items-center gap-1 rounded border border-border px-1.5 text-[11px] text-muted hover:bg-surface hover:text-text"
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-border px-1.5 text-[11px] text-muted hover:bg-surface hover:text-text"
           >
             <X className="size-3" /> Dismiss
           </button>
@@ -184,52 +187,64 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
         <span className="truncate">{cleanSubtitle}</span>
         {refinementText && (
           <span className="rounded border border-selection/35 bg-selection/8 px-1.5 py-0.2 text-[10px] text-selection" data-testid="mini-refinement-pill">
-            context: "{refinementText}"
+            context: &quot;{refinementText}&quot;
           </span>
         )}
       </div>
 
-      {/* Prominent Error Code Reference Encyclopedia Header */}
+      {/* Compact, collapsible Error Code Reference Encyclopedia Header */}
       {card.errorCodeReference && (
         <div
           data-testid="error-code-encyclopedia-banner"
-          className="mt-2 rounded-md border border-critical/45 bg-critical/8 p-2.5 text-[11.5px]"
+          className="mt-1.5 rounded-md border border-critical/40 bg-critical/6 px-2.5 py-1.5 text-[11px]"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded border border-critical/50 bg-critical/20 px-2 py-0.5 font-mono text-[11px] font-semibold text-critical">
-                <AlertTriangle className="size-3.5 shrink-0" />
-                {card.errorCodeReference.code} — {card.errorCodeReference.symbolicName}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="inline-flex shrink-0 items-center gap-1 rounded border border-critical/50 bg-critical/20 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-critical">
+                <AlertTriangle className="size-3 shrink-0" />
+                {card.errorCodeReference.code} · {card.errorCodeReference.symbolicName}
               </span>
-              <span className="font-mono text-[10px] tracking-wider text-muted uppercase">
-                Error Code Encyclopedia Reference
+              <span className="min-w-0 flex-1 truncate text-[11px] text-text/90" title={card.errorCodeReference.explanation}>
+                {card.errorCodeReference.explanation}
               </span>
             </div>
-            <a
-              href={card.errorCodeReference.docsUrl}
-              target="_blank"
-              rel="noreferrer"
-              data-testid="error-code-docs-link"
-              className="inline-flex items-center gap-1 rounded border border-selection/40 bg-selection/10 px-2 py-0.5 font-mono text-[10.5px] font-medium text-selection hover:bg-selection/20 hover:underline"
-            >
-              Microsoft Learn Docs <ExternalLink className="size-3" />
-            </a>
-          </div>
-          <p className="mt-1.5 leading-relaxed text-text/95">{card.errorCodeReference.explanation}</p>
-          <div className="mt-2 grid grid-cols-1 gap-1.5 md:grid-cols-3">
-            {card.errorCodeReference.troubleshootingChecks.map((check, idx) => (
-              <div
-                key={idx}
-                data-testid={`error-code-check-${idx + 1}`}
-                className="flex items-start gap-1.5 rounded border border-border-subtle/80 bg-surface/90 px-2 py-1.5 text-[10.5px] text-text"
+            <div className="flex shrink-0 items-center gap-1.5">
+              <a
+                href={card.errorCodeReference.docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="error-code-docs-link"
+                className="inline-flex h-5 items-center gap-1 rounded border border-selection/40 bg-selection/10 px-1.5 font-mono text-[10px] font-medium text-selection hover:bg-selection/20 hover:underline"
               >
-                <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-selection/20 font-mono text-[10px] font-bold text-selection">
-                  {idx + 1}
-                </span>
-                <span className="leading-snug">{check}</span>
-              </div>
-            ))}
+                MS Learn <ExternalLink className="size-2.5" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setEncyclopediaExpanded((v) => !v)}
+                className="inline-flex h-5 items-center gap-1 rounded border border-border-subtle bg-surface/80 px-1.5 font-mono text-[10px] text-muted hover:text-text"
+                title={encyclopediaExpanded ? "Collapse troubleshooting checks" : "Show troubleshooting checks"}
+              >
+                <span>{card.errorCodeReference.troubleshootingChecks.length} Checks</span>
+                <ChevronDown className={`size-2.5 transition-transform ${encyclopediaExpanded ? "rotate-180" : ""}`} />
+              </button>
+            </div>
           </div>
+          {encyclopediaExpanded && (
+            <div className="mt-1.5 grid grid-cols-1 gap-1 md:grid-cols-3">
+              {card.errorCodeReference.troubleshootingChecks.map((check, idx) => (
+                <div
+                  key={idx}
+                  data-testid={`error-code-check-${idx + 1}`}
+                  className="flex items-start gap-1.5 rounded border border-border-subtle/75 bg-surface/85 px-2 py-1 text-[10px] text-text"
+                >
+                  <span className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full bg-selection/20 font-mono text-[9.5px] font-bold text-selection">
+                    {idx + 1}
+                  </span>
+                  <span className="leading-tight">{check}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -605,8 +620,8 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
   };
 
   return (
-    <div className="mt-2.5 space-y-2.5" data-testid="mini-view-comparison">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-selection/35 bg-selection/8 px-2.5 py-1.5 text-[11px]">
+    <div className="mt-2 space-y-2" data-testid="mini-view-comparison">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-selection/35 bg-selection/8 px-2.5 py-1 text-[11px]">
         <span className="inline-flex items-center gap-1.5 font-semibold text-selection">
           <GitCompare className="size-3.5 shrink-0" />
           Side-by-Side Live Drifted State vs. Golden Target Baseline · Comparing {compareRows.length} of {card.rows.length} objects
@@ -618,14 +633,14 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
 
       {/* Live Drifted State vs. Golden Target Baseline Matrix + Unified Diff */}
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-2" data-testid="comparison-remediation-delta">
-        <div className="rounded-md border border-critical/40 bg-critical/5 p-2.5 text-[11px]">
-          <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
-            <span className="truncate font-mono text-[11px] font-semibold text-critical uppercase">
+        <div className="rounded-md border border-critical/40 bg-critical/5 p-2 text-[11px]">
+          <div className="mb-1 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
+            <span className="truncate font-mono text-[10.5px] font-semibold text-critical uppercase">
               Live Drifted State (Observed)
             </span>
             <Pill tone="critical">Drifted / Active</Pill>
           </div>
-          <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-1">
+          <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-0.5">
             {card.columns.map((c) => {
               const val = String(driftedRow[c.key] ?? "—");
               const targetVal = synthGoldenValue(c.key, val);
@@ -645,14 +660,14 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
           </dl>
         </div>
 
-        <div className="rounded-md border border-healthy/45 bg-healthy/5 p-2.5 text-[11px]">
-          <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
-            <span className="truncate font-mono text-[11px] font-semibold text-healthy uppercase">
+        <div className="rounded-md border border-healthy/45 bg-healthy/5 p-2 text-[11px]">
+          <div className="mb-1 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
+            <span className="truncate font-mono text-[10.5px] font-semibold text-healthy uppercase">
               Golden Target Baseline (Desired)
             </span>
             <Pill tone="healthy">Golden Target</Pill>
           </div>
-          <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-1">
+          <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-0.5">
             {card.columns.map((c) => {
               const liveVal = String(driftedRow[c.key] ?? "—");
               const targetVal = synthGoldenValue(c.key, liveVal);
@@ -683,7 +698,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
             <div
               key={idx}
               data-testid="comparison-column-card"
-              className={`flex flex-col rounded-md border p-2.5 text-[11px] ${
+              className={`flex flex-col rounded-md border p-2 text-[11px] ${
                 isBaseline
                   ? "border-healthy/50 bg-healthy/6"
                   : status === "bad"
@@ -691,27 +706,27 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
                     : "border-warning/40 bg-warning/6"
               }`}
             >
-              <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-border-subtle/80 pb-1.5">
-                <span className="truncate font-mono text-[11.5px] font-semibold text-text" title={title}>
+              <div className="mb-1 flex items-center justify-between gap-2 border-b border-border-subtle/80 pb-1">
+                <span className="truncate font-mono text-[11px] font-semibold text-text" title={title}>
                   {title}
                 </span>
                 <Pill tone={isBaseline ? "healthy" : status === "bad" ? "critical" : "warning"}>
                   {isBaseline ? "Reference / Golden" : status === "bad" ? (idx === 0 ? "Primary Failing" : `Drifted #${idx + 1}`) : idx === 0 ? "Selected Target" : `Peer #${idx + 1}`}
                 </Pill>
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 {attrColumns.map((c) => {
                   const raw = row[c.key];
                   const val = raw === null || raw === undefined ? "—" : String(raw);
                   const hasDelta = differingKeys.has(c.key);
                   return (
-                    <div key={c.key} className="rounded border border-border-subtle/60 bg-surface/75 px-2 py-1">
-                      <div className="flex items-center justify-between text-[9.5px] tracking-wider text-faint uppercase">
+                    <div key={c.key} className="rounded border border-border-subtle/60 bg-surface/75 px-2 py-0.5">
+                      <div className="flex items-center justify-between text-[9px] tracking-wider text-faint uppercase">
                         <span>{c.label}</span>
                         {hasDelta && <span className="font-mono font-bold text-selection">Δ diff</span>}
                       </div>
                       <div
-                        className={`mt-0.5 truncate ${c.mono ? "font-mono text-[10.5px]" : "text-[11px]"} ${
+                        className={`truncate ${c.mono ? "font-mono text-[10.5px]" : "text-[10.5px]"} ${
                           BAD.test(val) ? "font-medium text-critical" : GOOD.test(val) ? "font-medium text-healthy" : "text-text"
                         }`}
                         title={val}
@@ -727,39 +742,44 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
         })}
       </div>
 
-      {/* Compact matrix table when there are additional rows */}
-      {card.rows.length > 0 && (
-        <div className="max-h-48 overflow-auto rounded-md border border-border-subtle">
-          <table className="w-full text-[11px]">
-            <thead className="sticky top-0 bg-surface text-[10px] tracking-wider text-faint uppercase">
-              <tr>
-                {card.columns.map((c) => (
-                  <th key={c.key} className="px-2.5 py-1 text-left font-medium whitespace-nowrap">
-                    {c.label} {differingKeys.has(c.key) ? "Δ" : ""}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {card.rows.map((row, i) => {
-                const identity = { upn: typeof row.upn === "string" ? row.upn : null, deviceName: typeof row.deviceName === "string" ? row.deviceName : null };
-                return (
-                  <tr key={i} className={`border-t border-border-subtle ${rowHighlightClass(rowFilter, identity)}`}>
-                    {card.columns.map((c) => {
-                      const v = row[c.key];
-                      const text = v === null || v === undefined ? "—" : String(v);
-                      return (
-                        <td key={c.key} className={`px-2.5 py-1 ${c.mono ? "font-mono" : ""}`}>
-                          {c.isBadge ? <Pill tone={cellTone(text)}>{text}</Pill> : text}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+      {/* Collapsible matrix table when there are more than 3 rows */}
+      {card.rows.length > 3 && (
+        <details className="rounded-md border border-border-subtle bg-surface/60">
+          <summary className="cursor-pointer px-2.5 py-1 font-mono text-[10.5px] text-muted hover:text-text">
+            View all {card.rows.length} rows in matrix table
+          </summary>
+          <div className="max-h-44 overflow-auto border-t border-border-subtle">
+            <table className="w-full text-[11px]">
+              <thead className="sticky top-0 bg-surface text-[10px] tracking-wider text-faint uppercase">
+                <tr>
+                  {card.columns.map((c) => (
+                    <th key={c.key} className="px-2.5 py-1 text-left font-medium whitespace-nowrap">
+                      {c.label} {differingKeys.has(c.key) ? "Δ" : ""}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {card.rows.map((row, i) => {
+                  const identity = { upn: typeof row.upn === "string" ? row.upn : null, deviceName: typeof row.deviceName === "string" ? row.deviceName : null };
+                  return (
+                    <tr key={i} className={`border-t border-border-subtle ${rowHighlightClass(rowFilter, identity)}`}>
+                      {card.columns.map((c) => {
+                        const v = row[c.key];
+                        const text = v === null || v === undefined ? "—" : String(v);
+                        return (
+                          <td key={c.key} className={`px-2.5 py-1 ${c.mono ? "font-mono" : ""}`}>
+                            {c.isBadge ? <Pill tone={cellTone(text)}>{text}</Pill> : text}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
     </div>
   );
@@ -775,8 +795,8 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
   const goodCount = useMemo(() => card.rows.filter((r) => classify(r) === "good").length, [card.rows]);
 
   return (
-    <div className="mt-2.5 space-y-2.5" data-testid="mini-view-blast-radius">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-critical/35 bg-critical/8 px-2.5 py-1.5 text-[11px]">
+    <div className="mt-2 space-y-2" data-testid="mini-view-blast-radius">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-critical/35 bg-critical/8 px-2.5 py-1 text-[11px]">
         <span className="inline-flex items-center gap-1.5 font-semibold text-critical">
           <ShieldAlert className="size-3.5 shrink-0" />
           Impact &amp; Dependency Blast Radius · Affected Cohorts &amp; Rollback Safety
@@ -787,54 +807,54 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
       </div>
 
       {/* Affected Cohorts & Rollback Safety Summary Grid */}
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" data-testid="blast-cohort-grid">
-        <div className="rounded-md border border-border-subtle bg-surface p-2 text-[11px]">
+      <div className="grid grid-cols-2 gap-1.5 lg:grid-cols-4" data-testid="blast-cohort-grid">
+        <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
           <div className="font-mono text-[9.5px] tracking-wider text-faint uppercase">Affected Cohort</div>
-          <div className="mt-0.5 font-mono text-[12px] font-semibold text-critical">
+          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-critical">
             {badCount || card.rows.length} impacted / {card.rows.length} total
           </div>
-          <div className="mt-0.5 truncate text-[10px] text-muted">{card.title}</div>
+          <div className="truncate text-[10px] text-muted">{card.title}</div>
         </div>
-        <div className="rounded-md border border-border-subtle bg-surface p-2 text-[11px]">
+        <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
           <div className="font-mono text-[9.5px] tracking-wider text-faint uppercase">Dependency Chain</div>
-          <div className="mt-0.5 font-mono text-[12px] font-semibold text-selection">4 Hops Verified</div>
-          <div className="mt-0.5 truncate text-[10px] text-muted">Principal → Object → Policy → Blast</div>
+          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-selection">4 Hops Verified</div>
+          <div className="truncate text-[10px] text-muted">Principal → Object → Policy → Blast</div>
         </div>
-        <div className="rounded-md border border-border-subtle bg-surface p-2 text-[11px]">
+        <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
           <div className="font-mono text-[9.5px] tracking-wider text-faint uppercase">Healthy Peer Baseline</div>
-          <div className="mt-0.5 font-mono text-[12px] font-semibold text-healthy">{goodCount} unaffected peers</div>
-          <div className="mt-0.5 truncate text-[10px] text-muted">Zero collateral disruption</div>
+          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-healthy">{goodCount} unaffected peers</div>
+          <div className="truncate text-[10px] text-muted">Zero collateral disruption</div>
         </div>
-        <div className="rounded-md border border-healthy/40 bg-healthy/6 p-2 text-[11px]" data-testid="blast-rollback-safety">
+        <div className="rounded-md border border-healthy/40 bg-healthy/6 px-2 py-1.5 text-[11px]" data-testid="blast-rollback-safety">
           <div className="font-mono text-[9.5px] tracking-wider text-healthy uppercase">Rollback Safety Radius</div>
-          <div className="mt-0.5 inline-flex items-center gap-1 font-mono text-[12px] font-semibold text-healthy">
+          <div className="mt-0.5 inline-flex items-center gap-1 font-mono text-[11.5px] font-semibold text-healthy">
             <CheckCircle2 className="size-3.5 shrink-0" /> Idempotent &amp; Scoped
           </div>
-          <div className="mt-0.5 truncate text-[10px] text-muted" title={card.suggestedAction.label}>
+          <div className="truncate text-[10px] text-muted" title={card.suggestedAction.label}>
             Action: {card.suggestedAction.label}
           </div>
         </div>
       </div>
 
       {/* 4-Stage Directed Graph */}
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] lg:items-stretch">
+      <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] lg:items-stretch">
         {stages.map((stage, idx) => (
           <div key={stage.title} className="contents">
             <div
               data-testid={`blast-stage-${idx + 1}`}
-              className="flex flex-col rounded-md border border-border-subtle bg-surface p-2.5"
+              className="flex flex-col rounded-md border border-border-subtle bg-surface p-2"
             >
-              <div className="mb-1.5 flex items-center justify-between gap-1 border-b border-border-subtle pb-1">
+              <div className="mb-1 flex items-center justify-between gap-1 border-b border-border-subtle pb-1">
                 <span className="font-mono text-[10px] font-semibold tracking-wider text-selection uppercase">
                   {idx + 1}. {stage.title}
                 </span>
-                <span className="font-mono text-[10px] text-faint">{stage.edgeLabel}</span>
+                <span className="font-mono text-[9.5px] text-faint">{stage.edgeLabel}</span>
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 {stage.nodes.map((node, nIdx) => (
                   <div
                     key={`${node.label}-${nIdx}`}
-                    className={`rounded border px-2 py-1.5 text-[11px] ${
+                    className={`rounded border px-2 py-1 text-[10.5px] ${
                       node.tone === "critical"
                         ? "border-critical/45 bg-critical/10 text-text"
                         : node.tone === "warning"
@@ -845,7 +865,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1.5">
-                      <span className="truncate font-mono text-[11px] font-semibold" title={node.label}>
+                      <span className="truncate font-mono text-[10.5px] font-semibold" title={node.label}>
                         {node.label}
                       </span>
                       <span
@@ -860,7 +880,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
                         }`}
                       />
                     </div>
-                    <div className="mt-0.5 truncate text-[10px] text-muted" title={node.detail}>
+                    <div className="truncate text-[9.5px] text-muted" title={node.detail}>
                       {node.detail}
                     </div>
                   </div>
@@ -869,7 +889,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
             </div>
             {idx < stages.length - 1 && (
               <div className="hidden items-center justify-center text-selection/70 lg:flex" aria-hidden="true">
-                <ArrowRight className="size-4" />
+                <ArrowRight className="size-3.5" />
               </div>
             )}
           </div>

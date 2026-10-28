@@ -94,8 +94,8 @@ loadCustomScenarios();
 const TenantIdSchema = z.string().refine(isTenantId, { message: `tenantId must be one of ${Object.keys(TENANT_REGISTRY).join(", ")}` });
 /** A built-in scenario, or an unscripted CUSTOM-<hash> ticket registered through POST /api/tickets/triage-custom. */
 const ScenarioIdSchema = z.string().refine(isAnyScenarioId, { message: `scenarioId must be one of ${SCENARIO_IDS.join(", ")} or a registered CUSTOM-<hash> ticket` });
-/** Endpoints whose model is keyed by the built-in scenario only (prover, timeline, skills, runbooks): a custom ticket maps to its base. */
-const BaseScenarioIdSchema = ScenarioIdSchema.transform((id) => baseScenarioOf(id));
+/** Endpoints whose model is keyed by the built-in scenario only (prover, timeline, skills, runbooks): a custom ticket maps to its base or itself. */
+const BaseScenarioIdSchema = ScenarioIdSchema.transform((id) => baseScenarioOf(id) ?? id);
 
 /** Every scenario endpoint takes scenarioId; an older tenantId selects that tenant's ticket scenario. */
 function scenarioOf(body: { scenarioId?: string; tenantId?: string }): WorkbenchScenarioId {
@@ -103,7 +103,10 @@ function scenarioOf(body: { scenarioId?: string; tenantId?: string }): Workbench
 }
 
 function tenantOf(scenarioId: string): string {
-  return getScenarioEntry(scenarioId)?.tenantId ?? SCENARIO_REGISTRY[baseScenarioOf(scenarioId)].tenantId;
+  const entry = getScenarioEntry(scenarioId);
+  if (entry) return entry.tenantId;
+  const base = baseScenarioOf(scenarioId);
+  return base ? SCENARIO_REGISTRY[base].tenantId : "tenant-contoso-01";
 }
 
 /** ?refresh=true (or the older ?fresh=1) bypasses the context and hover caches. */
@@ -246,9 +249,9 @@ app.post("/api/tickets/triage-custom", async (c) => {
   const ctx = await gatherContext(entry.scenarioId, { fresh: true });
   const brief = buildScenarioBrief(ctx);
   const snapshot = publishDataPlane(ctx);
-  const formal = verifyFormalInvariants(entry.baseScenarioId);
-  const idempotency = verifyIdempotency(entry.baseScenarioId);
-  const timeline = getTimeline(entry.baseScenarioId);
+  const formal = verifyFormalInvariants(entry.baseScenarioId ?? entry.scenarioId);
+  const idempotency = verifyIdempotency(entry.baseScenarioId ?? entry.scenarioId);
+  const timeline = getTimeline(entry.baseScenarioId ?? entry.scenarioId);
   const latencyMs = Math.round(performance.now() - started);
   const hasSynthesized = Boolean(entry.elementRouting && entry.elementRouting.missingElements.length > 0);
   const event = telemetry.record({
@@ -518,17 +521,19 @@ app.post("/api/tickets/reopen", async (c) => {
 
 app.get("/api/formal/:scenarioId", (c) => {
   const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
-  const scenarioId = baseScenarioOf(requested);
-  const formal = verifyFormalInvariants(scenarioId);
-  return c.json({ scenarioId: requested, baseScenarioId: scenarioId, formal, blastRadius: counterfactualReplay(scenarioId), rollback: buildInverseRollback(scenarioId), idempotency: verifyIdempotency(scenarioId), asrBlast: scenarioId === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
+  const base = baseScenarioOf(requested);
+  const targetId = base ?? requested;
+  const formal = verifyFormalInvariants(targetId);
+  return c.json({ scenarioId: requested, baseScenarioId: base, formal, blastRadius: counterfactualReplay(targetId), rollback: buildInverseRollback(requested), idempotency: verifyIdempotency(targetId), asrBlast: base === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
 });
 
 app.post("/api/rollback", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
-  const scenarioId = baseScenarioOf(scenarioOf(body));
+  const requested = scenarioOf(body);
+  const targetId = baseScenarioOf(requested) ?? requested;
   const started = performance.now();
-  const rollback = buildInverseRollback(scenarioId);
-  const check = verifyIdempotency(scenarioId);
+  const rollback = buildInverseRollback(requested);
+  const check = verifyIdempotency(targetId);
   if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
   return c.json({ ok: true, executed: "simulated", latencyMs: Math.round((performance.now() - started) * 10) / 10, rollback, idempotency: check });
 });
@@ -541,10 +546,10 @@ app.get("/api/intune/health-script/:scenarioId", (c) => {
 
 app.get("/api/timeline/:scenarioId", (c) => {
   const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
-  const base = getTimeline(baseScenarioOf(requested));
+  const base = getTimeline(baseScenarioOf(requested) ?? requested);
   if (!base) return c.json({ error: "unknown scenario" }, 404);
-  // A custom ticket inherits the base scenario's bi-temporal slices under its own id.
-  const timeline = requested === base.scenarioId ? base : { ...base, scenarioId: requested, title: getScenarioEntry(requested)?.title ?? base.title, slices: base.slices.map((s) => ({ ...s, scenarioId: requested as ScenarioId, id: s.id.replace(base.scenarioId.toLowerCase(), requested.toLowerCase()) })) };
+  // A custom ticket inherits the base scenario's bi-temporal slices under its own id (or uses its own generated timeline).
+  const timeline = requested === base.scenarioId ? base : { ...base, scenarioId: requested, title: getScenarioEntry(requested)?.title ?? base.title, slices: base.slices.map((s) => ({ ...s, scenarioId: requested as ScenarioId, id: s.id.replace(String(base.scenarioId).toLowerCase(), requested.toLowerCase()) })) };
   return c.json({ timeline, telemetry: { tier: "Tier 0", tokensUsed: { total: 0 }, latencyMs: 0 } });
 });
 
@@ -555,7 +560,8 @@ app.get("/api/skills", (c) => c.json({ skills: listCompiledSkills().map(skillDef
 
 app.post("/api/skills/compile", async (c) => {
   const body = CompileBodySchema.parse(await c.req.json().catch(() => ({})));
-  const scenarioId = baseScenarioOf(scenarioOf(body));
+  const requested = scenarioOf(body);
+  const scenarioId = baseScenarioOf(requested) ?? requested;
   const skill = await compileSkill(scenarioId);
   return c.json({ skill: skillDef(skill), promoted: skill.fuzz.passed === skill.fuzz.cases, telemetry: { tier: "Tier 0", tokensUsed: { total: 0 }, latencyMs: skill.latencyMs } }, 201);
 });
@@ -762,9 +768,10 @@ const approveHandler = async (c: Context) => {
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
   const scenarioId = drawer.ticketId;
   const liveWriteApplied = drawer.approval.state === "executed";
+  const canaryTarget = baseScenarioOf(scenarioId) ?? scenarioId;
   // Only an "executed" approval wrote to the live tenant; when simulateCanaryFailure triggers AUTO_ROLLED_BACK, execute f^-1 immediately.
   const canary = {
-    ...runCanaryConvergence(baseScenarioOf(scenarioId), {
+    ...runCanaryConvergence(canaryTarget, {
       mode: body.mode ?? "break-glass",
       simulateCanaryFailure: body.simulateCanaryFailure ?? false,
       liveWriteApplied,
@@ -775,7 +782,8 @@ const approveHandler = async (c: Context) => {
   closureStore.setCanary(scenarioId, canary);
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
-    const revertWrite = liveWriteApplied ? await applyScenarioState(baseScenarioOf(scenarioId), "drifted") : null;
+    const baseForRevert = baseScenarioOf(scenarioId);
+    const revertWrite = liveWriteApplied && baseForRevert ? await applyScenarioState(baseForRevert, "drifted") : null;
     invalidateContext(scenarioId);
     const rollbackLog = revertWrite
       ? `Inverse rollback f⁻¹ executed (${revertWrite.source}, ${revertWrite.latencyMs} ms): ${revertWrite.summary}`
@@ -817,23 +825,26 @@ const approveHandler = async (c: Context) => {
 /* --------------------- Day-2 Places 5-8: reconcile / iac / fleet / runbook --------------------- */
 
 app.get("/api/reconcile/commercial/:scenarioId", (c) => {
-  const scenarioId = baseScenarioOf(ScenarioIdSchema.parse(c.req.param("scenarioId")));
+  const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const scenarioId = baseScenarioOf(requested) ?? requested;
   return c.json({ reconciliation: reconcileCommercial(scenarioId) });
 });
 
 app.post("/api/iac/reverse-compile", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
-  return c.json({ result: reverseCompile(baseScenarioOf(scenarioOf(body))) });
+  const requested = scenarioOf(body);
+  return c.json({ result: reverseCompile(baseScenarioOf(requested) ?? requested) });
 });
 
 app.get("/api/fleet/immunize/:scenarioId", (c) => {
-  const scenarioId = baseScenarioOf(ScenarioIdSchema.parse(c.req.param("scenarioId")));
+  const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const scenarioId = baseScenarioOf(requested) ?? requested;
   return c.json({ fleet: immunizeFleet(scenarioId) });
 });
 
 app.post("/api/fleet/campaign/:scenarioId", (c) => {
   const requested = ScenarioIdSchema.parse(c.req.param("scenarioId"));
-  const scenarioId = baseScenarioOf(requested);
+  const scenarioId = baseScenarioOf(requested) ?? requested;
   const campaign = stageFleetCampaign(scenarioId);
   const fleet = immunizeFleet(scenarioId);
   auditLedger.append({ tenantId: tenantOf(requested), ticketId: requested, actionType: "fleet-campaign", delegatedIdentity: "contextpane-fleet", modalSandboxVerified: true, astPass: true, tfValidatePass: null, gitBranch: campaign.branches[0]?.branch ?? null, prUrl: null, latencyMs: Math.round(campaign.latencyMs), execution: "none", detail: `Fleet GitOps campaign staged for ${campaign.branches.length} tenants (${fleet.signature})` });
@@ -842,7 +853,8 @@ app.post("/api/fleet/campaign/:scenarioId", (c) => {
 
 app.get("/api/runbooks/:file", (c) => {
   const file = c.req.param("file");
-  const scenarioId = baseScenarioOf(ScenarioIdSchema.parse(file.replace(/\.md$/, "")));
+  const requested = ScenarioIdSchema.parse(file.replace(/\.md$/, ""));
+  const scenarioId = baseScenarioOf(requested) ?? requested;
   return c.text(generateRunbook(scenarioId), 200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="${scenarioId}-runbook.md"` });
 });
 app.post("/api/remediate/approve", approveHandler);
@@ -874,7 +886,11 @@ app.post("/api/lab/reset-drift", async (c) => {
       closureStore.clear(scenarioId);
       remediationStore.clear(scenarioId);
       // A custom ticket's lab objects are those of its base pattern; a full reset already restored them.
-      const write = isScenarioId(scenarioId) || body.scenarioId || body.tenantId ? await applyScenarioState(baseScenarioOf(scenarioId), "drifted") : { source: "simulated" as const, latencyMs: 0, results: [], summary: "custom ticket cleared (base pattern reset separately)" };
+      const baseForReset = baseScenarioOf(scenarioId);
+      const write =
+        (isScenarioId(scenarioId) || body.scenarioId || body.tenantId) && baseForReset
+          ? await applyScenarioState(baseForReset, "drifted")
+          : { source: "simulated" as const, latencyMs: 0, results: [], summary: "custom ticket cleared (base pattern reset separately)" };
       invalidateContext(scenarioId);
       const failed = write.results.filter((r) => !r.ok);
       auditLedger.append({

@@ -28,7 +28,7 @@ export interface VoiceResult {
   telemetry: RouterTelemetry;
 }
 
-const SYSTEM_PROMPT = `You interpret short spoken operator commands for the ContextPane canvas (cards: LicenseDriftCard, EntraSignInTimeline, IntuneDriftCard, IaCDriftBanner; tenants: tenant-contoso-01 "Contoso Finance", tenant-fabrikam-02 "Fabrikam Legal"; scenarios: INC-4092, INC-4099, ANOM-LIC-101 license anomaly, ANOM-CA-204 Conditional Access anomaly, ANOM-INT-309 Intune anomaly).
+const SYSTEM_PROMPT = `You interpret short spoken operator commands for the ContextPane canvas (cards: LicenseDriftCard, EntraSignInTimeline, IntuneDriftCard, IaCDriftBanner; tenants: tenant-contoso-01 "Contoso Finance", tenant-fabrikam-02 "Fabrikam Legal"; scenarios: INC-4092, INC-4099, ANOM-LIC-101 license anomaly, ANOM-CA-204 Conditional Access anomaly, ANOM-INT-309 Intune anomaly, ANOM-APP-401 Workload Identity / Service Principal anomaly).
 Map the command to exactly one intent via steer_contextpane_layout. Prefer filter for "show/only/just", switch-scenario when a ticket or anomaly is named, switch-tenant when only a tenant is named, pin for "pin/save/remember", generate-fix for fix/remediation/PR requests, reset for "show everything".`;
 
 /**

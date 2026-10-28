@@ -655,19 +655,23 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       {
         kind: "federated credential",
         name: w.federatedCredential.name,
-        state: "missing / subject drift (AADSTS70021)",
+        state: w.federatedCredential.driftState ?? "configured",
         required: true,
-        detail: `Configured subject identifier: ${w.federatedCredential.subject} · issuer ${w.federatedCredential.issuer}`,
+        detail: w.federatedCredential.driftDetail ?? `Configured subject identifier: ${w.federatedCredential.subject} · issuer ${w.federatedCredential.issuer}`,
         expired: false,
       },
-      {
-        kind: "oidc subject claim",
-        name: "GitHub Actions OIDC assertion",
-        state: "rejected (AADSTS70021)",
-        required: true,
-        detail: `Presented subject identifier: repo:contoso/erp-sync:environment:prod vs expected ${w.federatedCredential.subject} (${w.federatedCredential.issuer})`,
-        expired: false,
-      },
+      ...(w.oidcAssertionClaim
+        ? [
+            {
+              kind: "oidc subject claim",
+              name: w.oidcAssertionClaim.name,
+              state: w.oidcAssertionClaim.state,
+              required: true,
+              detail: w.oidcAssertionClaim.detail,
+              expired: false,
+            },
+          ]
+        : []),
     ];
     const bad = rows.filter(
       (r) =>
@@ -751,79 +755,51 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
     });
   }
 
-  // Conceptual Entra security / licensing / policy groups across the tenant
-  const groupRows: Row[] = [
-    {
-      displayName: "SG-Contoso-Finance-Legacy",
-      members: "3",
-      assignedSku: "SPE_E3",
-      linkedPolicy: "Block AVD - Contoso Finance Legacy (Blocking)",
-      state: "Drifted — 3 users stuck in legacy group",
-    },
-    {
-      displayName: "SG-Contoso-Finance-AVD",
-      members: "12",
-      assignedSku: "SPE_E5",
-      linkedPolicy: "Excluded from Block AVD (Target)",
-      state: "Active entitlement group",
-    },
-    {
-      displayName: "SG-Contoso-F3-Frontline",
-      members: "18",
-      assignedSku: "SPE_F1",
-      linkedPolicy: "CA-004-Block-Legacy-Auth",
-      state: "Active",
-    },
-    {
-      displayName: "SG-Fabrikam-Legacy-BitLocker",
-      members: "6 devices",
-      assignedSku: "Intune Device Config",
-      linkedPolicy: "Fabrikam-Legacy-BitLocker-DeviceConfig",
-      state: "Conflicting profile group",
-    },
-    {
-      displayName: "SG-BreakGlass-Accounts",
-      members: "1 (bg-admin-01)",
-      assignedSku: "None",
-      linkedPolicy: "CA-001-Require-PhishingResistant-MFA-Admins",
-      state: "Missing exclusion on CA-001",
-    },
-  ];
-  out.push({
-    kind: "entra-groups",
-    rows: groupRows,
-    focus: groupRows,
-    columns: [
-      col("displayName", "Group", { mono: true }),
-      col("members", "Members", { mono: true }),
-      col("assignedSku", "Assigned SKU", { mono: true }),
-      col("linkedPolicy", "Linked Policy"),
-      col("state", "State", { isBadge: true }),
-    ],
-    sourceQuery: "GET /v1.0/groups?$filter=startsWith(displayName,'SG-')&$expand=transitiveMembers($count=true),assignedLicenses",
-    title: () => "Entra Security & Licensing Groups (SG-*)",
-    subtitle: (m) => `Live query across groups & transitiveMembers · ${plural(m.length, "group")} matched`,
-    kpis: (m) => [
-      { label: "Groups", value: String(m.length) },
-      {
-        label: "Drifted / blocking",
-        value: String(m.filter((r) => /Drifted|Conflicting|Missing/i.test(String(r.state))).length),
-        tone: m.some((r) => /Drifted|Conflicting|Missing/i.test(String(r.state))) ? "critical" : "success",
-      },
-      { label: "Active target", value: String(m.filter((r) => /Active/i.test(String(r.state))).length), tone: "success" },
-      { label: "Legacy / conflict", value: "2 groups", tone: "warning" },
-    ],
-    breakdown: (m) =>
-      breakdownBy(m, "state", (v) =>
-        /Drifted|Conflicting|Missing/i.test(v) ? "critical" : /Active/i.test(v) ? "success" : "warning",
-      ),
-    action: () => ({
-      label: "Inspect Entra security groups",
-      scriptPreview:
-        "Get-MgGroup -Filter \"startsWith(displayName, 'SG-')\" -ConsistencyLevel eventual | Select-Object Id, DisplayName, SecurityEnabled, AssignedLicenses",
-      ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
-    }),
-  });
+  // Entra security / licensing / policy groups across the tenant (via @contextpane/mcp-msgraph)
+  const groupRows: Row[] = (ctx.securityGroups?.data ?? []).map((g) => ({
+    displayName: g.displayName,
+    members: g.members,
+    assignedSku: g.assignedSku,
+    linkedPolicy: g.linkedPolicy,
+    state: g.state,
+  }));
+  if (groupRows.length) {
+    out.push({
+      kind: "entra-groups",
+      rows: groupRows,
+      focus: groupRows,
+      columns: [
+        col("displayName", "Group", { mono: true }),
+        col("members", "Members", { mono: true }),
+        col("assignedSku", "Assigned SKU", { mono: true }),
+        col("linkedPolicy", "Linked Policy"),
+        col("state", "State", { isBadge: true }),
+      ],
+      sourceQuery: "GET /v1.0/groups?$filter=startsWith(displayName,'SG-')&$expand=transitiveMembers($count=true),assignedLicenses",
+      title: () => "Entra Security & Licensing Groups (SG-*)",
+      subtitle: (m) => `Live query across groups & transitiveMembers · ${plural(m.length, "group")} matched`,
+      kpis: (m) => [
+        { label: "Groups", value: String(m.length) },
+        {
+          label: "Drifted / blocking",
+          value: String(m.filter((r) => /Drifted|Conflicting|Missing/i.test(String(r.state))).length),
+          tone: m.some((r) => /Drifted|Conflicting|Missing/i.test(String(r.state))) ? "critical" : "success",
+        },
+        { label: "Active target", value: String(m.filter((r) => /Active/i.test(String(r.state))).length), tone: "success" },
+        { label: "Legacy / conflict", value: "2 groups", tone: "warning" },
+      ],
+      breakdown: (m) =>
+        breakdownBy(m, "state", (v) =>
+          /Drifted|Conflicting|Missing/i.test(v) ? "critical" : /Active/i.test(v) ? "success" : "warning",
+        ),
+      action: () => ({
+        label: "Inspect Entra security groups",
+        scriptPreview:
+          "Get-MgGroup -Filter \"startsWith(displayName, 'SG-')\" -ConsistencyLevel eventual | Select-Object Id, DisplayName, SecurityEnabled, AssignedLicenses",
+        ...(stepIndex(steps, "identity") !== undefined ? { targetStepIndex: stepIndex(steps, "identity") } : {}),
+      }),
+    });
+  }
 
   if (ctx.drift) {
     const d = ctx.drift.data;
@@ -883,10 +859,10 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
     });
   }
 
-  // Always populate Azure Policy & Resource Health dataset across all scenarios
+  // Populate Azure Policy & Resource Health dataset via @contextpane/mcp-azure-iac
   {
     const rgName = ctx.avd?.data.resourceGroup ?? ctx.drift?.data.resourceGroup ?? "rg-contoso-avd-prod";
-    const basePolicies: Row[] = (ctx.avd?.data.azurePolicies ?? []).map((p) => ({
+    const basePolicies: Row[] = (ctx.azurePolicies?.data ?? ctx.avd?.data.azurePolicies ?? []).map((p) => ({
       name: p.name,
       effect: p.effect,
       compliance: p.compliance,
@@ -894,171 +870,96 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       scope: p.scope,
       detail: p.detail,
     }));
-    const extraPolicies: Row[] = [
-      {
-        name: "Allowed-Locations-EU-Sovereign",
-        effect: "Deny",
-        compliance: "Compliant",
-        nonCompliantResources: 0,
-        scope: `/subscriptions/${sub}/resourceGroups/${rgName}`,
-        detail: "RequestDisallowedByPolicy outside westeurope, germanywestcentral, northeurope (EU sovereign boundary)",
-      },
-      {
-        name: "Require-Tag-Environment",
-        effect: "Deny",
-        compliance: "NonCompliant",
-        nonCompliantResources: 2,
-        scope: `/subscriptions/${sub}/resourceGroups/${rgName}`,
-        detail: "RequestDisallowedByPolicy when mandatory tag 'Environment' is missing on compute/network resources",
-      },
-      {
-        name: "Resource-Health-Compute-WestEurope",
-        effect: "ResourceHealth",
-        compliance: "NonCompliant",
-        nonCompliantResources: 1,
-        scope: `/subscriptions/${sub}/providers/Microsoft.ResourceHealth/availabilityStatuses`,
-        detail: "Resource health degraded: AZ-WEU-CAP-409 Standard_D4s_v5 regional allocation pressure in westeurope",
-      },
-      {
-        name: "Resource-Health-Compute-GermanyWestCentral",
-        effect: "ResourceHealth",
-        compliance: "Compliant",
-        nonCompliantResources: 0,
-        scope: `/subscriptions/${sub}/providers/Microsoft.ResourceHealth/availabilityStatuses`,
-        detail: "Resource health available: Healthy compute capacity and policy compliance in germanywestcentral",
-      },
-    ];
-    for (const ep of extraPolicies) {
-      if (!basePolicies.some((p) => p.name === ep.name)) basePolicies.push(ep);
-    }
     const nc = basePolicies.filter((r) => r.compliance === "NonCompliant");
-    out.push({
-      kind: "azure-policies",
-      rows: basePolicies,
-      focus: basePolicies,
-      columns: [
-        col("name", "Policy / Health Check"),
-        col("effect", "Effect", { isBadge: true }),
-        col("compliance", "Compliance", { isBadge: true }),
-        col("nonCompliantResources", "Non-compliant", { mono: true }),
-        col("detail", "Detail"),
-      ],
-      sourceQuery: `POST /subscriptions/${sub}/resourceGroups/${rgName}/providers/Microsoft.PolicyInsights/policyStates/latest/summarize?api-version=2019-10-01`,
-      title: (m) =>
-        m.some((r) => /Resource-Health/i.test(String(r.name)))
-          ? `Azure Policy & Resource Health · ${rgName}`
-          : `Azure Policy compliance · ${rgName}`,
-      subtitle: (m) => `Live PolicyInsights & ResourceHealth summary · ${plural(m.length, "assignment")} matched`,
-      kpis: (m) => [
-        { label: "Assignments", value: String(m.length) },
-        {
-          label: "Non-compliant",
-          value: String(m.filter((r) => r.compliance === "NonCompliant").length),
-          tone: m.some((r) => r.compliance === "NonCompliant") ? "warning" : "success",
-        },
-        {
-          label: "Deny policies",
-          value: String(m.filter((r) => r.effect === "Deny").length),
-          tone: m.some((r) => r.effect === "Deny" && r.compliance === "NonCompliant") ? "critical" : "default",
-        },
-        {
-          label: "Resources flagged",
-          value: String(m.reduce((n, r) => n + Number(r.nonCompliantResources), 0)),
-          tone: nc.length ? "warning" : "success",
-        },
-      ],
-      breakdown: (m) => breakdownBy(m, "compliance", (v) => (v === "Compliant" ? "success" : "warning")),
-      action: () => ({
-        label: "Summarise policy states",
-        scriptPreview: `Get-AzPolicyStateSummary -ResourceGroupName '${rgName}' | Select-Object -ExpandProperty PolicyAssignments`,
-        ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
-      }),
-    });
+    if (basePolicies.length) {
+      out.push({
+        kind: "azure-policies",
+        rows: basePolicies,
+        focus: basePolicies,
+        columns: [
+          col("name", "Policy / Health Check"),
+          col("effect", "Effect", { isBadge: true }),
+          col("compliance", "Compliance", { isBadge: true }),
+          col("nonCompliantResources", "Non-compliant", { mono: true }),
+          col("detail", "Detail"),
+        ],
+        sourceQuery: `POST /subscriptions/${sub}/resourceGroups/${rgName}/providers/Microsoft.PolicyInsights/policyStates/latest/summarize?api-version=2019-10-01`,
+        title: (m) =>
+          m.some((r) => /Resource-Health/i.test(String(r.name)))
+            ? `Azure Policy & Resource Health · ${rgName}`
+            : `Azure Policy compliance · ${rgName}`,
+        subtitle: (m) => `Live PolicyInsights & ResourceHealth summary · ${plural(m.length, "assignment")} matched`,
+        kpis: (m) => [
+          { label: "Assignments", value: String(m.length) },
+          {
+            label: "Non-compliant",
+            value: String(m.filter((r) => r.compliance === "NonCompliant").length),
+            tone: m.some((r) => r.compliance === "NonCompliant") ? "warning" : "success",
+          },
+          {
+            label: "Deny policies",
+            value: String(m.filter((r) => r.effect === "Deny").length),
+            tone: m.some((r) => r.effect === "Deny" && r.compliance === "NonCompliant") ? "critical" : "default",
+          },
+          {
+            label: "Resources flagged",
+            value: String(m.reduce((n, r) => n + Number(r.nonCompliantResources), 0)),
+            tone: nc.length ? "warning" : "success",
+          },
+        ],
+        breakdown: (m) => breakdownBy(m, "compliance", (v) => (v === "Compliant" ? "success" : "warning")),
+        action: () => ({
+          label: "Summarise policy states",
+          scriptPreview: `Get-AzPolicyStateSummary -ResourceGroupName '${rgName}' | Select-Object -ExpandProperty PolicyAssignments`,
+          ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
+        }),
+      });
+    }
   }
 
-  // Always populate Regional Quota & Capacity dataset across sub-contoso-prod-01
+  // Populate Regional Quota & Capacity dataset via @contextpane/mcp-azure-iac
   {
-    const quotaRows: Row[] = [
-      {
-        resource: "Standard_D4s_v5 (westeurope)",
-        region: "westeurope",
-        usage: "20/20",
-        utilization: "100%",
-        headroom: "QuotaExceeded",
-        status: "Critical",
-      },
-      {
-        resource: "Total Regional vCPUs (westeurope)",
-        region: "westeurope",
-        usage: "48/50",
-        utilization: "96%",
-        headroom: "Near Limit",
-        status: "Warning",
-      },
-      {
-        resource: "Public IPv4 Addresses (westeurope)",
-        region: "westeurope",
-        usage: "19/20",
-        utilization: "95%",
-        headroom: "Near Limit",
-        status: "Warning",
-      },
-      {
-        resource: "Premium SSD Managed Disks (westeurope)",
-        region: "westeurope",
-        usage: "42/50",
-        utilization: "84%",
-        headroom: "High Usage",
-        status: "Warning",
-      },
-      {
-        resource: "Standard_D4s_v5 (germanywestcentral)",
-        region: "germanywestcentral",
-        usage: "4/20",
-        utilization: "20%",
-        headroom: "16 vCPUs Free",
-        status: "Healthy",
-      },
-      {
-        resource: "Standard_D4s_v5 (northeurope)",
-        region: "northeurope",
-        usage: "6/20",
-        utilization: "30%",
-        headroom: "14 vCPUs Free",
-        status: "Healthy",
-      },
-    ];
-    out.push({
-      kind: "azure-quota-capacity",
-      rows: quotaRows,
-      focus: quotaRows,
-      columns: [
-        col("resource", "Quota / Resource Family", { mono: true }),
-        col("region", "Region", { mono: true }),
-        col("usage", "Usage", { mono: true }),
-        col("utilization", "Utilization", { mono: true }),
-        col("headroom", "Capacity State", { isBadge: true }),
-        col("status", "Status", { isBadge: true }),
-      ],
-      sourceQuery:
-        "GET /subscriptions/sub-contoso-prod-01/providers/Microsoft.Compute/locations/westeurope/usages?api-version=2024-03-01",
-      title: () => "Regional Quota & Capacity · sub-contoso-prod-01",
-      subtitle: (m) => `Live Compute/Network/Storage Usages (≥80% + EU peer regions) · ${plural(m.length, "quota")} matched`,
-      kpis: () => [
-        { label: "D4s_v5 (westeurope)", value: "20/20 (100%)", tone: "critical" },
-        { label: "Regional vCPUs", value: "48/50 (96%)", tone: "warning" },
-        { label: "germanywestcentral", value: "16 vCPUs Free", tone: "success" },
-        { label: "northeurope", value: "14 vCPUs Free", tone: "success" },
-      ],
-      breakdown: (m) =>
-        breakdownBy(m, "status", (v) => (v === "Critical" ? "critical" : v === "Warning" ? "warning" : "success")),
-      action: () => ({
-        label: "Query regional VM quota usage",
-        scriptPreview:
-          "Get-AzVMUsage -Location westeurope | Where-Object { $_.Limit -gt 0 -and ($_.CurrentValue / $_.Limit) -ge 0.8 } | Select-Object @{n='Resource';e={$_.Name.LocalizedValue}}, CurrentValue, Limit",
-        ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
-      }),
-    });
+    const quotaRows: Row[] = (ctx.regionalQuotas?.data ?? []).map((q) => ({
+      resource: q.resource,
+      region: q.region,
+      usage: q.usage,
+      utilization: q.utilization,
+      headroom: q.headroom,
+      status: q.status,
+    }));
+    if (quotaRows.length) {
+      out.push({
+        kind: "azure-quota-capacity",
+        rows: quotaRows,
+        focus: quotaRows,
+        columns: [
+          col("resource", "Quota / Resource Family", { mono: true }),
+          col("region", "Region", { mono: true }),
+          col("usage", "Usage", { mono: true }),
+          col("utilization", "Utilization", { mono: true }),
+          col("headroom", "Capacity State", { isBadge: true }),
+          col("status", "Status", { isBadge: true }),
+        ],
+        sourceQuery:
+          `GET /subscriptions/${sub}/providers/Microsoft.Compute/locations/westeurope/usages?api-version=2024-03-01`,
+        title: () => `Regional Quota & Capacity · ${sub}`,
+        subtitle: (m) => `Live Compute/Network/Storage Usages (≥80% + EU peer regions) · ${plural(m.length, "quota")} matched`,
+        kpis: () => [
+          { label: "D4s_v5 (westeurope)", value: "20/20 (100%)", tone: "critical" },
+          { label: "Regional vCPUs", value: "48/50 (96%)", tone: "warning" },
+          { label: "germanywestcentral", value: "16 vCPUs Free", tone: "success" },
+          { label: "northeurope", value: "14 vCPUs Free", tone: "success" },
+        ],
+        breakdown: (m) =>
+          breakdownBy(m, "status", (v) => (v === "Critical" ? "critical" : v === "Warning" ? "warning" : "success")),
+        action: () => ({
+          label: "Query regional VM quota usage",
+          scriptPreview:
+            "Get-AzVMUsage -Location westeurope | Where-Object { $_.Limit -gt 0 -and ($_.CurrentValue / $_.Limit) -ge 0.8 } | Select-Object @{n='Resource';e={$_.Name.LocalizedValue}}, CurrentValue, Limit",
+          ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
+        }),
+      });
+    }
   }
 
   return out;

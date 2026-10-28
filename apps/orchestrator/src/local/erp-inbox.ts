@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { basename, join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { VisionExtractionSchema, displayScenarioId, erpScenarioId, listCustomScenarios, type CustomScenarioEntry, type CustomScenarioId, type ScenarioListItem, type TicketAttachment, type VisionExtraction } from "@contextpane/catalog";
-import { config } from "../config.ts";
+import { config, providers } from "../config.ts";
 import { workbenchEvents } from "../events.ts";
 import { gatherContext, invalidateContext } from "../mcp/context.ts";
 import { convergenceStore } from "../store/convergence.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { matchSignIn, visionExtract, type VisionResult } from "../tiers/vision.ts";
-import { customScenarioListItem, registerCustomTicket, removeCustomTicket } from "./custom-ticket.ts";
+import { customScenarioListItem, registerCustomTicket, removeCustomTicket, triageCustomTicketAsync } from "./custom-ticket.ts";
 import { generateDrop, type DropArchetype } from "./erp-drop-generator.ts";
 import { readPngInfo } from "./png.ts";
 
@@ -216,8 +216,28 @@ export function ingestFolder(folder: string, options: { announce?: boolean } = {
       estimatedSavings: { tokens: 1800, ms: 4000, versus: "model-based ticket classification" },
     });
     workbenchEvents.publish({ type: "inbox/ingested", item, folder, attachments: attachments.map((a) => a.fileName) });
-    // Warm the brief and the data plane so the first click on the new item is instant.
-    void gatherContext(scenarioId, { fresh: true }).catch(() => undefined);
+    if (providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test") {
+      void triageCustomTicketAsync(
+        {
+          title: parsed.title,
+          body: parsed.body,
+          customerName: parsed.customerName,
+          ...(parsed.requester ? { requester: parsed.requester } : {}),
+          ...(parsed.priority ? { priority: parsed.priority } : {}),
+        },
+        { scenarioId, origin: "erp-drop", createdAt: parsed.createdAt, erpDrop: { folder, ingestedAt, attachments } },
+      )
+        .then((asyncEntry) => {
+          invalidateContext(scenarioId);
+          const updatedItem = customScenarioListItem(asyncEntry, Boolean(convergenceStore.get(scenarioId)));
+          workbenchEvents.publish({ type: "inbox/ingested", item: updatedItem, folder, attachments: attachments.map((a) => a.fileName) });
+          return gatherContext(scenarioId, { fresh: true });
+        })
+        .catch(() => undefined);
+    } else {
+      // Warm the brief and the data plane so the first click on the new item is instant.
+      void gatherContext(scenarioId, { fresh: true }).catch(() => undefined);
+    }
   }
   return { entry, item, folder, attachments: attachments.map((a) => a.fileName), latencyMs };
 }

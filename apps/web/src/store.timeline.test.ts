@@ -214,6 +214,7 @@ describe("applyTimelineSliceToLayout sign-in timestamp & badge honesty", () => {
     };
 
     useWorkbench.setState((s) => ({
+      expanded: { LicenseDriftCard: true, EntraSignInTimeline: true },
       speculativeSelectionCache: {
         ...s.speculativeSelectionCache,
         [key]: {
@@ -236,6 +237,7 @@ describe("applyTimelineSliceToLayout sign-in timestamp & badge honesty", () => {
     await useWorkbench.getState().exploreSelection("temporary RDP", { viewMode: "dashboard" });
     const elapsed = performance.now() - t0;
     expect(elapsed).toBeLessThan(15);
+    expect(useWorkbench.getState().expanded).toEqual({});
     const promoted = useWorkbench.getState().miniDashboards.find((m) => m.id === "mini-speculative-test");
     expect(promoted).toBeDefined();
     expect(promoted?.speculativeHit).toBe(true);

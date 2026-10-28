@@ -316,3 +316,55 @@ export const INTUNE_SCENARIOS: Record<IntuneScenarioKey, IntuneScenarioFixture> 
     },
   },
 };
+
+export interface SecurityGroupSummary {
+  displayName: string;
+  members: string;
+  assignedSku: string;
+  linkedPolicy: string;
+  state: string;
+  tenantId: string;
+}
+
+export const SECURITY_GROUPS_FIXTURE: SecurityGroupSummary[] = [
+  {
+    displayName: "SG-Contoso-Finance-Legacy",
+    members: "3",
+    assignedSku: "SPE_E3",
+    linkedPolicy: "Block AVD - Contoso Finance Legacy (Blocking)",
+    state: "Drifted — 3 users stuck in legacy group",
+    tenantId: "tenant-contoso-01",
+  },
+  {
+    displayName: "SG-Contoso-Finance-AVD",
+    members: "12",
+    assignedSku: "SPE_E5",
+    linkedPolicy: "Excluded from Block AVD (Target)",
+    state: "Active entitlement group",
+    tenantId: "tenant-contoso-01",
+  },
+  {
+    displayName: "SG-Contoso-F3-Frontline",
+    members: "18",
+    assignedSku: "SPE_F1",
+    linkedPolicy: "CA-004-Block-Legacy-Auth",
+    state: "Active",
+    tenantId: "tenant-contoso-01",
+  },
+  {
+    displayName: "SG-Fabrikam-Legacy-BitLocker",
+    members: "6 devices",
+    assignedSku: "Intune Device Config",
+    linkedPolicy: "Fabrikam-Legacy-BitLocker-DeviceConfig",
+    state: "Conflicting profile group",
+    tenantId: "tenant-fabrikam-02",
+  },
+  {
+    displayName: "SG-BreakGlass-Accounts",
+    members: "1 (bg-admin-01)",
+    assignedSku: "None",
+    linkedPolicy: "CA-001-Require-PhishingResistant-MFA-Admins",
+    state: "Missing exclusion on CA-001",
+    tenantId: "tenant-contoso-01",
+  },
+];

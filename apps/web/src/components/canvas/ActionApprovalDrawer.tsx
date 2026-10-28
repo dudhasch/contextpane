@@ -425,15 +425,20 @@ export function ActionApprovalDrawerSheet() {
               {/* Row 1: How to apply + simple checkboxes */}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <ExecutionModeSwitch drawer={drawer} />
-                <div className="flex items-center gap-3" data-testid="canary-controls">
-                  <CanaryCheckbox />
+                <div className="flex items-center gap-2.5" data-testid="canary-controls">
                   {mode === "break-glass" && (
                     <label
-                      className={`flex items-center gap-1.5 text-[11px] whitespace-nowrap ${prPossible ? "text-muted hover:text-text" : "text-faint"}`}
+                      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] whitespace-nowrap transition-colors ${
+                        openPr && prPossible
+                          ? "border-primary/45 bg-primary/12 font-medium text-primary"
+                          : prPossible
+                            ? "border-border-subtle bg-surface/60 text-muted hover:text-text"
+                            : "border-border-subtle/50 bg-surface/30 text-faint"
+                      }`}
                       title={
                         prPossible
-                          ? `Push ${drawer.staging?.branchName ?? "fix/*"} and open a GitHub Pull Request`
-                          : "Requires a remote origin and authenticated GitHub CLI"
+                          ? `Commit changes to ${drawer.staging?.branchName ?? "fix/*"} and open an audit GitHub Pull Request alongside live execution`
+                          : "Local Git branch staged; remote GitHub PR requires an authenticated GitHub CLI origin"
                       }
                     >
                       <input
@@ -443,9 +448,10 @@ export function ActionApprovalDrawerSheet() {
                         disabled={!prPossible || !drawer.staging || drawer.approval.state !== "pending"}
                         onChange={(e) => setOpenPr(e.target.checked)}
                       />
-                      <span>Also Open GitHub PR</span>
+                      <span>+ Sync Audit PR</span>
                     </label>
                   )}
+                  <CanaryCheckbox />
                 </div>
               </div>
 
@@ -760,11 +766,11 @@ function DeviceHealthScriptTab() {
       </div>
       <div>
         <div className="section-label mb-1">1. Detection Script (Detect.ps1 — Read-Only Check)</div>
-        <CodeBlock code={health.detect} hideToolbar />
+        <CodeBlock code={health.detect} maxHeight="max-h-40 overflow-y-auto" hideToolbar />
       </div>
       <div>
         <div className="section-label mb-1">2. Remediation Script (Remediate.ps1 — Registry &amp; Policy Fix)</div>
-        <CodeBlock code={health.remediate} hideToolbar />
+        <CodeBlock code={health.remediate} maxHeight="max-h-44 overflow-y-auto" hideToolbar />
       </div>
       {health.csp.length > 0 && (
         <div>
@@ -877,7 +883,7 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
             variant="outline"
             icon={<Zap />}
             onClick={() => void compileSkill()}
-            title="Runs in <1ms with 0 AI tokens next time this issue happens"
+            title="Runs in <1ms automatically next time this issue happens"
           >
             Save as Instant Auto-Fix Rule
           </Button>
@@ -1289,8 +1295,12 @@ function CanaryCheckbox() {
   const setSimulate = useWorkbench((s) => s.setSimulateCanaryFailure);
   return (
     <label
-      className="flex items-center gap-1.5 text-[11px] whitespace-nowrap text-muted hover:text-text"
-      title="Test Auto-Rollback (Simulate Health Check Failure)"
+      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] whitespace-nowrap transition-colors ${
+        simulate
+          ? "border-amber-500/55 bg-amber-500/15 font-semibold text-amber-300"
+          : "border-border-subtle bg-surface/60 text-muted hover:text-text"
+      }`}
+      title="Simulate a post-change health check failure to verify automatic 1-Click Undo rollback"
     >
       <input
         type="checkbox"
@@ -1298,7 +1308,7 @@ function CanaryCheckbox() {
         checked={simulate}
         onChange={(e) => setSimulate(e.target.checked)}
       />
-      <span>Test Auto-Rollback</span>
+      <span>{simulate ? "🧪 Auto-Rollback Drill On" : "Test Auto-Rollback"}</span>
     </label>
   );
 }
@@ -1340,8 +1350,8 @@ function ExecutionModeSwitch({ drawer }: { drawer: Drawer }) {
   const locked = drawer.approval.state !== "pending" && drawer.approval.state !== "rolled-back";
   const current = locked ? (drawer.approval.mode ?? selected) : selected;
   const options: Array<{ id: ExecutionMode; label: string }> = [
-    { id: "break-glass", label: "⚡ Apply Live Now (+ Sync Git)" },
-    { id: "gitops", label: "🔀 Create GitHub PR Only" },
+    { id: "break-glass", label: "⚡ Apply Live Now" },
+    { id: "gitops", label: "🔀 Stage GitHub PR Only" },
   ];
   return (
     <div

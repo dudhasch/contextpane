@@ -1,4 +1,4 @@
-import { baseScenarioOf, isCustomScenarioId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { baseScenarioOf, getCustomScenario, isCustomScenarioId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
 import { verifyFormalInvariants } from "./formal-verifier.ts";
 
 /**
@@ -83,6 +83,8 @@ export const FLEET_DIRECTORY: readonly { tenant: FleetTenant; signatures: readon
 ];
 
 export function activeTenantForScenario(scenarioId: string): FleetTenant {
+  const custom = getCustomScenario(scenarioId);
+  if (custom?.tenantId === "tenant-fabrikam-02") return "Fabrikam Legal";
   const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
   return effectiveId === "INC-4099" ? "Fabrikam Legal" : "Contoso Finance";
 }
@@ -93,8 +95,12 @@ export function tenantSlug(tenant: string): string {
 
 export function signatureForScenario(scenarioId: string): string {
   const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
-  if (!isScenarioId(effectiveId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
-  return SIGNATURE_BY_SCENARIO[effectiveId];
+  if (effectiveId && isScenarioId(effectiveId)) return SIGNATURE_BY_SCENARIO[effectiveId];
+  if (isCustomScenarioId(scenarioId)) {
+    const custom = getCustomScenario(scenarioId);
+    return custom?.elementRouting?.missingElements[0]?.elementId ?? `Custom-Dynamic-${scenarioId}`;
+  }
+  throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
 }
 
 export interface FleetTenantMatch {
@@ -104,7 +110,7 @@ export interface FleetTenantMatch {
 }
 
 export interface FleetImmunizationResult {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   signature: string;
   tenants: FleetTenantMatch[];
   affectedCount: number;
@@ -112,20 +118,37 @@ export interface FleetImmunizationResult {
 
 export function immunizeFleet(scenarioId: string): FleetImmunizationResult {
   const effectiveId = isCustomScenarioId(scenarioId) ? baseScenarioOf(scenarioId) : scenarioId;
-  if (!isScenarioId(effectiveId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
-  const signature = SIGNATURE_BY_SCENARIO[effectiveId];
-  const activeTenant = activeTenantForScenario(effectiveId);
-  const tenants: FleetTenantMatch[] = FLEET_DIRECTORY.map((entry) => ({
-    tenant: entry.tenant,
-    affected: entry.tenant !== activeTenant && entry.signatures.includes(signature),
-    signatures: [...entry.signatures],
-  }));
-  return {
-    scenarioId: effectiveId,
-    signature,
-    tenants,
-    affectedCount: tenants.filter((t) => t.affected).length,
-  };
+  if (effectiveId && isScenarioId(effectiveId)) {
+    const signature = SIGNATURE_BY_SCENARIO[effectiveId];
+    const activeTenant = activeTenantForScenario(effectiveId);
+    const tenants: FleetTenantMatch[] = FLEET_DIRECTORY.map((entry) => ({
+      tenant: entry.tenant,
+      affected: entry.tenant !== activeTenant && entry.signatures.includes(signature),
+      signatures: [...entry.signatures],
+    }));
+    return {
+      scenarioId: effectiveId,
+      signature,
+      tenants,
+      affectedCount: tenants.filter((t) => t.affected).length,
+    };
+  }
+  if (isCustomScenarioId(scenarioId)) {
+    const signature = signatureForScenario(scenarioId);
+    const activeTenant = activeTenantForScenario(scenarioId);
+    const tenants: FleetTenantMatch[] = FLEET_DIRECTORY.map((entry) => ({
+      tenant: entry.tenant,
+      affected: entry.tenant !== activeTenant && entry.signatures.includes(signature),
+      signatures: [...entry.signatures],
+    }));
+    return {
+      scenarioId,
+      signature,
+      tenants,
+      affectedCount: tenants.filter((t) => t.affected).length,
+    };
+  }
+  throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
 }
 
 export interface FleetCampaignBranch {
@@ -136,7 +159,7 @@ export interface FleetCampaignBranch {
 
 export interface FleetCampaign {
   campaignId: string;
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   signature: string;
   branches: FleetCampaignBranch[];
   verified: boolean;

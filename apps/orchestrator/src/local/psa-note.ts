@@ -40,12 +40,13 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const { brief, convergence } = input;
   const scenarioId = convergence.scenarioId;
   const base = baseScenarioOf(scenarioId);
+  const targetId = base ?? scenarioId;
   const snapshotBrief = closureStore.briefSnapshot(scenarioId) ?? brief;
   const drawer = approvedDrawerFor(scenarioId, convergence.remediationId);
   const canary = closureStore.canary(scenarioId);
-  const formal = verifyFormalInvariants(base);
-  const idempotency = verifyIdempotency(base);
-  const rollback = buildInverseRollback(base);
+  const formal = verifyFormalInvariants(targetId);
+  const idempotency = verifyIdempotency(targetId);
+  const rollback = buildInverseRollback(scenarioId);
   const closed = closureStore.closedState(scenarioId);
   const entry = getScenarioEntry(scenarioId);
   const live = convergence.execution === "live-graph";
@@ -63,7 +64,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const shortUpns = remediatedUpns.map((u) => u.split("@")[0]!);
 
   const rawRootCause = snapshotBrief.summary
-    .replace(/^(?:Unscripted ticket triaged live|ERP ticket [^\s]+ dropped into input\/tickets\/[^\s]+ and triaged live) against [^:]+:\s*\d+\s+entit(?:y|ies) matched MCP data \([^)]*\),\s*inheriting the [A-Z0-9-]+ pattern\.\s*/i, "")
+    .replace(/^(?:Unscripted ticket triaged live|ERP ticket [^\s]+ dropped into input\/tickets\/[^\s]+ and triaged live) against [^:]+:\s*\d+\s+entit(?:y|ies) matched MCP data \([^)]*\)(?:,\s*inheriting the [A-Z0-9-]+ pattern)?\.\s*/i, "")
     .trim();
 
   const FALLBACK_ROOT_CAUSE_BY_BASE: Record<string, string> = {
@@ -89,7 +90,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
 
   const rootCause = toPastTenseSummary(
     hasPostConvergedOrInternalText
-      ? (FALLBACK_ROOT_CAUSE_BY_BASE[base] ?? rawRootCause)
+      ? ((base ? FALLBACK_ROOT_CAUSE_BY_BASE[base] : undefined) ?? rawRootCause)
       : rawRootCause,
   );
 
@@ -105,7 +106,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
   const rawDrawerSummary =
     drawer?.summary && !drawer.summary.includes("0 drifted member") && !drawer.summary.startsWith("Remediates ")
       ? toPastTenseSummary(drawer.summary)
-      : PAST_TENSE_RESOLUTION_BY_BASE[base] ?? toPastTenseSummary(drawer?.summary ?? "Applied the verified remediation to restore the golden baseline.");
+      : (base ? PAST_TENSE_RESOLUTION_BY_BASE[base] : undefined) ?? toPastTenseSummary(drawer?.summary ?? "Applied the verified remediation to restore the golden baseline.");
 
   const resolution = drawer
     ? `${rawDrawerSummary} The change was approved by ${drawer.approval.approvedBy ?? drawer.approval.requiredIdentity} as ${drawer.approval.mode === "gitops" ? "a Pure GitOps change" : "an Emergency Break-Glass change"} and ${live ? "applied to the tenant" : "recorded (simulated execution, no tenant write)"} on ${convergence.convergedAt.slice(0, 16).replace("T", " ")} UTC.`
@@ -122,7 +123,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
     drawer ? `Pre-flight: ${drawer.verificationStatus.verdict} · PowerShell AST ${flag(drawer.verificationStatus.astCheckPassed)} · -WhatIf dry run ${flag(drawer.verificationStatus.whatIfSafe)}${drawer.terraformDiff ? ` · terraform fmt ${flag(drawer.verificationStatus.terraformFmtPassed)}, validate ${flag(drawer.verificationStatus.terraformValidatePassed)}` : ""} · ${drawer.verificationStatus.sandboxProvider}` : "Pre-flight: see the remediation record",
     `Git: ${convergence.gitBranch ?? drawer?.staging?.branchName ?? "no branch staged"}${drawer?.staging?.commitSha ? ` @ ${drawer.staging.commitSha.slice(0, 7)}` : ""}${convergence.prUrl ? ` · PR ${convergence.prUrl}` : ""}${drawer?.staging?.filesChanged.length ? ` · ${drawer.staging.filesChanged.length} files` : ""}`,
     `Verified 1-click undo script (Inverse rollback) archived: ${rollback.restores.length} restore${rollback.restores.length === 1 ? "" : "s"} (${rollback.restores.slice(0, 3).join(", ")}${rollback.restores.length > 3 ? ", …" : ""}) · ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
-    `Execution: ${live ? "live Graph/ARM write" : "simulated"} as ${drawer?.approval.approvedBy ?? drawer?.approval.requiredIdentity ?? "the delegated identity"} · remediation ${convergence.remediationId} · converged in ${convergence.latencyMs} ms · 0 LLM tokens for the convergence`,
+    `Execution: ${live ? "live Graph/ARM write" : "simulated"} as ${drawer?.approval.approvedBy ?? drawer?.approval.requiredIdentity ?? "the delegated identity"} · remediation ${convergence.remediationId} · converged in ${convergence.latencyMs} ms · Post-check invariants verified`,
   ];
 
   const status: PsaResolutionNote["status"] = closed ? "CLOSED" : "RESOLVED & VERIFIED";
@@ -141,7 +142,7 @@ export function buildResolutionNote(input: { brief: ScenarioBrief; convergence: 
     "",
     ...trail.map((t) => `- ${t}`),
     "",
-    `_Generated by ContextPane from the verified audit ledger (${entry?.kind === "ticket" ? "ticket" : "anomaly"} ${scenarioId}, base pattern ${base})._`,
+    `_Generated by ContextPane from the verified audit ledger (${entry?.kind === "ticket" ? "ticket" : "anomaly"} ${scenarioId}${base ? `, base pattern ${base}` : ""})._`,
     "",
   ].join("\n");
 

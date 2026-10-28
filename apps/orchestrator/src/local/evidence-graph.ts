@@ -80,10 +80,10 @@ export function buildEvidenceGraph(
 ): EntityEvidenceGraph {
   const started = performance.now();
   const ctx = isContextObject(ctxOrScenarioId) ? ctxOrScenarioId : null;
-  const scenarioId = (ctx ? ctx.scenarioId : String(ctxOrScenarioId || "INC-4092")).toUpperCase();
+  const scenarioId = (ctx ? (ctx.scenarioId ?? ctx.ticketId) : String(ctxOrScenarioId || "INC-4092")).toUpperCase();
   const tenantId =
     ctx?.tenantId ??
-    (scenarioId === "INC-4099" || scenarioId === "ANOM-INT-309" ? "tenant-fabrikam-02" : "tenant-contoso-01");
+    (scenarioId === "INC-4099" ? "tenant-fabrikam-02" : "tenant-contoso-01");
 
   const nodes: EntityEvidenceNode[] = [];
   const edges: EntityEvidenceEdge[] = [];
@@ -444,11 +444,6 @@ export function buildEvidenceGraph(
         ];
 
   const informationBottleneck = scoreInformationBottleneck(ibInput);
-  // Enforce viewportEntropyBits <= HUMAN_FOVEAL_CAPACITY_BITS (42.0)
-  if (informationBottleneck.viewportEntropyBits > HUMAN_FOVEAL_CAPACITY_BITS) {
-    informationBottleneck.viewportEntropyBits = HUMAN_FOVEAL_CAPACITY_BITS;
-    informationBottleneck.withinBudget = true;
-  }
 
   const builtInMs = Number(Math.max(0.05, performance.now() - started).toFixed(3));
 

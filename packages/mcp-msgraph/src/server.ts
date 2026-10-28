@@ -134,6 +134,16 @@ export function createMsGraphMcpServer(): McpServer {
     async (args) => run(() => msgraphService.getGroupDiagnostic(args.tenantId, args.groupDisplayName)),
   );
 
+  server.registerTool(
+    "get_security_groups",
+    {
+      title: "Get Entra security and licensing groups",
+      description: "Returns Entra security and group-based licensing groups (SG-*) across the tenant.",
+      inputSchema: { tenantId },
+    },
+    async (args) => run(() => msgraphService.getSecurityGroups(args.tenantId)),
+  );
+
   return server;
 }
 

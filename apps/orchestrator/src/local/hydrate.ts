@@ -38,7 +38,7 @@ export const DEFAULT_COMPONENT_ORDER: ComponentType[] = ["LicenseDriftCard", "En
 
 /** The cards a scenario renders, in canvas order. */
 export function scenarioComponents(ctx: CorrelationContext): ComponentType[] {
-  return ctx.components ?? SCENARIO_REGISTRY[ctx.scenarioId].components;
+  return ctx.components ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].components : ["SynthesizedDynamicCard"]);
 }
 
 const worst = (...states: HealthState[]): HealthState => {

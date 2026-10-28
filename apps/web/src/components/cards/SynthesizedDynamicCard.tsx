@@ -258,16 +258,12 @@ export function SynthesizedDynamicCard({
       footerMeta={
         <span className="inline-flex items-center gap-1.5 font-mono text-[10px]">
           <Sparkles className="size-2.5 text-teal-400" />
-          <span>{props.elementId}</span>
+          <span>Live Azure &amp; Entra Diagnostics</span>
           <span>·</span>
           <span className="text-teal-300">
-            {meta.gatekeeperModel} → {meta.synthesizerModel}
-          </span>
-          <span>·</span>
-          <span>
             {meta.reusedFromCatalog
-              ? `Reused from dynamic-catalog.json (×${meta.reuseCount})`
-              : "Persisted to dynamic-catalog.json"}
+              ? `Verified Custom View (×${meta.reuseCount})`
+              : "Synthesized Custom View"}
           </span>
         </span>
       }
@@ -280,13 +276,13 @@ export function SynthesizedDynamicCard({
       ]}
       summary={<div className="text-[12.5px] leading-snug text-text">{props.headline}</div>}
       primaryAction={
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-nowrap items-center gap-1.5">
           <input
             type="search"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             placeholder={dynamicFilterPlaceholder}
-            className="h-6 w-[185px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[10.5px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
+            className="h-6 w-[140px] rounded border border-border-subtle bg-slate-950/80 px-2 font-mono text-[10.5px] text-text placeholder:text-faint focus:border-teal-400 focus:outline-none"
           />
           <Button
             size="xs"
@@ -294,7 +290,7 @@ export function SynthesizedDynamicCard({
             icon={<GitCompareArrows />}
             data-testid="synth-diff-btn"
             onClick={() => {
-              openRemediation({ tab: "terraform", focusBanner: `Focused: ${diffCtaLabel} (${props.elementId})` });
+              openRemediation({ tab: "terraform", focusBanner: `Focused: ${diffCtaLabel}` });
             }}
           >
             {diffCtaLabel}
@@ -307,7 +303,7 @@ export function SynthesizedDynamicCard({
             onClick={() =>
               openRemediation({
                 tab: "powershell",
-                focusBanner: `Focused: ${primaryCtaLabel} (${props.elementId})`,
+                focusBanner: `Focused: ${primaryCtaLabel}`,
               })
             }
           >

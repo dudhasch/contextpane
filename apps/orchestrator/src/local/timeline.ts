@@ -1,5 +1,6 @@
 import {
   SCENARIO_REGISTRY,
+  getCustomScenario,
   isScenarioId,
   type CanvasComponentType,
   type HealthState,
@@ -46,7 +47,7 @@ export interface TimelineStateSnapshot {
 
 export interface TimelineSlice {
   id: string;
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   index: number;
   kind: TimelineSliceKind;
   /** Display label, e.g. "Healthy Baseline". */
@@ -71,7 +72,7 @@ export interface TimelineSlice {
 }
 
 export interface ScenarioTimeline {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   title: string;
   kind: ScenarioRegistryEntry["kind"];
   tenantId: ScenarioRegistryEntry["tenantId"];
@@ -390,14 +391,53 @@ const TIMELINES = new Map<ScenarioId, ScenarioTimeline>(
  * Returns a fresh copy on every call so callers may mutate their copy.
  */
 export function getTimeline(scenarioId: ScenarioId): ScenarioTimeline;
-export function getTimeline(scenarioId: string): ScenarioTimeline | null;
-export function getTimeline(scenarioId: string): ScenarioTimeline | null {
-  if (!isScenarioId(scenarioId)) return null;
-  const timeline = TIMELINES.get(scenarioId);
-  return timeline ? structuredClone(timeline) : null;
+export function getTimeline(scenarioId: string | null | undefined): ScenarioTimeline | null;
+export function getTimeline(scenarioId: string | null | undefined): ScenarioTimeline | null {
+  if (!scenarioId) return null;
+  if (isScenarioId(scenarioId)) {
+    const timeline = TIMELINES.get(scenarioId);
+    return timeline ? structuredClone(timeline) : null;
+  }
+  const custom = getCustomScenario(scenarioId);
+  if (!custom) return null;
+  if (custom.baseScenarioId && isScenarioId(custom.baseScenarioId)) {
+    const base = TIMELINES.get(custom.baseScenarioId);
+    if (base) {
+      const cloned = structuredClone(base);
+      return {
+        ...cloned,
+        scenarioId: custom.scenarioId,
+        title: custom.title,
+        slices: cloned.slices.map((s) => ({
+          ...s,
+          scenarioId: custom.scenarioId,
+          id: s.id.replace(custom.baseScenarioId!.toLowerCase(), custom.scenarioId.toLowerCase()),
+        })),
+      };
+    }
+  }
+  const entryLike: ScenarioRegistryEntry = {
+    scenarioId: custom.scenarioId as ScenarioId,
+    kind: "ticket",
+    tenantId: custom.tenantId,
+    title: custom.title,
+    components: custom.components,
+    remediationScope: custom.remediationScope,
+  };
+  const driftedEntities: TimelineEntityState[] = custom.extraction.entities.slice(0, 4).map((e) =>
+    ent(e.resolvedTo ?? e.id, "drifted", e.type === "errorCode" ? "critical" : "warning", e.label),
+  );
+  if (driftedEntities.length === 0) {
+    driftedEntities.push(ent(custom.scenarioId, "active", "critical", custom.title));
+  }
+  return genericTimeline(entryLike, {
+    nowIso: custom.createdAt || "2026-10-26T08:00:00.000Z",
+    entities: { drifted: driftedEntities, healthyStatus: "compliant" },
+    failure: `Active incident: ${custom.title}.`,
+  });
 }
 
 /** Just the slices of a scenario (empty for an unknown scenario id). */
-export function getTimelineSlices(scenarioId: string): TimelineSlice[] {
+export function getTimelineSlices(scenarioId: string | null | undefined): TimelineSlice[] {
   return getTimeline(scenarioId)?.slices ?? [];
 }

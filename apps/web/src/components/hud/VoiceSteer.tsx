@@ -157,7 +157,7 @@ export function VoiceSteerPanel() {
           <Mic className="size-4 text-meta" />
           <span className="text-[13px] font-semibold">Voice Steer</span>
           <Pill tone="meta" icon={<Sparkles />}>
-            muse-voice-transcribe → muse-spark
+            Live Voice &amp; Text Command
           </Pill>
         </div>
         <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-text" aria-label="Close">
@@ -221,8 +221,7 @@ export function VoiceSteerPanel() {
             </Pill>
           </div>
           <div className="mt-1 text-faint">
-            intent via {last.intentSource} · {last.transcription ? `transcribed by ${last.transcription.modelId} in ${last.transcription.latencyMs} ms` : "text input / browser speech"} ·{" "}
-            {last.telemetry.latencyMs} ms · {last.telemetry.tokensUsed.total} tok
+            {last.transcription ? `Voice transcribed in ${last.transcription.latencyMs} ms` : "Text / browser speech input"} · Matched in {last.telemetry.latencyMs} ms
           </div>
         </div>
       )}

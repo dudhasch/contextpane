@@ -160,7 +160,7 @@ export async function assessTicketElementNeeds(input: {
   body: string;
   matchedSeededComponents: string[];
   clarifiedAnswers?: Record<string, string>;
-}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number }> {
+}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; source?: "llm" | "fallback-on-error" }> {
   const started = performance.now();
   const fallback = buildDeterministicRoutingDecision(input);
   const gatekeeperModel = models.metaCatalog;
@@ -183,13 +183,25 @@ export async function assessTicketElementNeeds(input: {
       );
       const parsed = ElementRoutingDecisionSchema.safeParse(parseToolArguments(res.argumentsRaw));
       if (parsed.success && parsed.data.missingElements.length > 0) {
-        return { decision: { ...parsed.data, matchedExistingElements: [] }, modelUsed: gatekeeperModel, latencyMs: res.latencyMs };
+        return {
+          decision: { ...parsed.data, matchedExistingElements: [] },
+          modelUsed: gatekeeperModel,
+          latencyMs: Math.max(1, Math.round(performance.now() - started)),
+          tokensUsed: res.usage.total,
+          source: "llm",
+        };
       }
     } catch {
       /* fallback below */
     }
   }
-  return { decision: fallback, modelUsed: gatekeeperModel, latencyMs: Math.max(8, Math.round(performance.now() - started)) };
+  return {
+    decision: fallback,
+    modelUsed: gatekeeperModel,
+    latencyMs: Math.max(1, Math.round(performance.now() - started)),
+    tokensUsed: 0,
+    source: "fallback-on-error",
+  };
 }
 
 function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: string, synthesizerModel: string, latencyMs: number): SynthesizedDynamicCard {
@@ -217,12 +229,15 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
 }
 
 export function synthesizeAndPersistMissingElementsSync(input: { ticketId: string; ticketPrompt: string; decision: ElementRoutingDecision; gatekeeperModel?: string }): SynthesizedDynamicCard[] {
+  const started = performance.now();
   const store = loadDynamicCatalog();
   const nowIso = new Date().toISOString();
   const cards = input.decision.missingElements.map((m) => {
-    const card = buildMinimalFallbackCard(m, input.gatekeeperModel ?? models.metaCatalog, models.metaWonder, 12);
+    const tCard = performance.now();
+    const card = buildMinimalFallbackCard(m, input.gatekeeperModel ?? models.metaCatalog, models.metaWonder, Math.max(1, Math.round(performance.now() - tCard)));
     const tsxPath = writeTsxStub(card);
     card.synthesisMeta.tsxStubPath = tsxPath;
+    card.synthesisMeta.latencyMs = Math.max(1, Math.round(performance.now() - started));
     store.dynamicElements.push({ elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: nowIso, lastUsedAt: nowIso, reuseCount: 1, gatekeeperModel: input.gatekeeperModel ?? models.metaCatalog, synthesizerModel: models.metaWonder, tsxStubPath: tsxPath, cardTemplate: card });
     return card;
   });
@@ -294,7 +309,7 @@ export async function synthesizeAndPersistMissingElements(input: {
         /* fallback below */
       }
     }
-    const latencyMs = Math.max(18, Math.round(performance.now() - started));
+    const latencyMs = Math.max(1, Math.round(performance.now() - started));
     if (!card) card = buildMinimalFallbackCard(missing, input.gatekeeperModel, synthesizerModel, latencyMs);
     const tsxPath = writeTsxStub(card);
     const nowIso = new Date().toISOString();

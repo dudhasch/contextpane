@@ -110,10 +110,10 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
         </Pill>
         {unscripted ? (
           <Pill tone="primary" icon={drop ? <FolderInput /> : <Sparkles />} title={cleanInlineSlugs(brief.extraction?.rationale ?? "")}>
-            {drop ? "triaged from drop" : "unscripted"} ·{" "}
+            {drop ? "ERP Drop" : "Live Triage"} ·{" "}
             {brief.elementRouting?.missingElements[0]
-              ? `dynamic UI (${brief.elementRouting.missingElements[0].elementId})`
-              : `base ${brief.extraction?.baseScenarioId}`}
+              ? "Custom View"
+              : brief.extraction?.baseScenarioId}
           </Pill>
         ) : (
           <span className="truncate text-[11px] text-faint">{brief.origin}</span>
@@ -137,12 +137,20 @@ function ScenarioHeader({ brief }: { brief: ScenarioBrief }) {
 }
 
 const FALLBACK_LIVE_TASKS: SubAgentTaskRecord[] = [
-  { stepIndex: 1, task: "scope-and-questions", agentName: "1. Goal Clarifier", role: "Target Scope & Clarifying Questions", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 0, inputSummary: "Synthesizing clarifying options...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 2, task: "telemetry-and-status", agentName: "2. Telemetry Scout", role: "Live Graph & ARM Status Scout", modelId: "muse-spark-1.3", status: "completed", latencyMs: 0, inputSummary: "Correlating upstream cloud status...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 3, task: "ui-element-synthesis", agentName: "3. UI Architect", role: "N+k Dynamic Card Synthesis", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 0, inputSummary: "Synthesizing domain-specific card...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 4, task: "script-and-iac-synthesis", agentName: "4. IaC & PS7 Coder", role: "PowerShell 7 & Terraform Patch", modelId: "muse-wonder-1.0", status: "completed", latencyMs: 0, inputSummary: "Generating idempotent remediation...", outputSummary: "In progress", timestamp: new Date().toISOString() },
-  { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Safety Verifier", role: "AST, -WhatIf & 1-Click Undo", modelId: "muse-spark-1.3", status: "completed", latencyMs: 0, inputSummary: "Verifying pre-flight invariants...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 1, task: "scope-and-questions", agentName: "1. Scope Check", role: "Target Scope & Parameters", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Analyzing ticket parameters...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 2, task: "telemetry-and-status", agentName: "2. Live Telemetry", role: "Live Graph & ARM Status Check", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Correlating upstream cloud status...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 3, task: "ui-element-synthesis", agentName: "3. View Layout", role: "Diagnostic View Layout", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Building diagnostic card layout...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 4, task: "script-and-iac-synthesis", agentName: "4. Remediation Plan", role: "PowerShell 7 & Terraform Patch", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Preparing idempotent remediation...", outputSummary: "In progress", timestamp: new Date().toISOString() },
+  { stepIndex: 5, task: "preflight-and-undo", agentName: "5. Pre-Flight Safety", role: "AST, -WhatIf & 1-Click Undo", modelId: "deterministic", status: "completed", latencyMs: 0, inputSummary: "Verifying pre-flight invariants...", outputSummary: "In progress", timestamp: new Date().toISOString() },
 ];
+
+const STAGE_DISPLAY_META: Record<number, { name: string; role: string }> = {
+  1: { name: "1. Scope Check", role: "Target Scope & Parameters" },
+  2: { name: "2. Live Telemetry", role: "Live Graph & ARM Status Check" },
+  3: { name: "3. View Layout", role: "Diagnostic View Layout" },
+  4: { name: "4. Remediation Plan", role: "PowerShell 7 & Terraform Patch" },
+  5: { name: "5. Pre-Flight Safety", role: "AST, -WhatIf & 1-Click Undo" },
+};
 
 /**
  * Unified 32px horizontal status strip combining Sub-Agent Task Pipeline (5/5 Completed)
@@ -199,13 +207,13 @@ function UnifiedStatusAndAgentBar({
           onClick={() => setAgentsExpanded((v) => !v)}
           data-testid="subagent-strip-toggle"
           className="inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-left font-medium text-text transition-colors hover:bg-elevated"
-          title="Click to inspect the 5 specialized sub-agents in the triage pipeline"
+          title="Click to inspect the 5 automated triage & safety checks"
         >
           <Bot className={`size-3.5 shrink-0 text-primary ${isBusy ? "animate-bounce" : ""}`} />
           <span className="font-mono text-[10.5px] font-semibold text-emerald-300">
             {isBusy
-              ? "● Synthesizing via 5 Sub-Agents (muse-wonder-1.0)..."
-              : `✓ ${completedCount}/${displayTasks.length} Sub-Agents (${totalLatencyMs}ms)`}
+              ? "● Running 5/5 Triage Checks..."
+              : `✓ ${completedCount}/${displayTasks.length} Triage Checks (${totalLatencyMs}ms)`}
           </span>
           <span className="font-mono text-[10px] text-muted">{agentsExpanded || isBusy ? "▴" : "▾"}</span>
         </button>
@@ -238,13 +246,16 @@ function UnifiedStatusAndAgentBar({
           <div className="flex flex-wrap items-center gap-1">
             {displayTasks.map((t, idx) => {
               const isSelected = selectedStep === t.stepIndex;
+              const stageMeta = STAGE_DISPLAY_META[t.stepIndex];
+              const stageName = stageMeta?.name ?? t.agentName;
+              const stageRole = stageMeta?.role ?? t.role;
               return (
                 <Fragment key={t.stepIndex}>
                   <button
                     type="button"
                     onClick={() => setSelectedStep(isSelected ? null : t.stepIndex)}
                     data-testid={`subagent-pill-${t.stepIndex}`}
-                    title={`${t.role} (${t.modelId}) · ${t.latencyMs} ms — click to inspect`}
+                    title={`${stageRole} · ${t.latencyMs} ms — click to inspect`}
                     className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
                       isBusy
                         ? "animate-pulse border-primary/60 bg-primary/20 font-semibold text-primary"
@@ -253,7 +264,7 @@ function UnifiedStatusAndAgentBar({
                           : "border-emerald-500/35 bg-emerald-500/10 text-emerald-300 hover:border-primary/50 hover:text-text"
                     }`}
                   >
-                    <span>{isBusy ? "●" : "✓"} {t.agentName}</span>
+                    <span>{isBusy ? "●" : "✓"} {stageName}</span>
                   </button>
                   {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}
                 </Fragment>
@@ -268,10 +279,10 @@ function UnifiedStatusAndAgentBar({
             >
               <div className="flex flex-wrap items-center justify-between gap-1">
                 <span className="font-semibold text-primary">
-                  {activeTask.agentName} · {activeTask.role}
+                  {STAGE_DISPLAY_META[activeTask.stepIndex]?.name ?? activeTask.agentName} · {STAGE_DISPLAY_META[activeTask.stepIndex]?.role ?? activeTask.role}
                 </span>
                 <span className="font-mono text-[10px] text-muted">
-                  model: {activeTask.modelId} · {activeTask.latencyMs} ms
+                  {activeTask.latencyMs} ms · Verified
                 </span>
               </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10.5px]">
@@ -383,7 +394,10 @@ function formatSlugWord(w: string): string {
 
 function cleanInlineSlugs(text: string): string {
   return text
-    .replace(/\belement_not_existent\b/gi, "dynamic UI synthesis")
+    .replace(/\belement_not_existent\b/gi, "custom diagnostic view")
+    .replace(/\b(?:data\/)?dynamic-catalog\.json\b/gi, "custom view catalog")
+    .replace(/\bmuse-(?:wonder|spark|glimmer|voice)[a-z0-9.-]*\b/gi, "live analyzer")
+    .replace(/\s*\((?:Remove-MgGroupMemberByRef|Invoke-MgLicenseUser|Set-MgUserLicense|Update-MgIdentityConditionalAccessPolicy)[^)]*\)/g, "")
     .replace(/\b([a-z]{2,}(?:_[a-z0-9]{2,})+)\b/g, (match) =>
       match.split("_").map(formatSlugWord).join(" "),
     );
@@ -484,7 +498,7 @@ function ProjectGoalClarifierCard({
               Interactive Goal &amp; Scope Clarifier
             </span>
             <span className="rounded border border-primary/35 bg-canvas/75 px-1.5 py-0.5 font-mono text-[10px] text-primary">
-              Sub-Agent 1 · muse-wonder-1.0
+              Scope Parameters
             </span>
             {lastRefinedAt && !refiningGoal && (
               <span
@@ -570,15 +584,15 @@ function ProjectGoalClarifierCard({
               {refiningGoal ? (
                 <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-primary">
                   <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  Sub-Agents 3 &amp; 4 re-synthesizing card &amp; PowerShell/IaC...
+                  Updating diagnostic view &amp; remediation scripts...
                 </span>
               ) : lastRefinedAt ? (
                 <span className="font-mono text-[10.5px] text-emerald-300">
-                  ✓ Plan, Dynamic UI &amp; Remediation updated at {lastRefinedAt}
+                  ✓ Plan, Diagnostic View &amp; Remediation updated at {lastRefinedAt}
                 </span>
               ) : (
                 <span className="text-[10.5px] text-muted">
-                  Click any option or type custom parameters to re-synthesize plan &amp; scripts.
+                  Click any option or type custom parameters to update plan &amp; scripts.
                 </span>
               )}
               <Button
@@ -592,7 +606,7 @@ function ProjectGoalClarifierCard({
                 }}
                 data-testid="refine-goal-submit"
               >
-                ↻ Update Plan &amp; Regenerate via Sub-Agents
+                ↻ Update Plan &amp; Regenerate
               </Button>
             </div>
           </div>

@@ -36,11 +36,10 @@ import {
   applyClarifiedAnswersToEntry,
   buildCustomTicketRemediationSync,
   buildSubAgentPipelineRecords,
-  enrichRemediationFromCard,
-  generateClarifyingQuestions,
   generateClarifyingQuestionsSync,
   refineEntryWithSubAgentsAsync,
-  synthesizeCustomRemediation,
+  runSubAgentPipeline,
+  verifyAndRepairGeneratedScript,
 } from "./subagent-orchestrator.ts";
 
 /**
@@ -173,14 +172,17 @@ const KNOWN_SCOPES = new Set([...WORKLOAD_IDENTITY.appPermissions, ...WORKLOAD_I
  * out, else the one that belongs to the chosen pattern (the app owner for a workload-identity ticket),
  * else the first match.
  */
-function dedupeUpns(entities: ExtractedEntity[], lower: string, baseScenarioId: ScenarioId): ExtractedEntity[] {
+function dedupeUpns(entities: ExtractedEntity[], lower: string, baseScenarioId: ScenarioId | null): ExtractedEntity[] {
   const hint = new Map(known().filter((k) => k.type === "upn").map((k) => [k.id.toLowerCase(), k.scenarioId]));
   const byName = new Map<string, ExtractedEntity[]>();
   for (const e of entities) if (e.type === "upn") byName.set(e.label.toLowerCase(), [...(byName.get(e.label.toLowerCase()) ?? []), e]);
   const drop = new Set<ExtractedEntity>();
   for (const group of byName.values()) {
     if (group.length < 2) continue;
-    const keep = group.find((e) => lower.includes(e.id.toLowerCase())) ?? group.find((e) => hint.get(e.id.toLowerCase()) === baseScenarioId) ?? group[0]!;
+    const keep =
+      group.find((e) => lower.includes(e.id.toLowerCase())) ??
+      (baseScenarioId ? group.find((e) => hint.get(e.id.toLowerCase()) === baseScenarioId) : undefined) ??
+      group[0]!;
     for (const e of group) if (e !== keep) drop.add(e);
   }
   return entities.filter((e) => !drop.has(e));
@@ -301,19 +303,15 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
     if (k.id === CA_POSTURE.breakGlassGroup || k.id === CA_POSTURE.breakGlassAccount) base["ANOM-CA-204"] = (base["ANOM-CA-204"] ?? 0) + 2;
     if (k.id === LICENSE_ANOMALY.groupName) base["ANOM-LIC-101"] = (base["ANOM-LIC-101"] ?? 0) + 2;
   }
-  // Pick the base pattern: the tenant decides what exists; the votes decide which story it is.
-  let baseScenarioId: ScenarioId;
-  if (tenantId === "tenant-fabrikam-02") baseScenarioId = "INC-4099";
-  else {
-    const ranked = (Object.entries(base) as Array<[ScenarioId, number]>).filter(([id]) => SCENARIO_REGISTRY[id].tenantId === tenantId).sort((a, b) => b[1] - a[1]);
-    baseScenarioId = ranked[0]?.[0] ?? "INC-4092";
-  }
+  // Custom tickets stand on their own synthesized brief, cards, and remediation scripts without inheriting INC-4092 or INC-4099.
+  const baseScenarioId: ScenarioId | null = null;
   if (tenantId === "tenant-fabrikam-02") components.delete("IaCDriftBanner");
   const ordered = COMPONENT_ORDER.filter((c) => components.has(c));
-  const finalComponents = ordered.length ? ordered : [...SCENARIO_REGISTRY[baseScenarioId].components];
-  const finalEntities = dedupeUpns(entities, lower, baseScenarioId);
+  const finalComponents: CanvasComponentType[] = ordered.length ? ordered : ["SynthesizedDynamicCard"];
+  const rankedHint = (Object.entries(base) as Array<[ScenarioId, number]>).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const finalEntities = dedupeUpns(entities, lower, rankedHint);
   const matched = finalEntities.filter((e) => e.resolvedTo).length;
-  const rationale = `${why.length ? `intents ${why.join(", ")}` : "no intent keywords"}; ${matched}/${finalEntities.length} entities resolved against ${tenantId}; closest pattern ${baseScenarioId} (${SCENARIO_REGISTRY[baseScenarioId].remediationScope})`.slice(0, 300);
+  const rationale = `${why.length ? `intents ${why.join(", ")}` : "no intent keywords"}; ${matched}/${finalEntities.length} entities resolved against ${tenantId}; standalone custom ticket (baseScenarioId: null)`.slice(0, 300);
   return TicketExtractionSchema.parse({ tenantId, baseScenarioId, intents, entities: finalEntities, components: finalComponents, rationale });
 }
 
@@ -353,7 +351,8 @@ export function loadCustomScenarios(): number {
     const raw = JSON.parse(readFileSync(FILE, "utf8")) as { scenarios?: CustomScenarioEntry[] };
     let n = 0;
     for (const s of raw.scenarios ?? []) {
-      if (!(s?.scenarioId?.startsWith("CUSTOM-") || s?.scenarioId?.startsWith("ERP-")) || !isTenantId(s.tenantId) || !(s.baseScenarioId in SCENARIO_REGISTRY)) continue;
+      if (!(s?.scenarioId?.startsWith("CUSTOM-") || s?.scenarioId?.startsWith("ERP-")) || !isTenantId(s.tenantId)) continue;
+      if (s.baseScenarioId !== null && s.baseScenarioId !== undefined && !(s.baseScenarioId in SCENARIO_REGISTRY)) continue;
       const probe = s.ticket?.requester ? `${s.ticket.body}\n${s.ticket.requester.displayName} ${s.ticket.requester.upn}` : s.ticket?.body ?? "";
       const freshExtraction = s.ticket?.title && probe ? extractTicket({ title: s.ticket.title, body: probe, ...(s.ticket.customerName ? { customerName: s.ticket.customerName } : {}) }) : null;
       const extraction = freshExtraction ? { success: true as const, data: freshExtraction } : TicketExtractionSchema.safeParse(s.extraction);
@@ -363,8 +362,8 @@ export function loadCustomScenarios(): number {
         ...s,
         origin: s.origin ?? (s.scenarioId.startsWith("ERP-") ? "erp-drop" : "unscripted"),
         extraction: extraction.data,
-        components: extraction.data.components,
-        baseScenarioId: extraction.data.baseScenarioId,
+        components: s.components?.length ? s.components : extraction.data.components,
+        baseScenarioId: null,
       });
       n++;
     }
@@ -375,6 +374,27 @@ export function loadCustomScenarios(): number {
   }
 }
 
+function mergeEntities(rawEntities: ExtractedEntity[], routedEntities: Array<{ id: string; label: string; type: string; category: ExtractedEntity["category"] }>, sourceLabel: string): ExtractedEntity[] {
+  const merged = [...rawEntities];
+  const seen = new Set(rawEntities.map((e) => `${e.type}:${e.id.toLowerCase()}`));
+  for (const e of routedEntities) {
+    const type = (e.type === "setting" ? "keyword" : e.type) as ExtractedEntity["type"];
+    const key = `${type}:${e.id.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      id: e.id,
+      label: e.label,
+      type,
+      category: e.category,
+      resolvedTo: e.id,
+      source: sourceLabel,
+      confidence: 1,
+    });
+  }
+  return merged;
+}
+
 export function registerCustomTicket(input: CustomTicketRequest, options: RegisterOptions = {}): CustomScenarioEntry {
   const title = input.title.trim().slice(0, 140);
   const body = input.body.trim().slice(0, 6000);
@@ -383,24 +403,29 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
   const probe = input.requester ? `${body}\n${input.requester.displayName} ${input.requester.upn}` : body;
   const rawExtraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
   const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
-  const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
+  const base = rawExtraction.baseScenarioId ? SCENARIO_REGISTRY[rawExtraction.baseScenarioId] : null;
 
-  const hasSeededFixtureEntities =
-    options.origin === "erp-drop" ||
-    rawExtraction.entities.some((e) => e.resolvedTo !== null);
+  const t1Start = performance.now();
+  const clarifyingQuestions = generateClarifyingQuestionsSync({
+    title,
+    body,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+  });
+  const t1Ms = Math.max(1, Math.round(performance.now() - t1Start));
 
-  const routingDecision = hasSeededFixtureEntities
-    ? {
-        matchedExistingElements: rawExtraction.components,
-        missingElements: [],
-        extractedEntities: [],
-        customBrief: { summary: "", steps: [] },
-      }
-    : buildDeterministicRoutingDecision({
-        title,
-        body: probe,
-        matchedSeededComponents: rawExtraction.components,
-      });
+  const t2Start = performance.now();
+  const cloudStatusCorrelation = correlateUpstreamCloudStatusSync({
+    ticketText: `${title}\n${body}`,
+    createdAt,
+  });
+  const t2Ms = Math.max(1, Math.round(performance.now() - t2Start));
+
+  const t3Start = performance.now();
+  const routingDecision = buildDeterministicRoutingDecision({
+    title,
+    body: probe,
+    matchedSeededComponents: rawExtraction.components,
+  });
 
   const hasMissingElements = routingDecision.missingElements.length > 0;
   const finalComponents: CanvasComponentType[] = hasMissingElements
@@ -411,15 +436,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     ? {
         ...rawExtraction,
         components: finalComponents,
-        entities: routingDecision.extractedEntities.map((e) => ({
-          id: e.id,
-          label: e.label,
-          type: e.type === "setting" ? "keyword" : (e.type as ExtractedEntity["type"]),
-          category: e.category,
-          resolvedTo: e.id,
-          source: "muse-spark-1.3 · N+k Catalog Gatekeeper",
-          confidence: 1,
-        })),
+        entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, "muse-spark-1.3 · N+k Catalog Gatekeeper"),
         rationale: `Stage-1 muse-spark-1.3 routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
       }
     : rawExtraction;
@@ -431,25 +448,25 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
         decision: routingDecision,
       })
     : undefined;
+  const t3Ms = Math.max(1, Math.round(performance.now() - t3Start));
 
-  const cloudStatusCorrelation = correlateUpstreamCloudStatusSync({
-    ticketText: `${title}\n${body}`,
-    createdAt,
-  });
-
-  const customRemediation = hasMissingElements
+  const t4Start = performance.now();
+  const rawRemediation = hasMissingElements
     ? buildCustomTicketRemediationSync({
         scenarioId: id,
         ticketTitle: title,
         ticketBody: body,
       })
     : undefined;
+  const t4Ms = Math.max(1, Math.round(performance.now() - t4Start));
 
-  const clarifyingQuestions = generateClarifyingQuestionsSync({
-    title,
-    body,
-    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-  });
+  const safetyCheck = rawRemediation
+    ? verifyAndRepairGeneratedScript(rawRemediation.powershellScript, id)
+    : { repairedScript: "", passed: true, repaired: false, warnings: [], latencyMs: 1 };
+  const customRemediation = rawRemediation
+    ? { ...rawRemediation, powershellScript: safetyCheck.repairedScript }
+    : undefined;
+
   const initialAnswers: Record<string, string> = Object.fromEntries(
     clarifyingQuestions.map((q) => {
       const raw = input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
@@ -468,6 +485,13 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
     gatekeeperModel: "muse-spark-1.3",
     synthesizerModel: "muse-wonder-1.0",
+    measurements: {
+      1: { latencyMs: t1Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
+      2: { latencyMs: t2Ms, status: "completed", source: "mcp-probe", tokensUsed: 0 },
+      3: { latencyMs: t3Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
+      4: { latencyMs: t4Ms, status: "fallback", source: "fallback-on-error", tokensUsed: 0 },
+      5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "symbolic-verifier", tokensUsed: 0 },
+    },
   });
 
   const rawEntry: CustomScenarioEntry = {
@@ -476,7 +500,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     origin: options.origin ?? "unscripted",
     tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
     title,
-    remediationScope: hasMissingElements ? routingDecision.missingElements[0]?.title ?? "Dynamic cloud remediation" : base.remediationScope,
+    remediationScope: hasMissingElements ? routingDecision.missingElements[0]?.title ?? "Dynamic cloud remediation" : (base?.remediationScope ?? "Dynamic cloud remediation"),
     components: finalComponents,
     baseScenarioId: extraction.baseScenarioId,
     shortHash: id.slice(id.indexOf("-") + 1),
@@ -519,63 +543,30 @@ export async function triageCustomTicketAsync(
 ): Promise<CustomScenarioEntry> {
   const title = input.title.trim().slice(0, 140);
   const body = input.body.trim().slice(0, 6000);
-  if (options.origin === "erp-drop" || SAMPLE_UNSCRIPTED_TICKETS.slice(0, 3).some((s) => s.title.toLowerCase() === title.toLowerCase())) {
-    return registerCustomTicket(input, options);
-  }
   const createdAt = options.createdAt ?? new Date().toISOString();
   const probe = input.requester ? `${body}\n${input.requester.displayName} ${input.requester.upn}` : body;
   const rawExtraction = extractTicket({ title, body: probe, ...(input.customerName ? { customerName: input.customerName } : {}) });
   const id = options.scenarioId ?? customScenarioId(shortHash(`${title}\n${body}`));
-  const base = SCENARIO_REGISTRY[rawExtraction.baseScenarioId];
+  const base = rawExtraction.baseScenarioId ? SCENARIO_REGISTRY[rawExtraction.baseScenarioId] : null;
 
-  const seedDecision = buildDeterministicRoutingDecision({
+  const {
+    routingDecision,
+    gatekeeperModel,
+    cloudStatusCorrelation,
+    clarifyingQuestions,
+    synthesizedElements,
+    customRemediation,
+    subAgentTasks,
+  } = await runSubAgentPipeline({
+    scenarioId: id,
     title,
-    body: probe,
+    body,
+    probeText: probe,
+    createdAt,
     matchedSeededComponents: rawExtraction.components,
+    ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
   });
 
-  const [
-    { decision: routingDecision, modelUsed: gatekeeperModel },
-    cloudStatusCorrelation,
-    { questions: clarifyingQuestions },
-    synthesizedElements,
-    rawRemediation,
-  ] = await Promise.all([
-    assessTicketElementNeeds({
-      title,
-      body: probe,
-      matchedSeededComponents: rawExtraction.components,
-      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-    }),
-    correlateUpstreamCloudStatus({
-      ticketText: `${title}\n${body}`,
-      createdAt,
-    }),
-    generateClarifyingQuestions({
-      title,
-      body,
-      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-    }),
-    synthesizeAndPersistMissingElements({
-      ticketId: id,
-      ticketPrompt: `${title}\n${body}`,
-      decision: seedDecision,
-      gatekeeperModel: "muse-spark-1.3",
-      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-    }),
-    synthesizeCustomRemediation({
-      scenarioId: id,
-      ticketTitle: title,
-      ticketBody: body,
-      ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
-    }),
-  ]);
-  const customRemediation = enrichRemediationFromCard(rawRemediation, synthesizedElements?.[0]);
-
-  if (synthesizedElements?.[0] && routingDecision.missingElements[0]) {
-    routingDecision.missingElements[0].elementId = synthesizedElements[0].elementId;
-    routingDecision.missingElements[0].title = synthesizedElements[0].title;
-  }
   const hasMissingElements = routingDecision.missingElements.length > 0;
   const finalComponents: CanvasComponentType[] = hasMissingElements
     ? ["SynthesizedDynamicCard"]
@@ -595,29 +586,10 @@ export async function triageCustomTicketAsync(
     ? {
         ...rawExtraction,
         components: finalComponents,
-        entities: routingDecision.extractedEntities.map((e) => ({
-          id: e.id,
-          label: e.label,
-          type: e.type === "setting" ? "keyword" : (e.type as ExtractedEntity["type"]),
-          category: e.category,
-          resolvedTo: e.id,
-          source: `${gatekeeperModel} · N+k Catalog Gatekeeper`,
-          confidence: 1,
-        })),
+        entities: mergeEntities(rawExtraction.entities, routingDecision.extractedEntities, `${gatekeeperModel} · N+k Catalog Gatekeeper`),
         rationale: `Stage-1 ${gatekeeperModel} routed to dynamic UI synthesis (${routingDecision.missingElements.map((m) => m.elementId).join(", ")}) -> Stage-2 muse-wonder-1.0 synthesized dynamic UI element`.slice(0, 300),
       }
     : rawExtraction;
-
-  const subAgentTasks = buildSubAgentPipelineRecords({
-    scenarioId: id,
-    title,
-    body,
-    questions: clarifyingQuestions,
-    clarifiedAnswers: initialAnswers,
-    elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
-    gatekeeperModel,
-    synthesizerModel: synthesizedElements?.[0]?.synthesisMeta.synthesizerModel ?? "muse-wonder-1.0",
-  });
 
   const rawEntry: CustomScenarioEntry = {
     scenarioId: id,
@@ -625,7 +597,7 @@ export async function triageCustomTicketAsync(
     origin: options.origin ?? "unscripted",
     tenantId: extraction.tenantId as CustomScenarioEntry["tenantId"],
     title,
-    remediationScope: hasMissingElements ? routingDecision.missingElements[0]?.title ?? "Dynamic cloud remediation" : base.remediationScope,
+    remediationScope: hasMissingElements ? routingDecision.missingElements[0]?.title ?? "Dynamic cloud remediation" : (base?.remediationScope ?? "Dynamic cloud remediation"),
     components: finalComponents,
     baseScenarioId: extraction.baseScenarioId,
     shortHash: id.slice(id.indexOf("-") + 1),

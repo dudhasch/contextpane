@@ -22,6 +22,7 @@ const SCENARIO_ALIASES: Array<[RegExp, (typeof SCENARIO_IDS)[number]]> = [
   [/licen[cs]e anomal|count ?violation|orphaned|lic[- ]?101/i, "ANOM-LIC-101"],
   [/(conditional access|ca|break[- ]?glass) anomal|ca[- ]?204|break[- ]?glass/i, "ANOM-CA-204"],
   [/intune anomal|asr|baseline drift|int[- ]?309/i, "ANOM-INT-309"],
+  [/(workload|service principal|spn|secret|oauth|app) anomal|app[- ]?401|erp[- ]?sync|7000222/i, "ANOM-APP-401"],
 ];
 
 export function parseSteerIntent(transcript: string): SteerLayoutArgs {

@@ -85,8 +85,8 @@ const hoverKey = (scope: string, entityId: string) => `${scope}|${entityId.toLow
  * in data/hover-cache.seed.json stay valid; every other scenario has its own scope.
  */
 export function hoverScope(scenarioId: string): string {
-  // An unscripted ticket reuses the cached answers of the built-in scenario it inherits.
   const base = baseScenarioOf(scenarioId);
+  if (!base) return scenarioId;
   return base === "INC-4092" ? "tenant-contoso-01" : base;
 }
 /** Set when data/hover-cache.json was created from the seed at this start-up. */
@@ -158,12 +158,23 @@ function cachedHover(scope: string, entityId: string): CachedHover | undefined {
 }
 
 /**
- * Facts, quick actions, status and the error translation always come from the
- * deterministic diagnostic of the current context; the model contributes the headline,
- * and only while its verdict still matches (a remediated user gets the fresh headline).
+ * Preserve the LLM's schema-valid hover output (`headline`, `status`, `facts`, `quickActions`,
+ * `errorCodeTranslation`); only fill in fields from the local fallback (`truth`) if the LLM omitted them.
  */
 function withGroundTruth(model: HoverDiagnosticArgs, truth: HoverDiagnosticArgs): HoverDiagnosticArgs {
-  return { ...truth, headline: model.status === truth.status ? model.headline : truth.headline };
+  return {
+    ...truth,
+    ...model,
+    entityId: model.entityId || truth.entityId,
+    entityType: model.entityType || truth.entityType,
+    status: model.status || truth.status,
+    headline: model.headline?.trim() ? model.headline : truth.headline,
+    facts: Array.isArray(model.facts) && model.facts.length > 0 ? model.facts : truth.facts,
+    quickActions: Array.isArray(model.quickActions) && model.quickActions.length > 0 ? model.quickActions : truth.quickActions,
+    ...(model.errorCodeTranslation ?? truth.errorCodeTranslation
+      ? { errorCodeTranslation: model.errorCodeTranslation ?? truth.errorCodeTranslation }
+      : {}),
+  };
 }
 
 /** Only what this entity's popover can use: the deterministic diagnostic already carries the rest. */
@@ -171,7 +182,7 @@ function hoverContext(ctx: CorrelationContext, entityId: string, entityType: Ent
   const id = entityId.toLowerCase();
   const signIns = (ctx.signIns?.data ?? []).filter((e) => e.upn.toLowerCase() === id || e.errorCodeLabel?.toLowerCase() === id || e.blockingPolicyId === entityId);
   return {
-    scenario: { scenarioId: ctx.scenarioId, title: ctx.erp.ticket?.title ?? ctx.scenarioId },
+    scenario: { scenarioId: ctx.scenarioId ?? ctx.ticketId, title: ctx.erp.ticket?.title ?? ctx.custom?.title ?? ctx.scenarioId ?? ctx.ticketId },
     user: entityType === "upn" ? (ctx.license?.data.users.find((u) => u.upn.toLowerCase() === id) ?? null) : undefined,
     groups: entityType === "upn" ? (ctx.groupsByUpn.get(id) ?? []) : undefined,
     skuPools: ctx.license?.data.skuPools,

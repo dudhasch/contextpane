@@ -1,5 +1,77 @@
 [
   {
+    "id": "syn-mvrztv0c-9e70",
+    "timestamp": "2026-10-28T10:50:29.049Z",
+    "triggerTicketId": "CUSTOM-13E7NK",
+    "ticketPrompt": "Lynne Robins cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation\nLynne Robins (lynne.robins.contoso@c4a8shili.onmicrosoft.com) cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation in Contoso Finance.",
+    "elementId": "LynneRobinsCannotAccessNewlyCard",
+    "title": "Lynne Robins cannot access a newly created Key Vault kv-contoso-fin-02 due to so",
+    "domain": "azure",
+    "gatekeeperModel": "muse-spark-1.3",
+    "modelUsed": "muse-wonder-1.0",
+    "latencyMs": 14810,
+    "tokens": {
+      "prompt": 1769,
+      "completion": 2717,
+      "total": 4486
+    },
+    "reusedFromCatalog": false,
+    "reuseCount": 2,
+    "tsxStubPath": "data/synthesized-elements/LynneRobinsCannotAccessNewlyCard.tsx",
+    "schemaSpec": {
+      "requiredPrimitives": [
+        "quota-gauges",
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ],
+      "blockKinds": [
+        "quota-gauges",
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ]
+    }
+  },
+  {
+    "id": "syn-mvrxzpfk-7rcd",
+    "timestamp": "2026-10-28T09:59:02.527Z",
+    "triggerTicketId": "CUSTOM-SEGU10",
+    "ticketPrompt": "my api assignment for mcp.read disappeared on my entra app\ncould you see why this happened ?",
+    "elementId": "MyApiAssignmentForMcpCard",
+    "title": "my api assignment for mcp.read disappeared on my entra app",
+    "domain": "azure",
+    "gatekeeperModel": "muse-spark-1.3",
+    "modelUsed": "muse-wonder-1.0",
+    "latencyMs": 14964,
+    "tokens": {
+      "prompt": 1634,
+      "completion": 2657,
+      "total": 4291
+    },
+    "reusedFromCatalog": false,
+    "reuseCount": 1,
+    "tsxStubPath": "data/synthesized-elements/MyApiAssignmentForMcpCard.tsx",
+    "schemaSpec": {
+      "requiredPrimitives": [
+        "quota-gauges",
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ],
+      "blockKinds": [
+        "quota-gauges",
+        "policy-chain",
+        "data-table",
+        "config-diff",
+        "event-stream"
+      ]
+    }
+  },
+  {
     "id": "syn-mvrvxpjt-icly",
     "timestamp": "2026-10-28T09:01:30.136Z",
     "triggerTicketId": "CUSTOM-15Z6CF",

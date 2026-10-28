@@ -632,7 +632,7 @@ function hoverGeneric(ctx: CorrelationContext, target: HoverTarget): HoverDiagno
     status: "unknown",
     headline: `${target.entityId} · ${ctx.erp.tenant.displayName}`.slice(0, 120),
     errorCodeTranslation: null,
-    facts: [fact("Scenario", ctx.scenarioId, true), fact("Tenant", ctx.erp.tenant.verifiedDomain, true)],
+    facts: [fact("Scenario", ctx.scenarioId ?? ctx.ticketId, true), fact("Tenant", ctx.erp.tenant.verifiedDomain, true)],
     quickActions: [],
   };
 }

@@ -123,6 +123,8 @@ export function scenarioEntities(ctx: CorrelationContext): EnrichedEntity[] {
         entity("SG-All-Workstations", "group", "intune", "IntuneDriftCard", { tab: "devices", note: intune ? `${intune.affectedDeviceCount} in Conflict` : undefined }),
       ];
     }
+    default:
+      return [];
   }
 }
 
@@ -177,7 +179,7 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
       return {
         summary: `${plural(driftedCount, "Finance user")} in ${group} still hold SPE_E3 instead of SPE_E5 and remain in the legacy block group, so '${blockingLabel}' rejects Azure Virtual Desktop with AADSTS53003. Separately, a vendor left ${rogueRuleName} (${rogueProtoPort} from ${rogueSource}) open on ${nsgName}.`,
         steps: [
-          step("license", "licensing", "License Upgrade", `Move ${plural(driftedCount, "user")} in ${group} out of SG-Contoso-Finance-Legacy and reprocess group SPE_E5 licensing (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser).`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
+          step("license", "licensing", "License Upgrade", `Move ${plural(driftedCount, "user")} in ${group} out of SG-Contoso-Finance-Legacy and reprocess group SPE_E5 licensing.`, "LicenseDriftCard", { label: "Inspect / Stage Fix", kind: "stage-fix" }, "users"),
           step(
             "ca",
             "identity",
@@ -225,8 +227,8 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
             ? `${LICENSE_ANOMALY.groupName} cannot assign SPE_E5 to ${plural(failed.length, "new hire")} (CountViolation, ${e5?.consumed}/${e5?.enabled} seats consumed) while ${plural(orphaned.length, "disabled account")} still hold SPE_E5${copilot ? ` and ${copilot} Microsoft 365 Copilot` : ""} through overlapping Direct + Group assignments.`
             : `Seats reclaimed: ${LICENSE_ANOMALY.groupName} assigns SPE_E5 to every member with ${e5?.available ?? 0} seat(s) to spare and no new purchase.`,
         steps: [
-          step("reclaim", "licensing", "Reclaim Seats", `Remove SPE_E5${copilot ? " and Copilot" : ""} from ${plural(orphaned.length || 3, "disabled account")} (Set-MgUserLicense) and drop them from ${LICENSE_ANOMALY.groupName} (Remove-MgGroupMemberByRef).`, "LicenseDriftCard", { label: "Stage License Fix", kind: "stage-fix" }, "users"),
-          step("reprocess", "identity", "Reprocess Group Licensing", `Run Invoke-MgLicenseUser for the ${plural(failed.length || 2, "CountViolation member")} so they resolve to Active with 0 new purchases.`, "LicenseDriftCard", { label: "Inspect Assignments", kind: "inspect" }, "users"),
+          step("reclaim", "licensing", "Reclaim Seats", `Remove SPE_E5${copilot ? " and Copilot" : ""} from ${plural(orphaned.length || 3, "disabled account")} and drop them from ${LICENSE_ANOMALY.groupName}.`, "LicenseDriftCard", { label: "Stage License Fix", kind: "stage-fix" }, "users"),
+          step("reprocess", "identity", "Reprocess Group Licensing", `Reprocess group license assignment for the ${plural(failed.length || 2, "CountViolation member")} so they resolve to Active with 0 new purchases.`, "LicenseDriftCard", { label: "Inspect Assignments", kind: "inspect" }, "users"),
           step("pool", "azure", "Verify Pool", "Confirm SPE_E5 shows available seats again and the group reports no licensing errors.", "LicenseDriftCard", { label: "Inspect Pool", kind: "inspect" }, "pool"),
         ],
       };
@@ -241,7 +243,7 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
           : "Both Conditional Access policies match the golden baseline: break-glass excluded, legacy authentication blocked.",
         steps: [
           step("breakglass", "identity", "Break-Glass Exclusion", `Restore the ${CA_POSTURE.breakGlassGroup} exclusion on CA-001-Require-PhishingResistant-MFA-Admins.`, "EntraSignInTimeline", { label: "Inspect Policy", kind: "inspect" }, "policies"),
-          step("legacy", "azure", "Enforce Legacy Auth Block", "Flip CA-004-Block-Legacy-Auth from enabledForReportingButNotEnforced to enabled (Update-MgIdentityConditionalAccessPolicy).", "EntraSignInTimeline", { label: "Stage CA Fix", kind: "stage-fix" }, "policies"),
+          step("legacy", "azure", "Enforce Legacy Auth Block", "Switch CA-004-Block-Legacy-Auth from Report-Only to Enforced to block legacy authentication.", "EntraSignInTimeline", { label: "Stage CA Fix", kind: "stage-fix" }, "policies"),
           step("verify", "licensing", "Verify Sign-Ins", `Check the ${legacy} legacy sign-ins (3 from an unfamiliar ASN) and that bg-admin-01 stays excluded.`, "EntraSignInTimeline", { label: "Inspect Sign-Ins", kind: "inspect" }, "signins"),
         ],
       };
@@ -272,6 +274,11 @@ function summaryAndSteps(ctx: CorrelationContext): { summary: string; steps: Res
         ],
       };
     }
+    default:
+      return {
+        summary: ctx.custom?.elementRouting?.customBrief.summary ?? ctx.custom?.ticket.title ?? ctx.ticketId,
+        steps: [],
+      };
   }
 }
 
@@ -351,7 +358,7 @@ function anomalyBody(ctx: CorrelationContext): { title: string; origin: string; 
       };
     }
     default:
-      return { title: SCENARIO_REGISTRY[ctx.scenarioId].title, origin: "", body: "", signals: [], openedAt: ctx.gatheredAt };
+      return { title: ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId, origin: "", body: "", signals: [], openedAt: ctx.gatheredAt };
   }
 }
 
@@ -362,16 +369,17 @@ function anomalyBody(ctx: CorrelationContext): { title: string; origin: string; 
 export function buildScenarioBrief(ctx: CorrelationContext): ScenarioBrief {
   const { tenant, contract, ticket } = ctx.erp;
   const { summary, steps } = summaryAndSteps(ctx);
+  const scenarioTitle = ctx.custom?.title ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId);
   const defaultCloudCorrelation = correlateUpstreamCloudStatusSync({
-    ticketText: ticket ? `${ticket.title}\n${ticket.description}` : ctx.scenarioId,
-    createdAt: ticket?.openedAt ?? ctx.gatheredAt,
+    ticketText: ticket ? `${ticket.title}\n${ticket.description}` : (ctx.custom ? `${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}` : (ctx.scenarioId ?? ctx.ticketId)),
+    createdAt: ticket?.openedAt ?? ctx.custom?.createdAt ?? ctx.gatheredAt,
   });
   const defaultSubAgentTasks = buildSubAgentPipelineRecords({
     scenarioId: ctx.ticketId,
-    title: ticket?.title ?? SCENARIO_REGISTRY[ctx.scenarioId].title,
-    body: ticket?.description ?? ctx.scenarioId,
+    title: ticket?.title ?? scenarioTitle,
+    body: ticket?.description ?? ctx.custom?.ticket.body ?? (ctx.scenarioId ?? ctx.ticketId),
     questions: [],
-    elementIds: SCENARIO_REGISTRY[ctx.scenarioId].components,
+    elementIds: ctx.components,
     gatekeeperModel: "muse-spark-1.3",
     synthesizerModel: "muse-wonder-1.0",
   });
@@ -460,24 +468,26 @@ const EXTRACTED_TARGET: Record<string, CanvasComponentType> = {
  */
 export function customEntities(ctx: CorrelationContext): EnrichedEntity[] {
   const custom = ctx.custom!;
-  if (custom.elementRouting && custom.elementRouting.missingElements.length > 0) {
-    return custom.elementRouting.extractedEntities.slice(0, 24);
-  }
   const cards = new Set(custom.components);
+  const defaultTarget: CanvasComponentType = cards.has("SynthesizedDynamicCard") ? "SynthesizedDynamicCard" : (custom.components[0] ?? "SynthesizedDynamicCard");
+  const routed = (custom.elementRouting?.extractedEntities ?? []).map((e) => ({
+    ...e,
+    target: cards.has(e.target) ? e.target : defaultTarget,
+  }));
   const inherited = scenarioEntities(ctx).filter((e) => cards.has(e.target));
-  const seen = new Set(inherited.map((e) => e.id.toLowerCase()));
+  const seen = new Set([...routed, ...inherited].map((e) => e.id.toLowerCase()));
   const extracted: EnrichedEntity[] = [];
   for (const x of custom.extraction.entities) {
     const id = x.resolvedTo ?? x.id;
     if (seen.has(id.toLowerCase())) continue;
-    const target = EXTRACTED_TARGET[x.category];
-    if (!target || !cards.has(target)) continue;
+    const mappedTarget = EXTRACTED_TARGET[x.category];
+    const target = mappedTarget && cards.has(mappedTarget) ? mappedTarget : defaultTarget;
     const type: EnrichedEntity["type"] = x.type === "name" ? "upn" : x.type === "keyword" || x.type === "permission" ? "setting" : x.type;
     const hoverable = Boolean(x.resolvedTo) && (type === "upn" || type === "errorCode" || type === "policy" || type === "group" || type === "sku" || type === "resource" || x.type === "permission");
     seen.add(id.toLowerCase());
     extracted.push(entity(id, type, x.category, target, { label: x.label, hoverable, note: x.resolvedTo ? "matched live" : "from ticket text" }));
   }
-  return [...extracted, ...inherited].slice(0, 24);
+  return [...routed, ...extracted, ...inherited].slice(0, 24);
 }
 
 function extraDomainSteps(cards: Set<CanvasComponentType>, existingSteps: ResolutionStep[]): ResolutionStep[] {
@@ -514,7 +524,7 @@ function extraDomainSteps(cards: Set<CanvasComponentType>, existingSteps: Resolu
         "license",
         "licensing",
         "License Upgrade",
-        "Move 3 users in SG-Contoso-Finance-AVD out of SG-Contoso-Finance-Legacy and reprocess group SPE_E5 licensing (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser).",
+        "Move 3 users in SG-Contoso-Finance-AVD out of SG-Contoso-Finance-Legacy and reprocess group SPE_E5 licensing.",
         "LicenseDriftCard",
         { label: "Inspect / Stage Fix", kind: "stage-fix" },
         "users",
@@ -571,7 +581,7 @@ function buildCustomBrief(
         `syn-step-${idx + 1}`,
         s.category,
         s.title,
-        s.detail,
+        s.detail.endsWith(".") ? s.detail : `${s.detail}.`,
         "SynthesizedDynamicCard",
         {
           label: s.actionLabel.slice(0, 32),
@@ -580,9 +590,23 @@ function buildCustomBrief(
       ),
     );
     const missingNames = routing.missingElements.map((m) => m.elementId).join(", ");
+    const rawCustomSummary = cleanTruncate(routing.customBrief.summary, 700);
+    const formattedCustomSummary = rawCustomSummary.endsWith(".") ? rawCustomSummary : `${rawCustomSummary}.`;
+    const timeline = drop
+      ? [
+          { at: custom.createdAt, actor: custom.ticket.requester?.displayName ?? customer, note: `Ticket ${displayId} opened in the ERP${custom.ticket.priority ? ` (priority ${custom.ticket.priority})` : ""}` },
+          { at: drop.ingestedAt, actor: "ERP inbox watcher", note: `${drop.folder}/ticketbody.json ingested${drop.attachments.length ? ` with ${plural(drop.attachments.length, "attachment")} (${drop.attachments.map((a) => a.fileName).join(", ")})` : ""}; Dynamic UI synthesized (${missingNames})` },
+        ]
+      : [
+          {
+            at: custom.createdAt,
+            actor: customer,
+            note: `Unscripted ticket triaged against live tenant state · Custom view synthesized (${missingNames})`,
+          },
+        ];
     return {
       ...base,
-      summary: cleanTruncate(routing.customBrief.summary, 700),
+      summary: formattedCustomSummary,
       steps: customSteps,
       entities: customEntities(ctx),
       extraction: custom.extraction,
@@ -594,14 +618,17 @@ function buildCustomBrief(
       title: custom.ticket.title,
       status: drop ? "New" : "Open",
       openedAt: custom.createdAt,
-      origin: `Unscripted ticket · ${customer} · Dynamic UI (${missingNames})`,
+      origin: drop ? `ERP file drop · input/tickets/${drop.folder} · ${customer}` : `Unscripted ticket · ${customer} · Custom Diagnostic View`,
       body: custom.ticket.body,
       signals: [
+        ...(drop
+          ? [{ label: "ERP file drop", value: `${drop.folder}/ticketbody.json${drop.attachments.length ? ` + ${drop.attachments.map((a) => a.fileName).join(", ")}` : ""} · ingested ${drop.ingestedAt.slice(11, 19)}Z`, category: "azure" as const, source: `fs.watch + 1 s scan · ${drop.folder}` }]
+          : []),
         {
-          label: "N+k Catalog Synthesis",
-          value: `muse-spark-1.3 routed to dynamic UI synthesis -> muse-wonder-1.0 synthesized ${missingNames}`,
+          label: "Custom Diagnostic View",
+          value: `Synthesized tailored diagnostic view (${missingNames}) for live tenant state`,
           category: "azure",
-          source: "data/dynamic-catalog.json",
+          source: "Live Azure & Entra Telemetry",
         },
         {
           label: "Upstream Cloud Correlation",
@@ -614,13 +641,7 @@ function buildCustomBrief(
       priority: custom.ticket.priority ?? null,
       contract: null,
       infrastructureSpec: null,
-      timeline: [
-        {
-          at: custom.createdAt,
-          actor: customer,
-          note: `Unscripted ticket triaged via muse-spark-1.3 gatekeeper -> muse-wonder-1.0 synthesized ${missingNames}`,
-        },
-      ],
+      timeline,
       attachments: drop?.attachments ?? [],
     };
   }
@@ -632,12 +653,13 @@ function buildCustomBrief(
   const matched = x.entities.filter((e) => e.resolvedTo);
   const how = drop ? `ERP ticket ${displayId} dropped into input/tickets/${drop.folder}/ and triaged live` : "Unscripted ticket triaged live";
   const customRemNote = custom.customRemediation ? ` ${custom.customRemediation.summary}` : "";
-  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "live tenant correlation"}), inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern.${customRemNote} ${base.summary}`;
+  const patternNote = ctx.scenarioId ? `, inheriting the ${SCENARIO_REGISTRY[ctx.scenarioId].scenarioId} pattern` : "";
+  const rawSummary = `${how} against ${ctx.erp.tenant.verifiedDomain}: ${plural(matched.length, "entity")} matched MCP data (${x.intents.join(", ") || "live tenant correlation"})${patternNote}.${customRemNote} ${base.summary}`;
   const summary = cleanTruncate(rawSummary, 700);
   const timeline = drop
     ? [
         { at: custom.createdAt, actor: custom.ticket.requester?.displayName ?? customer, note: `Ticket ${displayId} opened in the ERP${custom.ticket.priority ? ` (priority ${custom.ticket.priority})` : ""}` },
-        { at: drop.ingestedAt, actor: "ERP inbox watcher", note: `${drop.folder}/ticketbody.json ingested${drop.attachments.length ? ` with ${plural(drop.attachments.length, "attachment")} (${drop.attachments.map((a) => a.fileName).join(", ")})` : ""}; Tier 0 extraction, 0 tokens` },
+        { at: drop.ingestedAt, actor: "ERP inbox watcher", note: `${drop.folder}/ticketbody.json ingested${drop.attachments.length ? ` with ${plural(drop.attachments.length, "attachment")} (${drop.attachments.map((a) => a.fileName).join(", ")})` : ""}; Live entity & intent correlation` },
       ]
     : [{ at: custom.createdAt, actor: customer, note: "Ticket pasted into the unscripted composer and triaged live" }];
   return {
@@ -654,7 +676,7 @@ function buildCustomBrief(
     title: custom.ticket.title,
     status: drop ? "New" : "Open",
     openedAt: custom.createdAt,
-    origin: drop ? `ERP file drop · input/tickets/${drop.folder} · ${customer} · base pattern ${ctx.scenarioId}` : `Unscripted ticket · ${customer} · base pattern ${ctx.scenarioId}`,
+    origin: drop ? `ERP file drop · input/tickets/${drop.folder} · ${customer}` : `Unscripted ticket · ${customer}`,
     body: custom.ticket.body,
     signals: [
       ...(drop

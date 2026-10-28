@@ -104,7 +104,7 @@ describe("inbox watcher pipeline", () => {
     expect(item.custom?.createdAt).toBe("2026-10-27T08:30:00.000Z");
     expect(item.custom?.erpDrop?.attachments.map((a) => a.fileName)).toEqual(["attachment1.png", "zzz-extra.jpg"]);
     expect(item.custom?.erpDrop?.attachments[0]?.url).toBe("/api/tickets/inbox-attachment/%232026777/attachment1.png");
-    expect(item.custom?.extraction.baseScenarioId).toBe("INC-4092");
+    expect(item.custom?.extraction.baseScenarioId).toBeNull();
     expect(item.custom?.extraction.entities.some((e) => e.type === "upn" && e.resolvedTo?.startsWith("lynne.robins"))).toBe(true);
     expect(item.custom?.extraction.entities.some((e) => e.id === "AADSTS53003")).toBe(true);
     expect(isAnyScenarioId("ERP-2026777")).toBe(true);
@@ -115,7 +115,7 @@ describe("inbox watcher pipeline", () => {
 
     const ctx = await gatherContext("ERP-2026777", { fresh: true });
     expect(ctx.ticketId).toBe("ERP-2026777");
-    expect(ctx.scenarioId).toBe("INC-4092");
+    expect(ctx.scenarioId).toBeNull();
     const brief = buildScenarioBrief(ctx);
     expect(brief.originKind).toBe("erp-drop");
     expect(brief.displayId).toBe("#2026777");
@@ -150,7 +150,7 @@ describe("inbox watcher pipeline", () => {
     expect(existsSync(join(drop.dir, "ticketbody.json"))).toBe(true);
     expect(existsSync(join(drop.dir, "attachment1.png"))).toBe(true);
     expect(drop.ingest?.item.scenarioId).toBe(drop.scenarioId);
-    expect(drop.ingest?.item.custom?.extraction.baseScenarioId).toBe("ANOM-APP-401");
+    expect(drop.ingest?.item.custom?.extraction.baseScenarioId).toBeNull();
     expect(drop.ingest?.item.custom?.extraction.entities.some((e) => e.id === "AADSTS7000222")).toBe(true);
     const json = JSON.parse(readFileSync(join(drop.dir, "ticketbody.json"), "utf8")) as { id: string; attachments: string[] };
     expect(json.id).toBe(drop.displayId);
@@ -159,7 +159,7 @@ describe("inbox watcher pipeline", () => {
     // Explicit ids are honoured and folders may be re-dropped.
     const again = simulateDrop({ archetype: "Licensing", ticketId: "#2026999", seed: 1 });
     expect(again.scenarioId).toBe("ERP-2026999");
-    expect(again.ingest?.item.custom?.extraction.baseScenarioId).toBe("ANOM-LIC-101");
+    expect(again.ingest?.item.custom?.extraction.baseScenarioId).toBeNull();
   });
 
   test("a folder that disappears leaves the queue on the next scan", () => {

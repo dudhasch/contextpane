@@ -1,6 +1,6 @@
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import { CornerDownLeft, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { CONTEXT_VIEW_MODES, SELECTION_MAX_CHARS, SELECTION_MIN_CHARS, type ContextViewMode } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
 import { CONTEXT_MODE_LIST, CONTEXT_MODE_META, ContextModeIcon } from "../ui/ContextModeIcons";
@@ -30,7 +30,7 @@ function isWithinSelectableSurface(node: Node | null, rootEl: HTMLElement | null
  * - Middle: auto-focused inline refinement input (e.g. "other apps with the same owner") — press Enter to generate
  * - Right: 4 VectorCraft SVG view-mode icons (Dashboard, Full Card, Quick Comparison, Blast Radius) — press Tab to cycle
  */
-export function SelectionTrigger({ children, className }: { children: ReactNode; className?: string }) {
+export function SelectionTrigger({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -214,6 +214,7 @@ export function SelectionTrigger({ children, className }: { children: ReactNode;
         onKeyUp={(e) => (e.shiftKey ? readSelection() : undefined)}
         data-testid="selection-surface"
         className={className}
+        style={style}
       >
         {children}
       </div>

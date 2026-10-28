@@ -106,7 +106,7 @@ export function TicketComposer() {
         <div className="flex items-center gap-2">
           <FilePlus2 className="size-4 text-primary" />
           <span className="text-[13px] font-semibold">New Ticket / Outline Cloud Project Goal</span>
-          <span className="text-[11px] text-faint">5-Task Sub-Agent Pipeline · c4a8shili.onmicrosoft.com</span>
+          <span className="text-[11px] text-faint">Live Tenant Triage · c4a8shili.onmicrosoft.com</span>
           <button type="button" onClick={() => setOpen(false)} className="ml-auto text-faint hover:text-text" aria-label="Close">
             <X className="size-4" />
           </button>
@@ -179,7 +179,7 @@ export function TicketComposer() {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={4}
-            placeholder="Paste the customer's incident description or outline your cloud engineering project goal. Sub-Agent 1 (Goal Clarifier) can ask clarifying questions before or after triage."
+            placeholder="Paste the customer's incident description or outline your cloud engineering project goal. You can also scope parameters with clarifying questions before or after triage."
             className="mt-1 w-full resize-y rounded-md border border-border bg-canvas px-2.5 py-2 text-[12.5px] leading-relaxed text-text focus:outline-2 focus:outline-primary"
             data-testid="composer-body"
           />
@@ -190,11 +190,11 @@ export function TicketComposer() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-primary">
                 <MessageSquare className="size-3.5" />
-                Sub-Agent 1 · Goal &amp; Scope Clarifier ({questions.length} targeted questions)
+                Goal &amp; Scope Clarifier ({questions.length} targeted questions)
               </span>
               {clarifierModel && (
                 <span className="rounded border border-primary/30 bg-canvas/80 px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                  {clarifierModel}
+                  Scope Analysis
                 </span>
               )}
             </div>
@@ -270,7 +270,7 @@ export function TicketComposer() {
           >
             💬 Ask Clarifying Questions to Scope Goal
           </Button>
-          <Pill tone="muted">5 Sub-Agents · N+k UI</Pill>
+          <Pill tone="muted">Live Graph &amp; Azure</Pill>
           <Button
             variant="primary"
             size="md"

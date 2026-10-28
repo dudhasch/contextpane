@@ -1,4 +1,4 @@
-import { isScenarioId, SCENARIO_REGISTRY, type ScenarioId } from "@contextpane/catalog";
+import { getCustomScenario, isCustomScenarioId, isScenarioId, SCENARIO_REGISTRY, type ScenarioId } from "@contextpane/catalog";
 import {
   AVD_SUBNET,
   buildInverseRollback,
@@ -75,7 +75,7 @@ export interface CanaryStage {
 }
 
 export interface CanaryConvergenceResult {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   mode: CanaryMode;
   stages: CanaryStage[];
   finalState: CanaryFinalState;
@@ -87,7 +87,7 @@ export interface CanaryConvergenceResult {
   auditAction: string;
 }
 
-function buildProbes(scenarioId: ScenarioId, simulateCanaryFailure: boolean): CanaryProbes {
+function buildProbes(scenarioId: ScenarioId | string, simulateCanaryFailure: boolean): CanaryProbes {
   const verification = verifyFormalInvariants(scenarioId);
   const breakGlass = verification.invariants.find((i) => i.id === "break-glass-non-lockout");
   const targets = verification.invariants.find((i) => i.id === "target-remediation");
@@ -118,12 +118,15 @@ function buildProbes(scenarioId: ScenarioId, simulateCanaryFailure: boolean): Ca
   return { identity, network, synthetic };
 }
 
-export function runCanaryConvergence(scenarioId: ScenarioId, options: CanaryConvergenceOptions = {}): CanaryConvergenceResult {
-  if (!isScenarioId(scenarioId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+export function runCanaryConvergence(scenarioId: ScenarioId | string, options: CanaryConvergenceOptions = {}): CanaryConvergenceResult {
+  const custom = getCustomScenario(String(scenarioId));
+  if (!isScenarioId(scenarioId) && !custom && !isCustomScenarioId(String(scenarioId))) {
+    throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+  }
   const mode: CanaryMode = options.mode ?? "break-glass";
   const simulateCanaryFailure = options.simulateCanaryFailure ?? false;
   const liveWriteApplied = mode === "break-glass" && (options.liveWriteApplied ?? false);
-  const tenantId = SCENARIO_REGISTRY[scenarioId].tenantId;
+  const tenantId = isScenarioId(scenarioId) ? SCENARIO_REGISTRY[scenarioId].tenantId : (custom?.tenantId ?? "tenant-contoso-01");
   const at = new Date().toISOString();
   const probes = buildProbes(scenarioId, simulateCanaryFailure);
 

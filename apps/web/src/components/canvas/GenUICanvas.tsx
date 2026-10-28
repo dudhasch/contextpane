@@ -59,11 +59,11 @@ export function GenUICanvas() {
 }
 
 const SUB_AGENT_SYNTHESIS_STAGES = [
-  { step: 1, name: "Goal Clarifier", role: "Target Scope & Clarifying Options", model: "muse-wonder-1.0" },
-  { step: 2, name: "Telemetry Scout", role: "Live Graph, ARM & Cloud Status Correlation", model: "muse-spark-1.3" },
-  { step: 3, name: "UI Architect", role: "N+k Dynamic Card & Block Synthesis", model: "muse-wonder-1.0" },
-  { step: 4, name: "IaC & PS7 Coder", role: "PowerShell 7, Graph JSON & Terraform Diff", model: "muse-wonder-1.0" },
-  { step: 5, name: "Safety Verifier", role: "AST, -WhatIf Guard & 1-Click Undo Verification", model: "muse-spark-1.3" },
+  { step: 1, name: "Scope Check", role: "Target Scope & Clarifying Options", source: "Ticket & Tenant" },
+  { step: 2, name: "Live Telemetry", role: "Live Graph, ARM & Cloud Status Correlation", source: "Graph & ARM" },
+  { step: 3, name: "View Layout", role: "Diagnostic Card & Block Layout", source: "Live Context" },
+  { step: 4, name: "Remediation Plan", role: "PowerShell 7, Graph JSON & Terraform Diff", source: "Idempotent Fix" },
+  { step: 5, name: "Pre-Flight Safety", role: "AST, -WhatIf Guard & 1-Click Undo Verification", source: "Safety Prover" },
 ] as const;
 
 function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine"; title: string }) {
@@ -90,8 +90,8 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
           <Bot className="size-4 text-primary" />
           <span className="text-[12.5px] font-semibold text-text">
             {mode === "triage"
-              ? "5-Stage Sub-Agent Pipeline · Synthesizing Custom Ticket & Dynamic UI"
-              : "Re-Synthesizing Resolution Plan, UI Card & Remediation Scripts"}
+              ? "5-Stage Triage Pipeline · Analyzing Ticket & Live Tenant State"
+              : "Updating Resolution Plan, Diagnostic View & Remediation Scripts"}
           </span>
         </div>
         <span
@@ -99,7 +99,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
           data-testid="synthesis-elapsed-timer"
         >
           <Sparkles className="size-3 animate-pulse" />
-          muse-wonder-1.0 · {elapsedSec}s elapsed
+          Live Triage · {elapsedSec}s elapsed
         </span>
       </div>
 
@@ -128,7 +128,7 @@ function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine";
                 </span>
               </div>
               <div className="mt-0.5 truncate text-[10px] opacity-85">{st.role}</div>
-              <div className="mt-1 font-mono text-[9.5px] text-primary/90">{st.model}</div>
+              <div className="mt-1 font-mono text-[9.5px] text-primary/90">{st.source}</div>
             </div>
           );
         })}
@@ -176,11 +176,11 @@ function SelectionSynthesisSkeleton({ selectionText }: { selectionText: string }
         <div className="flex items-center gap-2 font-medium">
           <span className="size-3.5 animate-spin rounded-full border-2 border-selection border-t-transparent" />
           <span>
-            🧠 muse-wonder-1.0 is synthesizing custom context UI for &quot;{selectionText}&quot;...
+            Analyzing live tenant context for &quot;{selectionText}&quot;...
           </span>
         </div>
         <span className="rounded-pill border border-selection/40 bg-selection/12 px-2 py-0.5 font-mono text-[10.5px]">
-          {elapsedSec}s elapsed · 4-Mode Synthesis
+          {elapsedSec}s elapsed · Live Query
         </span>
       </div>
       <div className="grid grid-cols-4 gap-1.5">
@@ -312,7 +312,7 @@ function TimeTravelScrubber() {
         </div>
       </div>
       {active && !convergence && (
-        <span className="shrink-0 whitespace-nowrap text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId, cardCount)}</span>
+        <span className="min-w-0 truncate text-[10.5px] text-muted">{formatTimelineStepDescription(active, scenarioId, cardCount)}</span>
       )}
       {convergence && (
         <button
@@ -359,7 +359,7 @@ function TenantBreadcrumb({ cards, customCards = 0 }: { cards: number; customCar
         {recipe && (
           <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 text-[10.5px] text-primary" title={recipe.description}>
             <Pin className="size-3" />
-            {recipe.name} · 0 tokens
+            {recipe.name} · Pinned
           </span>
         )}
         <RowFilterPill />

@@ -54,7 +54,7 @@ export interface AffectedEntity {
 }
 
 export interface SymbolicState {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   policies: SymbolicCaPolicy[];
   affected: AffectedEntity[];
   nsgName: string;
@@ -118,7 +118,7 @@ export interface MaxSmtCandidate {
 }
 
 export interface MaxSmtSynthesisResult {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   optimal: boolean;
   invariantProofMask: number;
   minPerturbationCost: number;
@@ -130,7 +130,7 @@ export interface MaxSmtSynthesisResult {
 }
 
 export interface FormalVerificationResult {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   passed: boolean;
   invariants: InvariantResult[];
   counterexamples: Counterexample[];
@@ -229,21 +229,31 @@ function affectedFor(scenarioId: ScenarioId): AffectedEntity[] {
   return [];
 }
 
-function effectiveScenarioId(scenarioId: ScenarioId | string): ScenarioId {
+function isCustomOrErpId(id: string): boolean {
+  return isCustomScenarioId(id) || id.startsWith("CUSTOM-") || id.startsWith("ERP-") || /^2026\d+$/.test(id);
+}
+
+function effectiveScenarioId(scenarioId: ScenarioId | string | null | undefined): ScenarioId | string {
+  if (!scenarioId) return "CUSTOM-UNSEEDED";
   const raw = String(scenarioId).trim().replace(/^#/, "");
-  if (isCustomScenarioId(raw) || raw.startsWith("CUSTOM-") || raw.startsWith("ERP-") || /^2026\d+$/.test(raw)) {
+  if (isCustomOrErpId(raw)) {
     const normalized = /^2026\d+$/.test(raw) ? `ERP-${raw}` : raw;
-    return baseScenarioOf(normalized);
+    return baseScenarioOf(normalized) ?? normalized;
   }
   return raw as ScenarioId;
 }
 
 /** Pre-remediation (drifted) symbolic state S. */
-export function preState(scenarioId: ScenarioId): SymbolicState {
+export function preState(scenarioId: ScenarioId | string | null): SymbolicState {
   const effectiveId = effectiveScenarioId(scenarioId);
   const post = postState(effectiveId);
+  const isCustom = !isScenarioId(effectiveId) && isCustomOrErpId(String(effectiveId));
   const driftPolicies = post.policies.map((p) =>
-    p.id === "CA-001" && effectiveId === "ANOM-CA-204" ? { ...p, excludeGroups: [] as string[] } : p.id === "ca-avd-legacy" ? { ...p, state: "enabled" as const, excludeGroups: [] as string[] } : p,
+    p.id === "CA-001" && (effectiveId === "ANOM-CA-204" || isCustom)
+      ? { ...p, excludeGroups: [] as string[] }
+      : p.id === "ca-avd-legacy"
+        ? { ...p, state: "enabled" as const, excludeGroups: [] as string[] }
+        : p,
   );
   return {
     ...post,
@@ -255,16 +265,38 @@ export function preState(scenarioId: ScenarioId): SymbolicState {
 }
 
 /** Proposed post-remediation symbolic state P_post(S). */
-export function postState(scenarioId: ScenarioId): SymbolicState {
+export function postState(scenarioId: ScenarioId | string | null): SymbolicState {
   const effectiveId = effectiveScenarioId(scenarioId);
-  // ANOM-APP-401 is modelled locally (shadow-admin.ts) until the catalog lands it.
   if (!isScenarioId(effectiveId) && (effectiveId as string) !== SHADOW_ADMIN_SCENARIO_ID) {
+    if (isCustomOrErpId(String(effectiveId))) {
+      const custom = getCustomScenario(String(effectiveId));
+      const customAffected: AffectedEntity[] = (custom?.customRemediation?.affectedEntities ?? []).map((e) => ({
+        kind: e.type === "device" ? "device" : "user",
+        id: e.id,
+        groups: [],
+        pre: "Drift",
+        post: "Allow",
+      }));
+      const affected: AffectedEntity[] =
+        customAffected.length > 0
+          ? customAffected
+          : [U(custom?.ticket.requester?.upn ?? `target@${String(effectiveId).toLowerCase()}`, [], "Drift", "Allow")];
+      return {
+        scenarioId: effectiveId,
+        policies: postPolicies("ANOM-CA-204"),
+        affected,
+        nsgName: AVD_NSG_NAME,
+        nsgRules: baselineNsgRules(),
+        licenses: {},
+        tags: { Environment: "Production", Owner: "ContextPane", ManagedBy: "Terraform" },
+      };
+    }
     throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
   }
-  const affected = affectedFor(effectiveId);
+  const affected = affectedFor(effectiveId as ScenarioId);
   return {
     scenarioId: effectiveId,
-    policies: postPolicies(effectiveId),
+    policies: postPolicies(effectiveId as ScenarioId),
     affected,
     nsgName: AVD_NSG_NAME,
     nsgRules: baselineNsgRules(),
@@ -273,7 +305,7 @@ export function postState(scenarioId: ScenarioId): SymbolicState {
   };
 }
 
-function resolveOptions(scenarioId: ScenarioId, options?: FormalVerifyOptions): SymbolicState {
+function resolveOptions(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): SymbolicState {
   const effectiveId = effectiveScenarioId(scenarioId);
   const base = postState(effectiveId);
   if (!options) return base;
@@ -541,7 +573,7 @@ const CANONICAL_DETECT_SCRIPT = [
   "if ($null -eq $v.EncryptionMethodWithXtsOs) { Write-Output 'Compliant'; exit 0 } else { Write-Output 'NonCompliant: tattooed FVE key present'; exit 1 }",
 ].join("\n");
 
-export function maxSmtSynthesis(scenarioId: ScenarioId, options?: FormalVerifyOptions): MaxSmtSynthesisResult {
+export function maxSmtSynthesis(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): MaxSmtSynthesisResult {
   const effectiveId = effectiveScenarioId(scenarioId);
   const state = resolveOptions(effectiveId, options);
   const inv1 = verifyBreakGlassNonLockout(state);
@@ -625,7 +657,7 @@ export function maxSmtSynthesis(scenarioId: ScenarioId, options?: FormalVerifyOp
   })}`;
 
   return {
-    scenarioId,
+    scenarioId: scenarioId ?? effectiveId,
     optimal: verifyPccBitmask(invariantProofMask),
     invariantProofMask,
     minPerturbationCost,
@@ -637,7 +669,7 @@ export function maxSmtSynthesis(scenarioId: ScenarioId, options?: FormalVerifyOp
   };
 }
 
-export function verifyFormalInvariants(scenarioId: ScenarioId, options?: FormalVerifyOptions): FormalVerificationResult {
+export function verifyFormalInvariants(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): FormalVerificationResult {
   const started = performance.now();
   const effectiveId = effectiveScenarioId(scenarioId);
   const state = resolveOptions(effectiveId, options);
@@ -649,7 +681,7 @@ export function verifyFormalInvariants(scenarioId: ScenarioId, options?: FormalV
   const smt = maxSmtSynthesis(effectiveId, options);
   const allPassed = counterexamples.length === 0 && verifyPccBitmask(smt.invariantProofMask);
   return {
-    scenarioId,
+    scenarioId: scenarioId ?? effectiveId,
     passed: allPassed,
     invariants,
     counterexamples,
@@ -679,7 +711,7 @@ export function applyRemediation(state: SymbolicState): SymbolicState {
   return next;
 }
 
-export interface IdempotencyResult { scenarioId: ScenarioId; idempotent: boolean; forkIsolated: boolean; passed: boolean; firstHash: string; secondHash: string }
+export interface IdempotencyResult { scenarioId: ScenarioId | string; idempotent: boolean; forkIsolated: boolean; passed: boolean; firstHash: string; secondHash: string }
 
 function stableHash(value: unknown): string {
   const s = JSON.stringify(value);
@@ -689,7 +721,7 @@ function stableHash(value: unknown): string {
 }
 
 /** Copy-on-write fork check: f(f(S)) == f(S) and f does not mutate its input fork's source. */
-export function verifyIdempotency(scenarioId: ScenarioId, options?: FormalVerifyOptions): IdempotencyResult {
+export function verifyIdempotency(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): IdempotencyResult {
   const effectiveId = effectiveScenarioId(scenarioId);
   const source = options?.postState ? ({ ...preState(effectiveId), ...options.postState } as SymbolicState) : preState(effectiveId);
   const snapshot = JSON.stringify(source);
@@ -698,14 +730,14 @@ export function verifyIdempotency(scenarioId: ScenarioId, options?: FormalVerify
   const twice = applyRemediation(structuredClone(once));
   const idempotent = JSON.stringify(once) === JSON.stringify(twice);
   const forkIsolated = JSON.stringify(source) === snapshot && JSON.stringify(fork) === snapshot;
-  return { scenarioId, idempotent, forkIsolated, passed: idempotent && forkIsolated, firstHash: stableHash(once), secondHash: stableHash(twice) };
+  return { scenarioId: scenarioId ?? effectiveId, idempotent, forkIsolated, passed: idempotent && forkIsolated, firstHash: stableHash(once), secondHash: stableHash(twice) };
 }
 export const verifyCopyOnWriteFork = verifyIdempotency;
 
 /* ------------------------------ inverse rollback --------------------------- */
 
 export interface InverseRollbackBundle {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   powershellScript: string;
   terraformDiff: string;
   hcl: string;
@@ -724,11 +756,12 @@ export const CONTOSO_USER_OBJECT_IDS: Record<string, string> = {
 };
 
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
-export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBundle {
-  const customEntry = getCustomScenario(String(scenarioId).trim().replace(/^#/, ""));
+export function buildInverseRollback(scenarioId: ScenarioId | string | null): InverseRollbackBundle {
+  const resolvedId = scenarioId ?? "CUSTOM-UNSEEDED";
+  const customEntry = getCustomScenario(String(resolvedId).trim().replace(/^#/, ""));
   if (customEntry?.customRemediation) {
     return {
-      scenarioId,
+      scenarioId: resolvedId,
       powershellScript: customEntry.customRemediation.rollbackScript,
       terraformDiff: customEntry.customRemediation.terraformDiff,
       hcl: "",
@@ -736,7 +769,7 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
       restores: customEntry.customRemediation.affectedEntities.map((e) => `${e.id}: ${e.change}`),
     };
   }
-  const effectiveId = effectiveScenarioId(scenarioId);
+  const effectiveId = effectiveScenarioId(resolvedId);
   const pre = preState(effectiveId);
   const rogue = pre.nsgRules.find((r) => r.name === "Allow-Temp-RDP-Diagnostic-Drift");
   const hcl = rogue
@@ -774,21 +807,21 @@ export function buildInverseRollback(scenarioId: ScenarioId): InverseRollbackBun
     "[CmdletBinding(SupportsShouldProcess)]",
     "param([string]$TenantId)",
     "$ErrorActionPreference = 'Stop'",
-    `# ContextPane inverse rollback f^-1 for ${scenarioId}: restores pre-remediation state`,
+    `# ContextPane inverse rollback f^-1 for ${resolvedId}: restores pre-remediation state`,
     ...userLines,
     "",
   ].join("\n");
-  const graphPatch = JSON.stringify({ scenarioId, inverseOf: "f", restorePolicies: pre.policies, restoreNsgRules: pre.nsgRules, restoreTags: pre.tags, restoreLicenses: pre.licenses }, null, 2);
-  return { scenarioId, powershellScript, terraformDiff, hcl, graphPatch, restores: [...pre.affected.map((a) => `${a.id}:${a.post}->${a.pre}`), `${AVD_NSG_NAME}:rules/tags->pre-state`] };
+  const graphPatch = JSON.stringify({ scenarioId: resolvedId, inverseOf: "f", restorePolicies: pre.policies, restoreNsgRules: pre.nsgRules, restoreTags: pre.tags, restoreLicenses: pre.licenses }, null, 2);
+  return { scenarioId: resolvedId, powershellScript, terraformDiff, hcl, graphPatch, restores: [...pre.affected.map((a) => `${a.id}:${a.post}->${a.pre}`), `${AVD_NSG_NAME}:rules/tags->pre-state`] };
 }
 export const synthesizeInverseRollback = buildInverseRollback;
 
-export function verifyInverseRollback(scenarioId: ScenarioId): { scenarioId: ScenarioId; passed: boolean; detail: string } {
+export function verifyInverseRollback(scenarioId: ScenarioId | string | null): { scenarioId: ScenarioId | string; passed: boolean; detail: string } {
   const effectiveId = effectiveScenarioId(scenarioId);
   const pre = preState(effectiveId);
   const restored = applyInverseForTest(pre, applyRemediation(structuredClone(pre)));
   const passed = JSON.stringify(restored.policies) === JSON.stringify(pre.policies) && JSON.stringify(restored.nsgRules) === JSON.stringify(pre.nsgRules);
-  return { scenarioId, passed, detail: passed ? "f^-1(f(S)) == S on policies+NSG" : "inverse did not restore S" };
+  return { scenarioId: scenarioId ?? effectiveId, passed, detail: passed ? "f^-1(f(S)) == S on policies+NSG" : "inverse did not restore S" };
 }
 function applyInverseForTest(pre: SymbolicState, post: SymbolicState): SymbolicState {
   return { ...post, policies: structuredClone(pre.policies), nsgRules: structuredClone(pre.nsgRules), tags: { ...pre.tags } };
@@ -807,7 +840,7 @@ export interface BlastRadiusRow {
   collateralChanges: number;
 }
 export interface BlastRadiusMatrix {
-  scenarioId: ScenarioId;
+  scenarioId: ScenarioId | string;
   days: 30;
   rows: BlastRadiusRow[];
   targetBlockedToAllowed: number;
@@ -817,7 +850,7 @@ export interface BlastRadiusMatrix {
 }
 
 /** 30-day counterfactual replay: replay each cohort daily under P_pre vs P_post and count transitions. */
-export function counterfactualReplay(scenarioId: ScenarioId, options?: FormalVerifyOptions): BlastRadiusMatrix {
+export function counterfactualReplay(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): BlastRadiusMatrix {
   const effectiveId = effectiveScenarioId(scenarioId);
   const state = resolveOptions(effectiveId, options);
   const days = 30 as const;
@@ -830,6 +863,6 @@ export function counterfactualReplay(scenarioId: ScenarioId, options?: FormalVer
   ];
   // Device scenarios: target transition is NonCompliant->Compliant, still counted as Blocked->Allowed class.
   if (state.affected.every((a) => a.kind === "device")) { rows[0]!.before = "Blocked"; rows[0]!.after = "Allowed"; }
-  return { scenarioId, days, rows, targetBlockedToAllowed: rows[0]!.changedAttempts, breakGlassAllowedToAllowed: rows[1]!.attempts, collateralChanges: rows.reduce((n, r) => n + r.collateralChanges, 0), totalEntities: rows.reduce((n, r) => n + r.entities.length, 0) };
+  return { scenarioId: scenarioId ?? effectiveId, days, rows, targetBlockedToAllowed: rows[0]!.changedAttempts, breakGlassAllowedToAllowed: rows[1]!.attempts, collateralChanges: rows.reduce((n, r) => n + r.collateralChanges, 0), totalEntities: rows.reduce((n, r) => n + r.entities.length, 0) };
 }
 export const blastRadiusMatrix = counterfactualReplay;

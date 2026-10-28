@@ -89,6 +89,26 @@ export function createAzureIacMcpServer(): McpServer {
     async (args) => run(() => azureIacService.getResourceDiagnostic(args.tenantId, args.resourceName)),
   );
 
+  server.registerTool(
+    "get_azure_policies",
+    {
+      title: "Get Azure Policy and Resource Health states",
+      description: "Returns Azure Policy compliance and Resource Health availability statuses for the tenant.",
+      inputSchema: { tenantId },
+    },
+    async (args) => run(() => azureIacService.getAzurePolicies(args.tenantId)),
+  );
+
+  server.registerTool(
+    "get_regional_quotas",
+    {
+      title: "Get Regional Compute and Network Quotas",
+      description: "Returns regional vCPU, VM SKU, IP, and storage quota utilization across EU sovereign regions.",
+      inputSchema: { tenantId },
+    },
+    async (args) => run(() => azureIacService.getRegionalQuotas(args.tenantId)),
+  );
+
   return server;
 }
 

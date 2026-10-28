@@ -124,9 +124,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     warmModalSandbox("remediate");
     report("mcp:start", "Refreshing MCP context");
     const ctx = await gatherContext(input.scenarioId, { fresh: input.fresh ?? true }).catch(() =>
-      gatherContext(baseScenarioOf(input.scenarioId), { fresh: false }),
+      gatherContext(baseScenarioOf(input.scenarioId) ?? input.scenarioId, { fresh: false }),
     );
-    report("mcp:done", `Context ready (${ctx.gatherLatencyMs} ms)`, { sources: ctx.sourcesUsed, scenarioId: ctx.scenarioId });
+    report("mcp:done", `Context ready (${ctx.gatherLatencyMs} ms)`, { sources: ctx.sourcesUsed, scenarioId: ctx.scenarioId ?? ctx.ticketId });
 
     const plan = buildRemediationPlan(ctx);
     const reference = plan.bundle;
@@ -138,13 +138,17 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     const chain: RouterTelemetry["fallbackChain"] = [];
 
     if (ctx.custom?.customRemediation) {
-      provider = providers.meta.hasKey && !config.forceLocal ? "meta" : "local";
-      planner = models.metaWonder;
-      coder = models.metaCode;
-      chain.push(
-        { provider, modelId: models.metaWonder, outcome: "ok", latencyMs: 18 },
-        { provider, modelId: models.metaCode, outcome: "ok", latencyMs: 22 },
-      );
+      const step4 = ctx.custom.subAgentTasks?.find((t) => t.stepIndex === 4);
+      const usedLlm = step4?.source === "llm";
+      provider = usedLlm ? "meta" : "local";
+      planner = usedLlm ? models.metaWonder : "deterministic";
+      coder = usedLlm ? (step4?.modelId ?? models.metaWonder) : "deterministic";
+      chain.push({
+        provider,
+        modelId: step4?.modelId ?? models.metaWonder,
+        outcome: usedLlm ? "ok" : "skipped",
+        latencyMs: step4?.latencyMs ?? 1,
+      });
     } else if (!config.forceLocal && providers.meta.hasKey) {
       const model = contextForModel(ctx);
       /* ---- 3A: plan with muse-wonder ---- */
@@ -201,8 +205,14 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
         if (!parsed.success) throw new InvalidSchemaError("bundle failed validation", formatIssues(parsed.error));
         const issues = bundleIsSound(parsed.data, plan);
         if (issues.length) throw new InvalidSchemaError("bundle failed structural checks", issues);
-        // The IaC diff and the Graph request bodies stay the deterministic ones: they are what the pre-flight and the lab write verify.
-        return { bundle: { ...parsed.data, terraformDiff: reference.terraformDiff, graphPatch: reference.graphPatch }, usage: result.usage };
+        return {
+          bundle: {
+            ...parsed.data,
+            terraformDiff: parsed.data.terraformDiff?.trim() ? parsed.data.terraformDiff : reference.terraformDiff,
+            graphPatch: parsed.data.graphPatch?.trim() ? parsed.data.graphPatch : reference.graphPatch,
+          },
+          usage: result.usage,
+        };
       });
       chain.push(...codeOutcome.chain);
       if (codeOutcome.result) {
@@ -297,7 +307,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     return { drawer, telemetry: event };
   } catch (unexpectedError) {
     console.warn(`[tier3-remediate] Fallback recovery for ${input.scenarioId}:`, unexpectedError);
-    const fallbackCtx = await gatherContext(baseScenarioOf(input.scenarioId), { fresh: false });
+    const fallbackCtx = await gatherContext(baseScenarioOf(input.scenarioId) ?? input.scenarioId, { fresh: false });
     const fallbackPlan = buildRemediationPlan(fallbackCtx);
     const fallbackBundle = fallbackPlan.bundle;
     const latencyMs = Math.max(12, Math.round(performance.now() - started));
@@ -393,35 +403,11 @@ async function preflight(
   }
   const whatIf = checkWhatIfSafety(bundle.powershellScript);
   verification.whatIfSafe = whatIf.safe;
-  if (!whatIf.safe) verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
-
-  const isDeterministicOrCustom =
-    Boolean(ctx.custom) ||
-    isCustomScenarioId(ctx.ticketId) ||
-    isCustomScenarioId(ctx.scenarioId) ||
-    bundle.powershellScript === plan.bundle.powershellScript;
-  if (isDeterministicOrCustom && (verification.verdict === "Verification Failed" || verification.astCheckPassed === false || !verification.whatIfSafe)) {
-    verification = {
-      ...verification,
-      verdict: "Verified Safe",
-      astCheckPassed: true,
-      terraformFmtPassed: bundle.terraformDiff ? (verification.terraformFmtPassed ?? true) : null,
-      terraformValidatePassed: bundle.terraformDiff ? (verification.terraformValidatePassed ?? true) : null,
-      whatIfSafe: true,
-      findings: verification.findings
-        .filter(
-          (f) =>
-            !f.startsWith("AST parse error") &&
-            !f.startsWith("Forbidden command") &&
-            !f.startsWith("Expected command missing") &&
-            !f.startsWith("Verb outside allow-list") &&
-            !f.startsWith("-WhatIf is not a full dry run") &&
-            !f.startsWith("Script does not declare SupportsShouldProcess") &&
-            !f.startsWith("Unified diff does not apply cleanly") &&
-            !f.startsWith("Patched state differs"),
-        )
-        .map((f) => f.slice(0, 300)),
-    };
+  if (!whatIf.safe) {
+    verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
+    if (verification.verdict === "Verified Safe") {
+      verification.verdict = "Verified With Warnings";
+    }
   }
 
   report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
@@ -794,7 +780,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         state = "simulated";
       }
       invalidateContext(scenarioId);
-    } else if (config.liveCloudMode) {
+    } else if (config.liveCloudMode && labScenarioId) {
       if (config.allowExecute) {
         log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
         const script = await runApprovedScript(drawer);

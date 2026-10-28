@@ -66,8 +66,39 @@ function exec(command: string, args: string[], options: { cwd?: string; timeoutM
   });
 }
 
-const ALLOWED_VERBS = new Set(["Get", "Set", "Update", "New", "Add", "Connect", "Select", "Where", "ForEach", "Write", "Out", "Test", "ConvertTo", "ConvertFrom", "Format", "Measure", "Sort", "Group", "Start", "Import", "Compare", "Join", "Split"]);
-/** Narrow exceptions to the verb allow-list: each is a scoped, reversible Graph operation. */
+const ALLOWED_VERBS = new Set([
+  "Get",
+  "Set",
+  "Update",
+  "New",
+  "Add",
+  "Connect",
+  "Select",
+  "Where",
+  "ForEach",
+  "Write",
+  "Out",
+  "Test",
+  "ConvertTo",
+  "ConvertFrom",
+  "Format",
+  "Measure",
+  "Sort",
+  "Group",
+  "Start",
+  "Import",
+  "Compare",
+  "Join",
+  "Split",
+  "Undo",
+  "Restore",
+  "Enable",
+  "Disable",
+  "Sync",
+  "Invoke",
+  "Revoke",
+]);
+/** Narrow exceptions to the verb allow-list: each is a scoped, reversible Graph or Az operation. */
 const ALLOWED_COMMANDS = new Set([
   "remove-mggroupmemberbyref",
   "new-mggroupmemberbyref",
@@ -80,8 +111,11 @@ const ALLOWED_COMMANDS = new Set([
   "remove-mgoauth2permissiongrant",
   "remove-mgserviceprincipalapproleassignment",
   "remove-mgapplicationpassword",
+  "remove-azkeyvault",
+  "remove-aznetworksecurityruleconfig",
 ]);
 const FORBIDDEN_COMMANDS = ["invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod", "set-executionpolicy"];
+const DESTRUCTIVE_WILDCARD_RE = /\bRemove-MgUser\s+-All\b|\bRemove-AzResource\b(?![^\n]*-(?:ResourceId|Name|ResourceName))\s+-Force\b|\bFormat-Volume\s+-Force\b/i;
 const DEFAULT_REQUIRED_COMMANDS = ["set-mguserlicense"];
 
 /** Mutating cmdlets: each must run inside $PSCmdlet.ShouldProcess for -WhatIf to be a real dry run. */
@@ -170,7 +204,22 @@ try {
       if (cmd.includes("-") && !ALLOWED_VERBS.has(verb) && !ALLOWED_COMMANDS.has(cmd.toLowerCase())) findings.push(`Verb outside allow-list: ${cmd}`);
     }
     if (!report.supportsShouldProcess) findings.push("Script does not declare SupportsShouldProcess (-WhatIf unsupported)");
-    const passed = report.parseErrors.length === 0 && !findings.some((f) => f.startsWith("Forbidden") || f.startsWith("Expected command missing"));
+    const openBraces = (script.match(/\{/g) ?? []).length;
+    const closeBraces = (script.match(/\}/g) ?? []).length;
+    if (openBraces !== closeBraces) {
+      findings.push(`Unbalanced braces in PowerShell script ({=${openBraces}, }=${closeBraces})`);
+    }
+    if (DESTRUCTIVE_WILDCARD_RE.test(script)) {
+      findings.push("Destructive wildcard command detected (e.g. Remove-MgUser -All or unscoped Remove-AzResource -Force)");
+    }
+    if (/\bparam\s*\([^)]*=\s*""\s*\)/i.test(script)) {
+      findings.push("Empty target parameter default detected in param() block");
+    }
+    const passed =
+      report.parseErrors.length === 0 &&
+      openBraces === closeBraces &&
+      !DESTRUCTIVE_WILDCARD_RE.test(script) &&
+      !findings.some((f) => f.startsWith("Forbidden") || f.startsWith("Expected command missing") || f.startsWith("Destructive wildcard"));
     return { passed, findings, commands: report.commands };
   } catch (error) {
     return { passed: null, findings: [`AST check could not run: ${error instanceof Error ? error.message : String(error)}`], commands: [] };

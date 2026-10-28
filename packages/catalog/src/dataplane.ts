@@ -106,7 +106,7 @@ const DEFAULT_TENANT_BY_SCENARIO: Record<string, string> = {
   "anom-ca-204": "tenant-contoso-01",
   "anom-app-401": "tenant-contoso-01",
   "inc-4099": "tenant-fabrikam-02",
-  "anom-int-309": "tenant-fabrikam-02",
+  "anom-int-309": "tenant-contoso-01",
 };
 
 function nowNs(): number {

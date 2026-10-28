@@ -88,6 +88,13 @@ export interface WorkloadIdentityFixture {
     issuer: string;
     subject: string;
     audiences: string[];
+    driftState?: string;
+    driftDetail?: string;
+  };
+  oidcAssertionClaim?: {
+    name: string;
+    state: string;
+    detail: string;
   };
   /** Peer service principals in the tenant (including other apps owned by the same shadow-admin user and a golden OIDC reference). */
   peerApps?: WorkloadPeerApp[];
@@ -144,6 +151,13 @@ export const WORKLOAD_IDENTITY: WorkloadIdentityFixture = {
     issuer: "https://token.actions.githubusercontent.com",
     subject: "repo:contoso/erp-sync:ref:refs/heads/main",
     audiences: ["api://AzureADTokenExchange"],
+    driftState: "missing / subject drift (AADSTS70021)",
+    driftDetail: "Configured subject identifier: repo:contoso/erp-sync:ref:refs/heads/main · issuer https://token.actions.githubusercontent.com",
+  },
+  oidcAssertionClaim: {
+    name: "GitHub Actions OIDC assertion",
+    state: "rejected (AADSTS70021)",
+    detail: "Presented subject identifier: repo:contoso/erp-sync:environment:prod vs expected repo:contoso/erp-sync:ref:refs/heads/main (https://token.actions.githubusercontent.com)",
   },
   peerApps: [
     {

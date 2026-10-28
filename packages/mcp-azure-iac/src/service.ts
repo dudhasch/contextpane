@@ -399,7 +399,153 @@ export const azureIacService = {
       },
     };
   },
+
+  /** Azure Policy assignments & Resource Health posture across the tenant's subscription/resource group. */
+  async getAzurePolicies(tenantId: string): Promise<IacResult<AzurePolicyAndHealthRow[]>> {
+    const tenant = getManifestTenant(tenantId);
+    const sub = tenant.subscriptionId;
+    const rgName = tenant.azure?.resourceGroup ?? "rg-tenant-prod";
+    let basePolicies: AzurePolicyAndHealthRow[] = [];
+    if (tenant.azure) {
+      try {
+        const avd = await azureIacService.getAvdEstate(tenantId);
+        basePolicies = avd.data.azurePolicies.map((p) => ({
+          name: p.name,
+          effect: p.effect,
+          compliance: p.compliance,
+          nonCompliantResources: p.nonCompliantResources,
+          scope: p.scope,
+          detail: p.detail,
+        }));
+      } catch {
+        // Tenant may not have AVD estate; proceed with subscription-level policies
+      }
+    }
+    const extraPolicies: AzurePolicyAndHealthRow[] = [
+      {
+        name: "Allowed-Locations-EU-Sovereign",
+        effect: "Deny",
+        compliance: "Compliant",
+        nonCompliantResources: 0,
+        scope: `/subscriptions/${sub}/resourceGroups/${rgName}`,
+        detail: "RequestDisallowedByPolicy outside westeurope, germanywestcentral, northeurope (EU sovereign boundary)",
+      },
+      {
+        name: "Require-Tag-Environment",
+        effect: "Deny",
+        compliance: "NonCompliant",
+        nonCompliantResources: 2,
+        scope: `/subscriptions/${sub}/resourceGroups/${rgName}`,
+        detail: "RequestDisallowedByPolicy when mandatory tag 'Environment' is missing on compute/network resources",
+      },
+      {
+        name: "Resource-Health-Compute-WestEurope",
+        effect: "ResourceHealth",
+        compliance: "NonCompliant",
+        nonCompliantResources: 1,
+        scope: `/subscriptions/${sub}/providers/Microsoft.ResourceHealth/availabilityStatuses`,
+        detail: "Resource health degraded: AZ-WEU-CAP-409 Standard_D4s_v5 regional allocation pressure in westeurope",
+      },
+      {
+        name: "Resource-Health-Compute-GermanyWestCentral",
+        effect: "ResourceHealth",
+        compliance: "Compliant",
+        nonCompliantResources: 0,
+        scope: `/subscriptions/${sub}/providers/Microsoft.ResourceHealth/availabilityStatuses`,
+        detail: "Resource health available: Healthy compute capacity and policy compliance in germanywestcentral",
+      },
+    ];
+    for (const ep of extraPolicies) {
+      if (!basePolicies.some((p) => p.name === ep.name)) basePolicies.push(ep);
+    }
+    return {
+      source: "seeded-manifest",
+      liveCloudMode: isLiveCloudMode(),
+      fetchedAt: new Date().toISOString(),
+      latencyMs: 1,
+      data: basePolicies,
+    };
+  },
+
+  /** Regional Compute/Network/Storage quota and capacity headroom across EU sovereign regions. */
+  async getRegionalQuotas(_tenantId: string): Promise<IacResult<RegionalQuotaRow[]>> {
+    const quotaRows: RegionalQuotaRow[] = [
+      {
+        resource: "Standard_D4s_v5 (westeurope)",
+        region: "westeurope",
+        usage: "20/20",
+        utilization: "100%",
+        headroom: "QuotaExceeded",
+        status: "Critical",
+      },
+      {
+        resource: "Total Regional vCPUs (westeurope)",
+        region: "westeurope",
+        usage: "48/50",
+        utilization: "96%",
+        headroom: "Near Limit",
+        status: "Warning",
+      },
+      {
+        resource: "Public IPv4 Addresses (westeurope)",
+        region: "westeurope",
+        usage: "19/20",
+        utilization: "95%",
+        headroom: "Near Limit",
+        status: "Warning",
+      },
+      {
+        resource: "Premium SSD Managed Disks (westeurope)",
+        region: "westeurope",
+        usage: "42/50",
+        utilization: "84%",
+        headroom: "High Usage",
+        status: "Warning",
+      },
+      {
+        resource: "Standard_D4s_v5 (germanywestcentral)",
+        region: "germanywestcentral",
+        usage: "4/20",
+        utilization: "20%",
+        headroom: "16 vCPUs Free",
+        status: "Healthy",
+      },
+      {
+        resource: "Standard_D4s_v5 (northeurope)",
+        region: "northeurope",
+        usage: "6/20",
+        utilization: "30%",
+        headroom: "14 vCPUs Free",
+        status: "Healthy",
+      },
+    ];
+    return {
+      source: "seeded-manifest",
+      liveCloudMode: isLiveCloudMode(),
+      fetchedAt: new Date().toISOString(),
+      latencyMs: 1,
+      data: quotaRows,
+    };
+  },
 };
+
+export interface AzurePolicyAndHealthRow {
+  name: string;
+  effect: string;
+  compliance: "Compliant" | "NonCompliant";
+  nonCompliantResources: number;
+  scope: string;
+  detail: string;
+}
+
+export interface RegionalQuotaRow {
+  resource: string;
+  region: string;
+  usage: string;
+  utilization: string;
+  headroom: string;
+  status: "Critical" | "Warning" | "Healthy";
+}
 
 /** Outcome of an NSG write: one row per ARM operation (rule delete / put, tag update). */
 export interface NsgWriteResult {

@@ -13,9 +13,18 @@ import {
   type TenantId,
   type WorkbenchScenarioId,
 } from "@contextpane/catalog";
-import type { AvdEstate, IacResult, NsgDrift } from "@contextpane/mcp-azure-iac";
+import type { AvdEstate, AzurePolicyAndHealthRow, IacResult, NsgDrift, RegionalQuotaRow } from "@contextpane/mcp-azure-iac";
 import type { ErpContract, ErpTenant, ErpTicket } from "@contextpane/mcp-erp";
-import type { CaPolicySummary, CaPosture, GraphResult, IntuneDrift, LicenseInventory, SignInSummary, WorkloadIdentityFixture } from "@contextpane/mcp-msgraph";
+import type {
+  CaPolicySummary,
+  CaPosture,
+  GraphResult,
+  IntuneDrift,
+  LicenseInventory,
+  SecurityGroupSummary,
+  SignInSummary,
+  WorkloadIdentityFixture,
+} from "@contextpane/mcp-msgraph";
 import { CA_POSTURE, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { DatasetDescriptor } from "@contextpane/catalog";
 import { sources, type McpDataSources } from "./clients.ts";
@@ -28,8 +37,8 @@ import { sources, type McpDataSources } from "./clients.ts";
  * so hover → correlate → remediate never wait on Graph or ARM twice.
  */
 export interface CorrelationContext {
-  /** The built-in scenario the data, remediation template and invariants come from (the base of a custom ticket). */
-  scenarioId: ScenarioId;
+  /** The built-in scenario the data, remediation template and invariants come from, or null for standalone custom tickets. */
+  scenarioId: ScenarioId | null;
   kind: ScenarioKind;
   tenantId: TenantId;
   /** Workbench id: the ERP ticket (INC-4092), the anomaly (ANOM-LIC-101) or the unscripted ticket (CUSTOM-<hash>). */
@@ -48,6 +57,9 @@ export interface CorrelationContext {
   workloadIdentity: WorkloadIdentityFixture | null;
   drift: IacResult<NsgDrift> | null;
   avd: IacResult<AvdEstate> | null;
+  securityGroups: GraphResult<SecurityGroupSummary[]> | null;
+  azurePolicies: IacResult<AzurePolicyAndHealthRow[]> | null;
+  regionalQuotas: IacResult<RegionalQuotaRow[]> | null;
   /** Entra security groups per UPN (lower-cased), for the user hover. */
   groupsByUpn: Map<string, string[]>;
   gatheredAt: string;
@@ -65,7 +77,7 @@ const cache = new Map<string, { at: number; value: Promise<CorrelationContext>; 
 /** Accepts a scenario id (built-in or registered CUSTOM-<hash>), or a tenant id (its ticket scenario), for older callers. */
 export function resolveScenarioId(value: string | undefined | null): WorkbenchScenarioId {
   if (isAnyScenarioId(value)) return value;
-  return scenarioForTenant(value ?? "tenant-contoso-01");
+  return scenarioForTenant(value ?? "tenant-contoso-01") ?? "INC-4092";
 }
 
 /** Drops the cached context of one scenario (a custom ticket drops its base too), every scenario of a tenant, or everything. */
@@ -114,34 +126,51 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
   return (async () => {
     const started = performance.now();
     const custom = isCustomScenarioId(workbenchId) ? (getCustomScenario(workbenchId) ?? null) : null;
-    const scenarioId: ScenarioId = custom ? custom.baseScenarioId : (workbenchId as ScenarioId);
-    const entry = SCENARIO_REGISTRY[scenarioId];
-    const tenantId = custom?.tenantId ?? entry.tenantId;
-    const components = custom ? custom.components : entry.components;
+    const scenarioId: ScenarioId | null = custom ? custom.baseScenarioId : (workbenchId as ScenarioId);
+    const entry = scenarioId ? SCENARIO_REGISTRY[scenarioId] : null;
+    const tenantId = custom?.tenantId ?? entry?.tenantId ?? "tenant-contoso-01";
+    const components = custom ? custom.components : (entry?.components ?? []);
     const cards = new Set(components);
     // A custom ticket gathers like a ticket: every source its cards need, plus licenses for the user hover.
-    const ticketScenario = entry.kind === "ticket" || Boolean(custom);
-    const intuneKey = scenarioId === "INC-4099" ? "INC-4099" : "ANOM-INT-309";
-    const [erp, license, policies, signIns, caPosture, intune, drift, avd] = await Promise.all([
+    const ticketScenario = entry?.kind === "ticket" || Boolean(custom);
+    const intuneKey = scenarioId === "INC-4099" || tenantId === "tenant-fabrikam-02" ? "INC-4099" : "ANOM-INT-309";
+    const hasAzureEstate = tenantId === "tenant-contoso-01";
+    const customIntents = new Set(custom?.extraction.intents ?? []);
+    const customCards = new Set(custom?.extraction.components ?? []);
+    const [erp, license, policies, signIns, caPosture, intune, drift, avd, securityGroups, azurePolicies, regionalQuotas] = await Promise.all([
       sources.erp.getTenantContext(tenantId),
       // Ticket scenarios read licenses for the user hover even when they show no license card.
-      cards.has("LicenseDriftCard") || ticketScenario ? sources.msgraph.getLicenseInventory(tenantId, scenarioId) : none,
+      cards.has("LicenseDriftCard") || customCards.has("LicenseDriftCard") || ticketScenario ? sources.msgraph.getLicenseInventory(tenantId, scenarioId ?? undefined) : none,
       ticketScenario ? sources.msgraph.getConditionalAccessPolicies(tenantId) : none,
       ticketScenario ? sources.msgraph.getSignInEvents(tenantId, { top: 50 }) : none,
-      scenarioId === "ANOM-CA-204" || (custom && cards.has("EntraSignInTimeline") && custom.extraction.intents.some((i) => i === "break-glass" || i === "legacy-auth")) ? sources.msgraph.getCaPosture(tenantId) : none,
-      scenarioId === "ANOM-INT-309" || scenarioId === "INC-4099" || (custom && cards.has("IntuneDriftCard")) ? sources.msgraph.getIntuneDrift(intuneKey) : none,
-      cards.has("IaCDriftBanner") ? sources.azure.getNsgDrift(tenantId) : none,
-      cards.has("IaCDriftBanner") ? sources.azure.getAvdEstate(tenantId) : none,
+      scenarioId === "ANOM-CA-204" || (custom && (cards.has("EntraSignInTimeline") || customCards.has("EntraSignInTimeline")) && (customIntents.has("break-glass") || customIntents.has("legacy-auth"))) ? sources.msgraph.getCaPosture(tenantId) : none,
+      scenarioId === "ANOM-INT-309" || scenarioId === "INC-4099" || (custom && (cards.has("IntuneDriftCard") || customCards.has("IntuneDriftCard") || customIntents.has("bitlocker") || customIntents.has("intune-compliance") || customIntents.has("asr"))) ? sources.msgraph.getIntuneDrift(intuneKey) : none,
+      cards.has("IaCDriftBanner") || (custom && hasAzureEstate && (customCards.has("IaCDriftBanner") || customIntents.has("avd") || customIntents.has("nsg"))) ? sources.azure.getNsgDrift(tenantId) : none,
+      cards.has("IaCDriftBanner") || (custom && hasAzureEstate && (customCards.has("IaCDriftBanner") || customIntents.has("avd") || customIntents.has("nsg"))) ? sources.azure.getAvdEstate(tenantId) : none,
+      sources.msgraph.getSecurityGroups(tenantId),
+      sources.azure.getAzurePolicies(tenantId),
+      sources.azure.getRegionalQuotas(tenantId),
     ]);
-    const used: Record<string, { source: string; fallbackReason?: string } | null> = { license, policies, signIns, caPosture, intune, drift, avd };
+    const used: Record<string, { source: string; fallbackReason?: string } | null> = {
+      license,
+      policies,
+      signIns,
+      caPosture,
+      intune,
+      drift,
+      avd,
+      securityGroups,
+      azurePolicies,
+      regionalQuotas,
+    };
     return {
       scenarioId,
-      kind: custom ? "ticket" : entry.kind,
+      kind: custom ? "ticket" : (entry?.kind ?? "ticket"),
       tenantId,
       ticketId: workbenchId,
       custom,
       components,
-      erp: { tenant: erp.tenant, contract: erp.contract, ticket: ticketScenario && entry.kind === "ticket" ? erp.ticket : null },
+      erp: { tenant: erp.tenant, contract: erp.contract, ticket: !custom && entry?.kind === "ticket" ? erp.ticket : null },
       license,
       policies,
       signIns,
@@ -150,6 +179,9 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       workloadIdentity: scenarioId === "ANOM-APP-401" || (custom && custom.extraction.intents.includes("workload-identity")) ? WORKLOAD_IDENTITY : null,
       drift,
       avd,
+      securityGroups,
+      azurePolicies,
+      regionalQuotas,
       groupsByUpn: groupsByUpn(scenarioId, tenantId),
       gatheredAt: new Date().toISOString(),
       gatherLatencyMs: Math.round(performance.now() - started),
@@ -163,7 +195,7 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
   })();
 }
 
-function groupsByUpn(scenarioId: ScenarioId, tenantId: string): Map<string, string[]> {
+function groupsByUpn(scenarioId: ScenarioId | null, tenantId: string): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const add = (upn: string, group: string) => {
     const key = upn.toLowerCase();
@@ -188,7 +220,13 @@ function groupsByUpn(scenarioId: ScenarioId, tenantId: string): Map<string, stri
 export function contextForModel(ctx: CorrelationContext) {
   const { ticket, contract, tenant } = ctx.erp;
   return {
-    scenario: { scenarioId: ctx.ticketId, kind: ctx.kind, title: ctx.custom?.title ?? SCENARIO_REGISTRY[ctx.scenarioId].title, cards: ctx.components, ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}) },
+    scenario: {
+      scenarioId: ctx.ticketId,
+      kind: ctx.kind,
+      title: ctx.custom?.title ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId),
+      cards: ctx.components,
+      ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}),
+    },
     tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, entraTenantId: tenant.entraTenantId, verifiedDomain: tenant.verifiedDomain },
     ...(ticket
       ? {
@@ -310,7 +348,13 @@ export function contextForModel(ctx: CorrelationContext) {
 export function contextForCorrelation(ctx: CorrelationContext, datasets: DatasetDescriptor[]) {
   const { ticket, contract, tenant } = ctx.erp;
   return {
-    scenario: { scenarioId: ctx.ticketId, kind: ctx.kind, title: ctx.custom?.title ?? SCENARIO_REGISTRY[ctx.scenarioId].title, cards: ctx.components, ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}) },
+    scenario: {
+      scenarioId: ctx.ticketId,
+      kind: ctx.kind,
+      title: ctx.custom?.title ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId),
+      cards: ctx.components,
+      ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}),
+    },
     tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, verifiedDomain: tenant.verifiedDomain },
     ...(ticket
       ? {

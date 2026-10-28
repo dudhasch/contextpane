@@ -104,8 +104,11 @@ describe("custom scenario registry", () => {
     expect(isAnyScenarioId(id)).toBe(true);
     expect(baseScenarioOf(id)).toBe("INC-4092");
     expect(baseScenarioOf("ANOM-CA-204")).toBe("ANOM-CA-204");
+    expect(baseScenarioOf("CUSTOM-UNREGISTERED")).toBeNull();
+    expect(baseScenarioOf("ERP-202699999")).toBeNull();
     expect(getScenarioEntry(id)?.components).toEqual(["EntraSignInTimeline", "IaCDriftBanner"]);
     expect(unregisterCustomScenario(id)).toBe(true);
     expect(isAnyScenarioId(id)).toBe(false);
+    expect(baseScenarioOf(id)).toBeNull();
   });
 });

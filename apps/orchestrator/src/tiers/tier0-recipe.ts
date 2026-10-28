@@ -54,7 +54,7 @@ export async function hydrateRecipe(recipeId: string, scenarioId: string, option
       validated: true,
       repaired: [],
     },
-    { components, recipeId: recipe.recipeId, layoutId: `layout-${recipe.recipeId}-${ctx.scenarioId.toLowerCase()}-${Date.now().toString(36)}` },
+    { components, recipeId: recipe.recipeId, layoutId: `layout-${recipe.recipeId}-${(ctx.scenarioId ?? ctx.ticketId).toLowerCase()}-${Date.now().toString(36)}` },
   );
 
   const baseline = telemetry.baselineTier2();

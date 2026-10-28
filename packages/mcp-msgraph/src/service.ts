@@ -14,6 +14,7 @@ import {
   CA_POSTURE,
   INTUNE_SCENARIOS,
   LICENSE_ANOMALY,
+  SECURITY_GROUPS_FIXTURE,
   caAuditEvents,
   legacySignIns,
   type CaGoldenPolicy,
@@ -21,6 +22,7 @@ import {
   type IntuneScenarioFixture,
   type IntuneScenarioKey,
   type LicenseAnomalyUser,
+  type SecurityGroupSummary,
 } from "./fixtures.ts";
 import { caBaselineDiff, caDriftSourceRef, caPolicySourceRef, intuneBaselineDiff, intuneSettingSourceRef } from "./golden.ts";
 import {
@@ -1064,6 +1066,17 @@ export const msgraphService = {
         policiesTargeting,
         sku: license.data.sku,
       },
+    };
+  },
+
+  async getSecurityGroups(_tenantId: string): Promise<GraphResult<SecurityGroupSummary[]>> {
+    const started = performance.now();
+    return {
+      source: "seeded-manifest",
+      liveCloudMode: false,
+      fetchedAt: new Date().toISOString(),
+      latencyMs: Math.round(performance.now() - started),
+      data: SECURITY_GROUPS_FIXTURE.map((g) => ({ ...g })),
     };
   },
 };

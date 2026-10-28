@@ -1,6 +1,7 @@
 import type { RemediationBundleArgs } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, WORKLOAD_IDENTITY, demoName } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
+import { buildCustomTicketRemediationSync } from "./subagent-orchestrator.ts";
 
 /**
  * Deterministic remediation templates, one per scenario. These are what Tier 3
@@ -788,8 +789,15 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
 }
 
 export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
-  if (ctx.custom?.customRemediation) {
-    const cr = ctx.custom.customRemediation;
+  if (ctx.custom || !ctx.scenarioId) {
+    const cr =
+      ctx.custom?.customRemediation ??
+      buildCustomTicketRemediationSync({
+        scenarioId: ctx.ticketId,
+        ticketTitle: ctx.custom?.ticket.title ?? ctx.ticketId,
+        ticketBody: ctx.custom?.ticket.body ?? "",
+        ...(ctx.custom?.clarifiedAnswers ? { clarifiedAnswers: ctx.custom.clarifiedAnswers } : {}),
+      });
     return {
       bundle: {
         title: cr.title.slice(0, 120),

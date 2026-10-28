@@ -113,7 +113,16 @@ export function publishDataPlane(ctx: CorrelationContext, options?: { epoch?: nu
   let totalColumnarScanNs = 0;
   let lastGeneration = getDataPlaneGeneration();
 
-  for (const type of scenarioComponents(ctx)) {
+  const customCardTypes: CanvasComponentType[] = ctx.custom
+    ? [
+        ...(ctx.license ? (["LicenseDriftCard"] as const) : []),
+        ...(ctx.signIns || ctx.policies || ctx.caPosture || ctx.workloadIdentity ? (["EntraSignInTimeline"] as const) : []),
+        ...(ctx.intune ? (["IntuneDriftCard"] as const) : []),
+        ...(ctx.drift ? (["IaCDriftBanner"] as const) : []),
+      ]
+    : [];
+  const typesToPublish = [...new Set([...scenarioComponents(ctx), ...customCardTypes])];
+  for (const type of typesToPublish) {
     const component = buildComponent(type, ctx);
     if (!component) continue;
     const props = component.props as Record<string, unknown>;
