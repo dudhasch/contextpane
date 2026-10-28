@@ -24,7 +24,7 @@ import {
   type ScenarioId,
   type VerificationStatus,
 } from "@contextpane/catalog";
-import { config, models, providers } from "../config.ts";
+import { config, isLiveCloudMode, models, providers } from "../config.ts";
 import { applyScenarioState, type LabWriteOutcome } from "../local/lab.ts";
 import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
@@ -771,7 +771,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       log.push(...customSteps);
       writeSummary = drawer.title;
       write = {
-        source: config.liveCloudMode ? "live-graph" : "simulated",
+        source: isLiveCloudMode() ? "live-graph" : "simulated",
         latencyMs: 38,
         summary: drawer.title,
         results: drawer.affectedEntities.map((e) => ({
@@ -780,14 +780,14 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
           status: 200,
         })),
       };
-      if (config.liveCloudMode) {
+      if (isLiveCloudMode()) {
         state = "executed";
         execution = "live-graph";
       } else {
         state = "simulated";
       }
       invalidateContext(scenarioId);
-    } else if (config.liveCloudMode && labScenarioId) {
+    } else if (isLiveCloudMode() && labScenarioId) {
       if (config.allowExecute) {
         log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
         const script = await runApprovedScript(drawer);

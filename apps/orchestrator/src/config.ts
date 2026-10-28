@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ProviderId } from "@contextpane/catalog";
+import { isLiveCloudMode as mcpLiveCloudMode } from "@contextpane/mcp-azure-iac";
 
 /* -------------------------------------------------------------------------- */
 /* Repo root + dotenv                                                          */
@@ -155,8 +156,7 @@ export const models = {
   basetenSpark: env("CTX_MODEL_BASETEN_SPARK", "meta-models/muse-spark-open-1026"),
   basetenGlimmer: env("CTX_MODEL_BASETEN_GLIMMER", "muse-glimmer-30b"),
   metaSpark: env("CTX_MODEL_META_SPARK", "muse-spark-1.3"),
-  metaSparkContributor: env("CTX_MODEL_META_SPARK_CONTRIBUTOR", "muse-spark-1.3-contributor"),
-  /** Tier 1B on the Meta API. muse-spark-1.3 at minimal effort hydrates the layout in ~8 s; -contributor needs ~22 s. */
+  /** Tier 1B on the Meta API. muse-spark-1.3 at minimal effort hydrates the layout in ~8 s (muse-spark-1.3-contributor needed ~22 s and was dropped). */
   metaCatalog: env("CTX_MODEL_META_CATALOG", "muse-spark-1.3"),
   metaWonder: env("CTX_MODEL_META_WONDER", "muse-wonder-1.0"),
   metaCode: env("CTX_MODEL_META_CODE", "muse-code"),
@@ -239,11 +239,21 @@ export function anyProviderKey(): boolean {
   return Object.values(providers).some((p) => p.hasKey);
 }
 
+/**
+ * LIVE_CLOUD_MODE as it is now. The Real-Tenant / Simulated-Lab toggle (`sources.setDataMode`)
+ * flips it at runtime, so approve, telemetry and the health payload read this, never the
+ * boot-time `config.liveCloudMode`.
+ */
+export function isLiveCloudMode(): boolean {
+  return mcpLiveCloudMode();
+}
+
 export function describeConfig() {
   return {
     repoRoot: REPO_ROOT,
     dotenvLoaded: DOTENV_FILES_LOADED,
-    liveCloudMode: config.liveCloudMode,
+    liveCloudMode: isLiveCloudMode(),
+    bootLiveCloudMode: config.liveCloudMode,
     forceLocal: config.forceLocal,
     mcpTransport: config.mcpTransport,
     providers: Object.values(providers).map((p) => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, hasKey: p.hasKey })),

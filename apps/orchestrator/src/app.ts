@@ -25,7 +25,7 @@ import {
   type ScenarioListItem,
   type WorkbenchScenarioId,
 } from "@contextpane/catalog";
-import { config, describeConfig, providers } from "./config.ts";
+import { config, describeConfig, isLiveCloudMode, providers } from "./config.ts";
 import { buildScenarioBrief } from "./local/brief.ts";
 import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
 import { applyScenarioState } from "./local/lab.ts";
@@ -136,7 +136,7 @@ app.get("/api/health", async (c) => {
     service: "contextpane-orchestrator",
     version: "0.1.0",
     now: new Date().toISOString(),
-    liveCloudMode: config.liveCloudMode,
+    liveCloudMode: isLiveCloudMode(),
     dataMode: getPersistedDataMode(),
     forceLocal: config.forceLocal,
     providers: Object.values(providers).map((p) => ({ id: p.id, label: p.label, hasKey: p.hasKey })),
@@ -196,7 +196,7 @@ app.get("/api/scenarios", (c) => {
 app.get("/api/settings/data-mode", (c) => {
   return c.json({
     dataMode: getPersistedDataMode(),
-    liveCloudMode: config.liveCloudMode,
+    liveCloudMode: isLiveCloudMode(),
   });
 });
 
@@ -211,7 +211,7 @@ app.post("/api/settings/data-mode", (c) =>
     return c.json({
       ok: true,
       dataMode,
-      liveCloudMode: config.liveCloudMode,
+      liveCloudMode: isLiveCloudMode(),
       scenarios: listActiveScenarios(),
     });
   }),

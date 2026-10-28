@@ -1,7 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   azureIacService,
+  createAzureIacMcpServer,
   type AvdEstate,
   type AzurePolicyAndHealthRow,
   type IacResult,
@@ -10,8 +12,9 @@ import {
   type RegionalQuotaRow,
   type TerraformBaseline,
 } from "@contextpane/mcp-azure-iac";
-import { erpService, type ErpTenantContext } from "@contextpane/mcp-erp";
+import { createErpMcpServer, erpService, type ErpTenantContext } from "@contextpane/mcp-erp";
 import {
+  createMsGraphMcpServer,
   msgraphService,
   type CaPolicySummary,
   type CaPosture,
@@ -27,7 +30,7 @@ import {
   type WorkloadIdentityFixture,
 } from "@contextpane/mcp-msgraph";
 import { join } from "node:path";
-import { REPO_ROOT, config } from "../config.ts";
+import { REPO_ROOT, config, isLiveCloudMode } from "../config.ts";
 
 /**
  * One interface, two transports:
@@ -110,17 +113,38 @@ export const inProcessSources: McpDataSources = {
     getRegionalQuotas: (t) => azureIacService.getRegionalQuotas(t),
   },
   async status() {
-    return {
-      transport: "in-process",
-      dataMode: msgraphService.getDataMode(),
-      servers: [
-        { name: "contextpane-erp", ok: true, tools: 7 },
-        { name: "contextpane-msgraph", ok: true, tools: 15 },
-        { name: "contextpane-azure-iac", ok: true, tools: 11 },
-      ],
-    };
+    return { transport: "in-process", dataMode: msgraphService.getDataMode(), servers: await inProcessToolCounts() };
   },
 };
+
+/**
+ * In-process services skip the MCP wire for speed, but the tool counts the HUD shows come from
+ * each server's own registry: build the server once, link it over an in-memory transport and
+ * list its tools.
+ */
+let toolCounts: Promise<Array<{ name: string; ok: boolean; tools?: number; error?: string }>> | null = null;
+function inProcessToolCounts() {
+  toolCounts ??= Promise.all(
+    ([
+      ["contextpane-erp", createErpMcpServer],
+      ["contextpane-msgraph", createMsGraphMcpServer],
+      ["contextpane-azure-iac", createAzureIacMcpServer],
+    ] as const).map(async ([name, create]) => {
+      try {
+        const server = create();
+        const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+        const client = new Client({ name: "contextpane-orchestrator", version: "0.1.0" });
+        await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+        const { tools } = await client.listTools();
+        await client.close();
+        return { name, ok: true, tools: tools.length };
+      } catch (error) {
+        return { name, ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }),
+  );
+  return toolCounts;
+}
 
 /* ---------------------------------- stdio --------------------------------- */
 
@@ -147,7 +171,7 @@ class StdioPool {
           command,
           args,
           cwd: REPO_ROOT,
-          env: { ...(process.env as Record<string, string>), LIVE_CLOUD_MODE: String(config.liveCloudMode) },
+          env: { ...(process.env as Record<string, string>), LIVE_CLOUD_MODE: String(isLiveCloudMode()) },
           stderr: "pipe",
         });
         const client = new Client({ name: "contextpane-orchestrator", version: "0.1.0" });

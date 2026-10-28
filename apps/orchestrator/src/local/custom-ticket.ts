@@ -71,24 +71,25 @@ interface Vote {
   intent: TicketIntent;
   re: RegExp;
   components: CanvasComponentType[];
-  base: Partial<Record<ScenarioId, number>>;
+  /** Fixture pattern this intent points at: a UPN-disambiguation hint only, never a base scenario. */
+  upnHint: Partial<Record<ScenarioId, number>>;
 }
 
 const VOTES: Vote[] = [
-  { intent: "avd", re: /\bavd\b|virtual desktop|host ?pool|session host|vdpool|remote desktop|aadloginforwindows|0x801c0042|vmextensionprovisioningerror|usererrorguestagent|operationnotallowed|dracut|initramfs/i, components: ["IaCDriftBanner", "EntraSignInTimeline"], base: { "INC-4092": 3 } },
-  { intent: "nsg", re: /\bnsg\b|\b3389\b|\brdp\b|network security group|firewall\s+port|\bport\s+\d+|inbound rule|terraform|tag drift|\bhcl\b|aadds104|aadds501|no_proposal_chosen|ipsec|expressroute|asymmetric|requestdisallowedbypolicy|subnetisfull/i, components: ["IaCDriftBanner"], base: { "INC-4092": 3 } },
-  { intent: "license", re: /licen[cs]e|\bsku\b|spe_e[35]|\be[35]\b|\bseats?\b|countviolation|orphan|unlicensed|latearrivingdata|_timereceived|cost anomaly|orphaneddisks/i, components: ["LicenseDriftCard"], base: { "INC-4092": 1, "ANOM-LIC-101": 2 } },
-  { intent: "copilot", re: /copilot/i, components: ["LicenseDriftCard"], base: { "ANOM-LIC-101": 3 } },
-  { intent: "conditional-access", re: /conditional access|\bca-?\d{3}\b|cap-\d{3}|\bca policy|\bmfa\b|aadsts5300[03]|aadsts50020|anomaloustoken|impossible travel|largeobject|usercertificate|overquota|blocked by (a )?policy|sign-?in (fail|block|den)|require compliant/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 2 } },
-  { intent: "break-glass", re: /break[- ]?glass|bg-admin|emergency access/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 4 } },
-  { intent: "legacy-auth", re: /legacy auth|\bimap\b|smtp auth|basic auth|report[- ]only/i, components: ["EntraSignInTimeline"], base: { "ANOM-CA-204": 4 } },
-  { intent: "bitlocker", re: /bitlocker|0x87d1fde8|disk encryption|\bencrypt/i, components: ["IntuneDriftCard"], base: { "INC-4099": 4 } },
-  { intent: "intune-compliance", re: /\bintune\b|complian[ct]|check-?ins?\b|\bmdm\b|laptops?\b|\bdevices?\b|workstation|grace period/i, components: ["IntuneDriftCard"], base: { "INC-4099": 1, "ANOM-INT-309": 1 } },
-  { intent: "asr", re: /\basr\b|attack surface|lsass|credential stealing/i, components: ["IntuneDriftCard"], base: { "ANOM-INT-309": 4 } },
-  { intent: "firewall", re: /\bfirewall\b(?!\s+port)(?![^.]*\b3389\b)|enablefirewall|firewall profile|event\s*id\s*5156|eventid5156|filtering platform/i, components: ["IntuneDriftCard"], base: { "ANOM-INT-309": 3 } },
-  { intent: "workload-identity", re: /service principal|\bspn\b|app registration|workload identity|enterprise app|erp[- ]sync|sync app|\bowner\b|github actions|federat|pimroleoutsidegovernance|roleassignmentupdatenotpermitted|authorizationpermissionmismatch/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
-  { intent: "secret", re: /client secret|\bsecret\b|aadsts7000222|credential(s)? (has |have )?expired|expired (client )?(secret|credential|certificate)/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 4 } },
-  { intent: "oauth", re: /\boauth|consent|graph (api )?scope|api permission|overprivileged|least privilege|right[- ]size/i, components: ["EntraSignInTimeline"], base: { "ANOM-APP-401": 2 } },
+  { intent: "avd", re: /\bavd\b|virtual desktop|host ?pool|session host|vdpool|remote desktop|aadloginforwindows|0x801c0042|vmextensionprovisioningerror|usererrorguestagent|operationnotallowed|dracut|initramfs/i, components: ["IaCDriftBanner", "EntraSignInTimeline"], upnHint: { "INC-4092": 3 } },
+  { intent: "nsg", re: /\bnsg\b|\b3389\b|\brdp\b|network security group|firewall\s+port|\bport\s+\d+|inbound rule|terraform|tag drift|\bhcl\b|aadds104|aadds501|no_proposal_chosen|ipsec|expressroute|asymmetric|requestdisallowedbypolicy|subnetisfull/i, components: ["IaCDriftBanner"], upnHint: { "INC-4092": 3 } },
+  { intent: "license", re: /licen[cs]e|\bsku\b|spe_e[35]|\be[35]\b|\bseats?\b|countviolation|orphan|unlicensed|latearrivingdata|_timereceived|cost anomaly|orphaneddisks/i, components: ["LicenseDriftCard"], upnHint: { "INC-4092": 1, "ANOM-LIC-101": 2 } },
+  { intent: "copilot", re: /copilot/i, components: ["LicenseDriftCard"], upnHint: { "ANOM-LIC-101": 3 } },
+  { intent: "conditional-access", re: /conditional access|\bca-?\d{3}\b|cap-\d{3}|\bca policy|\bmfa\b|aadsts5300[03]|aadsts50020|anomaloustoken|impossible travel|largeobject|usercertificate|overquota|blocked by (a )?policy|sign-?in (fail|block|den)|require compliant/i, components: ["EntraSignInTimeline"], upnHint: { "ANOM-CA-204": 2 } },
+  { intent: "break-glass", re: /break[- ]?glass|bg-admin|emergency access/i, components: ["EntraSignInTimeline"], upnHint: { "ANOM-CA-204": 4 } },
+  { intent: "legacy-auth", re: /legacy auth|\bimap\b|smtp auth|basic auth|report[- ]only/i, components: ["EntraSignInTimeline"], upnHint: { "ANOM-CA-204": 4 } },
+  { intent: "bitlocker", re: /bitlocker|0x87d1fde8|disk encryption|\bencrypt/i, components: ["IntuneDriftCard"], upnHint: { "INC-4099": 4 } },
+  { intent: "intune-compliance", re: /\bintune\b|complian[ct]|check-?ins?\b|\bmdm\b|laptops?\b|\bdevices?\b|workstation|grace period/i, components: ["IntuneDriftCard"], upnHint: { "INC-4099": 1, "ANOM-INT-309": 1 } },
+  { intent: "asr", re: /\basr\b|attack surface|lsass|credential stealing/i, components: ["IntuneDriftCard"], upnHint: { "ANOM-INT-309": 4 } },
+  { intent: "firewall", re: /\bfirewall\b(?!\s+port)(?![^.]*\b3389\b)|enablefirewall|firewall profile|event\s*id\s*5156|eventid5156|filtering platform/i, components: ["IntuneDriftCard"], upnHint: { "ANOM-INT-309": 3 } },
+  { intent: "workload-identity", re: /service principal|\bspn\b|app registration|workload identity|enterprise app|erp[- ]sync|sync app|\bowner\b|github actions|federat|pimroleoutsidegovernance|roleassignmentupdatenotpermitted|authorizationpermissionmismatch/i, components: ["EntraSignInTimeline"], upnHint: { "ANOM-APP-401": 4 } },
+  { intent: "secret", re: /client secret|\bsecret\b|aadsts7000222|credential(s)? (has |have )?expired|expired (client )?(secret|credential|certificate)/i, components: ["EntraSignInTimeline"], upnHint: { "ANOM-APP-401": 4 } },
+  { intent: "oauth", re: /\boauth|consent|graph (api )?scope|api permission|overprivileged|least privilege|right[- ]size/i, components: ["EntraSignInTimeline"], upnHint: { "ANOM-APP-401": 2 } },
 ];
 
 const COMPONENT_ORDER: CanvasComponentType[] = ["LicenseDriftCard", "EntraSignInTimeline", "IntuneDriftCard", "IaCDriftBanner"];
@@ -206,13 +207,15 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
   const tenantId = detectTenant(text, input.customerName);
   const intents: TicketIntent[] = [];
   const components = new Set<CanvasComponentType>();
-  const base: Partial<Record<ScenarioId, number>> = {};
+  // Pattern votes never pick a base scenario (custom tickets stand alone); they only decide which
+  // UPN to keep when one display name matches several fixture people (see dedupeUpns).
+  const upnHint: Partial<Record<ScenarioId, number>> = {};
   const why: string[] = [];
   for (const v of VOTES) {
     if (!v.re.test(text)) continue;
     intents.push(v.intent);
     for (const c of v.components) components.add(c);
-    for (const [id, n] of Object.entries(v.base)) base[id as ScenarioId] = (base[id as ScenarioId] ?? 0) + (n ?? 0);
+    for (const [id, n] of Object.entries(v.upnHint)) upnHint[id as ScenarioId] = (upnHint[id as ScenarioId] ?? 0) + (n ?? 0);
     why.push(v.intent);
   }
   const entities: ExtractedEntity[] = [];
@@ -231,18 +234,17 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
   }
   for (const m of text.matchAll(/\bAADSTS\d{4,7}\b/gi)) {
     const code = m[0].toUpperCase();
-    const cat = code === "AADSTS7000222" ? "identity" : "identity";
-    push({ id: code, label: code, type: "errorCode", category: cat, resolvedTo: code, source: "mcp-msgraph · GET /auditLogs/signIns (status/errorCode)", confidence: 1 });
-    if (code === "AADSTS7000222") { base["ANOM-APP-401"] = (base["ANOM-APP-401"] ?? 0) + 4; components.add("EntraSignInTimeline"); }
-    else if (code === "AADSTS53000") { base["INC-4099"] = (base["INC-4099"] ?? 0) + 2; components.add("EntraSignInTimeline"); }
-    else if (code === "AADSTS53003") { base["INC-4092"] = (base["INC-4092"] ?? 0) + 3; components.add("EntraSignInTimeline"); }
-    else if (code === "AADSTS50020") { base["ANOM-CA-204"] = (base["ANOM-CA-204"] ?? 0) + 3; components.add("EntraSignInTimeline"); }
+    push({ id: code, label: code, type: "errorCode", category: "identity", resolvedTo: code, source: "mcp-msgraph · GET /auditLogs/signIns (status/errorCode)", confidence: 1 });
+    if (code === "AADSTS7000222") { upnHint["ANOM-APP-401"] = (upnHint["ANOM-APP-401"] ?? 0) + 4; components.add("EntraSignInTimeline"); }
+    else if (code === "AADSTS53000") { upnHint["INC-4099"] = (upnHint["INC-4099"] ?? 0) + 2; components.add("EntraSignInTimeline"); }
+    else if (code === "AADSTS53003") { upnHint["INC-4092"] = (upnHint["INC-4092"] ?? 0) + 3; components.add("EntraSignInTimeline"); }
+    else if (code === "AADSTS50020") { upnHint["ANOM-CA-204"] = (upnHint["ANOM-CA-204"] ?? 0) + 3; components.add("EntraSignInTimeline"); }
   }
   for (const m of text.matchAll(/\b0x87D[0-9A-F]{5}\b/gi)) {
     const code = m[0].toUpperCase().replace("0X", "0x");
     push({ id: code, label: code, type: "errorCode", category: "intune", resolvedTo: code, source: "mcp-msgraph · deviceManagement/deviceConfigurationDeviceStateSummaries", confidence: 1 });
     components.add("IntuneDriftCard");
-    base["INC-4099"] = (base["INC-4099"] ?? 0) + 3;
+    upnHint["INC-4099"] = (upnHint["INC-4099"] ?? 0) + 3;
   }
   if (/countviolation/i.test(text)) push({ id: "CountViolation", label: "CountViolation", type: "errorCode", category: "licensing", resolvedTo: "CountViolation", source: "mcp-msgraph · GET /groups/{id}?$select=licenseProcessingState", confidence: 1 });
   const EXTRA_ERROR_CODES: Array<[RegExp, string, ExtractedEntity["category"], string, ScenarioId, CanvasComponentType]> = [
@@ -270,7 +272,7 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
   for (const [re, code, cat, source, scId, comp] of EXTRA_ERROR_CODES) {
     if (!re.test(text)) continue;
     push({ id: code, label: code, type: "errorCode", category: cat, resolvedTo: code, source, confidence: 1 });
-    base[scId] = (base[scId] ?? 0) + 3;
+    upnHint[scId] = (upnHint[scId] ?? 0) + 3;
     components.add(comp);
   }
   for (const [re, sku] of SKU_WORDS) if (re.test(text)) push({ id: sku, label: sku === "Microsoft_365_Copilot" ? "Copilot" : sku, type: "sku", category: "licensing", resolvedTo: sku, source: "mcp-msgraph · GET /subscribedSkus", confidence: 1 });
@@ -280,7 +282,7 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
     const knownScope = KNOWN_SCOPES.has(scope);
     push({ id: scope, label: scope, type: "permission", category: "identity", resolvedTo: knownScope ? scope : null, source: knownScope ? "mcp-msgraph · servicePrincipals/{id}/appRoleAssignments" : "ticket text (Graph permission scope)", confidence: knownScope ? 1 : 0.8 });
     components.add("EntraSignInTimeline");
-    base["ANOM-APP-401"] = (base["ANOM-APP-401"] ?? 0) + 1;
+    upnHint["ANOM-APP-401"] = (upnHint["ANOM-APP-401"] ?? 0) + 1;
   }
   for (const m of text.matchAll(/\b(?:CONTOSO|FAB|FABRIKAM)-[A-Z]{2,4}-\d{3,4}\b/gi)) {
     const name = m[0].toUpperCase();
@@ -299,16 +301,16 @@ export function extractTicket(input: CustomTicketRequest): TicketExtraction {
     if (k.type === "upn") components.add(components.has("LicenseDriftCard") ? "LicenseDriftCard" : "EntraSignInTimeline");
     if (k.category === "azure") components.add("IaCDriftBanner");
     if (k.category === "intune") components.add("IntuneDriftCard");
-    if (k.id === WORKLOAD_IDENTITY.spn.displayName || k.id === WORKLOAD_IDENTITY.owner.upn) base["ANOM-APP-401"] = (base["ANOM-APP-401"] ?? 0) + 2;
-    if (k.id === CA_POSTURE.breakGlassGroup || k.id === CA_POSTURE.breakGlassAccount) base["ANOM-CA-204"] = (base["ANOM-CA-204"] ?? 0) + 2;
-    if (k.id === LICENSE_ANOMALY.groupName) base["ANOM-LIC-101"] = (base["ANOM-LIC-101"] ?? 0) + 2;
+    if (k.id === WORKLOAD_IDENTITY.spn.displayName || k.id === WORKLOAD_IDENTITY.owner.upn) upnHint["ANOM-APP-401"] = (upnHint["ANOM-APP-401"] ?? 0) + 2;
+    if (k.id === CA_POSTURE.breakGlassGroup || k.id === CA_POSTURE.breakGlassAccount) upnHint["ANOM-CA-204"] = (upnHint["ANOM-CA-204"] ?? 0) + 2;
+    if (k.id === LICENSE_ANOMALY.groupName) upnHint["ANOM-LIC-101"] = (upnHint["ANOM-LIC-101"] ?? 0) + 2;
   }
   // Custom tickets stand on their own synthesized brief, cards, and remediation scripts without inheriting INC-4092 or INC-4099.
   const baseScenarioId: ScenarioId | null = null;
   if (tenantId === "tenant-fabrikam-02") components.delete("IaCDriftBanner");
   const ordered = COMPONENT_ORDER.filter((c) => components.has(c));
   const finalComponents: CanvasComponentType[] = ordered.length ? ordered : ["SynthesizedDynamicCard"];
-  const rankedHint = (Object.entries(base) as Array<[ScenarioId, number]>).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const rankedHint = (Object.entries(upnHint) as Array<[ScenarioId, number]>).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const finalEntities = dedupeUpns(entities, lower, rankedHint);
   const matched = finalEntities.filter((e) => e.resolvedTo).length;
   const rationale = `${why.length ? `intents ${why.join(", ")}` : "no intent keywords"}; ${matched}/${finalEntities.length} entities resolved against ${tenantId}; standalone custom ticket (baseScenarioId: null)`.slice(0, 300);

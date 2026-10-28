@@ -1,5 +1,5 @@
 import { RouterTelemetrySchema, type FallbackStep, type ProviderId, type RouterTelemetry, type RouterTier } from "@contextpane/catalog";
-import { config } from "./config.ts";
+import { config, isLiveCloudMode } from "./config.ts";
 
 /**
  * Router telemetry bus. Every tier reports exactly one event per request; the
@@ -40,7 +40,7 @@ class TelemetryBus {
     const event = RouterTelemetrySchema.parse({
       ...input,
       timestamp: input.timestamp ?? new Date().toISOString(),
-      liveCloudMode: config.liveCloudMode,
+      liveCloudMode: isLiveCloudMode(),
     });
     this.history.push(event);
     if (this.history.length > 200) this.history.shift();
@@ -108,7 +108,7 @@ class TelemetryBus {
       tier2Baseline: this.tier2Baseline,
       tiers,
       subscribers: this.listeners.size,
-      liveCloudMode: config.liveCloudMode,
+      liveCloudMode: isLiveCloudMode(),
     };
   }
 }
