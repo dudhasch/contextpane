@@ -330,9 +330,69 @@ export interface TelemetryStats {
 
 export interface OpenWeightInference { grammarConstrained: boolean; kvCacheQuant: string; speculativeDraftMax: number; speculativeDraftMin: number; maxContainers: number }
 
+export type McpDataMode = "real-tenant" | "simulated-lab";
+
+export interface FreeRoamEntityItem {
+  id: string;
+  label: string;
+  sublabel: string;
+  badge: string;
+  tone: "default" | "warning" | "critical" | "success";
+  queryPrompt: string;
+}
+
+export interface FreeRoamCategory {
+  id: string;
+  title: string;
+  source: string;
+  count: number;
+  items: FreeRoamEntityItem[];
+}
+
+export interface FreeRoamInventory {
+  dataMode: McpDataMode;
+  tenant: {
+    tenantId: string;
+    displayName: string;
+    verifiedDomain: string;
+    entraTenantId: string;
+  };
+  sourcesUsed: Record<string, string>;
+  fallbackReasons: string[];
+  summary: {
+    users: number;
+    groups: number;
+    skuPools: number;
+    caPolicies: number;
+    signInEvents: number;
+    intuneDevices: number;
+    azureResources: number;
+    azurePolicies: number;
+  };
+  categories: FreeRoamCategory[];
+  gatheredAt: string;
+}
+
+export interface AnomalyScanResponse {
+  dataMode: McpDataMode;
+  scannedAt: string;
+  detectedCount: number;
+  newlyRegistered: ScenarioListItem[];
+  findings: Array<{
+    id: string;
+    category: string;
+    severity: "critical" | "warning";
+    title: string;
+    detail: string;
+    source: string;
+  }>;
+  scenarios: ScenarioListItem[];
+}
+
 export interface HealthResponse {
   ok: boolean;
   liveCloudMode: boolean;
+  dataMode?: McpDataMode;
   forceLocal: boolean;
   providers: Array<{ id: string; label: string; hasKey: boolean }>;
   mcp: { transport: string; servers: Array<{ name: string; ok: boolean; tools?: number }> };
@@ -460,6 +520,20 @@ export const api = {
   reopenTicket: (scenarioId: string) => request<{ ok: boolean; scenarioId: string; audit: AuditEntry }>("/api/tickets/reopen", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   dynamicCatalog: () => request<DynamicCatalogResponse>("/api/dynamic-catalog"),
   clearDynamicCatalog: () => request<{ ok: boolean; removed: number }>("/api/dynamic-catalog/clear", { method: "POST", body: "{}" }),
+  getDataMode: () => request<{ dataMode: McpDataMode; liveCloudMode: boolean }>("/api/settings/data-mode"),
+  setDataMode: (dataMode: McpDataMode) =>
+    request<{ ok: boolean; dataMode: McpDataMode; liveCloudMode: boolean; scenarios: ScenarioListItem[] }>("/api/settings/data-mode", {
+      method: "POST",
+      body: JSON.stringify({ dataMode }),
+    }),
+  freeRoamInventory: (tenantId?: string) =>
+    request<FreeRoamInventory>(`/api/free-roam/inventory${tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ""}`),
+  freeRoamSpawn: (body: { prompt: string; refinementText?: string; scope?: "hybrid" | "tenant-only" | "knowledge"; viewMode?: ContextViewMode; tenantId?: string }) =>
+    request<ExploreSelectionResponse>("/api/free-roam/spawn", { method: "POST", body: JSON.stringify(body) }),
+  freeRoamRemediate: (body: { prompt: string; title?: string; scriptPreview?: string; tenantId?: string }) =>
+    request<RemediateResponse>("/api/free-roam/remediate", { method: "POST", body: JSON.stringify(body) }),
+  scanAnomalies: (tenantId?: string) =>
+    request<AnomalyScanResponse>("/api/anomalies/scan", { method: "POST", body: JSON.stringify(tenantId ? { tenantId } : {}) }),
 };
 
 /* -------------------------------------------------------------------------- */

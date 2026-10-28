@@ -1,4 +1,4 @@
-import { isScenarioId, type IntuneSettingDrift } from "@contextpane/catalog";
+import { isCustomScenarioId, isScenarioId, type IntuneSettingDrift } from "@contextpane/catalog";
 import { INTUNE_SCENARIOS, type IntuneScenarioKey } from "@contextpane/mcp-msgraph";
 
 /**
@@ -16,7 +16,7 @@ function isIntuneKey(scenarioId: string): scenarioId is IntuneScenarioKey {
 }
 
 function assertKnownScenario(scenarioId: string): void {
-  if (!isIntuneKey(scenarioId) && !isScenarioId(scenarioId)) {
+  if (!isIntuneKey(scenarioId) && !isScenarioId(scenarioId) && !isCustomScenarioId(scenarioId)) {
     throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
   }
 }
@@ -24,7 +24,7 @@ function assertKnownScenario(scenarioId: string): void {
 /** Settings carrying CSP fields (cspUri / registryPath / tattooedOnUnassign). */
 export function getCspMetadata(scenarioId: string): IntuneSettingDrift[] {
   if (!isIntuneKey(scenarioId)) {
-    if (isScenarioId(scenarioId)) return [];
+    if (isScenarioId(scenarioId) || isCustomScenarioId(scenarioId)) return [];
     throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
   }
   return INTUNE_SCENARIOS[scenarioId].settings

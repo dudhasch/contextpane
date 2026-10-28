@@ -1,10 +1,15 @@
-import { Activity, Building2, FilePlus2, Mic, Pin, PinOff, RotateCcw } from "lucide-react";
+import { Activity, Building2, Compass, Database, FilePlus2, Mic, Pin, PinOff, RotateCcw } from "lucide-react";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { WorkQueue } from "./WorkQueue";
 
-/** Operational top bar: the unified work queue, recipe, voice, drift reset; everything meta lives behind System & Audit. */
+/** Operational top bar: the unified work queue, Free-Roam startpage, MCP Data Mode toggle, recipe, voice, drift reset; everything meta lives behind System & Audit. */
 export function TopBar() {
+  const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
+  const openFreeRoam = useWorkbench((s) => s.openFreeRoam);
+  const dataMode = useWorkbench((s) => s.dataMode);
+  const togglingDataMode = useWorkbench((s) => s.togglingDataMode);
+  const setDataMode = useWorkbench((s) => s.setDataMode);
   const activeRecipeId = useWorkbench((s) => s.activeRecipeId);
   const pinRecipe = useWorkbench((s) => s.pinRecipe);
   const unpinRecipe = useWorkbench((s) => s.unpinRecipe);
@@ -21,15 +26,29 @@ export function TopBar() {
   const openCount = useWorkbench((s) => s.scenarios.filter((x) => !x.resolved && !s.convergence[x.scenarioId]).length);
 
   return (
-    <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
-      <div className="flex shrink-0 items-center gap-2 pr-1">
+    <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3">
+      <button
+        type="button"
+        onClick={() => openFreeRoam()}
+        title="Return to Free-Roam Startpage (Knowledge & Tenant Explorer)"
+        className="flex shrink-0 items-center gap-2 pr-1 text-left transition-opacity hover:opacity-85"
+      >
         <span className="grid size-6 place-items-center rounded-md bg-primary/15 text-primary">
           <Building2 className="size-3.5" />
         </span>
         <span className="text-[13px] font-semibold tracking-tight">ContextPane</span>
-      </div>
+      </button>
 
-      <div className="flex min-w-0 shrink items-center gap-2">
+      <div className="flex min-w-0 shrink items-center gap-1.5">
+        <Button
+          variant={freeRoamOpen ? "primary" : "outline"}
+          icon={<Compass />}
+          onClick={() => openFreeRoam()}
+          title="Open Free-Roam Startpage — dynamically spawn any dashboard without a ticket"
+          data-testid="topbar-freeroam-button"
+        >
+          Free-Roam Startpage
+        </Button>
         <WorkQueue />
         <span className="shrink-0 font-mono text-[10.5px] text-faint" title="Open work items in the queue" data-testid="queue-open-count">
           {openCount} open
@@ -46,6 +65,25 @@ export function TopBar() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          disabled={togglingDataMode}
+          onClick={() => void setDataMode(dataMode === "real-tenant" ? "simulated-lab" : "real-tenant")}
+          title={
+            dataMode === "real-tenant"
+              ? "Active: Strict Real Tenant Mode (MCP queries live Microsoft Graph & Azure ARM only, zero simulated fallback). Click to switch to Simulated Lab."
+              : "Active: Simulated Lab Mode (MCP includes seeded Contoso/Fabrikam lab fixtures). Click to enforce Strict Real Tenant Mode."
+          }
+          data-testid="topbar-datamode-toggle"
+          className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 font-mono text-[11px] font-semibold transition-colors ${
+            dataMode === "real-tenant"
+              ? "border-healthy/50 bg-healthy/15 text-healthy hover:bg-healthy/25"
+              : "border-border bg-elevated text-muted hover:border-primary/40 hover:text-text"
+          }`}
+        >
+          <Database className="size-3.5" />
+          <span>{dataMode === "real-tenant" ? "Real Tenant Only" : "Simulated Lab"}</span>
+        </button>
         {activeRecipeId ? (
           <Button variant="primary" icon={<PinOff />} onClick={unpinRecipe} title="Release the pinned recipe (p)">
             Recipe Pinned

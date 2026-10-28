@@ -607,3 +607,304 @@ export async function assignDeviceConfigurationLive(profileId: string, groupId: 
     timeoutMs,
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* Real Tenant Mode (Unfiltered Graph Reads — Zero Seeded Manifest Fallback)  */
+/* -------------------------------------------------------------------------- */
+
+export interface RealTenantUserRow {
+  objectId: string;
+  upn: string;
+  displayName: string;
+  jobTitle: string | null;
+  department: string | null;
+  usageLocation: string | null;
+  accountEnabled: boolean;
+  assignedSkuIds: string[];
+}
+
+export interface RealTenantGroupRow {
+  objectId: string;
+  displayName: string;
+  description: string | null;
+  mailNickname: string | null;
+  securityEnabled: boolean;
+  groupTypes: string[];
+  membershipRule: string | null;
+  memberCount: number;
+}
+
+export interface RealTenantUsersAndSkusResult {
+  tenantId: string;
+  tenantDisplayName: string;
+  verifiedDomain: string;
+  users: RealTenantUserRow[];
+  skus: LiveSubscribedSku[];
+  groups: RealTenantGroupRow[];
+}
+
+export async function fetchRealTenantUsersAndSkusLive(timeoutMs: number): Promise<RealTenantUsersAndSkusResult> {
+  const responses = await graphBatch(
+    [
+      { id: "org", url: "/organization?$select=id,displayName,verifiedDomains" },
+      { id: "users", url: "/users?$select=id,userPrincipalName,displayName,jobTitle,department,usageLocation,accountEnabled,assignedLicenses&$top=100" },
+      { id: "skus", url: "/subscribedSkus?$select=skuId,skuPartNumber,consumedUnits,prepaidUnits" },
+      { id: "groups", url: "/groups?$select=id,displayName,description,mailNickname,securityEnabled,groupTypes,membershipRule&$top=100" },
+    ],
+    timeoutMs,
+  );
+
+  const orgRes = responses.get("org");
+  const orgFirst = (orgRes && orgRes.status < 300 ? (orgRes.body?.value ?? []) : [])[0] as
+    | { id?: string; displayName?: string; verifiedDomains?: Array<{ name?: string; isDefault?: boolean }> }
+    | undefined;
+  const defaultDomain = orgFirst?.verifiedDomains?.find((d) => d.isDefault)?.name ?? orgFirst?.verifiedDomains?.[0]?.name ?? "tenant.onmicrosoft.com";
+
+  const usersBody = okBody(responses, "users");
+  const rawUsers = (usersBody.value ?? []) as Array<GraphUser & { accountEnabled?: boolean }>;
+  const skusRes = responses.get("skus");
+  const rawSkus = (skusRes && skusRes.status < 300 ? (skusRes.body?.value ?? []) : []) as Array<{
+    skuId: string;
+    skuPartNumber: string;
+    consumedUnits: number;
+    prepaidUnits?: { enabled?: number };
+  }>;
+  const groupsRes = responses.get("groups");
+  const rawGroups = (groupsRes && groupsRes.status < 300 ? (groupsRes.body?.value ?? []) : []) as Array<{
+    id: string;
+    displayName: string;
+    description?: string | null;
+    mailNickname?: string | null;
+    securityEnabled?: boolean;
+    groupTypes?: string[];
+    membershipRule?: string | null;
+  }>;
+
+  return {
+    tenantId: orgFirst?.id ?? "",
+    tenantDisplayName: orgFirst?.displayName ?? "Live Microsoft Entra Tenant",
+    verifiedDomain: defaultDomain,
+    users: rawUsers.map((u) => ({
+      objectId: u.id,
+      upn: u.userPrincipalName,
+      displayName: u.displayName,
+      jobTitle: u.jobTitle ?? null,
+      department: u.department ?? null,
+      usageLocation: u.usageLocation ?? null,
+      accountEnabled: u.accountEnabled !== false,
+      assignedSkuIds: (u.assignedLicenses ?? []).map((l) => l.skuId),
+    })),
+    skus: rawSkus.map((s) => ({
+      skuId: s.skuId,
+      skuPartNumber: s.skuPartNumber,
+      consumedUnits: s.consumedUnits ?? 0,
+      enabledUnits: s.prepaidUnits?.enabled ?? 0,
+    })),
+    groups: rawGroups.map((g) => ({
+      objectId: g.id,
+      displayName: g.displayName,
+      description: g.description ?? null,
+      mailNickname: g.mailNickname ?? null,
+      securityEnabled: g.securityEnabled !== false,
+      groupTypes: g.groupTypes ?? [],
+      membershipRule: g.membershipRule ?? null,
+      memberCount: 0,
+    })),
+  };
+}
+
+export async function fetchAllConditionalAccessPoliciesLive(timeoutMs: number): Promise<{
+  policies: LiveCaPolicy[];
+  groupNamesById: Map<string, string>;
+}> {
+  const [policiesRes, groupsRes] = await Promise.all([
+    delegatedFetch("/identity/conditionalAccess/policies", { method: "GET" }, timeoutMs)
+      .catch(() => graphFetch("/identity/conditionalAccess/policies", { method: "GET" }, timeoutMs)) as Promise<{ value?: GraphPolicy[] }>,
+    graphFetch("/groups?$select=id,displayName&$top=100", { method: "GET" }, timeoutMs)
+      .catch(() => ({ value: [] })) as Promise<{ value?: Array<{ id: string; displayName: string }> }>,
+  ]);
+  const groupNamesById = new Map<string, string>();
+  for (const g of groupsRes.value ?? []) {
+    groupNamesById.set(g.id, g.displayName);
+  }
+  return {
+    policies: (policiesRes.value ?? []).map(mapPolicy),
+    groupNamesById,
+  };
+}
+
+export async function fetchAllSignInEventsLive(upn: string | undefined, top: number, timeoutMs: number): Promise<LiveSignIn[]> {
+  const capped = Math.max(1, Math.min(top, 100));
+  const query = upn
+    ? `/auditLogs/signIns?$filter=${encodeURIComponent(`userPrincipalName eq '${upn.replace(/'/g, "''")}'`)}&$top=${capped}`
+    : `/auditLogs/signIns?$top=${capped}`;
+  const body = (await delegatedFetch(query, { method: "GET" }, timeoutMs)
+    .catch(() => graphFetch(query, { method: "GET" }, timeoutMs))) as { value?: GraphSignIn[] };
+  return (body.value ?? []).map((e) => ({
+    id: e.id,
+    createdDateTime: e.createdDateTime,
+    userPrincipalName: e.userPrincipalName,
+    userDisplayName: e.userDisplayName,
+    appId: e.appId,
+    appDisplayName: e.appDisplayName,
+    clientAppUsed: e.clientAppUsed ?? null,
+    ipAddress: e.ipAddress ?? null,
+    city: e.location?.city ?? null,
+    countryOrRegion: e.location?.countryOrRegion ?? null,
+    deviceDisplayName: e.deviceDetail?.displayName ?? null,
+    operatingSystem: e.deviceDetail?.operatingSystem ?? null,
+    isCompliant: e.deviceDetail?.isCompliant ?? null,
+    trustType: e.deviceDetail?.trustType ?? null,
+    errorCode: e.status?.errorCode ?? 0,
+    failureReason: e.status?.failureReason ?? null,
+    conditionalAccessStatus: e.conditionalAccessStatus ?? null,
+    appliedPolicies: (e.appliedConditionalAccessPolicies ?? []).map((p) => ({
+      id: p.id,
+      displayName: p.displayName,
+      result: p.result,
+      enforcedGrantControls: p.enforcedGrantControls ?? [],
+    })),
+  }));
+}
+
+export async function fetchSecurityGroupsLive(timeoutMs: number): Promise<RealTenantGroupRow[]> {
+  const groupsBody = (await graphFetch(
+    "/groups?$select=id,displayName,description,mailNickname,securityEnabled,groupTypes,membershipRule,assignedLicenses&$top=50",
+    { method: "GET" },
+    timeoutMs,
+  )) as {
+    value?: Array<{
+      id: string;
+      displayName: string;
+      description?: string | null;
+      mailNickname?: string | null;
+      securityEnabled?: boolean;
+      groupTypes?: string[];
+      membershipRule?: string | null;
+    }>;
+  };
+  const rawGroups = groupsBody.value ?? [];
+  const countBatch = rawGroups.slice(0, 20).map((g, i) => ({
+    id: `m${i}`,
+    url: `/groups/${g.id}/members?$select=id&$top=100`,
+  }));
+  const memberRes = countBatch.length ? await graphBatch(countBatch, timeoutMs).catch(() => new Map<string, BatchResponse>()) : new Map<string, BatchResponse>();
+  return rawGroups.map((g, i) => {
+    const mr = memberRes.get(`m${i}`);
+    const count = mr && mr.status < 300 && Array.isArray(mr.body?.value) ? mr.body.value.length : 0;
+    return {
+      objectId: g.id,
+      displayName: g.displayName,
+      description: g.description ?? null,
+      mailNickname: g.mailNickname ?? null,
+      securityEnabled: g.securityEnabled !== false,
+      groupTypes: g.groupTypes ?? [],
+      membershipRule: g.membershipRule ?? null,
+      memberCount: count,
+    };
+  });
+}
+
+export interface RealAppRegistrationRow {
+  objectId: string;
+  appId: string;
+  displayName: string;
+  signInAudience: string;
+  passwordCredentials: Array<{ keyId: string; displayName: string | null; endDateTime: string | null }>;
+  keyCredentialsCount: number;
+  requiredResourceAccessCount: number;
+}
+
+export async function fetchRealApplicationsLive(timeoutMs: number): Promise<RealAppRegistrationRow[]> {
+  const body = (await graphFetch(
+    "/applications?$select=id,appId,displayName,signInAudience,passwordCredentials,keyCredentials,requiredResourceAccess&$top=50",
+    { method: "GET" },
+    timeoutMs,
+  )) as {
+    value?: Array<{
+      id: string;
+      appId: string;
+      displayName: string;
+      signInAudience?: string;
+      passwordCredentials?: Array<{ keyId?: string; displayName?: string | null; endDateTime?: string | null }>;
+      keyCredentials?: unknown[];
+      requiredResourceAccess?: unknown[];
+    }>;
+  };
+  return (body.value ?? []).map((a) => ({
+    objectId: a.id,
+    appId: a.appId,
+    displayName: a.displayName,
+    signInAudience: a.signInAudience ?? "AzureADMyOrg",
+    passwordCredentials: (a.passwordCredentials ?? []).map((c) => ({
+      keyId: c.keyId ?? "",
+      displayName: c.displayName ?? null,
+      endDateTime: c.endDateTime ?? null,
+    })),
+    keyCredentialsCount: (a.keyCredentials ?? []).length,
+    requiredResourceAccessCount: (a.requiredResourceAccess ?? []).length,
+  }));
+}
+
+export interface RealIntuneOverviewResult {
+  policies: Array<{ id: string; name: string; kind: "Settings Catalog" | "Device Configuration" }>;
+  devices: Array<{
+    deviceId: string;
+    deviceName: string;
+    upn: string;
+    osVersion: string;
+    complianceState: "Compliant" | "NonCompliant" | "InGracePeriod" | "Conflict";
+    lastCheckIn: string;
+  }>;
+}
+
+export async function fetchRealIntuneOverviewLive(timeoutMs: number): Promise<RealIntuneOverviewResult> {
+  const [catalogRes, configRes, devicesRes] = await Promise.all([
+    delegatedFetch(`${BETA}/deviceManagement/configurationPolicies?$select=id,name&$top=50`, { method: "GET" }, timeoutMs)
+      .catch(() => ({ value: [] })) as Promise<{ value?: Array<{ id: string; name: string }> }>,
+    delegatedFetch(`/deviceManagement/deviceConfigurations?$select=id,displayName&$top=50`, { method: "GET" }, timeoutMs)
+      .catch(() => ({ value: [] })) as Promise<{ value?: Array<{ id: string; displayName: string }> }>,
+    delegatedFetch(
+      `/deviceManagement/managedDevices?$select=id,deviceName,userPrincipalName,operatingSystem,osVersion,complianceState,lastSyncDateTime&$top=50`,
+      { method: "GET" },
+      timeoutMs,
+    ).catch(() => ({ value: [] })) as Promise<{
+      value?: Array<{
+        id: string;
+        deviceName?: string;
+        userPrincipalName?: string;
+        operatingSystem?: string;
+        osVersion?: string;
+        complianceState?: string;
+        lastSyncDateTime?: string;
+      }>;
+    }>,
+  ]);
+
+  const policies: RealIntuneOverviewResult["policies"] = [
+    ...(catalogRes.value ?? []).map((p) => ({ id: p.id, name: p.name, kind: "Settings Catalog" as const })),
+    ...(configRes.value ?? []).map((c) => ({ id: c.id, name: c.displayName, kind: "Device Configuration" as const })),
+  ];
+
+  const devices: RealIntuneOverviewResult["devices"] = (devicesRes.value ?? []).map((d) => {
+    const rawState = (d.complianceState ?? "").toLowerCase();
+    const complianceState =
+      rawState === "compliant"
+        ? "Compliant"
+        : rawState === "ingraceperiod"
+          ? "InGracePeriod"
+          : rawState === "conflict"
+            ? "Conflict"
+            : "NonCompliant";
+    return {
+      deviceId: d.id,
+      deviceName: d.deviceName ?? d.id,
+      upn: d.userPrincipalName ?? "",
+      osVersion: [d.operatingSystem, d.osVersion].filter(Boolean).join(" ") || "Windows 11",
+      complianceState,
+      lastCheckIn: d.lastSyncDateTime ?? new Date().toISOString(),
+    };
+  });
+
+  return { policies, devices };
+}

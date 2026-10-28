@@ -3,8 +3,31 @@ import { join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { AzurePolicyState, HostPool, RogueSecurityRule, Severity, SourceRef, TagDrift } from "@contextpane/catalog";
 import { parseNsgResources, renderNsgHcl, ruleSignature, type NsgRule, type NsgState, type ParsedNsg } from "./hcl.ts";
-import { deleteNsgRuleLive, fetchAzContextLive, fetchNsgLive, patchNsgTagsLive, putNsgRuleLive } from "./live.ts";
-import { getManifestAzure, getManifestTenant, isLiveCloudMode, resolveIacDir, type ManifestAzureEstate, type ManifestAzureTenant } from "./shared.ts";
+import {
+  deleteNsgRuleLive,
+  fetchAllNsgsLive,
+  fetchAzContextLive,
+  fetchNsgLive,
+  fetchRealArmResourcesLive,
+  fetchRealAvdHostPoolsLive,
+  fetchRealAzurePolicyAssignmentsLive,
+  fetchRealComputeQuotasLive,
+  patchNsgTagsLive,
+  putNsgRuleLive,
+  resolveRealSubscriptionIdLive,
+} from "./live.ts";
+import {
+  getManifestAzure,
+  getManifestTenant,
+  getMcpDataMode,
+  isLiveCloudMode,
+  isStrictRealTenantMode,
+  resolveIacDir,
+  setMcpDataMode,
+  type ManifestAzureEstate,
+  type ManifestAzureTenant,
+  type McpDataMode,
+} from "./shared.ts";
 
 export type IacSource = "live-azure" | "seeded-manifest";
 
@@ -220,10 +243,47 @@ export function computeDrift(tenantId: string, tenant: AzureTenant, expected: Pa
 
 export const azureIacService = {
   getMode() {
-    return { liveCloudMode: isLiveCloudMode(), liveCapableTenants: [...LIVE_CAPABLE_TENANTS], iacDir: resolveIacDir() };
+    return {
+      liveCloudMode: isLiveCloudMode(),
+      dataMode: getMcpDataMode(),
+      liveCapableTenants: [...LIVE_CAPABLE_TENANTS],
+      iacDir: resolveIacDir(),
+    };
+  },
+
+  getDataMode(): McpDataMode {
+    return getMcpDataMode();
+  },
+
+  setDataMode(mode: McpDataMode): { dataMode: McpDataMode; liveCloudMode: boolean } {
+    const updated = setMcpDataMode(mode);
+    return { dataMode: updated, liveCloudMode: isLiveCloudMode() };
   },
 
   async getAzContext() {
+    if (isStrictRealTenantMode()) {
+      const started = performance.now();
+      try {
+        const subId = await resolveRealSubscriptionIdLive(undefined, LIVE_TIMEOUT_MS);
+        const ctx = await fetchAzContextLive(subId, LIVE_TIMEOUT_MS);
+        return {
+          source: "live-azure" as const,
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: ctx,
+        };
+      } catch (error) {
+        return {
+          source: "live-azure" as const,
+          liveCloudMode: true,
+          fallbackReason: error instanceof Error ? error.message : String(error),
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: { subscriptionId: "", subscriptionName: "", tenantId: "", account: "" },
+        };
+      }
+    }
     return withSource(
       "tenant-contoso-01",
       () => fetchAzContextLive(getManifestTenant("tenant-contoso-01").subscriptionId, LIVE_TIMEOUT_MS),
@@ -236,6 +296,50 @@ export const azureIacService = {
   },
 
   async getNsgState(tenantId: string): Promise<IacResult<NsgState & { id: string }>> {
+    if (isStrictRealTenantMode()) {
+      const started = performance.now();
+      let preferredSub: string | undefined;
+      try {
+        preferredSub = getManifestTenant(tenantId).subscriptionId;
+      } catch {
+        preferredSub = undefined;
+      }
+      try {
+        const subId = await resolveRealSubscriptionIdLive(preferredSub, LIVE_TIMEOUT_MS);
+        const nsgs = await fetchAllNsgsLive(subId, LIVE_TIMEOUT_MS);
+        const picked = nsgs[0] ?? {
+          id: `/subscriptions/${subId}/providers/Microsoft.Network/networkSecurityGroups/none`,
+          name: "No-NSG-Deployed-In-Subscription",
+          resourceGroup: "rg-live",
+          location: "westeurope",
+          tags: {},
+          rules: [],
+        };
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: picked,
+        };
+      } catch (error) {
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fallbackReason: error instanceof Error ? error.message : String(error),
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: {
+            id: "",
+            name: "Live-ARM-Unreachable",
+            resourceGroup: "",
+            location: "westeurope",
+            tags: {},
+            rules: [],
+          },
+        };
+      }
+    }
     const tenant = getManifestAzure(tenantId);
     return withSource(
       tenantId,
@@ -245,6 +349,56 @@ export const azureIacService = {
   },
 
   async getNsgDrift(tenantId: string): Promise<IacResult<NsgDrift>> {
+    if (isStrictRealTenantMode()) {
+      const state = await azureIacService.getNsgState(tenantId);
+      const actual = state.data;
+      const rogue: RogueSecurityRule[] = [];
+      for (const rule of actual.rules) {
+        if (rule.direction === "Inbound" && rule.access === "Allow" && ANY_SOURCE.has(rule.sourceAddressPrefix) && ADMIN_PORTS.has(rule.destinationPortRange)) {
+          const { severity, reason } = classifyRogue(rule);
+          rogue.push({
+            ruleName: rule.name,
+            priority: rule.priority,
+            direction: rule.direction,
+            access: rule.access,
+            protocol: rule.protocol,
+            port: rule.destinationPortRange,
+            source: rule.sourceAddressPrefix,
+            destination: rule.destinationAddressPrefix,
+            severity,
+            reason,
+          });
+        }
+      }
+      const actualHcl = renderNsgHcl(actual, "live_nsg");
+      const hasDrift = rogue.length > 0;
+      const subMatch = /\/subscriptions\/([^/]+)/i.exec(actual.id);
+      return {
+        ...state,
+        data: {
+          tenantId,
+          resourceName: actual.name,
+          resourceGroup: actual.resourceGroup,
+          resourceId: actual.id,
+          resourceType: "Microsoft.Network/networkSecurityGroups",
+          location: actual.location,
+          subscriptionId: subMatch?.[1] ?? "",
+          gitBranch: "main",
+          terraformFile: "live-azure/arm-state.tf",
+          sourceRef: { file: "live-azure/arm-state.tf", startLine: 1, endLine: Math.max(1, actualHcl.split("\n").length), ref: "main" },
+          driftState: hasDrift ? "drift-detected" : "in-sync",
+          tagDrift: [],
+          rogueSecurityRules: rogue,
+          modifiedSecurityRules: [],
+          missingSecurityRules: [],
+          expectedHcl: actualHcl,
+          actualHcl,
+          hclDiff: "",
+          summary: hasDrift ? `DRIFT DETECTED (${rogue.length} Open Management Port Rule(s))` : "IN SYNC (Live Azure ARM)",
+          severity: rogue.some((r) => r.severity === "critical") ? "critical" : hasDrift ? "high" : "none",
+        },
+      };
+    }
     const tenant = getManifestAzure(tenantId);
     const baseline = getTerraformBaseline(tenant);
     const state = await azureIacService.getNsgState(tenantId);
@@ -304,6 +458,45 @@ export const azureIacService = {
   },
 
   async getResourceInventory(tenantId: string) {
+    if (isStrictRealTenantMode()) {
+      const started = performance.now();
+      try {
+        const subId = await resolveRealSubscriptionIdLive(undefined, LIVE_TIMEOUT_MS);
+        const resources = await fetchRealArmResourcesLive(subId, LIVE_TIMEOUT_MS);
+        return {
+          source: "live-azure" as const,
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: {
+            subscriptionId: subId,
+            resourceGroup: resources[0]?.resourceGroup ?? "rg-live",
+            location: resources[0]?.location ?? "westeurope",
+            resources: resources.map((r) => ({
+              type: r.type,
+              name: r.name,
+              id: r.id,
+              tags: r.tags,
+              ruleCount: 0,
+            })),
+          },
+        };
+      } catch (error) {
+        return {
+          source: "live-azure" as const,
+          liveCloudMode: true,
+          fallbackReason: error instanceof Error ? error.message : String(error),
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: {
+            subscriptionId: "",
+            resourceGroup: "",
+            location: "westeurope",
+            resources: [],
+          },
+        };
+      }
+    }
     const tenant = getManifestAzure(tenantId);
     const state = await azureIacService.getNsgState(tenantId);
     return {
@@ -326,12 +519,91 @@ export const azureIacService = {
   },
 
   /**
-   * The AVD estate around the NSG: host pool topology (a fixture: the lab has no session
-   * hosts) and the Azure Policy states of the resource group, derived from the live NSG
-   * drift so they flip with it: an open management port fails "Management ports should be
-   * closed", a drifted Environment tag fails the tagging policy.
+   * The AVD estate around the NSG: host pool topology and the Azure Policy states of the resource group.
    */
   async getAvdEstate(tenantId: string): Promise<IacResult<AvdEstate>> {
+    if (isStrictRealTenantMode()) {
+      const started = performance.now();
+      try {
+        const subId = await resolveRealSubscriptionIdLive(undefined, LIVE_TIMEOUT_MS);
+        const [hostPools, policiesRes] = await Promise.all([
+          fetchRealAvdHostPoolsLive(subId, LIVE_TIMEOUT_MS).catch(() => []),
+          azureIacService.getAzurePolicies(tenantId),
+        ]);
+        const hp = hostPools[0];
+        const hostPool: HostPool = hp
+          ? {
+              name: hp.name,
+              poolType: hp.hostPoolType === "Personal" ? "Personal" : "Pooled",
+              loadBalancer: hp.loadBalancerType === "DepthFirst" ? "DepthFirst" : "BreadthFirst",
+              maxSessionLimit: hp.maxSessionLimit,
+              vmSize: "Live ARM HostPool",
+              location: hp.location,
+              joinType: "Microsoft Entra joined",
+              fslogix: { status: "Healthy", share: "Live Azure Storage" },
+              sessionHosts: [],
+              source: "live-azure",
+            }
+          : {
+              name: "No-AVD-HostPool-In-Subscription",
+              poolType: "Pooled",
+              loadBalancer: "BreadthFirst",
+              maxSessionLimit: 0,
+              vmSize: "None",
+              location: "westeurope",
+              joinType: "Microsoft Entra joined",
+              fslogix: { status: "Healthy", share: "None" },
+              sessionHosts: [],
+              source: "live-azure",
+            };
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: {
+            hostPool,
+            azurePolicies: policiesRes.data.map((p) => ({
+              name: p.name,
+              effect: p.effect as AzurePolicyState["effect"],
+              compliance: p.compliance,
+              nonCompliantResources: p.nonCompliantResources,
+              scope: p.scope,
+              detail: p.detail,
+            })),
+            resourceGroup: hp?.resourceGroup ?? "rg-live",
+            applicationGroup: hp ? `${hp.name}-dag` : "none",
+            workspace: hp ? `${hp.name}-ws` : "none",
+          },
+        };
+      } catch (error) {
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fallbackReason: error instanceof Error ? error.message : String(error),
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: {
+            hostPool: {
+              name: "Live-ARM-Unreachable",
+              poolType: "Pooled",
+              loadBalancer: "BreadthFirst",
+              maxSessionLimit: 0,
+              vmSize: "None",
+              location: "westeurope",
+              joinType: "Microsoft Entra joined",
+              fslogix: { status: "Healthy", share: "None" },
+              sessionHosts: [],
+              source: "live-azure",
+            },
+            azurePolicies: [],
+            resourceGroup: "",
+            applicationGroup: "",
+            workspace: "",
+          },
+        };
+      }
+    }
     const tenant = getManifestAzure(tenantId);
     const drift = await azureIacService.getNsgDrift(tenantId);
     const d = drift.data;
@@ -402,6 +674,37 @@ export const azureIacService = {
 
   /** Azure Policy assignments & Resource Health posture across the tenant's subscription/resource group. */
   async getAzurePolicies(tenantId: string): Promise<IacResult<AzurePolicyAndHealthRow[]>> {
+    if (isStrictRealTenantMode()) {
+      const started = performance.now();
+      try {
+        const subId = await resolveRealSubscriptionIdLive(undefined, LIVE_TIMEOUT_MS);
+        const assignments = await fetchRealAzurePolicyAssignmentsLive(subId, LIVE_TIMEOUT_MS);
+        const rows: AzurePolicyAndHealthRow[] = assignments.map((a) => ({
+          name: a.displayName,
+          effect: a.enforcementMode === "DoNotEnforce" ? "Audit" : "AuditIfNotExists",
+          compliance: "Compliant",
+          nonCompliantResources: 0,
+          scope: a.scope,
+          detail: a.description,
+        }));
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: rows,
+        };
+      } catch (error) {
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fallbackReason: error instanceof Error ? error.message : String(error),
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: [],
+        };
+      }
+    }
     const tenant = getManifestTenant(tenantId);
     const sub = tenant.subscriptionId;
     const rgName = tenant.azure?.resourceGroup ?? "rg-tenant-prod";
@@ -469,6 +772,42 @@ export const azureIacService = {
 
   /** Regional Compute/Network/Storage quota and capacity headroom across EU sovereign regions. */
   async getRegionalQuotas(_tenantId: string): Promise<IacResult<RegionalQuotaRow[]>> {
+    if (isStrictRealTenantMode()) {
+      const started = performance.now();
+      try {
+        const subId = await resolveRealSubscriptionIdLive(undefined, LIVE_TIMEOUT_MS);
+        const usages = await fetchRealComputeQuotasLive(subId, "westeurope", LIVE_TIMEOUT_MS);
+        const rows: RegionalQuotaRow[] = usages.map((u) => {
+          const pct = u.limit > 0 ? Math.round((u.currentValue / u.limit) * 100) : 0;
+          const free = Math.max(0, u.limit - u.currentValue);
+          const status: RegionalQuotaRow["status"] = pct >= 100 ? "Critical" : pct >= 80 ? "Warning" : "Healthy";
+          return {
+            resource: `${u.localizedValue} (${u.location})`,
+            region: u.location,
+            usage: `${u.currentValue}/${u.limit}`,
+            utilization: `${pct}%`,
+            headroom: pct >= 100 ? "QuotaExceeded" : `${free} Free`,
+            status,
+          };
+        });
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: rows,
+        };
+      } catch (error) {
+        return {
+          source: "live-azure",
+          liveCloudMode: true,
+          fallbackReason: error instanceof Error ? error.message : String(error),
+          fetchedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - started),
+          data: [],
+        };
+      }
+    }
     const quotaRows: RegionalQuotaRow[] = [
       {
         resource: "Standard_D4s_v5 (westeurope)",

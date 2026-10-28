@@ -152,3 +152,200 @@ export async function fetchAzContextLive(
     account: String(claims.upn ?? claims.unique_name ?? ""),
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Real Tenant Mode (Unfiltered Azure ARM Reads — Zero Seeded Manifest)       */
+/* -------------------------------------------------------------------------- */
+
+export interface RealArmSubscription {
+  subscriptionId: string;
+  displayName: string;
+  state: string;
+  tenantId: string;
+}
+
+export async function fetchRealSubscriptionsLive(timeoutMs: number): Promise<RealArmSubscription[]> {
+  const res = await armGet<{
+    value?: Array<{ subscriptionId: string; displayName: string; state?: string; tenantId?: string }>;
+  }>("/subscriptions?api-version=2022-12-01", timeoutMs);
+  return (res.value ?? []).map((s) => ({
+    subscriptionId: s.subscriptionId,
+    displayName: s.displayName,
+    state: s.state ?? "Enabled",
+    tenantId: s.tenantId ?? "",
+  }));
+}
+
+export async function resolveRealSubscriptionIdLive(preferredSubId: string | undefined, timeoutMs: number): Promise<string> {
+  const subs = await fetchRealSubscriptionsLive(timeoutMs);
+  if (preferredSubId && subs.some((s) => s.subscriptionId.toLowerCase() === preferredSubId.toLowerCase())) {
+    return preferredSubId;
+  }
+  const enabled = subs.find((s) => s.state === "Enabled") ?? subs[0];
+  if (!enabled) throw new Error("No accessible Azure subscriptions found for the current ARM token");
+  return enabled.subscriptionId;
+}
+
+export async function fetchAllNsgsLive(
+  subscriptionId: string,
+  timeoutMs: number,
+): Promise<Array<NsgState & { id: string }>> {
+  const res = await armGet<{ value?: ArmNsg[] }>(
+    `/subscriptions/${subscriptionId}/providers/Microsoft.Network/networkSecurityGroups?api-version=${NSG_API_VERSION}`,
+    timeoutMs,
+  );
+  return (res.value ?? []).map((nsg) => {
+    const rgMatch = /\/resourceGroups\/([^/]+)\//i.exec(nsg.id);
+    const resourceGroup = rgMatch?.[1] ?? "rg-default";
+    const rules: NsgRule[] = (nsg.properties.securityRules ?? []).map(({ name, properties: r }) => ({
+      name,
+      priority: r.priority,
+      direction: r.direction === "Outbound" ? "Outbound" : "Inbound",
+      access: r.access === "Deny" ? "Deny" : "Allow",
+      protocol: r.protocol,
+      sourcePortRange: first(r.sourcePortRange, r.sourcePortRanges),
+      destinationPortRange: first(r.destinationPortRange, r.destinationPortRanges),
+      sourceAddressPrefix: first(r.sourceAddressPrefix, r.sourceAddressPrefixes),
+      destinationAddressPrefix: first(r.destinationAddressPrefix, r.destinationAddressPrefixes),
+      ...(r.description ? { description: r.description } : {}),
+    }));
+    return {
+      id: nsg.id,
+      name: nsg.name,
+      resourceGroup,
+      location: nsg.location,
+      tags: nsg.tags ?? {},
+      rules,
+    };
+  });
+}
+
+export interface RealArmResourceRow {
+  id: string;
+  name: string;
+  type: string;
+  location: string;
+  resourceGroup: string;
+  tags: Record<string, string>;
+}
+
+export async function fetchRealArmResourcesLive(subscriptionId: string, timeoutMs: number): Promise<RealArmResourceRow[]> {
+  const res = await armGet<{
+    value?: Array<{ id: string; name: string; type: string; location: string; tags?: Record<string, string> }>;
+  }>(`/subscriptions/${subscriptionId}/resources?api-version=2021-04-01`, timeoutMs);
+  return (res.value ?? []).map((r) => {
+    const rgMatch = /\/resourceGroups\/([^/]+)\//i.exec(r.id);
+    return {
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      location: r.location,
+      resourceGroup: rgMatch?.[1] ?? "rg-default",
+      tags: r.tags ?? {},
+    };
+  });
+}
+
+export interface RealArmPolicyAssignment {
+  id: string;
+  name: string;
+  displayName: string;
+  scope: string;
+  enforcementMode: string;
+  description: string;
+}
+
+export async function fetchRealAzurePolicyAssignmentsLive(
+  subscriptionId: string,
+  timeoutMs: number,
+): Promise<RealArmPolicyAssignment[]> {
+  const res = await armGet<{
+    value?: Array<{
+      id: string;
+      name: string;
+      properties?: {
+        displayName?: string;
+        scope?: string;
+        enforcementMode?: string;
+        description?: string;
+      };
+    }>;
+  }>(`/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/policyAssignments?api-version=2022-06-01`, timeoutMs);
+  return (res.value ?? []).slice(0, 40).map((a) => ({
+    id: a.id,
+    name: a.name,
+    displayName: a.properties?.displayName ?? a.name,
+    scope: a.properties?.scope ?? `/subscriptions/${subscriptionId}`,
+    enforcementMode: a.properties?.enforcementMode ?? "Default",
+    description: a.properties?.description ?? "Live Azure Policy Assignment",
+  }));
+}
+
+export interface RealComputeUsageRow {
+  name: string;
+  localizedValue: string;
+  currentValue: number;
+  limit: number;
+  location: string;
+}
+
+export async function fetchRealComputeQuotasLive(
+  subscriptionId: string,
+  location: string,
+  timeoutMs: number,
+): Promise<RealComputeUsageRow[]> {
+  const res = await armGet<{
+    value?: Array<{
+      currentValue?: number;
+      limit?: number;
+      name?: { value?: string; localizedValue?: string };
+    }>;
+  }>(`/subscriptions/${subscriptionId}/providers/Microsoft.Compute/locations/${encodeURIComponent(location)}/usages?api-version=2024-03-01`, timeoutMs);
+  return (res.value ?? [])
+    .filter((u) => (u.currentValue ?? 0) > 0 || /cores|standardDSv5|standardDv5|virtualMachines/i.test(u.name?.value ?? ""))
+    .slice(0, 15)
+    .map((u) => ({
+      name: u.name?.value ?? "compute",
+      localizedValue: u.name?.localizedValue ?? u.name?.value ?? "Compute Quota",
+      currentValue: u.currentValue ?? 0,
+      limit: u.limit ?? 0,
+      location,
+    }));
+}
+
+export interface RealAvdHostPoolRow {
+  id: string;
+  name: string;
+  location: string;
+  resourceGroup: string;
+  hostPoolType: string;
+  loadBalancerType: string;
+  maxSessionLimit: number;
+}
+
+export async function fetchRealAvdHostPoolsLive(subscriptionId: string, timeoutMs: number): Promise<RealAvdHostPoolRow[]> {
+  const res = await armGet<{
+    value?: Array<{
+      id: string;
+      name: string;
+      location: string;
+      properties?: {
+        hostPoolType?: string;
+        loadBalancerType?: string;
+        maxSessionLimit?: number;
+      };
+    }>;
+  }>(`/subscriptions/${subscriptionId}/providers/Microsoft.DesktopVirtualization/hostPools?api-version=2023-09-05`, timeoutMs);
+  return (res.value ?? []).map((hp) => {
+    const rgMatch = /\/resourceGroups\/([^/]+)\//i.exec(hp.id);
+    return {
+      id: hp.id,
+      name: hp.name,
+      location: hp.location,
+      resourceGroup: rgMatch?.[1] ?? "rg-default",
+      hostPoolType: hp.properties?.hostPoolType ?? "Pooled",
+      loadBalancerType: hp.properties?.loadBalancerType ?? "BreadthFirst",
+      maxSessionLimit: hp.properties?.maxSessionLimit ?? 10,
+    };
+  });
+}

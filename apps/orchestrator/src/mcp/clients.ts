@@ -19,9 +19,11 @@ import {
   type IntuneScenarioKey,
   type LicenseInventory,
   type LicenseState,
+  type McpDataMode,
   type SecurityGroupSummary,
   type SignInSummary,
   type UserDiagnostic,
+  type WorkloadIdentityFixture,
 } from "@contextpane/mcp-msgraph";
 import { join } from "node:path";
 import { REPO_ROOT, config } from "../config.ts";
@@ -35,9 +37,12 @@ import { REPO_ROOT, config } from "../config.ts";
 export type PolicyDiagnostic = Awaited<ReturnType<typeof msgraphService.getPolicyDiagnostic>>;
 export type GroupDiagnostic = Awaited<ReturnType<typeof msgraphService.getGroupDiagnostic>>;
 export type ResourceDiagnostic = Awaited<ReturnType<typeof azureIacService.getResourceDiagnostic>>;
+export type ResourceInventory = Awaited<ReturnType<typeof azureIacService.getResourceInventory>>;
 
 export interface McpDataSources {
   transport: "in-process" | "stdio";
+  getDataMode(): McpDataMode;
+  setDataMode(mode: McpDataMode): Promise<{ dataMode: McpDataMode; liveCloudMode: boolean }>;
   erp: {
     getTenantContext(tenantId: string): Promise<ErpTenantContext>;
   };
@@ -52,22 +57,30 @@ export interface McpDataSources {
     getPolicyDiagnostic(tenantId: string, policyNameOrId: string): Promise<PolicyDiagnostic>;
     getGroupDiagnostic(tenantId: string, groupDisplayName: string): Promise<GroupDiagnostic>;
     getSecurityGroups(tenantId: string): Promise<GraphResult<SecurityGroupSummary[]>>;
+    getWorkloadIdentityPosture(tenantId: string): Promise<GraphResult<WorkloadIdentityFixture | null>>;
   };
   azure: {
     getNsgDrift(tenantId: string): Promise<IacResult<NsgDrift>>;
     getAvdEstate(tenantId: string): Promise<IacResult<AvdEstate>>;
     getResourceDiagnostic(tenantId: string, resourceName: string): Promise<ResourceDiagnostic>;
+    getResourceInventory(tenantId: string): Promise<ResourceInventory>;
     getTerraformBaseline(tenantId: string): Promise<TerraformBaseline>;
     getAzurePolicies(tenantId: string): Promise<IacResult<AzurePolicyAndHealthRow[]>>;
     getRegionalQuotas(tenantId: string): Promise<IacResult<RegionalQuotaRow[]>>;
   };
-  status(): Promise<{ transport: string; servers: Array<{ name: string; ok: boolean; tools?: number; error?: string }> }>;
+  status(): Promise<{ transport: string; dataMode: McpDataMode; servers: Array<{ name: string; ok: boolean; tools?: number; error?: string }> }>;
 }
 
 /* ------------------------------- in-process ------------------------------- */
 
 export const inProcessSources: McpDataSources = {
   transport: "in-process",
+  getDataMode: () => msgraphService.getDataMode(),
+  setDataMode: async (mode) => {
+    const g = msgraphService.setDataMode(mode);
+    azureIacService.setDataMode(mode);
+    return g;
+  },
   erp: {
     getTenantContext: async (tenantId) => erpService.getTenantContext(tenantId),
   },
@@ -82,11 +95,13 @@ export const inProcessSources: McpDataSources = {
     getPolicyDiagnostic: (t, p) => msgraphService.getPolicyDiagnostic(t, p),
     getGroupDiagnostic: (t, g) => msgraphService.getGroupDiagnostic(t, g),
     getSecurityGroups: (t) => msgraphService.getSecurityGroups(t),
+    getWorkloadIdentityPosture: (t) => msgraphService.getWorkloadIdentityPosture(t),
   },
   azure: {
     getNsgDrift: (t) => azureIacService.getNsgDrift(t),
     getAvdEstate: (t) => azureIacService.getAvdEstate(t),
     getResourceDiagnostic: (t, r) => azureIacService.getResourceDiagnostic(t, r),
+    getResourceInventory: (t) => azureIacService.getResourceInventory(t),
     getTerraformBaseline: async (t) => azureIacService.getTerraformBaseline(t),
     getAzurePolicies: (t) => azureIacService.getAzurePolicies(t),
     getRegionalQuotas: (t) => azureIacService.getRegionalQuotas(t),
@@ -94,10 +109,11 @@ export const inProcessSources: McpDataSources = {
   async status() {
     return {
       transport: "in-process",
+      dataMode: msgraphService.getDataMode(),
       servers: [
         { name: "contextpane-erp", ok: true, tools: 7 },
-        { name: "contextpane-msgraph", ok: true, tools: 13 },
-        { name: "contextpane-azure-iac", ok: true, tools: 10 },
+        { name: "contextpane-msgraph", ok: true, tools: 15 },
+        { name: "contextpane-azure-iac", ok: true, tools: 11 },
       ],
     };
   },
@@ -164,7 +180,7 @@ class StdioPool {
         servers.push({ name, ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     }
-    return { transport: "stdio", servers };
+    return { transport: "stdio", dataMode: msgraphService.getDataMode(), servers };
   }
 }
 
@@ -172,6 +188,16 @@ const pool = new StdioPool();
 
 export const stdioSources: McpDataSources = {
   transport: "stdio",
+  getDataMode: () => msgraphService.getDataMode(),
+  setDataMode: async (mode) => {
+    const g = msgraphService.setDataMode(mode);
+    azureIacService.setDataMode(mode);
+    await Promise.all([
+      pool.call("contextpane-msgraph", "set_data_mode", { dataMode: mode }).catch(() => null),
+      pool.call("contextpane-azure-iac", "set_data_mode", { dataMode: mode }).catch(() => null),
+    ]);
+    return g;
+  },
   erp: {
     getTenantContext: (tenantId) => pool.call("contextpane-erp", "get_tenant_context", { tenantId }),
   },
@@ -186,11 +212,13 @@ export const stdioSources: McpDataSources = {
     getPolicyDiagnostic: (tenantId, policyNameOrId) => pool.call("contextpane-msgraph", "get_policy_diagnostic", { tenantId, policyNameOrId }),
     getGroupDiagnostic: (tenantId, groupDisplayName) => pool.call("contextpane-msgraph", "get_group_diagnostic", { tenantId, groupDisplayName }),
     getSecurityGroups: (tenantId) => pool.call("contextpane-msgraph", "get_security_groups", { tenantId }),
+    getWorkloadIdentityPosture: (tenantId) => pool.call("contextpane-msgraph", "get_workload_identity_posture", { tenantId }),
   },
   azure: {
     getNsgDrift: (tenantId) => pool.call("contextpane-azure-iac", "get_nsg_drift", { tenantId }),
     getAvdEstate: (tenantId) => pool.call("contextpane-azure-iac", "get_avd_estate", { tenantId }),
     getResourceDiagnostic: (tenantId, resourceName) => pool.call("contextpane-azure-iac", "get_resource_diagnostic", { tenantId, resourceName }),
+    getResourceInventory: (tenantId) => pool.call("contextpane-azure-iac", "get_resource_inventory", { tenantId }),
     getTerraformBaseline: (tenantId) => pool.call("contextpane-azure-iac", "get_terraform_baseline", { tenantId }),
     getAzurePolicies: (tenantId) => pool.call("contextpane-azure-iac", "get_azure_policies", { tenantId }),
     getRegionalQuotas: (tenantId) => pool.call("contextpane-azure-iac", "get_regional_quotas", { tenantId }),

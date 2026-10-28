@@ -38,7 +38,9 @@ import {
   type CorrelateResponse,
   type DropArchetype,
   type ErpAttachment,
+  type FreeRoamInventory,
   type HealthResponse,
+  type McpDataMode,
   type ProgressEvent,
   type PsaResolutionNote,
   type RemediateResponse,
@@ -46,6 +48,36 @@ import {
   type VisionResponse,
   type VoiceResponse,
 } from "./lib/api";
+
+export interface SavedFreeRoamBoard {
+  id: string;
+  name: string;
+  savedAt: string;
+  dashboards: MiniDashboardEntry[];
+}
+
+const SAVED_BOARDS_KEY = "contextpane:freeroam-boards:v1";
+
+function loadSavedBoardsFromStorage(): SavedFreeRoamBoard[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(SAVED_BOARDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedBoardsToStorage(boards: SavedFreeRoamBoard[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SAVED_BOARDS_KEY, JSON.stringify(boards));
+  } catch {
+    /* ignore storage quota */
+  }
+}
 
 /** The scenario the workbench shows: a built-in one or an unscripted CUSTOM-<hash> ticket. */
 export type ScenarioId = WorkbenchScenarioId;
@@ -179,6 +211,17 @@ export interface CardLink {
 
 interface WorkbenchState {
   /* data */
+  /** Free-Roam Startpage / Landing Page mode (default true on boot; false when a ticket/scenario is opened). */
+  freeRoamOpen: boolean;
+  /** Global MCP Data Mode: "real-tenant" (strict live tenant, zero mock fallback) vs "simulated-lab". */
+  dataMode: McpDataMode;
+  togglingDataMode: boolean;
+  freeRoamInventory: FreeRoamInventory | null;
+  freeRoamInventoryStatus: CanvasStatus;
+  freeRoamDashboards: MiniDashboardEntry[];
+  freeRoamScope: "hybrid" | "tenant-only" | "knowledge";
+  scanningAnomalies: boolean;
+  savedBoards: SavedFreeRoamBoard[];
   scenarioId: ScenarioId;
   /** The unified work queue: tickets, anomalies, ERP drops and pasted tickets, as the orchestrator lists them. */
   scenarios: ScenarioListItem[];
@@ -294,6 +337,24 @@ interface WorkbenchState {
 
   /* actions */
   boot(): Promise<void>;
+  openFreeRoam(): void;
+  setDataMode(mode: McpDataMode): Promise<void>;
+  loadFreeRoamInventory(tenantId?: string): Promise<void>;
+  setFreeRoamScope(scope: "hybrid" | "tenant-only" | "knowledge"): void;
+  spawnFreeRoamDashboard(
+    prompt: string,
+    options?: {
+      refinementText?: string;
+      scope?: "hybrid" | "tenant-only" | "knowledge";
+      viewMode?: ContextViewMode;
+    },
+  ): Promise<void>;
+  stageFreeRoamRemediation(input: { prompt: string; title?: string; scriptPreview?: string }): Promise<void>;
+  scanAnomalies(): Promise<void>;
+  saveCurrentFreeRoamBoard(name: string): void;
+  loadSavedFreeRoamBoard(id: string): void;
+  deleteSavedFreeRoamBoard(id: string): void;
+  clearFreeRoamDashboards(): void;
   loadScenarios(): Promise<void>;
   selectScenario(scenarioId: ScenarioId): Promise<void>;
   /** The queue in display order (newest first, resolved last): hotkeys 1-9 and j/k follow it. */
@@ -395,6 +456,15 @@ const hoverKey = (scenarioId: string, entityId: string) => `${scenarioId}|${enti
 let inboxPoll: number | null = null;
 
 export const useWorkbench = create<WorkbenchState>()((set, get) => ({
+  freeRoamOpen: false,
+  dataMode: "simulated-lab",
+  togglingDataMode: false,
+  freeRoamInventory: null,
+  freeRoamInventoryStatus: "idle",
+  freeRoamDashboards: [],
+  freeRoamScope: "hybrid",
+  scanningAnomalies: false,
+  savedBoards: loadSavedBoardsFromStorage(),
   scenarioId: "INC-4092",
   scenarios: [],
   brief: null,
@@ -498,6 +568,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   executionMode: "break-glass",
 
   async boot() {
+    set({ freeRoamOpen: true });
     telemetryDisposer?.();
     telemetryDisposer = connectTelemetry({
       onStatus: (wsConnected) => set({ wsConnected }),
@@ -518,11 +589,259 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     void get().loadAudit();
     api
       .health()
-      .then((health) => set({ health, openPrOnApprove: Boolean(health.github?.prOnApprove && health.github.origin && health.github.ghAuthenticated) }))
+      .then((health) =>
+        set({
+          health,
+          ...(health.dataMode ? { dataMode: health.dataMode } : {}),
+          openPrOnApprove: Boolean(health.github?.prOnApprove && health.github.origin && health.github.ghAuthenticated),
+        }),
+      )
       .catch(() => set({ health: null }));
     void get().loadScenarios();
+    void get().loadFreeRoamInventory();
+    if (get().freeRoamDashboards.length === 0) {
+      void get().spawnFreeRoamDashboard("Live Tenant Identity, Licensing, Conditional Access & Infrastructure Posture Overview", {
+        scope: "hybrid",
+        viewMode: "dashboard",
+      });
+    }
     await Promise.all([get().loadRecipes(), get().loadBrief()]);
     await get().correlate();
+  },
+
+  openFreeRoam() {
+    set({ freeRoamOpen: true, queueOpen: false, voiceOpen: false });
+    if (!get().freeRoamInventory) {
+      void get().loadFreeRoamInventory();
+    }
+    if (get().freeRoamDashboards.length === 0 && get().exploreStatus !== "loading") {
+      void get().spawnFreeRoamDashboard("Live Tenant Identity, Licensing, Conditional Access & Infrastructure Posture Overview", {
+        scope: "hybrid",
+        viewMode: "dashboard",
+      });
+    }
+  },
+
+  async setDataMode(mode) {
+    if (get().togglingDataMode) return;
+    set({ togglingDataMode: true });
+    try {
+      const res = await api.setDataMode(mode);
+      set((s) => ({
+        dataMode: res.dataMode,
+        togglingDataMode: false,
+        scenarios: res.scenarios,
+        health: s.health ? { ...s.health, dataMode: res.dataMode } : s.health,
+        speculativeEpoch: s.speculativeEpoch + 1,
+        speculativeSelectionCache: {},
+        speculativeBuffer: [],
+      }));
+      void get().loadFreeRoamInventory();
+      if (!get().freeRoamOpen) {
+        // If current scenario was filtered out in real-tenant mode, switch to Free-Roam Landing Page
+        const stillExists = res.scenarios.some((s) => s.scenarioId === get().scenarioId);
+        if (!stillExists) {
+          set({ freeRoamOpen: true });
+        } else {
+          await Promise.all([get().loadBrief(get().scenarioId, true), get().correlate({ fresh: true })]);
+        }
+      }
+      get().toast({
+        tone: res.dataMode === "real-tenant" ? "healthy" : "info",
+        title: res.dataMode === "real-tenant" ? "MCP Mode: Real Tenant Only (Zero Simulated Fallback)" : "MCP Mode: Simulated Lab Enabled",
+        detail:
+          res.dataMode === "real-tenant"
+            ? "MCP servers (@contextpane/mcp-msgraph & @contextpane/mcp-azure-iac) now query your live tenant exclusively. Seeded demo scenarios are hidden."
+            : "MCP servers now include seeded Contoso & Fabrikam lab fixtures and scenarios.",
+      });
+    } catch (error) {
+      set({ togglingDataMode: false });
+      get().toast({
+        tone: "critical",
+        title: "Failed to switch MCP Data Mode",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+
+  async loadFreeRoamInventory(tenantId) {
+    set({ freeRoamInventoryStatus: "loading" });
+    try {
+      const inventory = await api.freeRoamInventory(tenantId);
+      set({
+        freeRoamInventory: inventory,
+        freeRoamInventoryStatus: "ready",
+        dataMode: inventory.dataMode,
+      });
+    } catch {
+      set({ freeRoamInventoryStatus: "error" });
+    }
+  },
+
+  setFreeRoamScope: (freeRoamScope) => set({ freeRoamScope }),
+
+  async spawnFreeRoamDashboard(prompt, options = {}) {
+    const clean = prompt.replace(/\s+/g, " ").trim();
+    if (clean.length < 2) return;
+    const scope = options.scope ?? get().freeRoamScope;
+    const viewMode = options.viewMode ?? "dashboard";
+    const refinementText = options.refinementText?.trim() || undefined;
+    const started = performance.now();
+
+    set({
+      freeRoamOpen: true,
+      exploreStatus: "loading",
+      exploreError: null,
+      activeExploreText: refinementText ? `${clean} (${refinementText})` : clean,
+    });
+
+    try {
+      const result = await api.freeRoamSpawn({
+        prompt: clean,
+        ...(refinementText ? { refinementText } : {}),
+        scope,
+        viewMode,
+      });
+      const resolvedViewMode = (options.viewMode ?? result.card.viewMode ?? viewMode) as ContextViewMode;
+      const entry: MiniDashboardEntry = {
+        id: `${result.card.id}-${Date.now().toString(36).slice(-4)}`,
+        scenarioId: get().scenarioId,
+        index: get().freeRoamDashboards.length + 1,
+        selectionText: clean,
+        ...(refinementText ? { refinementText } : {}),
+        viewMode: resolvedViewMode,
+        card: { ...result.card, viewMode: resolvedViewMode },
+        dataPtr: result.dataPtr,
+        latencyMs: Math.round(performance.now() - started),
+        modelId: result.modelId,
+        tokenCount: result.tokenCount,
+      };
+      set((s) => ({
+        freeRoamDashboards: [entry, ...s.freeRoamDashboards].slice(0, 12),
+        exploreStatus: "ready",
+        activeExploreText: null,
+        linkedSelection: entry.id,
+      }));
+      if (typeof window !== "undefined" && typeof document !== "undefined") {
+        window.requestAnimationFrame(() =>
+          document.getElementById(`mini-${entry.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        );
+      }
+      setTimeout(() => set((s) => (s.linkedSelection === entry.id ? { linkedSelection: null } : {})), 1600);
+    } catch (error) {
+      set({
+        exploreStatus: "error",
+        activeExploreText: null,
+        exploreError: error instanceof Error ? error.message : String(error),
+      });
+      get().toast({
+        tone: "critical",
+        title: "Free-Roam Dashboard Spawn Failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+
+  async stageFreeRoamRemediation(input) {
+    set({
+      drawerOpen: true,
+      remediateStatus: "loading",
+      drawerTab: "powershell",
+      drawerFocusBanner: `Free-Roam Staged Action · ${input.title ?? input.prompt.slice(0, 60)}`,
+    });
+    try {
+      const result = await api.freeRoamRemediate(input);
+      set({
+        drawer: result.drawer,
+        remediateStatus: "ready",
+      });
+      get().toast({
+        tone: result.drawer.verificationStatus.verdict === "Verified Safe" ? "healthy" : "warning",
+        title: `Free-Roam Action Staged · ${result.drawer.verificationStatus.verdict}`,
+        detail: `${result.drawer.title} · Pre-Flight AST & -WhatIf verified`,
+      });
+    } catch (error) {
+      set({ remediateStatus: "error" });
+      get().toast({
+        tone: "critical",
+        title: "Free-Roam Remediation Synthesis Failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+
+  async scanAnomalies() {
+    if (get().scanningAnomalies) return;
+    set({ scanningAnomalies: true });
+    try {
+      const res = await api.scanAnomalies();
+      set({
+        scanningAnomalies: false,
+        scenarios: res.scenarios,
+      });
+      get().toast({
+        tone: res.detectedCount > 0 ? "warning" : "healthy",
+        title:
+          res.detectedCount > 0
+            ? `🔍 Live Anomaly Scan: ${res.detectedCount} issue(s) found (${res.newlyRegistered.length} added to queue)`
+            : `🔍 Live Anomaly Scan (${res.dataMode}): 0 anomalies detected`,
+        detail:
+          res.findings.length > 0
+            ? res.findings.map((f) => f.category).join(" · ")
+            : "All queried MCP endpoints reported healthy posture.",
+      });
+    } catch (error) {
+      set({ scanningAnomalies: false });
+      get().toast({
+        tone: "critical",
+        title: "Anomaly scan failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+
+  saveCurrentFreeRoamBoard(name) {
+    const dashboards = get().freeRoamDashboards;
+    if (dashboards.length === 0) return;
+    const cleanName = name.trim() || `Board · ${new Date().toLocaleTimeString()}`;
+    const board: SavedFreeRoamBoard = {
+      id: `board-${Date.now().toString(36)}`,
+      name: cleanName,
+      savedAt: new Date().toISOString(),
+      dashboards,
+    };
+    const next = [board, ...get().savedBoards.filter((b) => b.name !== cleanName)].slice(0, 15);
+    persistSavedBoardsToStorage(next);
+    set({ savedBoards: next });
+    get().toast({
+      tone: "healthy",
+      title: `Saved Free-Roam Board "${cleanName}"`,
+      detail: `${dashboards.length} dashboard(s) persisted to local workspace storage.`,
+    });
+  },
+
+  loadSavedFreeRoamBoard(id) {
+    const found = get().savedBoards.find((b) => b.id === id);
+    if (!found) return;
+    set({
+      freeRoamOpen: true,
+      freeRoamDashboards: found.dashboards,
+    });
+    get().toast({
+      tone: "info",
+      title: `Loaded Board "${found.name}"`,
+      detail: `Restored ${found.dashboards.length} dashboard(s).`,
+    });
+  },
+
+  deleteSavedFreeRoamBoard(id) {
+    const next = get().savedBoards.filter((b) => b.id !== id);
+    persistSavedBoardsToStorage(next);
+    set({ savedBoards: next });
+  },
+
+  clearFreeRoamDashboards() {
+    set({ freeRoamDashboards: [] });
   },
 
   async loadScenarios() {
@@ -624,11 +943,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   async selectScenario(scenarioId) {
-    if (scenarioId === get().scenarioId && get().layout) {
+    if (scenarioId === get().scenarioId && get().layout && !get().freeRoamOpen) {
       set({ queueOpen: false });
       return;
     }
     set((s) => ({
+      freeRoamOpen: false,
       scenarioId,
       speculativeEpoch: s.speculativeEpoch + 1,
       speculativeSelectionCache: {},
@@ -1100,6 +1420,15 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({ stepsDone: { ...s.stepsDone, [key]: !s.stepsDone[key] } }));
   },
   openRemediation(options = {}) {
+    if (get().freeRoamOpen) {
+      const top = get().freeRoamDashboards[0];
+      void get().stageFreeRoamRemediation({
+        prompt: top?.selectionText ?? "Audit and remediate live tenant posture",
+        title: top?.card.title ?? options.focusBanner ?? "Free-Roam Tenant Remediation",
+        ...(top?.card.suggestedAction.scriptPreview ? { scriptPreview: top.card.suggestedAction.scriptPreview } : {}),
+      });
+      return;
+    }
     set({
       drawerTab: options.tab ?? "powershell",
       drawerFocusUpn: options.focusUpn ?? null,
@@ -1583,6 +1912,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   async exploreSelection(rawText, options = {}) {
+    if (get().freeRoamOpen) {
+      await get().spawnFreeRoamDashboard(rawText, options);
+      return;
+    }
     const text = rawText.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS);
     const refinementText = options.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
     const viewMode: ContextViewMode = options.viewMode ?? "dashboard";
@@ -1707,8 +2040,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   setMiniDashboardViewMode: (id, viewMode) =>
     set((s) => ({
       miniDashboards: s.miniDashboards.map((m) => (m.id === id ? { ...m, viewMode, card: { ...m.card, viewMode } } : m)),
+      freeRoamDashboards: s.freeRoamDashboards.map((m) => (m.id === id ? { ...m, viewMode, card: { ...m.card, viewMode } } : m)),
     })),
-  dismissMiniDashboard: (id) => set((s) => ({ miniDashboards: s.miniDashboards.filter((m) => m.id !== id), linkedSelection: s.linkedSelection === id ? null : s.linkedSelection })),
+  dismissMiniDashboard: (id) =>
+    set((s) => ({
+      miniDashboards: s.miniDashboards.filter((m) => m.id !== id),
+      freeRoamDashboards: s.freeRoamDashboards.filter((m) => m.id !== id),
+      linkedSelection: s.linkedSelection === id ? null : s.linkedSelection,
+    })),
   setLinkedSelection: (linkedSelection) => set((s) => (s.linkedSelection === linkedSelection ? {} : { linkedSelection })),
   setComposerOpen: (composerOpen) => set(composerOpen ? { composerOpen, voiceOpen: false } : { composerOpen }),
 

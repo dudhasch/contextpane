@@ -62,7 +62,7 @@ export interface CustomTicketRequest {
 /** How a ticket enters the registry: pasted (CUSTOM-<hash>) or dropped into the inbox (ERP-<id>). */
 export interface RegisterOptions {
   scenarioId?: CustomScenarioId;
-  origin?: "unscripted" | "erp-drop";
+  origin?: "unscripted" | "erp-drop" | "anomaly";
   createdAt?: string;
   erpDrop?: ErpDropSource;
 }
@@ -649,7 +649,7 @@ export function removeCustomTicket(scenarioId: string): boolean {
 }
 
 /** Clears unscripted (or all) custom tickets on demo reset and persists the registry. */
-export function clearCustomTickets(originFilter?: "unscripted" | "erp-drop"): string[] {
+export function clearCustomTickets(originFilter?: "unscripted" | "erp-drop" | "anomaly"): string[] {
   const removed = clearCustomScenarios(originFilter);
   if (removed.length > 0) save();
   return removed;
@@ -658,7 +658,7 @@ export function clearCustomTickets(originFilter?: "unscripted" | "erp-drop"): st
 export function customScenarioListItem(entry: CustomScenarioEntry, resolved: boolean): ScenarioListItem {
   return {
     scenarioId: entry.scenarioId,
-    kind: "ticket",
+    kind: entry.origin === "anomaly" ? "anomaly" : "ticket",
     origin: entry.origin,
     displayId: displayScenarioId(entry.scenarioId),
     tenantId: entry.tenantId,

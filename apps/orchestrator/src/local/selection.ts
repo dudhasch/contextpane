@@ -13,6 +13,7 @@ import {
   type ResolutionStep,
 } from "@contextpane/catalog";
 import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
+import { sources } from "../mcp/clients.ts";
 import type { CorrelationContext } from "../mcp/context.ts";
 
 /**
@@ -402,7 +403,7 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
     });
   }
 
-  const signIns = [...(ctx.signIns?.data ?? []), ...(ctx.caPosture?.data.legacySignIns ?? []), ...(ctx.workloadIdentity ? workloadIdentitySignIns() : [])];
+  const signIns = [...(ctx.signIns?.data ?? []), ...(ctx.caPosture?.data.legacySignIns ?? []), ...(ctx.workloadIdentity && sources.getDataMode() !== "real-tenant" ? workloadIdentitySignIns() : [])];
   if (signIns.length) {
     const rows: Row[] = signIns.map((e) => ({
       timestamp: e.timestamp,
@@ -603,8 +604,8 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
     });
   }
 
-  const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
-  {
+  const w = ctx.workloadIdentity ?? (sources.getDataMode() === "real-tenant" ? null : WORKLOAD_IDENTITY);
+  if (w) {
     const rows: Row[] = [
       ...(ctx.workloadIdentity
         ? [

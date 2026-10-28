@@ -91,7 +91,11 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
   const linked = useWorkbench((s) => s.linkedSelection);
   const toast = useWorkbench((s) => s.toast);
   const openRemediation = useWorkbench((s) => s.openRemediation);
+  const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
+  const stageFreeRoamRemediation = useWorkbench((s) => s.stageFreeRoamRemediation);
+  const exploreSelection = useWorkbench((s) => s.exploreSelection);
   const rowFilter = useWorkbench((s) => s.rowFilter);
+  const [followUpText, setFollowUpText] = useState("");
   const classifier = useCallback((r: Record<string, unknown>) => classify(r), []);
   const { chip, setChip, counts, filtered } = useStatusFilter(card.rows, classifier);
   const pulsing = linked === entry.id;
@@ -304,15 +308,57 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
         />
       )}
 
-      {/* Action footer */}
+      {/* Action & Follow-Up Refinement footer */}
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-border-subtle pt-2">
-        <Button size="xs" variant="meta" icon={<Wrench />} onClick={() => openRemediation({ tab: "powershell" })} title={card.suggestedAction.scriptPreview}>
+        <Button
+          size="xs"
+          variant="meta"
+          icon={<Wrench />}
+          onClick={() => {
+            if (freeRoamOpen) {
+              void stageFreeRoamRemediation({
+                prompt: card.selectionText,
+                title: card.title,
+                scriptPreview: card.suggestedAction.scriptPreview,
+              });
+            } else {
+              openRemediation({ tab: "powershell" });
+            }
+          }}
+          title={card.suggestedAction.scriptPreview}
+        >
           {card.suggestedAction.label}
         </Button>
         <Button size="xs" variant="ghost" icon={<ClipboardCopy />} onClick={() => void copy(card.suggestedAction.scriptPreview, "Targeted command")}>
           Copy command
         </Button>
-        <span className="ml-auto truncate font-mono text-[10px] text-faint" title={card.suggestedAction.scriptPreview}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!followUpText.trim()) return;
+            void exploreSelection(card.selectionText, {
+              refinementText: followUpText.trim(),
+              viewMode,
+            });
+            setFollowUpText("");
+          }}
+          className="flex min-w-[200px] flex-1 items-center gap-1"
+        >
+          <input
+            type="text"
+            value={followUpText}
+            onChange={(e) => setFollowUpText(e.target.value)}
+            placeholder="+ Follow-up / refine this dashboard..."
+            data-testid="mini-dashboard-followup-input"
+            className="h-6 min-w-0 flex-1 rounded border border-border-subtle bg-canvas/70 px-2 text-[10.5px] text-text placeholder:text-faint focus:border-selection focus:outline-none"
+          />
+          {followUpText.trim() && (
+            <Button size="xs" type="submit" variant="outline" icon={<Sparkles />}>
+              Refine
+            </Button>
+          )}
+        </form>
+        <span className="max-w-[240px] truncate font-mono text-[10px] text-faint" title={card.suggestedAction.scriptPreview}>
           {card.suggestedAction.scriptPreview.split("\n")[0]}
         </span>
       </div>

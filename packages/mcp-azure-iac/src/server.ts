@@ -22,8 +22,18 @@ export function createAzureIacMcpServer(): McpServer {
 
   server.registerTool(
     "get_mode",
-    { title: "Get mode", description: "LIVE_CLOUD_MODE flag, live-capable tenants and the resolved demo-iac directory.", inputSchema: {} },
+    { title: "Get mode", description: "LIVE_CLOUD_MODE flag, dataMode (real-tenant | simulated-lab), live-capable tenants and the resolved demo-iac directory.", inputSchema: {} },
     async () => ok(azureIacService.getMode()),
+  );
+
+  server.registerTool(
+    "set_data_mode",
+    {
+      title: "Set MCP data mode",
+      description: "Switch MCP between real-tenant (strict live Azure ARM with zero manifest/fixture fallback) and simulated-lab (seeded manifest/fixtures).",
+      inputSchema: { dataMode: z.enum(["real-tenant", "simulated-lab"]) },
+    },
+    async (args) => ok(azureIacService.setDataMode(args.dataMode)),
   );
 
   server.registerTool(

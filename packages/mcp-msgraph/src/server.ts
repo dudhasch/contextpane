@@ -22,8 +22,28 @@ export function createMsGraphMcpServer(): McpServer {
 
   server.registerTool(
     "get_mode",
-    { title: "Get mode", description: "Whether LIVE_CLOUD_MODE is on and which tenants can be queried live.", inputSchema: {} },
+    { title: "Get mode", description: "Whether LIVE_CLOUD_MODE is on, current dataMode (real-tenant | simulated-lab), and which tenants can be queried live.", inputSchema: {} },
     async () => ok(msgraphService.getMode()),
+  );
+
+  server.registerTool(
+    "set_data_mode",
+    {
+      title: "Set MCP data mode",
+      description: "Switch MCP between real-tenant (strict live Microsoft Graph with zero manifest/fixture fallback) and simulated-lab (seeded manifest/fixtures).",
+      inputSchema: { dataMode: z.enum(["real-tenant", "simulated-lab"]) },
+    },
+    async (args) => ok(msgraphService.setDataMode(args.dataMode)),
+  );
+
+  server.registerTool(
+    "get_workload_identity_posture",
+    {
+      title: "Get workload identity and app registration posture",
+      description: "Returns Entra ID application registrations, service principals, client secrets, and OIDC posture.",
+      inputSchema: { tenantId },
+    },
+    async (args) => run(() => msgraphService.getWorkloadIdentityPosture(args.tenantId)),
   );
 
   server.registerTool(

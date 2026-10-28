@@ -97,7 +97,31 @@ export function getManifestAzure(tenantId: string): ManifestAzureTenant & { azur
 /* PowerShell 7 runner                                                         */
 /* -------------------------------------------------------------------------- */
 
+export type McpDataMode = "real-tenant" | "simulated-lab";
+
+let runtimeDataModeOverride: McpDataMode | null = null;
+
+export function getMcpDataMode(): McpDataMode {
+  if (runtimeDataModeOverride) return runtimeDataModeOverride;
+  const envMode = (process.env.CTX_DATA_MODE ?? "").toLowerCase();
+  if (envMode === "real-tenant" || envMode === "real") return "real-tenant";
+  if (envMode === "simulated-lab" || envMode === "simulated") return "simulated-lab";
+  return /^(true|1|yes)$/i.test(process.env.LIVE_CLOUD_MODE ?? "") ? "real-tenant" : "simulated-lab";
+}
+
+export function setMcpDataMode(mode: McpDataMode): McpDataMode {
+  runtimeDataModeOverride = mode;
+  process.env.CTX_DATA_MODE = mode;
+  process.env.LIVE_CLOUD_MODE = mode === "real-tenant" ? "true" : "false";
+  return runtimeDataModeOverride;
+}
+
+export function isStrictRealTenantMode(): boolean {
+  return runtimeDataModeOverride === "real-tenant" || /^(real-tenant|real)$/i.test(process.env.CTX_DATA_MODE ?? "");
+}
+
 export function isLiveCloudMode(): boolean {
+  if (runtimeDataModeOverride) return runtimeDataModeOverride === "real-tenant";
   return /^(true|1|yes)$/i.test(process.env.LIVE_CLOUD_MODE ?? "");
 }
 
@@ -115,6 +139,9 @@ export async function isPwshAvailable(): Promise<boolean> {
 }
 
 export function runPwshRaw(script: string, timeoutMs = 30_000): Promise<string> {
+  if (/^(true|1|yes)$/i.test(process.env.CTX_SKIP_PWSH ?? "")) {
+    return Promise.reject(new Error("pwsh skipped via CTX_SKIP_PWSH=true"));
+  }
   // pwsh silently drops multi-line blocks fed through `-Command -`; a temp runner file is reliable.
   const dir = mkdtempSync(join(tmpdir(), "ctx-pwsh-"));
   const runner = join(dir, "runner.ps1");

@@ -222,13 +222,9 @@ async function probeAzureStatus(
   const res = await fetchWithShortTimeout("https://azure.status.microsoft/en-us/status/feed/", 850);
   const latencyMs = Math.max(18, Math.round(performance.now() - t0));
   const lower = ticketText.toLowerCase();
-  const isVmOrDeployIssue =
-    lower.includes("vm") ||
-    lower.includes("virtual machine") ||
-    lower.includes("deploy") ||
-    lower.includes("quota") ||
-    lower.includes("westeurope") ||
-    lower.includes("allocation");
+  const isExplicitWeuQuotaAdvisory =
+    (lower.includes("az-weu-cap-409") || lower.includes("quotaexceeded") || lower.includes("allocationfailed") || lower.includes("standard_d4s_v5")) &&
+    region === "westeurope";
 
   let rssHasIncident = false;
   if (res) {
@@ -241,7 +237,7 @@ async function probeAzureStatus(
   }
 
   const advisories: UpstreamAdvisory[] = [];
-  if (isVmOrDeployIssue && region === "westeurope") {
+  if (isExplicitWeuQuotaAdvisory) {
     advisories.push({
       id: "AZ-WEU-CAP-409",
       provider: "Azure",
@@ -260,15 +256,15 @@ async function probeAzureStatus(
     service: {
       serviceId: "azure-regional",
       label: isGlobal ? "Azure ARM / Global" : `Azure (${region})`,
-      status: isVmOrDeployIssue && region === "westeurope" ? "advisory" : rssHasIncident ? "degraded" : "operational",
+      status: isExplicitWeuQuotaAdvisory ? "advisory" : rssHasIncident ? "degraded" : "operational",
       statusLabel:
-        isVmOrDeployIssue && region === "westeurope"
+        isExplicitWeuQuotaAdvisory
           ? "Capacity Advisory (No ARM Outage)"
           : rssHasIncident
             ? "Regional Advisory"
             : "Operational",
       summary:
-        isVmOrDeployIssue && region === "westeurope"
+        isExplicitWeuQuotaAdvisory
           ? `ARM control plane healthy in ${region}; Standard_D4s_v5 regional vCPU pool constrained + tenant policy/quota gate active`
           : isGlobal
             ? "Azure Resource Manager & Global Control Plane operational"

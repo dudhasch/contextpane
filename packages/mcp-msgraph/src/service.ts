@@ -28,14 +28,21 @@ import { caBaselineDiff, caDriftSourceRef, caPolicySourceRef, intuneBaselineDiff
 import {
   GraphHttpError,
   assignDeviceConfigurationLive,
+  fetchAllConditionalAccessPoliciesLive,
+  fetchAllSignInEventsLive,
   fetchCaPostureLive,
   fetchConditionalAccessPoliciesLive,
   fetchGraphContextLive,
   fetchGroupMembersLive,
   fetchIntuneStateLive,
   fetchLabUsersLive,
+  fetchRealApplicationsLive,
+  fetchRealIntuneOverviewLive,
+  fetchRealTenantUsersAndSkusLive,
+  fetchSecurityGroupsLive,
   fetchSignInEventsLive,
   fetchSubscribedSkusLive,
+  invalidateGraphSnapshots,
   patchCaPolicyLive,
   patchLicenseExtensionsLive,
   setAsrRuleLive,
@@ -43,7 +50,8 @@ import {
   type LiveIntuneState,
 } from "./live.ts";
 import { getManifestTenant, type ManifestCaPolicy, type ManifestSignIn, type ManifestTenant, type ManifestUser } from "./manifest.ts";
-import { isLiveCloudMode } from "./pwsh.ts";
+import { getMcpDataMode, isLiveCloudMode, isStrictRealTenantMode, setMcpDataMode, type McpDataMode } from "./pwsh.ts";
+import { WORKLOAD_IDENTITY, type WorkloadIdentityFixture } from "./workload-identity.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Result envelope                                                             */
@@ -540,10 +548,28 @@ function mapManifestSignIn(e: ManifestSignIn): SignInSummary {
 
 export const msgraphService = {
   getMode() {
-    return { liveCloudMode: isLiveCloudMode(), liveCapableTenants: [...LIVE_CAPABLE_TENANTS] };
+    return { liveCloudMode: isLiveCloudMode(), dataMode: getMcpDataMode(), liveCapableTenants: [...LIVE_CAPABLE_TENANTS] };
+  },
+
+  getDataMode(): McpDataMode {
+    return getMcpDataMode();
+  },
+
+  setDataMode(mode: McpDataMode): { dataMode: McpDataMode; liveCloudMode: boolean } {
+    const updated = setMcpDataMode(mode);
+    invalidateGraphSnapshots();
+    return { dataMode: updated, liveCloudMode: isLiveCloudMode() };
   },
 
   async getGraphContext(): Promise<GraphResult<{ tenantId: string | null; account: string | null; scopes: string[] }>> {
+    if (isStrictRealTenantMode()) {
+      const done = envelope<{ tenantId: string | null; account: string | null; scopes: string[] }>(performance.now());
+      try {
+        return done(await fetchGraphContextLive(LIVE_TIMEOUT_MS), "live-graph");
+      } catch (error) {
+        return done({ tenantId: null, account: null, scopes: [] }, "live-graph", error instanceof Error ? error.message : String(error));
+      }
+    }
     return withSource<{ tenantId: string | null; account: string | null; scopes: string[] }>(
       "tenant-contoso-01",
       () => fetchGraphContextLive(LIVE_TIMEOUT_MS),
@@ -552,6 +578,69 @@ export const msgraphService = {
   },
 
   async getLicenseState(tenantId: string): Promise<GraphResult<LicenseState>> {
+    if (isStrictRealTenantMode()) {
+      const done = envelope<LicenseState>(performance.now());
+      try {
+        const real = await fetchRealTenantUsersAndSkusLive(LIVE_TIMEOUT_MS);
+        const skuById = new Map(real.skus.map((s) => [s.skuId.toLowerCase(), s]));
+        const primarySku = real.skus[0] ?? { skuId: "", skuPartNumber: "UNASSIGNED", consumedUnits: 0, enabledUnits: 0 };
+        const secondarySku = real.skus[1] ?? primarySku;
+        const primaryGroupObj = real.groups[0] ?? { objectId: "", displayName: "All Tenant Users" };
+        const users: LicenseUserState[] = real.users.map((u) => {
+          const assignedParts = u.assignedSkuIds.map((id) => skuById.get(id.toLowerCase())?.skuPartNumber ?? id);
+          const currentSku = assignedParts.length > 0 ? assignedParts.join(", ") : "NONE";
+          const expectedSku = primarySku.skuPartNumber;
+          const driftStatus: LicenseUserState["driftStatus"] = !u.accountEnabled && assignedParts.length > 0
+            ? "drifted"
+            : assignedParts.length === 0
+              ? "unassigned"
+              : "compliant";
+          return {
+            objectId: u.objectId,
+            upn: u.upn,
+            displayName: u.displayName,
+            jobTitle: u.jobTitle ?? "",
+            department: u.department ?? "",
+            currentSku,
+            expectedSku,
+            driftStatus,
+            extensionPresent: false,
+          };
+        });
+        return done(
+          {
+            tenantId,
+            entraTenantId: real.tenantId,
+            sku: {
+              skuPartNumber: primarySku.skuPartNumber,
+              skuName: primarySku.skuPartNumber,
+              skuId: primarySku.skuId,
+              legacySkuPartNumber: secondarySku.skuPartNumber,
+            },
+            group: { displayName: primaryGroupObj.displayName, objectId: primaryGroupObj.objectId },
+            entraAssignedCount: primarySku.consumedUnits,
+            users,
+            driftedUsers: users.filter((u) => u.driftStatus !== "compliant"),
+          },
+          "live-graph",
+        );
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return done(
+          {
+            tenantId,
+            entraTenantId: "",
+            sku: { skuPartNumber: "NONE", skuName: "No Live SKU Data", skuId: "", legacySkuPartNumber: "NONE" },
+            group: { displayName: "Real Tenant Directory", objectId: "" },
+            entraAssignedCount: 0,
+            users: [],
+            driftedUsers: [],
+          },
+          "live-graph",
+          reason,
+        );
+      }
+    }
     const tenant = getManifestTenant(tenantId);
     const group = primaryGroup(tenant);
     const fallback = (): LicenseState => {
@@ -659,6 +748,32 @@ export const msgraphService = {
   },
 
   async getConditionalAccessPolicies(tenantId: string): Promise<GraphResult<CaPolicySummary[]>> {
+    if (isStrictRealTenantMode()) {
+      const done = envelope<CaPolicySummary[]>(performance.now());
+      try {
+        const { policies, groupNamesById } = await fetchAllConditionalAccessPoliciesLive(LIVE_TIMEOUT_MS);
+        const resolveName = (id: string) => groupNamesById.get(id) ?? KNOWN_GROUP_NAMES_BY_ID[id.toLowerCase()] ?? id;
+        const mapped: CaPolicySummary[] = policies.map((p) => {
+          const builtInControls = p.builtInControls.length > 0 ? p.builtInControls : ["Require MFA"];
+          return {
+            id: p.id,
+            displayName: p.displayName,
+            state: p.state,
+            includeGroupIds: p.includeGroups,
+            includeGroupNames: p.includeGroups.map(resolveName),
+            excludeGroupIds: p.excludeGroups,
+            excludeGroupNames: p.excludeGroups.map(resolveName),
+            targetApps: p.includeApplications.map((appId) => ({ appId, displayName: KNOWN_APP_IDS[appId] ?? appId })),
+            grant: { operator: p.grantOperator ?? "OR", builtInControls },
+            blocks: builtInControls.map((c) => c.toLowerCase()).includes("block"),
+            modifiedDateTime: p.modifiedDateTime,
+          };
+        });
+        return done(mapped, "live-graph");
+      } catch (error) {
+        return done([], "live-graph", error instanceof Error ? error.message : String(error));
+      }
+    }
     const tenant = getManifestTenant(tenantId);
     const groupNameById = new Map<string, string>([
       ...Object.entries(KNOWN_GROUP_NAMES_BY_ID),
@@ -716,16 +831,27 @@ export const msgraphService = {
    * Live mode never waits on auditLogs/signIns. Real events found by the background
    * probe win; until then the seeded timeline is re-keyed to the live Conditional
    * Access policy (real id and name), reported as source "live-synthesized".
+   * In strict real-tenant mode, only real Graph sign-in events are returned (zero manifest fallback).
    */
   async getSignInEvents(tenantId: string, options: { upn?: string; top?: number } = {}): Promise<GraphResult<SignInSummary[]>> {
     const done = envelope<SignInSummary[]>(performance.now());
-    const tenant = getManifestTenant(tenantId);
     const top = options.top ?? 50;
     const select = (events: SignInSummary[]) =>
       events
         .filter((e) => !options.upn || e.upn.toLowerCase() === options.upn.toLowerCase())
         .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
         .slice(0, top);
+
+    if (isStrictRealTenantMode()) {
+      try {
+        const liveEvents = await fetchAllSignInEventsLive(options.upn, top, LIVE_TIMEOUT_MS);
+        return done(select(liveEvents.map(mapLiveSignIn)), "live-graph");
+      } catch (error) {
+        return done([], "live-graph", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const tenant = getManifestTenant(tenantId);
     const seeded = () => select(tenant.signInEvents.map(mapManifestSignIn));
 
     if (!isLiveCloudMode()) return done(seeded(), "seeded-manifest");
@@ -807,6 +933,76 @@ export const msgraphService = {
    * subscribedSkus; ANOM-LIC-101 reads its seeded users and keeps the 15/15 pool a fixture.
    */
   async getLicenseInventory(tenantId: string, scenarioId?: string): Promise<GraphResult<LicenseInventory>> {
+    if (isStrictRealTenantMode()) {
+      const done = envelope<LicenseInventory>(performance.now());
+      try {
+        const real = await fetchRealTenantUsersAndSkusLive(LIVE_TIMEOUT_MS);
+        const skuById = new Map(real.skus.map((s) => [s.skuId.toLowerCase(), s]));
+        const primarySku = real.skus[0] ?? { skuId: "", skuPartNumber: "UNASSIGNED", consumedUnits: 0, enabledUnits: 0 };
+        const primaryGroupObj = real.groups[0] ?? { objectId: "", displayName: "All Tenant Users" };
+        const users: LicenseDriftUser[] = real.users.map((u) => {
+          const assignedParts = u.assignedSkuIds.map((id) => skuById.get(id.toLowerCase())?.skuPartNumber ?? id);
+          const currentSku = assignedParts.length > 0 ? assignedParts.join(", ") : "NONE";
+          const isOrphaned = !u.accountEnabled && assignedParts.length > 0;
+          const isUnassigned = u.accountEnabled && assignedParts.length === 0 && real.skus.length > 0;
+          return {
+            upn: u.upn,
+            displayName: u.displayName,
+            jobTitle: u.jobTitle ?? "",
+            accountEnabled: u.accountEnabled,
+            currentSku,
+            expectedSku: primarySku.skuPartNumber,
+            assignmentPath: assignedParts.length > 0 ? "Direct" : "None",
+            assignmentState: isOrphaned ? "Orphaned" : isUnassigned ? "Drifted" : "Active",
+            driftStatus: isOrphaned ? "drifted" : isUnassigned ? "unassigned" : "compliant",
+            objectId: u.objectId,
+          };
+        });
+        const skuPools: SkuPool[] = real.skus.map((s) => {
+          const orphanedCount = users.filter((u) => !u.accountEnabled && u.currentSku.includes(s.skuPartNumber)).length;
+          return {
+            skuPartNumber: s.skuPartNumber,
+            skuName: s.skuPartNumber,
+            enabled: s.enabledUnits,
+            consumed: s.consumedUnits,
+            available: Math.max(0, s.enabledUnits - s.consumedUnits),
+            ...(orphanedCount > 0 ? { note: `${orphanedCount} held by disabled accounts` } : {}),
+            source: "live-graph" as const,
+          };
+        });
+        const groupErrors: GroupLicenseError[] = skuPools
+          .filter((p) => p.enabled > 0 && p.consumed >= p.enabled)
+          .map((p) => ({
+            groupName: primaryGroupObj.displayName,
+            skuPartNumber: p.skuPartNumber,
+            state: "CountViolation" as const,
+            affectedUsers: Math.max(1, users.filter((u) => u.driftStatus === "unassigned").length),
+            detail: `${p.consumed}/${p.enabled} ${p.skuPartNumber} seats consumed (${p.available} available)`,
+          }));
+        return done(
+          {
+            sku: { skuPartNumber: primarySku.skuPartNumber, skuName: primarySku.skuPartNumber },
+            groupName: primaryGroupObj.displayName,
+            skuPools,
+            groupErrors,
+            users,
+          },
+          "live-graph",
+        );
+      } catch (error) {
+        return done(
+          {
+            sku: { skuPartNumber: "NONE", skuName: "No Live SKU Data" },
+            groupName: "Real Tenant Directory",
+            skuPools: [],
+            groupErrors: [],
+            users: [],
+          },
+          "live-graph",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     if (scenarioId === "ANOM-LIC-101") return licenseAnomalyInventory();
     const started = performance.now();
     const license = await msgraphService.getLicenseState(tenantId);
@@ -870,6 +1066,69 @@ export const msgraphService = {
 
   /** ANOM-CA-204: the demo CA policies against their golden baseline, the break-glass group and the legacy sign-ins CA-004 only reported. */
   async getCaPosture(tenantId: string): Promise<GraphResult<CaPosture>> {
+    if (isStrictRealTenantMode()) {
+      const done = envelope<CaPosture>(performance.now());
+      try {
+        const [{ policies, groupNamesById }, liveSignIns] = await Promise.all([
+          fetchAllConditionalAccessPoliciesLive(LIVE_TIMEOUT_MS),
+          fetchAllSignInEventsLive(undefined, 25, LIVE_TIMEOUT_MS).catch(() => []),
+        ]);
+        const resolveName = (id: string) => groupNamesById.get(id) ?? KNOWN_GROUP_NAMES_BY_ID[id.toLowerCase()] ?? id;
+        const inspected: CaPolicyInspector[] = policies.map((p) => {
+          const st = normaliseCaState(p.state);
+          const includeGroups = p.includeGroups.map(resolveName);
+          const excludeGroups = p.excludeGroups.map(resolveName);
+          const drift: CaPolicyInspector["drift"] = [];
+          if (st === "enabledForReportingButNotEnforced") {
+            drift.push({ field: "state", expected: "enabled", actual: st, severity: "medium" });
+          }
+          if (st === "enabled" && excludeGroups.length === 0) {
+            drift.push({ field: "conditions.users.excludeGroups", expected: "Break-glass group excluded", actual: "(none)", severity: "high" });
+          }
+          return {
+            id: p.id,
+            displayName: p.displayName,
+            state: st,
+            role: drift.length > 0 ? "drifted" : p.builtInControls.includes("block") ? "blocking" : "in-scope",
+            includeGroups,
+            excludeGroups,
+            targetApps: p.includeApplications.map((appId) => KNOWN_APP_IDS[appId] ?? appId),
+            clientAppTypes: p.clientAppTypes,
+            grantControls: p.builtInControls,
+            drift,
+            fixedState: "enabled",
+            fixedExcludeGroups: excludeGroups,
+            modifiedDateTime: p.modifiedDateTime,
+          };
+        });
+        return done(
+          {
+            policies: inspected,
+            breakGlassGroup: [...groupNamesById.values()].find((n) => /break|emergency/i.test(n)) ?? "Emergency Access Group",
+            breakGlassAccount: "",
+            goldenSource: "Microsoft Graph Live Conditional Access Policies",
+            legacySignIns: liveSignIns.map(mapLiveSignIn),
+            auditEvents: [],
+            baselineDiff: "",
+          },
+          "live-graph",
+        );
+      } catch (error) {
+        return done(
+          {
+            policies: [],
+            breakGlassGroup: "",
+            breakGlassAccount: "",
+            goldenSource: "Microsoft Graph Live Conditional Access Policies",
+            legacySignIns: [],
+            auditEvents: [],
+            baselineDiff: "",
+          },
+          "live-graph",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     const groupNames = [CA_POSTURE.breakGlassGroup, CA_POSTURE.adminGroup, CA_POSTURE.legacyAuthScopeGroup];
     const live = async (): Promise<CaPosture> => {
       const posture = await fetchCaPostureLive(groupNames, LIVE_TIMEOUT_MS);
@@ -899,6 +1158,56 @@ export const msgraphService = {
   /** ANOM-INT-309 / INC-4099: Intune policy drift against the golden baseline. The demo Intune objects live in the lab tenant for both. */
   async getIntuneDrift(key: IntuneScenarioKey): Promise<GraphResult<IntuneDrift>> {
     const done = envelope<IntuneDrift>(performance.now());
+    if (isStrictRealTenantMode()) {
+      try {
+        const overview = await fetchRealIntuneOverviewLive(LIVE_TIMEOUT_MS);
+        const policies: IntunePolicyRef[] = overview.policies.map((p) => ({
+          id: p.id,
+          name: p.name,
+          kind: p.kind,
+          assignedTo: ["Tenant Assignment"],
+          role: "golden",
+          source: "live-graph",
+        }));
+        const devices: IntuneDevice[] = overview.devices.map((d) => ({
+          deviceName: d.deviceName,
+          upn: d.upn,
+          os: d.osVersion,
+          complianceState: d.complianceState,
+          lastCheckIn: d.lastCheckIn,
+          detail: `Live Intune Managed Device (${d.complianceState})`,
+        }));
+        const affectedDeviceCount = devices.filter((d) => d.complianceState !== "Compliant").length;
+        return done(
+          {
+            issueKind: "baseline-drift",
+            goldenSource: "Microsoft Graph Live Intune Device Management",
+            policies,
+            settings: [],
+            devices,
+            affectedDeviceCount,
+            resolved: affectedDeviceCount === 0,
+            baselineDiff: "",
+          },
+          "live-graph",
+        );
+      } catch (error) {
+        return done(
+          {
+            issueKind: "baseline-drift",
+            goldenSource: "Microsoft Graph Live Intune Device Management",
+            policies: [],
+            settings: [],
+            devices: [],
+            affectedDeviceCount: 0,
+            resolved: true,
+            baselineDiff: "",
+          },
+          "live-graph",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     const fixture = INTUNE_SCENARIOS[key];
     if (!isLiveCloudMode()) return done(intuneDrift(key, fixture, null), "seeded-manifest");
     try {
@@ -1069,15 +1378,120 @@ export const msgraphService = {
     };
   },
 
-  async getSecurityGroups(_tenantId: string): Promise<GraphResult<SecurityGroupSummary[]>> {
-    const started = performance.now();
+  async getSecurityGroups(tenantId: string): Promise<GraphResult<SecurityGroupSummary[]>> {
+    const done = envelope<SecurityGroupSummary[]>(performance.now());
+    if (isStrictRealTenantMode()) {
+      try {
+        const liveGroups = await fetchSecurityGroupsLive(LIVE_TIMEOUT_MS);
+        const mapped: SecurityGroupSummary[] = liveGroups.map((g) => ({
+          displayName: g.displayName,
+          members: `${g.memberCount} member${g.memberCount === 1 ? "" : "s"}`,
+          assignedSku: "—",
+          linkedPolicy: g.securityEnabled ? "Security Group" : "M365 Group",
+          state: g.groupTypes.includes("DynamicMembership") ? "Active (Dynamic)" : "Active (Assigned)",
+          tenantId,
+        }));
+        return done(mapped, "live-graph");
+      } catch (error) {
+        return done([], "live-graph", error instanceof Error ? error.message : String(error));
+      }
+    }
     return {
       source: "seeded-manifest",
       liveCloudMode: false,
       fetchedAt: new Date().toISOString(),
-      latencyMs: Math.round(performance.now() - started),
+      latencyMs: Math.round(performance.now()),
       data: SECURITY_GROUPS_FIXTURE.map((g) => ({ ...g })),
     };
+  },
+
+  async getWorkloadIdentityPosture(_tenantId: string): Promise<GraphResult<WorkloadIdentityFixture | null>> {
+    const done = envelope<WorkloadIdentityFixture | null>(performance.now());
+    if (isStrictRealTenantMode()) {
+      try {
+        const apps = await fetchRealApplicationsLive(LIVE_TIMEOUT_MS);
+        if (apps.length === 0) {
+          return done(null, "live-graph");
+        }
+        const nowMs = Date.now();
+        const primary =
+          apps.find((a) => a.passwordCredentials.some((c) => c.endDateTime && Date.parse(c.endDateTime) < nowMs)) ??
+          apps.find((a) => a.passwordCredentials.length > 0) ??
+          apps[0]!;
+        const cred = primary.passwordCredentials[0];
+        const expired = cred?.endDateTime ? Date.parse(cred.endDateTime) < nowMs : false;
+        const peerApps = apps.map((a) => {
+          const c = a.passwordCredentials[0];
+          const exp = c?.endDateTime ? Date.parse(c.endDateTime) < nowMs : false;
+          return {
+            displayName: a.displayName,
+            appId: a.appId,
+            objectId: a.objectId,
+            servicePrincipalId: a.objectId,
+            ownerUpn: "Directory App Registration",
+            ownerRoles: a.signInAudience,
+            credentialSummary: c
+              ? `${c.displayName ?? "ClientSecret"} (${exp ? "Expired" : "Active"} · ${c.endDateTime?.slice(0, 10) ?? "no expiry"})`
+              : a.keyCredentialsCount > 0
+                ? `${a.keyCredentialsCount} Certificate(s)`
+                : "No Client Secrets (Federated / Public)",
+            highPrivScopes: `${a.requiredResourceAccessCount} resource access set(s)`,
+            posture: (exp ? "critical" : c ? "warning" : "healthy") as "critical" | "warning" | "healthy",
+            stateLabel: exp ? "Expired Secret" : c ? "Client Secret Active" : "Certificate / OIDC",
+          };
+        });
+        const liveFixture: WorkloadIdentityFixture = {
+          scenarioId: "ANOM-APP-401",
+          goldenSource: "Microsoft Graph Live App Registrations (/v1.0/applications)",
+          spn: {
+            displayName: primary.displayName,
+            appId: primary.appId,
+            objectId: primary.objectId,
+            servicePrincipalId: primary.objectId,
+            signInAudience: primary.signInAudience,
+          },
+          owner: {
+            upn: "tenant-admin@live",
+            displayName: "Live Tenant Application Owner",
+            objectId: primary.objectId,
+            directoryRoles: [],
+          },
+          passwordCredential: {
+            displayName: cred?.displayName ?? "None",
+            keyId: cred?.keyId ?? "none",
+            endDateTime: cred?.endDateTime ?? new Date().toISOString(),
+            expired,
+          },
+          errorCode: expired ? 7000222 : 0,
+          errorCodeLabel: "AADSTS7000222",
+          failureSource: "Microsoft Graph Live Application Inventory",
+          appPermissions: [`${primary.requiredResourceAccessCount} configured resource access scope(s)`],
+          appRoleAssignments: [],
+          oauth2PermissionGrant: {
+            id: primary.objectId,
+            scope: "Configured in Entra ID",
+            consentType: "Principal",
+            verifiedPublisher: true,
+          },
+          activity: {
+            windowDays: 30,
+            calls: [],
+          },
+          requiredPermissions: [],
+          federatedCredential: {
+            name: "federated-identity",
+            issuer: "https://token.actions.githubusercontent.com",
+            subject: `app:${primary.displayName}`,
+            audiences: ["api://AzureADTokenExchange"],
+          },
+          peerApps,
+        };
+        return done(liveFixture, "live-graph");
+      } catch (error) {
+        return done(null, "live-graph", error instanceof Error ? error.message : String(error));
+      }
+    }
+    return done(WORKLOAD_IDENTITY, "seeded-manifest");
   },
 };
 

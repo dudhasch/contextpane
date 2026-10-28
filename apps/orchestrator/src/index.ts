@@ -5,6 +5,7 @@ import { app } from "./app.ts";
 import { config, describeConfig, providers } from "./config.ts";
 import { workbenchEvents } from "./events.ts";
 import { startInboxWatcher } from "./local/erp-inbox.ts";
+import { initDataModeOnStartup } from "./local/free-roam.ts";
 import { gatherContext } from "./mcp/context.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
@@ -52,9 +53,10 @@ const server = Bun.serve({
   idleTimeout: 120,
 });
 
+const activeDataMode = initDataModeOnStartup();
 const keyed = Object.values(providers).filter((p) => p.hasKey).map((p) => p.id);
 console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
-console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
+console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  DATA_MODE=${activeDataMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
 console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
 if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json${hoverCacheSeeded ? " (seeded from data/hover-cache.seed.json)" : ""}`);
 // The ERP inbox: input/tickets/#<id>/ticketbody.json (+ images) becomes a work item within ~1 s.

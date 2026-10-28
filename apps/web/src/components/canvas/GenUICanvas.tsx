@@ -1,7 +1,8 @@
-import { Bot, Check, ChevronRight, Clock3, Database, LayoutGrid, Pin, Sparkles, Undo2, X } from "lucide-react";
+import { Bot, Check, ChevronRight, Clock3, Compass, Database, LayoutGrid, Pin, Sparkles, Trash2, Undo2, Wrench, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { LayoutComponent } from "@contextpane/catalog";
 import { selectActiveTimelineSlice, selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
+import { Button } from "../ui/Button";
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
 import { IaCDriftBannerCard } from "./IaCDriftBanner";
 import { IntuneDriftCardView } from "./IntuneDriftCard";
@@ -17,6 +18,12 @@ import { SynthesizedDynamicCard } from "../cards/SynthesizedDynamicCard";
  * compact; the left pane expands and focuses them.
  */
 export function GenUICanvas() {
+  const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
+  const freeRoamDashboards = useWorkbench((s) => s.freeRoamDashboards);
+  const clearFreeRoamDashboards = useWorkbench((s) => s.clearFreeRoamDashboards);
+  const dataMode = useWorkbench((s) => s.dataMode);
+  const inventory = useWorkbench((s) => s.freeRoamInventory);
+  const openRemediation = useWorkbench((s) => s.openRemediation);
   const layout = useWorkbench(selectCanvasLayout);
   const status = useWorkbench((s) => s.canvasStatus);
   const error = useWorkbench((s) => s.canvasError);
@@ -30,6 +37,84 @@ export function GenUICanvas() {
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const briefTitle = useWorkbench((s) => s.brief?.title);
   const components = visibleComponents(layout, filter);
+
+  if (freeRoamOpen) {
+    return (
+      <div className="flex h-full flex-col" data-testid="free-roam-canvas">
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-[12px]">
+          <Compass className="size-3.5 shrink-0 text-selection" />
+          <span className="font-medium text-text">Free-Roam Multi-Dashboard Workspace</span>
+          <ChevronRight className="size-3 shrink-0 text-faint" />
+          <span className="truncate font-mono text-[11px] text-muted">
+            {inventory?.tenant.displayName ?? "Contoso"} ({inventory?.tenant.verifiedDomain ?? "c4a8shili.onmicrosoft.com"})
+          </span>
+          <span className="shrink-0 font-mono text-[11px] text-selection">
+            · {freeRoamDashboards.length} {freeRoamDashboards.length === 1 ? "dashboard" : "dashboards"} mounted
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <span
+              className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[10px] ${
+                dataMode === "real-tenant"
+                  ? "border-healthy/40 bg-healthy/12 text-healthy"
+                  : "border-primary/40 bg-primary/12 text-primary"
+              }`}
+              data-testid="free-roam-canvas-datamode"
+            >
+              <Database className="size-3" />
+              {dataMode === "real-tenant" ? "Strict Real Tenant (MCP)" : "Simulated Lab (MCP)"}
+            </span>
+            {freeRoamDashboards.length > 0 && (
+              <>
+                <Button
+                  size="xs"
+                  variant="meta"
+                  icon={<Wrench />}
+                  onClick={() => openRemediation()}
+                  title="Stage PowerShell 7 / Graph / Terraform action for the active Free-Roam dashboard"
+                >
+                  Stage Action
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  icon={<Trash2 />}
+                  onClick={() => clearFreeRoamDashboards()}
+                  title="Clear all spawned dashboards from the Free-Roam workspace"
+                >
+                  Clear ({freeRoamDashboards.length})
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-2.5">
+          {triageStatus === "loading" && (
+            <SubAgentSynthesisSkeleton
+              mode="triage"
+              title={pendingTriageTitle ?? "Custom Incident / Project Goal"}
+            />
+          )}
+          {exploreStatus === "loading" && (
+            <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "Free-Roam Query"} />
+          )}
+          {freeRoamDashboards.map((m) => (
+            <ContextualMiniDashboardCard key={m.id} entry={m} />
+          ))}
+          {freeRoamDashboards.length === 0 && exploreStatus !== "loading" && (
+            <div className="card flex flex-col items-center justify-center gap-2 border-dashed border-border py-12 text-center">
+              <Compass className="size-7 text-selection/70" />
+              <div className="text-[13px] font-semibold text-text">
+                Free-Roam Knowledge &amp; Telemetry Canvas Ready
+              </div>
+              <p className="max-w-md text-[11.5px] text-muted">
+                Type any cloud architecture question, error code, or tenant query in the left explorer—or click any entity in the live MCP tenant tree—to dynamically spawn interactive dashboards. Highlight any text on any card to recursively drill down.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">

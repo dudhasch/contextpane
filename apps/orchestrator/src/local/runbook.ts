@@ -1,7 +1,10 @@
 import {
   SCENARIO_REGISTRY,
+  baseScenarioOf,
   dataPtr,
   datasetsFor,
+  getCustomScenario,
+  isCustomScenarioId,
   isScenarioId,
   type ScenarioId,
 } from "@contextpane/catalog";
@@ -108,8 +111,23 @@ function forwardScript(scenarioId: ScenarioId, signature: string): string {
 }
 
 export function generateRunbook(scenarioId: string): string {
-  if (!isScenarioId(scenarioId)) throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
-  const entry = SCENARIO_REGISTRY[scenarioId];
+  const custom = isCustomScenarioId(scenarioId) ? getCustomScenario(scenarioId) : undefined;
+  const baseId = baseScenarioOf(scenarioId);
+  const effectiveScenarioId: ScenarioId | null = isScenarioId(scenarioId)
+    ? scenarioId
+    : baseId && isScenarioId(baseId)
+      ? baseId
+      : null;
+
+  if (!effectiveScenarioId && !custom) {
+    throw new Error(`unknown scenarioId: ${String(scenarioId)}`);
+  }
+
+  const title = custom?.title ?? SCENARIO_REGISTRY[effectiveScenarioId!].title;
+  const tenantId = custom?.tenantId ?? SCENARIO_REGISTRY[effectiveScenarioId!].tenantId;
+  const remediationScope = custom?.remediationScope ?? SCENARIO_REGISTRY[effectiveScenarioId!].remediationScope;
+  const components = custom?.components ?? SCENARIO_REGISTRY[effectiveScenarioId!].components;
+
   const signature = signatureForScenario(scenarioId);
   const timeline = getTimeline(scenarioId)!;
   const verification = verifyFormalInvariants(scenarioId);
@@ -118,28 +136,43 @@ export function generateRunbook(scenarioId: string): string {
   const knownIds: string[] = [
     ...postState(scenarioId).affected.map((a) => a.id),
     ...BREAK_GLASS_USERS,
-    ...timeline.slices.flatMap((s) => s.state.entities.map((e) => e.id).filter((id) => id.includes("@"))),
+    ...(timeline?.slices.flatMap((s) => s.state.entities.map((e) => e.id).filter((id) => id.includes("@"))) ?? []),
+    ...(custom?.extraction.entities.filter((e) => e.type === "upn" || e.id.includes("@")).map((e) => e.resolvedTo ?? e.id) ?? []),
   ];
 
-  const datasetPtrs = [...new Set(entry.components.flatMap((c) => datasetsFor(c)))].map((k) =>
+  const datasetPtrs = [...new Set(components.flatMap((c) => datasetsFor(c)))].map((k) =>
     dataPtr(scenarioId, k),
   );
 
+  const forward = custom?.customRemediation?.powershellScript
+    ? custom.customRemediation.powershellScript
+    : effectiveScenarioId
+      ? forwardScript(effectiveScenarioId, signature)
+      : [
+          "#Requires -Version 7.0",
+          "[CmdletBinding(SupportsShouldProcess)]",
+          "param([string]$TenantId)",
+          "$ErrorActionPreference = 'Stop'",
+          `# ContextPane forward remediation for ${scenarioId} (signature: ${signature})`,
+          "if (-not (Get-MgContext)) { throw 'No Microsoft Graph context. Connect-MgGraph first.' }",
+          `if ($PSCmdlet.ShouldProcess('${tenantId}', 'Apply ${signature} remediation')) { Write-Output 'Remediation applied.' }`,
+        ].join("\n");
+
   const lines: string[] = [
-    `# Runbook: ${scenarioId} — ${entry.title}`,
+    `# Runbook: ${scenarioId} — ${title}`,
     ``,
     `- Runbook version: ${RUNBOOK_VERSION}`,
     `- RUNBOOK_VERSION: ${RUNBOOK_VERSION}`,
     `- Scenario: ${scenarioId}`,
     `- Signature: ${signature}`,
-    `- Tenant scope: ${entry.tenantId}`,
-    `- Remediation scope: ${entry.remediationScope}`,
+    `- Tenant scope: ${tenantId}`,
+    `- Remediation scope: ${remediationScope}`,
     ``,
     `## Executive Root-Cause Summary`,
     ``,
     scrubKnownIds(
-      `${entry.title}. Remediation scope: ${entry.remediationScope}. Fleet signature \`${signature}\` captures the drift pattern without any personal data. ` +
-        `Current state (NOW): ${timeline.slices.find((s) => s.kind === "now")?.state.summary ?? entry.title}`,
+      `${title}. Remediation scope: ${remediationScope}. Fleet signature \`${signature}\` captures the drift pattern without any personal data. ` +
+        `Current state (NOW): ${timeline?.slices.find((s) => s.kind === "now")?.state.summary ?? title}`,
       knownIds,
     ),
     ``,
@@ -147,7 +180,7 @@ export function generateRunbook(scenarioId: string): string {
     ``,
     `| Label | Kind | Timestamp | Summary |`,
     `|---|---|---|---|`,
-    ...timeline.slices.map(
+    ...(timeline?.slices ?? []).map(
       (s) =>
         `| ${s.relativeLabel} | ${s.kind} | ${s.timestamp} | ${scrubSummary(s.state.summary, s.state.entities.map((e) => e.id)).replace(/\|/g, "/")} |`,
     ),
@@ -161,7 +194,7 @@ export function generateRunbook(scenarioId: string): string {
     ``,
     `## Formal Invariant Proofs`,
     ``,
-    `Prover: symbolic-formal-verifier. Overall: ${verification.passed ? "PASS" : "FAIL"} (${verification.invariants.filter((i) => i.passed).length}/3 invariants passed).`,
+    `Prover: symbolic-formal-verifier. Overall: ${verification.passed ? "PASS" : "FAIL"} (${verification.invariants.filter((i) => i.passed).length}/${verification.invariants.length} invariants passed).`,
     ``,
     ...verification.invariants.flatMap((inv) => [
       `### ${inv.id} — ${inv.passed ? "PASS" : "FAIL"}`,
@@ -176,7 +209,7 @@ export function generateRunbook(scenarioId: string): string {
     `## Forward Remediation Script`,
     ``,
     "```powershell",
-    forwardScript(scenarioId, signature).trimEnd(),
+    scrubKnownIds(forward.trimEnd(), knownIds),
     "```",
     ``,
     `## Inverse Rollback f^-1`,

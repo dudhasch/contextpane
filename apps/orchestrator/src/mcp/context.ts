@@ -137,7 +137,7 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
     const hasAzureEstate = tenantId === "tenant-contoso-01";
     const customIntents = new Set(custom?.extraction.intents ?? []);
     const customCards = new Set(custom?.extraction.components ?? []);
-    const [erp, license, policies, signIns, caPosture, intune, drift, avd, securityGroups, azurePolicies, regionalQuotas] = await Promise.all([
+    const [erp, license, policies, signIns, caPosture, intune, drift, avd, securityGroups, azurePolicies, regionalQuotas, workloadIdentityRes] = await Promise.all([
       sources.erp.getTenantContext(tenantId),
       // Ticket scenarios read licenses for the user hover even when they show no license card.
       cards.has("LicenseDriftCard") || customCards.has("LicenseDriftCard") || ticketScenario ? sources.msgraph.getLicenseInventory(tenantId, scenarioId ?? undefined) : none,
@@ -150,6 +150,9 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       sources.msgraph.getSecurityGroups(tenantId),
       sources.azure.getAzurePolicies(tenantId),
       sources.azure.getRegionalQuotas(tenantId),
+      scenarioId === "ANOM-APP-401" || (custom && custom.extraction.intents.includes("workload-identity")) || sources.getDataMode() === "real-tenant"
+        ? sources.msgraph.getWorkloadIdentityPosture(tenantId)
+        : none,
     ]);
     const used: Record<string, { source: string; fallbackReason?: string } | null> = {
       license,
@@ -162,6 +165,7 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       securityGroups,
       azurePolicies,
       regionalQuotas,
+      workloadIdentity: workloadIdentityRes,
     };
     return {
       scenarioId,
@@ -176,31 +180,51 @@ function load(workbenchId: WorkbenchScenarioId): Promise<CorrelationContext> {
       signIns,
       caPosture,
       intune,
-      workloadIdentity: scenarioId === "ANOM-APP-401" || (custom && custom.extraction.intents.includes("workload-identity")) ? WORKLOAD_IDENTITY : null,
+      workloadIdentity: workloadIdentityRes?.data ?? null,
       drift,
       avd,
       securityGroups,
       azurePolicies,
       regionalQuotas,
-      groupsByUpn: groupsByUpn(scenarioId, tenantId),
+      groupsByUpn: groupsByUpn(scenarioId, tenantId, license?.data ?? null, caPosture?.data ?? null, workloadIdentityRes?.data ?? null),
       gatheredAt: new Date().toISOString(),
       gatherLatencyMs: Math.round(performance.now() - started),
       transport: sources.transport,
       sourcesUsed: {
         ...Object.fromEntries(Object.entries(used).filter(([, r]) => r).map(([k, r]) => [k, r!.source])),
-        ...(scenarioId === "ANOM-APP-401" ? { workloadIdentity: "fixture" } : {}),
       },
       fallbackReasons: Object.values(used).flatMap((r) => (r?.fallbackReason ? [r.fallbackReason] : [])),
     } satisfies CorrelationContext;
   })();
 }
 
-function groupsByUpn(scenarioId: ScenarioId | null, tenantId: string): Map<string, string[]> {
+function groupsByUpn(
+  scenarioId: ScenarioId | null,
+  tenantId: string,
+  liveLicense?: LicenseInventory | null,
+  liveCaPosture?: CaPosture | null,
+  liveWorkloadIdentity?: WorkloadIdentityFixture | null,
+): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const add = (upn: string, group: string) => {
     const key = upn.toLowerCase();
     map.set(key, [...new Set([...(map.get(key) ?? []), group])]);
   };
+  if (sources.getDataMode() === "real-tenant") {
+    if (liveLicense) {
+      for (const u of liveLicense.users) {
+        if (u.assignmentPath.startsWith("group:")) add(u.upn, u.assignmentPath.slice("group:".length));
+        else if (liveLicense.groupName) add(u.upn, liveLicense.groupName);
+      }
+    }
+    if (liveCaPosture?.breakGlassAccount) {
+      if (liveCaPosture.breakGlassGroup) add(liveCaPosture.breakGlassAccount, liveCaPosture.breakGlassGroup);
+    }
+    if (liveWorkloadIdentity?.owner?.upn) {
+      add(liveWorkloadIdentity.owner.upn, `${liveWorkloadIdentity.spn.displayName} owners`);
+    }
+    return map;
+  }
   for (const g of getManifestTenant(tenantId).groups) for (const upn of g.memberUpns) add(upn, g.displayName);
   if (scenarioId === "ANOM-LIC-101") for (const u of LICENSE_ANOMALY.users) add(u.upn, LICENSE_ANOMALY.groupName);
   if (scenarioId === "ANOM-CA-204") {

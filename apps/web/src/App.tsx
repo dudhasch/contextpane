@@ -7,6 +7,7 @@ import { SystemAuditDrawer } from "./components/hud/SystemAuditDrawer";
 import { TicketComposer } from "./components/hud/TicketComposer";
 import { TopBar } from "./components/hud/TopBar";
 import { VoiceSteerPanel } from "./components/hud/VoiceSteer";
+import { FreeRoamExplorer } from "./components/landing/FreeRoamExplorer";
 import { ScenarioPane } from "./components/ticket/ScenarioPane";
 import { SelectionTrigger } from "./components/ticket/SelectionTrigger";
 import { Toasts } from "./components/ui/Toasts";
@@ -19,6 +20,7 @@ const MAX_LEFT_PCT = 58;
 
 export function App() {
   const boot = useWorkbench((s) => s.boot);
+  const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
   useDemoHotkeys();
   const [leftPct, setLeftPct] = useState<number>(DEFAULT_LEFT_PCT);
   const [dragging, setDragging] = useState(false);
@@ -63,7 +65,7 @@ export function App() {
         }}
       >
         <section className="flex min-h-0 flex-col bg-surface/40">
-          <ScenarioPane />
+          {freeRoamOpen ? <FreeRoamExplorer /> : <ScenarioPane />}
         </section>
         <div
           role="separator"

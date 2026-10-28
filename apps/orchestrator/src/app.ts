@@ -53,6 +53,14 @@ import { exploreSelection } from "./tiers/explore.ts";
 import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
 import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
+import {
+  getFreeRoamInventory,
+  getPersistedDataMode,
+  scanTenantForAnomalies,
+  setPersistedDataMode,
+  spawnFreeRoamDashboard,
+  stageFreeRoamRemediation,
+} from "./local/free-roam.ts";
 import { generateClarifyingQuestions } from "./local/subagent-orchestrator.ts";
 import { DROP_ARCHETYPES } from "./local/erp-drop-generator.ts";
 import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop, visionTriageDrop } from "./local/erp-inbox.ts";
@@ -129,6 +137,7 @@ app.get("/api/health", async (c) => {
     version: "0.1.0",
     now: new Date().toISOString(),
     liveCloudMode: config.liveCloudMode,
+    dataMode: getPersistedDataMode(),
     forceLocal: config.forceLocal,
     providers: Object.values(providers).map((p) => ({ id: p.id, label: p.label, hasKey: p.hasKey })),
     mcp,
@@ -137,7 +146,7 @@ app.get("/api/health", async (c) => {
   });
 });
 
-app.get("/api/config", (c) => c.json(describeConfig()));
+app.get("/api/config", (c) => c.json({ ...describeConfig(), dataMode: getPersistedDataMode() }));
 app.get("/api/mcp/status", async (c) => c.json(await sources.status()));
 
 /* -------------------------------- scenarios -------------------------------- */
@@ -147,27 +156,119 @@ app.get("/api/tenants", (c) => c.json({ tenants: Object.values(TENANT_REGISTRY) 
 /** When each built-in anomaly was detected (mirrors anomalyBody in local/brief.ts); tickets carry openedAt in the ERP. */
 const ANOMALY_DETECTED_AT: Record<string, string> = { "ANOM-LIC-101": "2026-10-26T06:05:00Z", "ANOM-CA-204": "2026-10-26T06:00:00Z", "ANOM-APP-401": "2026-10-26T06:10:00Z", "ANOM-INT-309": "2026-10-26T05:40:00Z" };
 
+function listActiveScenarios(includeSeededOverride?: boolean): ScenarioListItem[] {
+  const dataMode = getPersistedDataMode();
+  const includeSeeded = includeSeededOverride ?? dataMode !== "real-tenant";
+  const scenarios: ScenarioListItem[] = includeSeeded
+    ? SCENARIO_IDS.map((scenarioId) => {
+        const entry = SCENARIO_REGISTRY[scenarioId];
+        return {
+          scenarioId,
+          kind: entry.kind,
+          origin: entry.kind === "ticket" ? "psa" : "anomaly",
+          displayId: displayScenarioId(scenarioId),
+          tenantId: entry.tenantId,
+          tenantName: TENANT_REGISTRY[entry.tenantId].displayName,
+          title: entry.title,
+          resolved: Boolean(convergenceStore.get(scenarioId)),
+          createdAt: ERP_TICKETS[scenarioId]?.openedAt ?? ANOMALY_DETECTED_AT[scenarioId] ?? "2026-10-26T06:00:00Z",
+        };
+      })
+    : [];
+  for (const custom of listCustomScenarios()) {
+    scenarios.push(customScenarioListItem(custom, Boolean(convergenceStore.get(custom.scenarioId))));
+  }
+  return scenarios;
+}
+
 /**
  * The unified work queue: PSA tickets, live Graph anomalies, ERP file drops and pasted tickets are
  * one stream, differentiated by `origin`; resolved = approved since the last drift reset.
+ * In "real-tenant" mode, the 6 seeded demo scenarios are filtered out unless ?includeSeeded=1.
  */
 app.get("/api/scenarios", (c) => {
-  const scenarios: ScenarioListItem[] = SCENARIO_IDS.map((scenarioId) => {
-    const entry = SCENARIO_REGISTRY[scenarioId];
-    return {
-      scenarioId,
-      kind: entry.kind,
-      origin: entry.kind === "ticket" ? "psa" : "anomaly",
-      displayId: displayScenarioId(scenarioId),
-      tenantId: entry.tenantId,
-      tenantName: TENANT_REGISTRY[entry.tenantId].displayName,
-      title: entry.title,
-      resolved: Boolean(convergenceStore.get(scenarioId)),
-      createdAt: ERP_TICKETS[scenarioId]?.openedAt ?? ANOMALY_DETECTED_AT[scenarioId] ?? "2026-10-26T06:00:00Z",
-    };
+  const includeSeeded = /^(1|true)$/i.test(c.req.query("includeSeeded") ?? "") ? true : undefined;
+  return c.json({ scenarios: listActiveScenarios(includeSeeded), dataMode: getPersistedDataMode() });
+});
+
+/* ------------ Data Mode ("real-tenant" vs "simulated-lab") & Free-Roam ------------ */
+
+app.get("/api/settings/data-mode", (c) => {
+  return c.json({
+    dataMode: getPersistedDataMode(),
+    liveCloudMode: config.liveCloudMode,
   });
-  for (const custom of listCustomScenarios()) scenarios.push(customScenarioListItem(custom, Boolean(convergenceStore.get(custom.scenarioId))));
-  return c.json({ scenarios });
+});
+
+const DataModeBodySchema = z.object({
+  dataMode: z.enum(["real-tenant", "simulated-lab"]),
+});
+
+app.post("/api/settings/data-mode", (c) =>
+  c.req.json().then((raw) => {
+    const body = DataModeBodySchema.parse(raw);
+    const dataMode = setPersistedDataMode(body.dataMode);
+    return c.json({
+      ok: true,
+      dataMode,
+      liveCloudMode: config.liveCloudMode,
+      scenarios: listActiveScenarios(),
+    });
+  }),
+);
+
+app.get("/api/free-roam/inventory", async (c) => {
+  const tenantId = c.req.query("tenantId");
+  const inventory = await getFreeRoamInventory(tenantId);
+  return c.json(inventory);
+});
+
+const FreeRoamSpawnSchema = z.object({
+  prompt: z.string().min(2).max(2000),
+  refinementText: z.string().max(1000).optional(),
+  scope: z.enum(["hybrid", "tenant-only", "knowledge"]).optional(),
+  viewMode: ContextViewModeSchema.optional(),
+  tenantId: z.string().optional(),
+});
+
+app.post("/api/free-roam/spawn", async (c) => {
+  const body = FreeRoamSpawnSchema.parse(await c.req.json());
+  const result = await spawnFreeRoamDashboard({
+    prompt: body.prompt,
+    ...(body.refinementText ? { refinementText: body.refinementText } : {}),
+    ...(body.scope ? { scope: body.scope } : {}),
+    ...(body.viewMode ? { viewMode: body.viewMode } : {}),
+    ...(body.tenantId ? { tenantId: body.tenantId } : {}),
+  });
+  return c.json(result);
+});
+
+const FreeRoamRemediateSchema = z.object({
+  prompt: z.string().min(2).max(2000),
+  title: z.string().max(200).optional(),
+  scriptPreview: z.string().max(4000).optional(),
+  tenantId: z.string().optional(),
+});
+
+app.post("/api/free-roam/remediate", async (c) => {
+  const body = FreeRoamRemediateSchema.parse(await c.req.json());
+  const result = await stageFreeRoamRemediation({
+    prompt: body.prompt,
+    ...(body.title ? { title: body.title } : {}),
+    ...(body.scriptPreview ? { scriptPreview: body.scriptPreview } : {}),
+    ...(body.tenantId ? { tenantId: body.tenantId } : {}),
+  });
+  return c.json(result);
+});
+
+app.post("/api/anomalies/scan", async (c) => {
+  const raw = await c.req.json().catch(() => ({}));
+  const tenantId = typeof raw?.tenantId === "string" ? raw.tenantId : undefined;
+  const result = await scanTenantForAnomalies(tenantId);
+  return c.json({
+    ...result,
+    scenarios: listActiveScenarios(),
+  });
 });
 
 /** Left pane: summary & resolution plan, MCP-enriched entities by provenance colour, ticket or anomaly text. */

@@ -303,9 +303,54 @@ function ProvidersBody() {
   const wsConnected = useWorkbench((s) => s.wsConnected);
   const telemetry = useWorkbench((s) => s.telemetry);
   const brief = useWorkbench((s) => s.brief);
+  const dataMode = useWorkbench((s) => s.dataMode);
+  const togglingDataMode = useWorkbench((s) => s.togglingDataMode);
+  const setDataMode = useWorkbench((s) => s.setDataMode);
   const tierTone = (telemetry ? TIER_COLOR[telemetry.tier] : "muted") as Tone;
   return (
     <div className="space-y-4 text-[12px]">
+      <section className="rounded-md border border-border-subtle bg-canvas/50 p-3" data-testid="system-datamode-section">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="section-label">MCP Tenant Data Mode Boundary</span>
+          <Pill tone={dataMode === "real-tenant" ? "healthy" : "primary"}>
+            {dataMode === "real-tenant" ? "Strict Real Tenant" : "Simulated Lab"}
+          </Pill>
+        </div>
+        <p className="mb-2 text-[11px] text-muted">
+          Enforced inside <span className="font-mono text-text">@contextpane/mcp-msgraph</span> &amp;{" "}
+          <span className="font-mono text-text">@contextpane/mcp-azure-iac</span>. In{" "}
+          <span className="font-semibold text-text">Real Tenant Only</span> mode, MCP queries your authenticated tenant exclusively with zero fallback to seeded lab fixtures.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={togglingDataMode}
+            onClick={() => void setDataMode("real-tenant")}
+            data-testid="system-datamode-real"
+            className={`flex-1 rounded border px-2.5 py-1.5 font-mono text-[11px] font-semibold transition-colors ${
+              dataMode === "real-tenant"
+                ? "border-healthy/60 bg-healthy/18 text-healthy"
+                : "border-border bg-surface text-muted hover:text-text"
+            }`}
+          >
+            Real Tenant Only (Zero Mock)
+          </button>
+          <button
+            type="button"
+            disabled={togglingDataMode}
+            onClick={() => void setDataMode("simulated-lab")}
+            data-testid="system-datamode-simulated"
+            className={`flex-1 rounded border px-2.5 py-1.5 font-mono text-[11px] font-semibold transition-colors ${
+              dataMode === "simulated-lab"
+                ? "border-primary/60 bg-primary/18 text-primary"
+                : "border-border bg-surface text-muted hover:text-text"
+            }`}
+          >
+            Simulated Lab (Seeded Fixtures)
+          </button>
+        </div>
+      </section>
+
       <section>
         <div className="section-label mb-1.5">Last request</div>
         {telemetry ? (

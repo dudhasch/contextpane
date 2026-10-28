@@ -36,6 +36,11 @@ const FILTERS: Array<{ id: QueueFilter; label: string }> = [{ id: "all", label: 
 export function WorkQueue() {
   const open = useWorkbench((s) => s.queueOpen);
   const setOpen = useWorkbench((s) => s.setQueueOpen);
+  const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
+  const openFreeRoam = useWorkbench((s) => s.openFreeRoam);
+  const dataMode = useWorkbench((s) => s.dataMode);
+  const scanAnomalies = useWorkbench((s) => s.scanAnomalies);
+  const scanningAnomalies = useWorkbench((s) => s.scanningAnomalies);
   const scenarioId = useWorkbench((s) => s.scenarioId);
   const scenarios = useWorkbench((s) => s.scenarios);
   const convergence = useWorkbench((s) => s.convergence);
@@ -107,7 +112,7 @@ export function WorkQueue() {
         data-testid="work-queue-button"
         className="relative flex h-7 min-w-0 max-w-[560px] items-center gap-2 rounded-md border border-border bg-elevated pr-2 pl-2 text-[12px] text-text hover:border-primary/50 focus:outline-2 focus:outline-primary"
       >
-        {current ? (
+        {!freeRoamOpen && current ? (
           <>
             <span className={`inline-flex shrink-0 [&>svg]:size-3.5 ${TONE_TEXT[ORIGIN_META[current.origin].tone]}`}>{ORIGIN_ICON[current.origin]}</span>
             <span className="shrink-0 font-mono font-semibold">{current.displayId}</span>
@@ -115,7 +120,9 @@ export function WorkQueue() {
             {status && <span className={`ml-1 shrink-0 rounded-pill border px-1.5 font-mono text-[10px] ${TONE_CLASS[status.tone]}`}>{status.label}</span>}
           </>
         ) : (
-          <span className="text-muted">Work queue…</span>
+          <span className="text-muted">
+            {freeRoamOpen ? `Work Queue (${queue.length} items) · Ctrl+K` : "Work queue…"}
+          </span>
         )}
         <ChevronDown className="size-3.5 shrink-0 text-muted" />
         {unseen.length > 0 && <span className="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-meta font-mono text-[9.5px] font-semibold text-canvas" title={`${unseen.length} new ERP drop(s)`} data-testid="queue-unseen">{unseen.length}</span>}
@@ -144,17 +151,44 @@ export function WorkQueue() {
               ))}
             </div>
             <ul className="max-h-[360px] overflow-y-auto py-1">
-              {rows.length === 0 && <li className="px-3 py-4 text-center text-[12px] text-faint">No work items match.</li>}
+              {rows.length === 0 && (
+                <li className="px-3 py-4 text-center text-[12px] text-faint">
+                  {dataMode === "real-tenant"
+                    ? "No custom tickets or live anomalies in queue yet (Seeded demo tickets are hidden in Real Tenant mode). Click [Scan for Anomalies] or [+ Triage Unscripted Ticket]."
+                    : "No work items match."}
+                </li>
+              )}
               {rows.map((item) => (
-                <QueueRow key={item.scenarioId} item={item} active={item.scenarioId === scenarioId} index={queue.indexOf(item) + 1} unseen={unseen.includes(item.scenarioId)} closed={closedId === item.scenarioId} onSelect={() => void select(item.scenarioId)} />
+                <QueueRow key={item.scenarioId} item={item} active={!freeRoamOpen && item.scenarioId === scenarioId} index={queue.indexOf(item) + 1} unseen={unseen.includes(item.scenarioId)} closed={closedId === item.scenarioId} onSelect={() => void select(item.scenarioId)} />
               ))}
             </ul>
-            <div className="flex items-center gap-1.5 border-t border-border-subtle px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle px-3 py-2">
               <Button variant="outline" icon={<FilePlus2 />} onClick={() => { setOpen(false); setComposerOpen(true); }} title="Paste any support ticket and triage it live (n)" data-testid="new-ticket-button">
                 + Triage Unscripted Ticket
               </Button>
-              <Button variant="meta" icon={<Dices />} loading={dropStatus === "loading"} onClick={() => void simulateDrop()} title="Write a random #2026xxx/ticketbody.json + attachment1.png into input/tickets/ and let the inbox watcher ingest it (g)" data-testid="drop-erp-button">
-                🎲 Drop Random ERP Ticket
+              <Button
+                variant="primary"
+                icon={<Radar />}
+                loading={scanningAnomalies}
+                onClick={() => void scanAnomalies()}
+                title="Scan live MCP tenant endpoints for license drift, Conditional Access posture issues, expired secrets, and NSG drift"
+                data-testid="queue-scan-anomalies-button"
+              >
+                Scan for Anomalies
+              </Button>
+              {dataMode !== "real-tenant" && (
+                <Button variant="meta" icon={<Dices />} loading={dropStatus === "loading"} onClick={() => void simulateDrop()} title="Write a random #2026xxx/ticketbody.json + attachment1.png into input/tickets/ and let the inbox watcher ingest it (g)" data-testid="drop-erp-button">
+                  🎲 Drop Random ERP Ticket
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setOpen(false);
+                  openFreeRoam();
+                }}
+              >
+                Free-Roam Startpage
               </Button>
               <span className="ml-auto shrink-0 whitespace-nowrap text-[10.5px] text-faint">
                 <Kbd>1</Kbd>–<Kbd>9</Kbd> open · <Kbd>j</Kbd> <Kbd>k</Kbd> step · <Kbd>Esc</Kbd> close

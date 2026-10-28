@@ -256,9 +256,9 @@ export interface CustomRemediationTemplate {
 
 export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenarioId"> {
   scenarioId: CustomScenarioId;
-  kind: "ticket";
-  /** Pasted into the composer, or dropped into input/tickets/ as a folder. */
-  origin: "unscripted" | "erp-drop";
+  kind: "ticket" | "anomaly";
+  /** Pasted into the composer, dropped into input/tickets/ as a folder, or scanned from the live tenant. */
+  origin: "unscripted" | "erp-drop" | "anomaly";
   baseScenarioId: ScenarioId | null;
   shortHash: string;
   createdAt: string;
@@ -315,7 +315,7 @@ export function unregisterCustomScenario(scenarioId: string): boolean {
   return customRegistry.delete(scenarioId);
 }
 
-export function clearCustomScenarios(originFilter?: "unscripted" | "erp-drop"): string[] {
+export function clearCustomScenarios(originFilter?: "unscripted" | "erp-drop" | "anomaly"): string[] {
   const removed: string[] = [];
   if (!originFilter) {
     for (const id of customRegistry.keys()) removed.push(id);
@@ -579,7 +579,7 @@ export interface ScenarioListItem {
   createdAt: string;
   /** Set for CUSTOM-<hash> / ERP-<id> tickets, with the optional built-in scenario they inherit (null for standalone custom tickets). */
   custom?: {
-    origin: "unscripted" | "erp-drop";
+    origin: "unscripted" | "erp-drop" | "anomaly";
     baseScenarioId: ScenarioId | null;
     shortHash: string;
     createdAt: string;
