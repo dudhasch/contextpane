@@ -937,6 +937,12 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
             <p className="text-[11.5px] text-muted">
               If anything goes wrong after applying, ContextPane will run this script to restore the exact previous state.
             </p>
+            {/* R-7: the previous state is the drifted one; name the exposure the undo brings back. */}
+            {formal.rollback.restores.some((r) => /rules\/tags->pre-state|Allow-Temp-RDP|3389/.test(r)) && (
+              <p className="mt-0.5 text-[11px] text-warning" data-testid="undo-exposure-note">
+                Undo re-opens TCP/3389 from any source on the host-pool NSG until the drift is fixed again.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <Button

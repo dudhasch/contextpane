@@ -151,8 +151,8 @@ export const RemediationBundleArgsSchema = z.object({
   powershellScript: z
     .string()
     .describe(
-      "Complete PowerShell 7 script. Must use Set-MgUserLicense for license changes and " +
-        "Update-MgIdentityConditionalAccessPolicy for Conditional Access changes. Must support -WhatIf.",
+      "Complete PowerShell 7 script. Group-based licensing is fixed through group membership (Remove-MgGroupMemberByRef / New-MgGroupMemberByRef) " +
+        "followed by Invoke-MgLicenseUser; Set-MgUserLicense only for direct assignments; Update-MgIdentityConditionalAccessPolicy for Conditional Access changes. Must support -WhatIf.",
     ),
   terraformDiff: z
     .string()

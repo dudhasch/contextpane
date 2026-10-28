@@ -4,6 +4,8 @@ import type {
   UpstreamServiceHealth,
   WebSearchOutageCitation,
 } from "@contextpane/catalog";
+import * as msgraph from "@contextpane/mcp-msgraph";
+import { isLiveCloudMode } from "../config.ts";
 
 export interface IncidentTimestampWindow {
   windowStart: string;
@@ -204,6 +206,40 @@ function notProbed(serviceId: UpstreamServiceHealth["serviceId"], label: string,
 }
 
 const UNPROBED_M365 = "No public machine-readable feed is probed for this service; check Microsoft 365 Service Health in the admin center.";
+const M365_HEALTH_URL = "https://admin.microsoft.com/Adminportal/Home#/servicehealth";
+
+/** Graph serviceHealthStatus -> our status; anything not operational and not a known incident state is an advisory. */
+function m365Status(raw: string): UpstreamServiceHealth["status"] {
+  if (raw === "serviceOperational") return "operational";
+  if (raw === "serviceInterruption") return "outage";
+  if (raw === "serviceDegradation" || raw === "restoringService" || raw === "extendedRecovery") return "degraded";
+  return "advisory";
+}
+
+/**
+ * Entra ID and Intune have no public feed; the honest source is Graph serviceAnnouncement/healthOverviews on the
+ * delegated identity (ServiceHealth.Read.All). Live mode only; a missing scope or an unreachable Graph keeps both
+ * "not probed" and says why (HARD_CASES 31).
+ */
+async function probeM365ServiceHealth(): Promise<UpstreamServiceHealth[]> {
+  const unprobed = (why: string) => [notProbed("entra-id", "Entra ID", "https://status.cloud.microsoft", why), notProbed("intune", "Intune", "https://status.cloud.microsoft", why)];
+  if (!isLiveCloudMode()) return unprobed(UNPROBED_M365);
+  const started = performance.now();
+  try {
+    const overviews = await msgraph.fetchServiceHealthOverviewsLive(8_000);
+    const latencyMs = Math.max(1, Math.round(performance.now() - started));
+    const pick = (serviceId: "entra-id" | "intune", label: string, match: RegExp): UpstreamServiceHealth => {
+      const row = overviews.find((o) => match.test(o.service));
+      if (!row) return notProbed(serviceId, label, M365_HEALTH_URL, `healthOverviews returned ${overviews.length} services, none named ${label}.`);
+      const status = m365Status(row.status);
+      return { serviceId, label, status, statusLabel: row.status, summary: `Microsoft 365 Service Health reports ${row.service}: ${row.status}.`, sourceUrl: M365_HEALTH_URL, probeSource: "live-status-api", latencyMs };
+    };
+    return [pick("entra-id", "Entra ID", /entra|azure active directory|identity/i), pick("intune", "Intune", /intune/i)];
+  } catch (error) {
+    const forbidden = error instanceof msgraph.GraphHttpError && error.status === 403;
+    return unprobed(forbidden ? "ServiceHealth.Read.All is not granted on the delegated identity; grant it (or re-run scripts/Connect-ContextPaneGraph.ps1 with that scope) to probe Microsoft 365 Service Health." : `Microsoft 365 Service Health unreachable (${error instanceof Error ? error.message : String(error)}).`);
+  }
+}
 
 function decodeXml(text: string): string {
   return text
@@ -379,17 +415,13 @@ export function correlateUpstreamCloudStatusSync(input: { ticketText: string; cr
 export async function correlateUpstreamCloudStatus(input: { ticketText: string; createdAt?: string }): Promise<UpstreamCloudStatusCorrelation> {
   const window = extractIncidentTimestampWindow(input.ticketText, input.createdAt);
   const primaryRegion = extractPrimaryAzureRegion(input.ticketText);
-  const [github, azure, webSearchCitations] = await Promise.all([
+  const [github, azure, m365, webSearchCitations] = await Promise.all([
     probeGitHubStatus(window),
     probeAzureStatus(primaryRegion, window),
+    probeM365ServiceHealth(),
     probeMicrosoftLearnAndWebSearch(input.ticketText, primaryRegion),
   ]);
-  const services: UpstreamServiceHealth[] = [
-    azure.service,
-    notProbed("entra-id", "Entra ID", "https://status.cloud.microsoft", UNPROBED_M365),
-    notProbed("intune", "Intune", "https://status.cloud.microsoft", UNPROBED_M365),
-    github.service,
-  ];
+  const services: UpstreamServiceHealth[] = [azure.service, ...m365, github.service];
   const advisories: UpstreamAdvisory[] = [...azure.advisories, ...github.advisories];
   return {
     windowStart: window.windowStart,

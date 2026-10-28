@@ -447,10 +447,18 @@ app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
 app.get("/api/dynamic-catalog", (c) => {
   const catalog = loadDynamicCatalog();
   const auditLog = loadSynthesizedElementsLog();
+  // Template cards live only in memory (HARD_CASES 1): the HUD lists them from the custom-ticket registry, labelled as templates.
+  const templateCards = listCustomScenarios().flatMap((entry) =>
+    (entry.synthesizedElements ?? [])
+      .filter((card) => card.synthesisMeta.source !== "llm")
+      .map((card) => ({ ticketId: entry.scenarioId, elementId: card.elementId, title: card.title, synthesizerModel: card.synthesisMeta.synthesizerModel, synthesizedAt: card.synthesisMeta.synthesizedAt })),
+  );
   return c.json({
     catalog,
     dynamicCount: catalog.dynamicElements.length,
     builtInCount: catalog.builtInElements.length,
+    templateCards,
+    templateCount: templateCards.length,
     auditLog,
   });
 });

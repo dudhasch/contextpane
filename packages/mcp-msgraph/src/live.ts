@@ -353,6 +353,25 @@ export async function fetchGraphContextLive(timeoutMs: number): Promise<{ tenant
   };
 }
 
+export interface LiveServiceHealthOverview {
+  id: string;
+  service: string;
+  /** Graph serviceHealthStatus: serviceOperational, investigating, serviceDegradation, serviceInterruption, restoringService, extendedRecovery, ... */
+  status: string;
+}
+
+/**
+ * GET /admin/serviceAnnouncement/healthOverviews through the delegated Connect-MgGraph token.
+ * Needs ServiceHealth.Read.All on that identity; a 403 means the scope is not granted and the
+ * caller reports the service as not probed (HARD_CASES 31).
+ */
+export async function fetchServiceHealthOverviewsLive(timeoutMs: number): Promise<LiveServiceHealthOverview[]> {
+  const body = (await graphFetch("/admin/serviceAnnouncement/healthOverviews", { method: "GET" }, timeoutMs, "graph-sdk")) as {
+    value?: Array<{ id?: string; service?: string; status?: string }>;
+  };
+  return (body.value ?? []).map((v) => ({ id: String(v.id ?? ""), service: String(v.service ?? ""), status: String(v.status ?? "") }));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Writes: lab license state                                                   */
 /* -------------------------------------------------------------------------- */
