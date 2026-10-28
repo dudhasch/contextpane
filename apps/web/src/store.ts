@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create, type StateCreator } from "zustand";
 import {
   SCENARIO_REGISTRY,
   SELECTION_MAX_CHARS,
@@ -233,8 +233,8 @@ export interface CardLink {
   category: ProvenanceCategory;
 }
 
-/** Code rail (right zone) script tab and body state. WP4 fills the rail; until then `drawerOpen` still drives the drawer. */
-export type CodeRailTab = "powershell" | "opentofu" | "graph";
+/** Code rail (right zone) script tab and body state. The remediation drawer, diff modal and live console are rail modes. */
+export type CodeRailTab = "powershell" | "opentofu" | "graph" | "devicehealth";
 export type CodeRailMode = "idle" | "staging" | "review" | "console" | "note";
 
 interface WorkbenchState {
@@ -263,6 +263,7 @@ interface WorkbenchState {
   activeRecipeId: string | null;
   hovers: Record<string, HoverEntry>;
   drawer: ActionApprovalDrawer | null;
+  /** Derived (WP4): true whenever `codeRailMode !== "idle"`. No overlay reads it; legacy callers still may. */
   drawerOpen: boolean;
   /** Code rail: permanent right zone, collapsible to a 36px strip (Ctrl+. / Cmd+.). */
   codeRailOpen: boolean;
@@ -353,6 +354,7 @@ interface WorkbenchState {
   health: HealthResponse | null;
 
   /* ui */
+  /** Derived (WP4): true while the code rail is in `review` mode. */
   diffOpen: boolean;
   /** The card whose diff the modal shows: the NSG HCL diff or a golden-baseline JSON diff. */
   diffCard: CanvasComponentType | null;
@@ -500,7 +502,54 @@ const hoverKey = (scenarioId: string, entityId: string) => `${scenarioId}|${enti
 
 let inboxPoll: number | null = null;
 
-export const useWorkbench = create<WorkbenchState>()((set, get) => ({
+const SCRIPT_TAB_FOR_DRAWER_TAB: Partial<Record<DrawerTab, CodeRailTab>> = {
+  powershell: "powershell",
+  terraform: "opentofu",
+  graph: "graph",
+  deviceHealthScript: "devicehealth",
+};
+const DRAWER_TAB_FOR_SCRIPT_TAB: Record<CodeRailTab, DrawerTab> = {
+  powershell: "powershell",
+  opentofu: "terraform",
+  graph: "graph",
+  devicehealth: "deviceHealthScript",
+};
+
+/**
+ * WP4: the drawer, diff modal and live console are code-rail modes. Every write goes through here so
+ * legacy writes keep working (`drawerOpen: true` stages the rail, `drawerOpen: false` idles it,
+ * `liveConsoleOpen: true` shows the console) and `drawerOpen` / `diffOpen` stay derived from the mode.
+ */
+function reconcileCodeRail(s: WorkbenchState, patch: Partial<WorkbenchState>): Partial<WorkbenchState> {
+  const touches = "codeRailMode" in patch || "drawerOpen" in patch || "diffOpen" in patch || patch.liveConsoleOpen === true;
+  if (!touches) return patch;
+  let mode: CodeRailMode | undefined = patch.codeRailMode;
+  if (mode === undefined) {
+    if (patch.liveConsoleOpen === true) mode = "console";
+    else if (patch.diffOpen === true) mode = "review";
+    else if (patch.drawerOpen === true) mode = s.codeRailMode === "idle" ? "staging" : s.codeRailMode;
+    else if (patch.drawerOpen === false) mode = "idle";
+    else if (patch.diffOpen === false && s.codeRailMode === "review") mode = (patch.drawer ?? s.drawer) ? "staging" : "idle";
+    else mode = s.codeRailMode;
+  }
+  const out: Partial<WorkbenchState> = { ...patch, codeRailMode: mode, drawerOpen: mode !== "idle", diffOpen: mode === "review" };
+  if (mode !== "idle" && mode !== s.codeRailMode) out.codeRailOpen = true;
+  return out;
+}
+
+const withCodeRailModes =
+  (creator: StateCreator<WorkbenchState>): StateCreator<WorkbenchState> =>
+  (set, get, api) => {
+    type Patch = Partial<WorkbenchState> | ((s: WorkbenchState) => Partial<WorkbenchState>);
+    const rawSet = set as (fn: (s: WorkbenchState) => Partial<WorkbenchState>, replace?: boolean) => void;
+    const derivedSet = ((partial: Patch, replace?: boolean) =>
+      rawSet((s) => reconcileCodeRail(s, typeof partial === "function" ? partial(s) : partial), replace)) as typeof set;
+    // `useWorkbench.setState` (tests, components) goes through the same reconciliation.
+    api.setState = derivedSet;
+    return creator(derivedSet, get, api);
+  };
+
+export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get) => ({
   freeRoamOpen: false,
   dataMode: "simulated-lab",
   togglingDataMode: false,
@@ -528,7 +577,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   codeRailMode: "idle",
   setCodeRailOpen: (codeRailOpen) => set({ codeRailOpen }),
   toggleCodeRail: () => set((s) => ({ codeRailOpen: !s.codeRailOpen })),
-  setCodeRailTab: (codeRailTab) => set({ codeRailTab }),
+  setCodeRailTab: (codeRailTab) => set({ codeRailTab, drawerTab: DRAWER_TAB_FOR_SCRIPT_TAB[codeRailTab] }),
   setCodeRailMode: (codeRailMode) => set({ codeRailMode }),
   remediateStatus: "idle",
   remediateProgress: [],
@@ -1023,6 +1072,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       linked: null,
       drawer: null,
       drawerOpen: false,
+      codeRailMode: "idle",
       remediateStatus: "idle",
       remediateProgress: [],
       approveLog: [],
@@ -1318,6 +1368,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     // The console shows only what the orchestrator reports; nothing here is scripted (L-09).
     if (decision === "approve") {
       set({
+        codeRailOpen: true,
+        codeRailMode: "console",
         liveConsoleOpen: true,
         liveConsoleStreaming: true,
         liveConsoleReverted: false,
@@ -1436,13 +1488,23 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   setFilter: (filter) => set({ filter }),
-  setDrawerOpen: (drawerOpen) => set(drawerOpen ? { drawerOpen, voiceOpen: false } : { drawerOpen }),
+  // No overlay any more: opening shows the rail (staging unless it already shows a later mode); closing is a no-op.
+  setDrawerOpen: (open) => {
+    if (!open) return;
+    const s = get();
+    if (!s.drawer && s.remediateStatus !== "loading") return;
+    set({ codeRailOpen: true, codeRailMode: s.codeRailMode === "idle" ? "staging" : s.codeRailMode, voiceOpen: false });
+  },
   setDiffOpen(diffOpen, card) {
-    if (!diffOpen) return set({ diffOpen });
+    if (!diffOpen) {
+      const s = get();
+      if (s.codeRailMode !== "review") return;
+      return set({ codeRailMode: s.drawer || s.remediateStatus === "loading" ? "staging" : "idle" });
+    }
     const withDiff = (get().layout?.components ?? []).find((c) =>
       c.type === "IaCDriftBanner" ? Boolean(c.props.hclDiff) : (c.type === "EntraSignInTimeline" || c.type === "IntuneDriftCard") && Boolean(c.props.baselineDiff),
     );
-    set({ diffOpen, voiceOpen: false, diffCard: card ?? (withDiff && isCanvasComponentType(withDiff.type) ? withDiff.type : null) });
+    set({ codeRailOpen: true, codeRailMode: "review", voiceOpen: false, diffCard: card ?? (withDiff && isCanvasComponentType(withDiff.type) ? withDiff.type : null) });
   },
   setSystemOpen: (systemOpen, tab) => {
     set(tab ? { systemOpen, systemTab: tab, ...(systemOpen ? { voiceOpen: false } : {}) } : { systemOpen, ...(systemOpen ? { voiceOpen: false } : {}) });
@@ -1517,8 +1579,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set((s) => ({ stepsDone: { ...s.stepsDone, [key]: !s.stepsDone[key] } }));
   },
   openRemediation(options = {}) {
-    // The code rail is where staged scripts land; the drawer still opens below until WP4 moves its content.
-    set({ codeRailOpen: true, codeRailMode: "staging" });
+    // The code rail is where staged scripts land: a script tab selects the rail tab, `runbook` opens the note.
+    const railTab = options.tab ? SCRIPT_TAB_FOR_DRAWER_TAB[options.tab] : "powershell";
+    set({ codeRailOpen: true, codeRailMode: options.tab === "runbook" ? "note" : "staging", ...(railTab ? { codeRailTab: railTab } : {}) });
     if (get().freeRoamOpen) {
       const top = get().freeRoamDashboards[0];
       void get().stageFreeRoamRemediation({
@@ -1541,7 +1604,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     else void get().remediate();
   },
   confirmAndCloseConsole() {
-    set({ drawerOpen: false, liveConsoleOpen: false, liveConsoleStreaming: false });
+    // [OK] sign-off: the rail moves on to the customer note (nothing to note without a staged fix).
+    set((s) => ({ codeRailMode: s.drawer ? "note" : "idle", liveConsoleOpen: false, liveConsoleStreaming: false }));
     if (typeof window !== "undefined" && typeof document !== "undefined") {
       window.requestAnimationFrame(() => {
         document.querySelector('[data-testid="resolution-note"]')?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1720,16 +1784,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (slice?.changedCardId) get().flashComponent(slice.changedCardId as ComponentType);
   },
   async rollbackNow() {
-    try {
-      const r = await api.rollback(get().scenarioId);
-      if (r.executed !== true) {
-        get().toast({ tone: "warning", title: "Revert script staged, not executed", detail: r.reason ?? "Run the staged script as the delegated admin." });
-        return;
-      }
-      get().applyConvergence(get().scenarioId, null);
-      get().toast({ tone: "healthy", title: `Revert executed in ${r.latencyMs} ms`, detail: "Canvas reverted." });
-      void get().correlate({ fresh: true });
-    } catch (e) { get().toast({ tone: "critical", title: "Rollback failed", detail: e instanceof Error ? e.message : String(e) }); }
+    // The revert streams into the rail console like a console [REVERT] (same API, same toasts).
+    set({ codeRailOpen: true, codeRailMode: "console" });
+    await get().revertFromConsole();
   },
 
   async extractVision(attachment) {
@@ -2245,6 +2302,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set((s) => ({
         drawer: s.drawer?.ticketId === scenarioId ? null : s.drawer,
         drawerOpen: false,
+        codeRailMode: "idle",
         liveConsoleOpen: false,
         liveConsoleStreaming: false,
         liveConsoleLines: [],
@@ -2268,7 +2326,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     setTimeout(() => get().dismissToast(id), toast.href ? 12_000 : 5200);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
-}));
+})));
 
 let convergedCache: {
   layout: Layout | null;

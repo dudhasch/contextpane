@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActionApprovalDrawerSheet } from "./components/canvas/ActionApprovalDrawer";
-import { DiffModal } from "./components/canvas/DiffModal";
 import { GenUICanvas } from "./components/canvas/GenUICanvas";
 import { HotkeysOverlay } from "./components/demo/HotkeysOverlay";
 import { CODE_RAIL_COLLAPSED_PX, CODE_RAIL_OPEN_PX, CodeRail } from "./components/shell/CodeRail";
@@ -107,8 +105,6 @@ export function App() {
       <SystemAuditDrawer />
       <TicketComposer />
       <VoiceSteerPanel />
-      <DiffModal />
-      <ActionApprovalDrawerSheet />
       <HotkeysOverlay />
       <Toasts />
     </div>

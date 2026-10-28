@@ -261,17 +261,45 @@ describe("applyTimelineSliceToLayout sign-in timestamp & badge honesty", () => {
     expect(st.drawerFocusBanner).toBe("Focused: Conditional Access Policy Fix");
   });
 
-  test("confirmAndCloseConsole closes the Live Execution Console and drawer upon operator [OK] sign-off", () => {
+  test("confirmAndCloseConsole closes the Live Execution Console upon operator [OK] sign-off and moves the code rail to the note", () => {
+    const drawer = useWorkbench.getState().drawer;
     useWorkbench.setState({
+      drawer: { ticketId: "INC-4099" } as never,
       drawerOpen: true,
       liveConsoleOpen: true,
       liveConsoleStreaming: false,
       liveConsoleLines: ["⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch"],
     });
+    expect(useWorkbench.getState().codeRailMode).toBe("console");
     useWorkbench.getState().confirmAndCloseConsole();
     const st = useWorkbench.getState();
-    expect(st.drawerOpen).toBe(false);
+    expect(st.codeRailMode).toBe("note");
+    expect(st.drawerOpen).toBe(true);
     expect(st.liveConsoleOpen).toBe(false);
     expect(st.liveConsoleStreaming).toBe(false);
+    // Without a staged fix there is no note: the rail idles and the derived drawerOpen follows.
+    useWorkbench.setState({ drawer: null, codeRailMode: "console", liveConsoleOpen: true });
+    useWorkbench.getState().confirmAndCloseConsole();
+    expect(useWorkbench.getState().codeRailMode).toBe("idle");
+    expect(useWorkbench.getState().drawerOpen).toBe(false);
+    useWorkbench.setState({ drawer });
+  });
+
+  test("code rail modes: diff review returns to staging, setDrawerOpen(false) never blanks the rail, resets idle it", () => {
+    const drawer = useWorkbench.getState().drawer;
+    useWorkbench.setState({ drawer: { ticketId: "INC-4099" } as never, codeRailMode: "staging", liveConsoleOpen: false });
+    useWorkbench.getState().setDiffOpen(true);
+    expect(useWorkbench.getState().codeRailMode).toBe("review");
+    expect(useWorkbench.getState().diffOpen).toBe(true);
+    useWorkbench.getState().setDrawerOpen(false);
+    expect(useWorkbench.getState().codeRailMode).toBe("review");
+    useWorkbench.getState().setDiffOpen(false);
+    expect(useWorkbench.getState().codeRailMode).toBe("staging");
+    expect(useWorkbench.getState().diffOpen).toBe(false);
+    expect(useWorkbench.getState().drawerOpen).toBe(true);
+    useWorkbench.setState({ drawerOpen: false });
+    expect(useWorkbench.getState().codeRailMode).toBe("idle");
+    expect(useWorkbench.getState().drawerOpen).toBe(false);
+    useWorkbench.setState({ drawer });
   });
 });

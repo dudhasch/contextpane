@@ -1,6 +1,15 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
+import type { ProgressEvent } from "@/lib/api";
 import { useWorkbench, type CodeRailMode, type CodeRailTab } from "@/store";
-import { Button } from "../ui/Button";
+import { ApproveFooter } from "./rail/ApproveFooter";
+import { DiffReview } from "./rail/DiffReview";
+import { LiveConsole } from "./rail/LiveConsole";
+import { NoteAndDocs } from "./rail/NoteAndDocs";
+import { ProverStrip } from "./rail/ProverStrip";
+import { ScriptsTab } from "./rail/ScriptsTab";
+import { TraceTicker } from "./rail/TraceTicker";
+import { useHasIntune } from "./rail/shared";
 
 /** Grid widths of the code rail column; App.tsx animates between them. */
 export const CODE_RAIL_OPEN_PX = 440;
@@ -11,17 +20,12 @@ const TABS: Array<{ id: CodeRailTab; label: string }> = [
   { id: "opentofu", label: "OpenTofu" },
   { id: "graph", label: "Graph" },
 ];
-
-const MODE_LINE: Record<Exclude<CodeRailMode, "idle">, string> = {
-  staging: "Remediation staged. Scripts, pre-flight and approval are in the drawer.",
-  review: "Diff ready for review.",
-  console: "Live console is running.",
-  note: "Resolution note drafted.",
-};
+const DEVICE_HEALTH_TAB: { id: CodeRailTab; label: string } = { id: "devicehealth", label: "Device health" };
 
 /**
- * Right zone of the flight deck: permanent, non-modal "Muse Code" rail. WP1 ships the container
- * (header, tabs, body states, footer, collapsed strip); WP4 moves the drawer content into it.
+ * Right zone of the flight deck: permanent, non-modal "Muse Code" rail. The remediation drawer, the
+ * diff modal and the live console are its modes (`codeRailMode`): header tabs, prover strip, view bar,
+ * one scroll body, the approve footer, and a 2-line trace ticker at the bottom.
  */
 export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   const open = useWorkbench((s) => s.codeRailOpen);
@@ -29,9 +33,71 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   const tab = useWorkbench((s) => s.codeRailTab);
   const toggle = useWorkbench((s) => s.toggleCodeRail);
   const setTab = useWorkbench((s) => s.setCodeRailTab);
-  const setDrawerOpen = useWorkbench((s) => s.setDrawerOpen);
-  const hasDrawer = useWorkbench((s) => s.drawer !== null);
-  const mode: CodeRailMode = forceIdle ? "idle" : storeMode;
+  const drawer = useWorkbench((s) => s.drawer);
+  const remediateStatus = useWorkbench((s) => s.remediateStatus);
+  const remediateProgress = useWorkbench((s) => s.remediateProgress);
+  const liveConsoleOpen = useWorkbench((s) => s.liveConsoleOpen);
+  const liveConsoleStreaming = useWorkbench((s) => s.liveConsoleStreaming);
+  const liveConsoleStep = useWorkbench((s) => s.liveConsoleStep);
+  const liveConsoleLines = useWorkbench((s) => s.liveConsoleLines);
+  const hasIntune = useHasIntune();
+  // Free-Roam keeps the rail quiet unless it staged its own action (FREE-… bundle or one in flight).
+  const freeRoamStaged = Boolean(drawer?.ticketId.startsWith("FREE-")) || remediateStatus === "loading";
+  const mode: CodeRailMode = forceIdle && !freeRoamStaged ? "idle" : storeMode;
+  const tabs = hasIntune ? [...TABS, DEVICE_HEALTH_TAB] : TABS;
+  const activeTab: CodeRailTab = tab === "devicehealth" && !hasIntune ? "powershell" : tab;
+  const showFooter = mode !== "idle" && (drawer !== null || remediateStatus !== "idle" || mode === "console");
+
+  const goScripts = () => useWorkbench.setState({ codeRailMode: "staging", liveConsoleOpen: false });
+  const selectTab = (t: CodeRailTab) => {
+    setTab(t);
+    if (drawer && mode !== "staging") goScripts();
+  };
+
+  // What the ticker shows: fix generation streams real events; approve / revert report one step line.
+  const trace = useMemo((): { key: string; label: string; events: ProgressEvent[]; busy: boolean } => {
+    if (remediateStatus === "loading") return { key: "remediate", label: "remediate", events: remediateProgress, busy: true };
+    if (liveConsoleStreaming) {
+      const stage = /revert|rollback/i.test(liveConsoleStep ?? "") ? "rollback" : "approve";
+      const last = liveConsoleLines.at(-1);
+      const events: ProgressEvent[] = [
+        ...(last ? [{ stage: "log", message: last, at: "", elapsedMs: 0 }] : []),
+        { stage, message: liveConsoleStep ?? "", at: "", elapsedMs: 0 },
+      ];
+      return { key: `console-${stage}`, label: stage, events, busy: true };
+    }
+    return { key: "idle", label: "idle", events: [], busy: false };
+  }, [remediateStatus, remediateProgress, liveConsoleStreaming, liveConsoleStep, liveConsoleLines]);
+
+  let body: ReactNode;
+  if (mode === "idle") {
+    body = (
+      <div className="px-3 py-3 text-12 text-muted">
+        <p>No remediation staged.</p>
+        <p>Scripts stream here when you steer the plan.</p>
+      </div>
+    );
+  } else if (mode === "review") {
+    body = <DiffReview />;
+  } else if (mode === "console") {
+    body = <LiveConsole />;
+  } else if (!drawer) {
+    body = (
+      <div className="px-3 py-3 text-12">
+        {remediateStatus === "error" ? (
+          <p className="text-critical">Failed to prepare the fix. Check the orchestrator log.</p>
+        ) : remediateStatus === "loading" ? (
+          <p className="text-muted">Preparing fix scripts and running the pre-flight safety checks…</p>
+        ) : (
+          <p className="text-muted">No remediation staged.</p>
+        )}
+      </div>
+    );
+  } else if (mode === "note") {
+    body = <NoteAndDocs drawer={drawer} />;
+  } else {
+    body = <ScriptsTab drawer={drawer} />;
+  }
 
   return (
     <aside
@@ -44,15 +110,15 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
       {open ? (
         <>
           <div className="flex h-[34px] shrink-0 items-center gap-3 border-b border-hairline pr-1.5 pl-3">
-            <span className="shrink-0 text-12 font-medium text-text">
+            <span className="shrink-0 text-12 font-medium whitespace-nowrap text-text">
               <span aria-hidden className="mr-1 text-signal">
                 ✦
               </span>
               Muse Code
             </span>
-            <div role="tablist" aria-label="Script" className="flex h-full min-w-0 items-stretch gap-3">
-              {TABS.map((t) => {
-                const active = t.id === tab;
+            <div role="tablist" aria-label="Script" className="flex h-full min-w-0 items-stretch gap-2.5 overflow-hidden">
+              {tabs.map((t) => {
+                const active = t.id === activeTab;
                 return (
                   <button
                     key={t.id}
@@ -60,13 +126,13 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
                     role="tab"
                     aria-selected={active}
                     data-testid={`code-rail-tab-${t.id}`}
-                    onClick={() => setTab(t.id)}
-                    className={`relative inline-flex items-center font-mono text-11 whitespace-nowrap transition-colors duration-120 ${
+                    onClick={() => selectTab(t.id)}
+                    className={`relative inline-flex shrink-0 items-center font-mono text-11 whitespace-nowrap transition-colors duration-120 ${
                       active ? "text-text" : "text-muted hover:text-text"
                     }`}
                   >
                     {t.label}
-                    {active && <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5 bg-signal" />}
+                    {active && <span aria-hidden className={`absolute inset-x-0 bottom-0 h-0.5 ${mode === "staging" || mode === "idle" ? "bg-signal" : "bg-hairline"}`} />}
                   </button>
                 );
               })}
@@ -83,31 +149,34 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="code-rail-body">
-            {mode === "idle" ? (
-              <div className="text-12 text-muted">
-                <p>No remediation staged.</p>
-                <p>Scripts stream here when you steer the plan.</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-start gap-2">
-                <p className="text-12 text-muted">{MODE_LINE[mode]}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setDrawerOpen(true)}
-                  disabled={!hasDrawer}
-                  title={hasDrawer ? "Open the remediation scripts" : "The fix is still being generated"}
-                  data-testid="code-rail-open-scripts"
-                >
-                  Open scripts
-                </Button>
-              </div>
-            )}
+          {drawer && mode !== "idle" && <ProverStrip drawer={drawer} />}
+
+          {drawer && mode !== "idle" && mode !== "review" && (
+            <div className="flex h-8 shrink-0 items-center gap-4 border-b border-hairline px-3" role="tablist" aria-label="Rail view">
+              <ViewToggle active={mode === "staging"} onClick={goScripts} data-testid="code-rail-open-scripts">
+                Scripts
+              </ViewToggle>
+              {(liveConsoleOpen || liveConsoleLines.length > 0) && (
+                <ViewToggle active={mode === "console"} onClick={() => useWorkbench.setState({ codeRailMode: "console", liveConsoleOpen: true })} data-testid="live-console-tab">
+                  Console
+                </ViewToggle>
+              )}
+              <ViewToggle active={mode === "note"} onClick={() => useWorkbench.setState({ codeRailMode: "note", liveConsoleOpen: false })} data-testid="runbook-tab">
+                Note &amp; docs
+              </ViewToggle>
+            </div>
+          )}
+
+          <div className="flex min-h-0 flex-1 flex-col" data-testid="code-rail-body">
+            <div className="min-h-0 flex-1 overflow-y-auto" data-testid="drawer-scroll-viewport">
+              {body}
+            </div>
           </div>
 
-          <div className="flex h-7 shrink-0 items-center border-t border-hairline px-3" data-testid="code-rail-footer">
-            <span className="truncate font-mono text-11 text-muted">idle</span>
+          {showFooter && <ApproveFooter />}
+
+          <div className="flex min-h-7 shrink-0 items-center border-t border-hairline px-3 py-1" data-testid="code-rail-footer">
+            <TraceTicker key={trace.key} events={trace.events} busy={trace.busy} label={trace.label} />
           </div>
         </>
       ) : (
@@ -125,11 +194,27 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
           <span className="text-11 whitespace-nowrap text-muted [writing-mode:vertical-rl]">Muse Code</span>
           <div className="flex flex-col items-center gap-1.5" aria-label="Script status">
             {TABS.map((t) => (
-              <span key={t.id} title={`${t.label}: idle`} className="size-1.5 rounded-full bg-faint" />
+              <span key={t.id} title={`${t.label}: ${mode}`} className={`size-1.5 rounded-full ${mode === "idle" ? "bg-faint" : "bg-signal"}`} />
             ))}
           </div>
         </div>
       )}
     </aside>
+  );
+}
+
+function ViewToggle({ active, onClick, children, ...rest }: { active: boolean; onClick: () => void; children: ReactNode; "data-testid": string }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      {...rest}
+      className={`relative inline-flex h-full items-center text-11 whitespace-nowrap transition-colors duration-120 ${active ? "text-text" : "text-muted hover:text-text"}`}
+    >
+      {children}
+      {active && <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5 bg-signal" />}
+    </button>
   );
 }

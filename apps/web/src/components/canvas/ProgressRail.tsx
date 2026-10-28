@@ -2,7 +2,7 @@ import { Check, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ProgressEvent } from "@/lib/api";
 
-function cleanProgressMessage(msg: string): string {
+export function cleanProgressMessage(msg: string): string {
   return msg
     .replace(/\bTier\s+[0-9A-Z]+\s*·\s*/gi, "")
     .replace(/\bmuse-wonder-1\.0\b/gi, "Remediation engine")
@@ -11,7 +11,10 @@ function cleanProgressMessage(msg: string): string {
     .replace(/\bdynamic-catalog\.json\b/gi, "custom view catalog");
 }
 
-/** Stage-by-stage progress from the orchestrator's SSE stream. */
+/**
+ * Stage-by-stage progress from the orchestrator's SSE stream, as a borderless section (the lens uses
+ * it for the correlation / synthesis skeleton). The code rail shows the same events as `TraceTicker`.
+ */
 export function ProgressRail({ events, title, busy }: { events: ProgressEvent[]; title: string; busy: boolean }) {
   // The server stamps each event when it is sent; between events the last stage keeps running, so its
   // time ticks locally from the moment it arrived (the rail used to sit on "+0 ms mcp:start" for 30 s).
@@ -26,17 +29,17 @@ export function ProgressRail({ events, title, busy }: { events: ProgressEvent[];
   }, [busy]);
   const totalMs = Math.max(0, Math.round(now - mountedAt.current));
   return (
-    <div className="card animate-fade-in">
-      <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold">
-        {busy ? <Loader2 className="size-4 animate-spin text-primary" /> : <Check className="size-4 text-healthy" />}
+    <div className="animate-fade-in">
+      <div className="mb-2 flex items-center gap-2 text-13 font-medium text-text">
+        {busy ? <Loader2 className="size-3.5 animate-spin text-signal" /> : <Check className="size-3.5 text-healthy" />}
         {title}
         {busy && (
-          <span className="ml-auto font-mono text-[11px] font-normal text-muted" data-testid="progress-elapsed">
+          <span className="ml-auto font-mono text-11 font-normal text-muted" data-testid="progress-elapsed">
             {(totalMs / 1000).toFixed(1)} s
           </span>
         )}
       </div>
-      <ol className="space-y-1 font-mono text-[11px]">
+      <ol className="space-y-1 font-mono text-11">
         {events.length === 0 && <li className="text-faint">connecting…</li>}
         {events.map((e, i) => {
           const last = i === events.length - 1;
@@ -44,8 +47,8 @@ export function ProgressRail({ events, title, busy }: { events: ProgressEvent[];
           return (
             <li key={`${e.stage}-${i}`} className="flex items-start gap-2">
               <span className="w-16 shrink-0 text-right text-faint">+{shownMs >= 10_000 ? `${(shownMs / 1000).toFixed(1)} s` : `${shownMs} ms`}</span>
-              <span className={`w-24 shrink-0 truncate ${last && busy ? "text-primary" : "text-muted"}`}>{e.stage.replace(/_/g, " ")}</span>
-              <span className={last && busy ? "text-text" : "text-muted"}>{cleanProgressMessage(e.message)}</span>
+              <span className={`w-24 shrink-0 truncate ${last && busy ? "text-signal" : "text-muted"}`}>{e.stage.replace(/_/g, " ")}</span>
+              <span className={`min-w-0 break-words ${last && busy ? "text-text" : "text-muted"}`}>{cleanProgressMessage(e.message)}</span>
             </li>
           );
         })}
