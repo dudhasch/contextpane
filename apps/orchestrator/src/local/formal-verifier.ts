@@ -890,7 +890,19 @@ export function counterfactualReplay(scenarioId: ScenarioId | string | null, opt
   const state = resolveOptions(effectiveId, options);
   const days = 30 as const;
   const targetIds = state.affected.map((a) => a.id);
-  const collateralIds = ["alex.wilber.contoso@c4a8shili.onmicrosoft.com", "miriam.graham.contoso@c4a8shili.onmicrosoft.com", "bg-adjacent-admin@c4a8shili.onmicrosoft.com"].filter((u) => !targetIds.includes(u) && !BREAK_GLASS_USERS.includes(u));
+  const baseCollateral =
+    effectiveId === "INC-4099"
+      ? [
+          "claire.dupont@fabrikamlegal.onmicrosoft.com",
+          "thomas.weber@fabrikamlegal.onmicrosoft.com",
+          "henrik.lindqvist@fabrikamlegal.onmicrosoft.com",
+        ]
+      : [
+          "alex.wilber.contoso@c4a8shili.onmicrosoft.com",
+          "miriam.graham.contoso@c4a8shili.onmicrosoft.com",
+          "bg-adjacent-admin@c4a8shili.onmicrosoft.com",
+        ];
+  const collateralIds = baseCollateral.filter((u) => !targetIds.includes(u) && !BREAK_GLASS_USERS.includes(u));
   const rows: BlastRadiusRow[] = [
     { cohort: "target", entities: targetIds, before: "Blocked", after: "Allowed", days, attempts: targetIds.length * days, changedAttempts: targetIds.length * days, collateralChanges: 0 },
     { cohort: "break-glass", entities: [...BREAK_GLASS_USERS], before: "Allowed", after: "Allowed", days, attempts: BREAK_GLASS_USERS.length * days, changedAttempts: 0, collateralChanges: 0 },

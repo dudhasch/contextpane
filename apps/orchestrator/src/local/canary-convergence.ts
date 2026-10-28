@@ -185,7 +185,10 @@ export function runCanaryConvergence(scenarioId: ScenarioId | string, options: C
   stages.push({
     stage: "SYNTHETIC_PROBED",
     at,
-    detail: "Synthetic probes passed in Canary Ring 0: break-glass + targets Allow, Tcp/3389 closed, Tcp/443 open, 0 Intune conflicts",
+    detail:
+      scenarioId === "INC-4092"
+        ? "Synthetic probes passed in Canary Ring 0: break-glass + targets Allow, Tcp/3389 closed, Tcp/443 open, 0 Intune conflicts"
+        : "Synthetic probes passed in Canary Ring 0: break-glass + targets verified healthy, 0 policy conflicts",
     probes,
   });
   stages.push({

@@ -249,7 +249,7 @@ function formatTimelineStepDescription(
   scenarioId: string,
   cardCount = 3,
 ): string {
-  const isAvd = scenarioId === "INC-4092" || scenarioId.startsWith("ERP-");
+  const isAvd = scenarioId === "INC-4092";
   if (s.kind === "baseline" || s.relativeLabel === "T-18m") return "Healthy baseline · 0 issues";
   if (s.kind === "drift" || s.relativeLabel === "T-14m") return isAvd ? "Drift introduced · 3 users & port 3389" : "Drift introduced · Config changed";
   if (s.kind === "first-failure" || s.relativeLabel === "T-06m") return isAvd ? "First AVD sign-in error (53003)" : "First user or device error";

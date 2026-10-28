@@ -1181,7 +1181,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (get().resetting) return;
     const started = performance.now();
     const currentId = get().scenarioId;
-    const targetScenarioId: ScenarioId = currentId.startsWith("CUSTOM-") ? "INC-4092" : currentId;
+    const targetScenarioId: ScenarioId =
+      currentId.startsWith("CUSTOM-") || currentId.startsWith("ERP-") ? "INC-4092" : currentId;
     // Revert the canvas at once; the server clears its state and rewrites the lab objects behind this.
     set((s) => ({
       resetting: true,
@@ -1922,7 +1923,7 @@ export function applyTimelineSliceToLayout(
                 errorCode: 0,
                 errorCodeLabel: /virtual desktop|\bavd\b/i.test(e.appDisplayName)
                   ? "AVD Sign-In OK (SPE_E5)"
-                  : "Sign-In OK (SPE_E5)",
+                  : "Sign-In OK · Compliant",
                 failureReason: undefined,
                 blockingPolicyName: undefined,
                 conditionalAccessStatus: "success" as const,

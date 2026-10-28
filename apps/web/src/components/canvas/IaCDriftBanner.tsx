@@ -36,7 +36,7 @@ export function IaCDriftBannerCard({ props, triggeredBy }: { props: Props; trigg
     <CardShell
       type="IaCDriftBanner"
       icon={<Cloud />}
-      title="AVD Host Pool, NSG & Azure Policy"
+      title={pool ? "AVD Host Pool, NSG & Azure Policy" : "Azure Network Security, IaC Drift & Policy"}
       state={props.state}
       triggeredBy={triggeredBy}
       source={props.comparedAgainst === "live-azure" ? "NSG: live Azure" : "NSG: manifest"}

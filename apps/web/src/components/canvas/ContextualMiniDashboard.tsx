@@ -38,6 +38,7 @@ function cellTone(text: string): Tone {
 export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEntry }) {
   const rawCard: Card = entry.card;
   const activeSlice = useWorkbench(selectActiveTimelineSlice);
+  const scenarioId = useWorkbench((s) => s.scenarioId);
   const converged = useWorkbench((s) => Boolean(s.convergence[s.scenarioId]));
   const isBaselineSlice = activeSlice?.kind === "baseline";
   const isPostFixSlice = activeSlice?.kind === "counterfactual" || (converged && (!activeSlice || activeSlice.relativeLabel === "NOW"));
@@ -46,7 +47,12 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
     if (!isBaselineSlice && !isPostFixSlice) return rawCard;
     const preTimes = ["07:44:12", "07:41:08", "07:38:55", "07:35:20", "07:32:14", "07:29:05", "07:26:40", "07:23:11"];
     const postTimes = ["08:12:10", "08:11:45", "08:11:02", "08:10:48", "08:10:30", "08:10:15", "08:10:05", "08:09:58"];
-    const okBadge = isBaselineSlice ? "AVD Sign-In OK · Compliant" : "AVD Sign-In OK (SPE_E5)";
+    const isAvd = scenarioId === "INC-4092";
+    const okBadge = isAvd
+      ? isBaselineSlice
+        ? "AVD Sign-In OK · Compliant"
+        : "AVD Sign-In OK (SPE_E5)"
+      : "Healthy · Compliant";
     const rows = rawCard.rows.map((r, idx) => {
       const next: Record<string, string | number | boolean | null> = { ...r };
       for (const [k, v] of Object.entries(next)) {

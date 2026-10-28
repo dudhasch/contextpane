@@ -316,7 +316,7 @@ function detectShadowFindings(scenarioId: string): ShadowFinding[] {
   }
   // NSG: an Allow rule whose ports are covered by a broader Deny (or vice versa) is redundant/shadowed.
   const nsg = liveNsgRules();
-  if (nsg && (scenarioId === "INC-4092" || scenarioId === "ANOM-LIC-101" || scenarioId === "ANOM-CA-204" || !intuneKey)) {
+  if (nsg && scenarioId === "INC-4092") {
     for (const a of nsg.rules) {
       for (const b of nsg.rules) {
         if (a === b || a.direction !== b.direction) continue;
@@ -351,21 +351,22 @@ export function reverseCompile(scenarioIdOrState?: string | { scenarioId?: strin
   const rgName = tenantId === "tenant-fabrikam-02" ? "rg-fabrikam-intune-prod" : "rg-contoso-avd-prod";
   const shadowFindings = detectShadowFindings(scenarioId);
 
+  const rgTfLabel = tenantId === "tenant-fabrikam-02" ? "fabrikam_intune_prod" : scenarioId === "INC-4092" ? "contoso_avd_prod" : "contoso_estate_prod";
   const resources: Array<{ address: string; block: string; importId: string }> = [];
   resources.push({
-    address: "azurerm_resource_group.contoso_avd_prod",
+    address: `azurerm_resource_group.${rgTfLabel}`,
     importId: `/subscriptions/${subscription}/resourceGroups/${rgName}`,
-    block: `resource "azurerm_resource_group" "contoso_avd_prod" {\n  name     = "${rgName}"\n  location = "westeurope"\n  tags = {\n    ManagedBy = "Terraform"\n  }\n}`,
+    block: `resource "azurerm_resource_group" "${rgTfLabel}" {\n  name     = "${rgName}"\n  location = "westeurope"\n  tags = {\n    ManagedBy = "Terraform"\n  }\n}`,
   });
-  if (tenantId === "tenant-contoso-01") {
+  if (scenarioId === "INC-4092") {
     resources.push({
       address: "azurerm_network_security_group.contoso_avd_hostpool",
       importId: `/subscriptions/${subscription}/resourceGroups/${rgName}/providers/Microsoft.Network/networkSecurityGroups/nsg-contoso-avd-hostpool-01`,
       block: [
         `resource "azurerm_network_security_group" "contoso_avd_hostpool" {`,
         `  name                = "nsg-contoso-avd-hostpool-01"`,
-        `  location            = azurerm_resource_group.contoso_avd_prod.location`,
-        `  resource_group_name = azurerm_resource_group.contoso_avd_prod.name`,
+        `  location            = azurerm_resource_group.${rgTfLabel}.location`,
+        `  resource_group_name = azurerm_resource_group.${rgTfLabel}.name`,
         ``,
         `  security_rule {`,
         `    name                       = "Allow-AVD-ServiceTraffic"`,
