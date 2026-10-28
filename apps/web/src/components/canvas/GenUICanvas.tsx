@@ -1,8 +1,7 @@
-import { Bot, Check, ChevronRight, Clock3, Compass, Database, Pin, Sparkles, Trash2, Undo2, Wrench, X } from "lucide-react";
+import { Bot, Check, Clock3, Pin, Sparkles, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { LayoutComponent } from "@contextpane/catalog";
 import { selectActiveTimelineSlice, selectCanvasLayout, selectConvergence, useWorkbench, visibleComponents } from "@/store";
-import { Button } from "../ui/Button";
 import { EntraSignInTimelineCard } from "./EntraSignInTimeline";
 import { IaCDriftBannerCard } from "./IaCDriftBanner";
 import { IntuneDriftCardView } from "./IntuneDriftCard";
@@ -11,6 +10,7 @@ import { LicenseDriftCardView } from "./LicenseDriftCard";
 import { ProgressRail } from "./ProgressRail";
 import { RowFilterPill } from "./TableFilter";
 import { SynthesizedDynamicCard } from "../cards/SynthesizedDynamicCard";
+import { CommandLine, LensList } from "../freeroam";
 
 /**
  * Right pane. Mounts only catalog components the orchestrator returned and Zod
@@ -19,12 +19,6 @@ import { SynthesizedDynamicCard } from "../cards/SynthesizedDynamicCard";
  */
 export function GenUICanvas() {
   const freeRoamOpen = useWorkbench((s) => s.freeRoamOpen);
-  const freeRoamDashboards = useWorkbench((s) => s.freeRoamDashboards);
-  const clearFreeRoamDashboards = useWorkbench((s) => s.clearFreeRoamDashboards);
-  const spawnFreeRoamDashboard = useWorkbench((s) => s.spawnFreeRoamDashboard);
-  const dataMode = useWorkbench((s) => s.dataMode);
-  const inventory = useWorkbench((s) => s.freeRoamInventory);
-  const openRemediation = useWorkbench((s) => s.openRemediation);
   const layout = useWorkbench(selectCanvasLayout);
   const status = useWorkbench((s) => s.canvasStatus);
   const error = useWorkbench((s) => s.canvasError);
@@ -40,92 +34,22 @@ export function GenUICanvas() {
   const components = visibleComponents(layout, filter);
 
   if (freeRoamOpen) {
+    // Free-Roam command deck (board D3): the command line on top, lenses in the same hairline list as an incident.
     return (
-      <div className="flex h-full flex-col" data-testid="free-roam-canvas">
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-[12px]">
-          <Compass className="size-3.5 shrink-0 text-selection" />
-          <span className="font-medium text-text">Free-Roam Lens Workspace</span>
-          <ChevronRight className="size-3 shrink-0 text-faint" />
-          <span className="truncate font-mono text-[11px] text-muted">
-            {inventory?.tenant.displayName ?? "Contoso"} ({inventory?.tenant.verifiedDomain ?? "c4a8shili.onmicrosoft.com"})
-          </span>
-          <span className="shrink-0 font-mono text-[11px] text-selection">
-            · {freeRoamDashboards.length} {freeRoamDashboards.length === 1 ? "lens" : "lenses"} mounted
-          </span>
-          <div className="ml-auto flex items-center gap-1.5">
-            <span
-              className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[10px] ${
-                dataMode === "real-tenant"
-                  ? "border-healthy/40 bg-healthy/12 text-healthy"
-                  : "border-primary/40 bg-primary/12 text-primary"
-              }`}
-              data-testid="free-roam-canvas-datamode"
-            >
-              <Database className="size-3" />
-              {dataMode === "real-tenant" ? "Strict Real Tenant (MCP)" : "Simulated Lab (MCP)"}
-            </span>
-            {freeRoamDashboards.length > 0 && (
-              <>
-                <Button
-                  size="xs"
-                  variant="meta"
-                  icon={<Wrench />}
-                  onClick={() => openRemediation()}
-                  title="Stage PowerShell 7 / Graph / Terraform action for the active Free-Roam lens"
-                >
-                  Stage Action
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  icon={<Trash2 />}
-                  onClick={() => clearFreeRoamDashboards()}
-                  title="Close all open lenses in the Free-Roam workspace"
-                >
-                  Clear ({freeRoamDashboards.length})
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-2.5">
+      <div className="flex h-full flex-col bg-ground" data-testid="free-roam-canvas">
+        <CommandLine />
+        <div className="flex min-h-0 flex-1 flex-col divide-y divide-hairline overflow-y-auto" data-lens-list="">
           {triageStatus === "loading" && (
-            <SubAgentSynthesisSkeleton
-              mode="triage"
-              title={pendingTriageTitle ?? "Custom Incident / Project Goal"}
-            />
-          )}
-          {exploreStatus === "loading" && (
-            <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "Free-Roam Query"} />
-          )}
-          {freeRoamDashboards.map((m) => (
-            <ContextualMiniDashboardCard key={m.id} entry={m} />
-          ))}
-          {freeRoamDashboards.length === 0 && exploreStatus !== "loading" && (
-            <div className="flex flex-col items-center justify-center gap-2 rounded-[10px] border border-dashed border-border bg-raised px-3 py-12 text-center">
-              <Compass className="size-7 text-selection/70" />
-              <div className="text-[13px] font-semibold text-text">
-                Free-Roam Knowledge &amp; Telemetry Canvas Ready
-              </div>
-              <p className="max-w-md text-[11.5px] text-muted">
-                Type any cloud architecture question, error code, or tenant query in the left explorer—or click any entity in the live MCP tenant tree—to open interactive lenses. Highlight any text on any card to recursively drill down.
-              </p>
-              <Button
-                size="sm"
-                variant="primary"
-                icon={<Sparkles />}
-                onClick={() =>
-                  void spawnFreeRoamDashboard("Live Tenant Identity, Licensing, Conditional Access & Infrastructure Posture Overview", {
-                    scope: "hybrid",
-                    viewMode: "dashboard",
-                  })
-                }
-                data-testid="free-roam-spawn-overview"
-              >
-                Open Tenant Posture Overview
-              </Button>
+            <div className="px-4 py-3">
+              <SubAgentSynthesisSkeleton mode="triage" title={pendingTriageTitle ?? "Custom Incident / Project Goal"} />
             </div>
           )}
+          {exploreStatus === "loading" && (
+            <div className="px-4 py-3">
+              <SelectionSynthesisSkeleton selectionText={activeExploreText ?? "Free-Roam Query"} />
+            </div>
+          )}
+          <LensList />
         </div>
       </div>
     );

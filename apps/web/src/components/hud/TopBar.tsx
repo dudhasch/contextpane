@@ -1,4 +1,4 @@
-import { Activity, Building2, Compass, Database, FilePlus2, Mic, Monitor, Moon, Pin, PinOff, RotateCcw, Sun } from "lucide-react";
+import { Activity, Building2, Compass, FilePlus2, Mic, Monitor, Moon, Pin, PinOff, RotateCcw, Sun } from "lucide-react";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -76,25 +76,6 @@ export function TopBar() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <button
-          type="button"
-          disabled={togglingDataMode}
-          onClick={() => void setDataMode(dataMode === "real-tenant" ? "simulated-lab" : "real-tenant")}
-          title={
-            dataMode === "real-tenant"
-              ? "Active: Strict Real Tenant Mode (MCP queries live Microsoft Graph & Azure ARM only, zero simulated fallback). Click to switch to Simulated Lab."
-              : "Active: Simulated Lab Mode (MCP includes seeded Contoso/Fabrikam lab fixtures). Click to enforce Strict Real Tenant Mode."
-          }
-          data-testid="topbar-datamode-toggle"
-          className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 font-mono text-11 font-semibold transition-colors ${
-            dataMode === "real-tenant"
-              ? "border-healthy/50 bg-healthy/15 text-healthy-strong hover:bg-healthy/25"
-              : "border-hairline bg-raised text-muted hover:border-signal/40 hover:text-text"
-          }`}
-        >
-          <Database className="size-3.5" />
-          <span>{dataMode === "real-tenant" ? "Real Tenant Only" : "Simulated Lab"}</span>
-        </button>
         {activeRecipeId ? (
           <Button variant="primary" icon={<PinOff />} onClick={unpinRecipe} title="Release the pinned recipe (p)">
             Recipe Pinned
@@ -119,6 +100,25 @@ export function TopBar() {
           data-testid="topbar-theme-toggle"
         />
         <div className="ml-1 flex items-center gap-2 border-l border-hairline pl-2.5 font-mono text-11 text-muted" data-testid="topbar-status-cluster">
+          <button
+            type="button"
+            disabled={togglingDataMode}
+            onClick={() => void setDataMode(dataMode === "real-tenant" ? "simulated-lab" : "real-tenant")}
+            title={
+              dataMode === "real-tenant"
+                ? "Data mode: real tenant only (MCP queries live Microsoft Graph & Azure ARM, no simulated fallback). Click for the simulated lab."
+                : "Data mode: simulated lab (MCP includes seeded Contoso/Fabrikam fixtures). Click for real tenant only."
+            }
+            aria-label={`Data mode: ${dataMode === "real-tenant" ? "real tenant only" : "lab"}. Toggle.`}
+            data-testid="topbar-datamode-toggle"
+            className="inline-flex h-6 items-center rounded px-1 font-sans whitespace-nowrap transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-signal disabled:opacity-60"
+          >
+            <span data-testid="freeroam-datamode-toggle" data-mode={dataMode}>
+              <span className={dataMode === "real-tenant" ? "text-healthy" : "text-faint"}>Real tenant only</span>
+              <span aria-hidden className="text-faint"> / </span>
+              <span className={dataMode === "real-tenant" ? "text-faint" : "text-text"}>Lab</span>
+            </span>
+          </button>
           <Pill variant="status" tone={connection.tone} title={connection.title}>
             <span data-testid="topbar-connection-status">{connection.word}</span>
           </Pill>

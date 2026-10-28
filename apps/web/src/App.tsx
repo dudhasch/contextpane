@@ -6,7 +6,7 @@ import { SystemAuditDrawer } from "./components/hud/SystemAuditDrawer";
 import { TicketComposer } from "./components/hud/TicketComposer";
 import { TopBar } from "./components/hud/TopBar";
 import { VoiceSteerPanel } from "./components/hud/VoiceSteer";
-import { FreeRoamExplorer } from "./components/landing/FreeRoamExplorer";
+import { TenantTree } from "./components/freeroam";
 import { ScenarioPane } from "./components/ticket/ScenarioPane";
 import { SelectionTrigger } from "./components/ticket/SelectionTrigger";
 import { Toasts } from "./components/ui/Toasts";
@@ -75,7 +75,7 @@ export function App() {
           style={{ gridTemplateColumns: `${leftPx}px 1px minmax(0, 1fr)` }}
         >
           <section ref={contextRef} className="flex min-h-0 min-w-0 flex-col bg-surface" data-testid="zone-context">
-            {freeRoamOpen ? <FreeRoamExplorer /> : <ScenarioPane />}
+            {freeRoamOpen ? <TenantTree /> : <ScenarioPane />}
           </section>
           <div
             role="separator"

@@ -243,12 +243,10 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
   };
 
   const modeMeta = CONTEXT_MODE_META[viewMode];
-  // In the lens list the section sits in a 16px / 12px gutter: the dashed agent rule covers the
-  // list's solid divider one gutter up; in Free-Roam (stacked lenses) it sits on the section's own top.
-  const inLens = !freeRoamOpen;
-  const agentRule = `after:pointer-events-none after:absolute after:h-px after:border-t after:border-dashed after:border-hairline after:bg-ground after:content-[''] ${
-    inLens ? "after:-top-[13px] after:-inset-x-4" : "pt-2 after:top-0 after:inset-x-0"
-  }`;
+  // The section sits in the lens list's 16px / 12px gutter (incident and Free-Roam alike): the dashed
+  // agent rule covers the list's solid divider one gutter up, and tables bleed to the gutter edges.
+  const agentRule =
+    "after:pointer-events-none after:absolute after:h-px after:border-t after:border-dashed after:border-hairline after:bg-ground after:content-[''] after:-top-[13px] after:-inset-x-4";
   const [titleAccent, titleRest] = splitFirstWord(card.title);
   const err = card.errorCodeReference;
 
@@ -389,7 +387,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
       </div>
 
       {viewMode === "dashboard" && (
-        <DashboardModeBody card={card} chip={chip} setChip={setChip} counts={counts} filtered={filtered} rowFilter={rowFilter} bleed={inLens} />
+        <DashboardModeBody card={card} chip={chip} setChip={setChip} counts={counts} filtered={filtered} rowFilter={rowFilter} bleed />
       )}
 
       {viewMode === "full-card" && (
@@ -400,13 +398,13 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
           counts={counts}
           filtered={filtered}
           rowFilter={rowFilter}
-          bleed={inLens}
+          bleed
           latencyLabel={`${lensOrigin(entry, card.rows.length)} · ${elapsedSec}s`}
           copy={copy}
         />
       )}
 
-      {viewMode === "comparison" && <ComparisonModeBody card={card} rowFilter={rowFilter} bleed={inLens} />}
+      {viewMode === "comparison" && <ComparisonModeBody card={card} rowFilter={rowFilter} bleed />}
 
       {viewMode === "blast-radius" && <BlastRadiusModeBody card={card} refinementText={refinementText} />}
 
