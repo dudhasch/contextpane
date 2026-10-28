@@ -78,7 +78,7 @@ export function TenantTree() {
               title="Refresh tenant inventory"
               className="grid size-6 place-items-center rounded text-faint transition-colors hover:bg-raised hover:text-text focus-visible:outline-2 focus-visible:outline-signal"
             >
-              <RefreshCw className={`size-3.5 ${inventoryStatus === "loading" ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3.5 ${inventoryStatus === "loading" ? "text-signal motion-safe:animate-pulse-dot" : ""}`} />
             </button>
             <Button
               size="xs"
@@ -117,11 +117,24 @@ export function TenantTree() {
           )}
         </div>
         {summary && (
-          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-            <Stat label="Users">{summary.users}</Stat>
-            <Stat label="CA policies">{summary.caPolicies}</Stat>
-            <Stat label="SKU pools">{summary.skuPools}</Stat>
-            <Stat label="ARM objects">{summary.azureResources + summary.azurePolicies}</Stat>
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5" data-testid="free-roam-stat-row">
+            {[
+              { n: summary.users, one: "user", many: "users" },
+              { n: summary.caPolicies, one: "CA policy", many: "CA policies" },
+              { n: summary.skuPools, one: "SKU pool", many: "SKU pools" },
+              { n: summary.azureResources + summary.azurePolicies, one: "ARM object", many: "ARM objects" },
+            ].map((stat, i) => (
+              <span key={stat.many} className="inline-flex items-baseline gap-1.5">
+                {i > 0 && (
+                  <span aria-hidden className="text-faint">
+                    ·
+                  </span>
+                )}
+                <Stat valueFirst label={stat.n === 1 ? stat.one : stat.many}>
+                  {stat.n}
+                </Stat>
+              </span>
+            ))}
           </div>
         )}
       </header>

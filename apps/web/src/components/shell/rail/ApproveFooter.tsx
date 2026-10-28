@@ -1,5 +1,6 @@
 import { Check, FlaskConical, GitPullRequest, RotateCcw, Undo2, Zap } from "lucide-react";
 import type { ReactNode } from "react";
+import { humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../../ui/Button";
 import { OtherTenantsPopover } from "./OtherTenantsPopover";
@@ -10,8 +11,8 @@ const ACTION = "!h-8 !text-12";
 
 /**
  * Permanent approve footer of the code rail: other-tenant trigger and the canary drill on top, then
- * exactly one action row: approve (PR / apply now / rollback drill), console [REVERT] / [OK], or re-apply
- * after a rollback.
+ * exactly one action row: approve (PR / apply now / rollback drill), console revert / confirm while the
+ * console awaits sign-off, a quiet resolved line once it is signed off, or re-apply after a rollback.
  */
 export function ApproveFooter() {
   const drawer = useWorkbench((s) => s.drawer);
@@ -47,7 +48,7 @@ export function ApproveFooter() {
           }}
           data-testid="reapply-fix-button"
         >
-          Re-Apply Fix Now
+          Re-apply fix now
         </Button>
         <Button variant="outline" size="md" className={ACTION} onClick={() => confirmAndCloseConsole()}>
           Done
@@ -58,10 +59,10 @@ export function ApproveFooter() {
     actions = (
       <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="live-console-actions">
         <Button variant="danger" size="md" icon={<Undo2 />} disabled={streaming} onClick={() => void revertFromConsole()} data-testid="console-revert-button" className={ACTION}>
-          Stage Revert Script
+          Stage revert
         </Button>
         <Button variant="healthy" size="md" icon={<Check />} disabled={streaming} onClick={() => confirmAndCloseConsole()} data-testid="console-confirm-ok-button" className={`flex-1 ${ACTION}`}>
-          Confirm &amp; Close
+          Confirm and close
         </Button>
       </div>
     );
@@ -81,7 +82,7 @@ export function ApproveFooter() {
   } else if (drawer.approval.state === "pending" && resolved) {
     actions = (
       <Button variant="outline" size="md" icon={<Check />} className={`flex-1 ${ACTION}`} disabled title="Reopen the ticket or reset drift to run this fix again">
-        {closed ? "Already resolved & closed" : "Already resolved & verified"}
+        {closed ? "Already resolved and closed" : "Already resolved and verified"}
       </Button>
     );
   } else if (drawer.approval.state === "pending") {
@@ -95,17 +96,21 @@ export function ApproveFooter() {
         onClick={() => void approve("approve")}
         icon={simulate ? <FlaskConical /> : mode === "break-glass" ? <Zap /> : <GitPullRequest />}
       >
-        {simulate ? "Run Rollback Simulation (Test Auto-Undo)" : mode === "break-glass" ? "Apply Fix Now" : "Create Pull Request"}
+        {simulate ? "Run rollback drill" : mode === "break-glass" ? "Apply fix now" : "Create pull request"}
       </Button>
     );
   } else {
+    // Signed off (or moved on to the note): a quiet resolved line; the revert stays one click away.
+    const state = drawer.approval.state;
+    const summary = resolved ? (closed ? "Resolved · closed in PSA · undo ready" : "Resolved · undo ready") : state === "staged" ? "Staged for the pipeline" : `Approval ${humanizeStatus(state).toLowerCase()}`;
     actions = (
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <Button variant="danger" size="md" icon={<Undo2 />} onClick={() => void revertFromConsole()} data-testid="console-revert-button" className={ACTION}>
-          Stage Revert Script
-        </Button>
-        <Button variant="healthy" size="md" icon={<Check />} onClick={() => confirmAndCloseConsole()} data-testid="console-confirm-ok-button" className={`flex-1 ${ACTION}`}>
-          Confirm &amp; Close
+      <div className="flex h-8 min-w-0 flex-1 items-center gap-2" data-testid="approve-footer-resolved">
+        <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-12 text-muted">
+          <Check className={`size-3.5 shrink-0 ${resolved ? "text-healthy" : "text-faint"}`} aria-hidden />
+          {summary}
+        </span>
+        <Button variant="ghost" size="sm" icon={<Undo2 />} onClick={() => void revertFromConsole()} title="Stage the inverse script (f⁻¹) for this change">
+          Stage revert
         </Button>
       </div>
     );

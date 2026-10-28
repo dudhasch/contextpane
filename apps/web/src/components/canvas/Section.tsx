@@ -464,12 +464,24 @@ export function GhostLines({ lines, className = "" }: { lines: string[]; classNa
 }
 
 /** Small label/value row used in compact summaries. */
-export function Stat({ label, children, tone }: { label: string; children: ReactNode; tone?: Tone }) {
+/** Label + mono value. `valueFirst` reads as a count in running text ("5 users"), not a key ("Users 5"). */
+export function Stat({ label, children, tone, valueFirst = false }: { label: string; children: ReactNode; tone?: Tone; valueFirst?: boolean }) {
   const color = tone === "critical" ? "text-critical" : tone === "warning" ? "text-warning" : tone === "healthy" ? "text-healthy" : "text-text";
+  const value = <span className={`font-mono ${color}`}>{children}</span>;
+  const name = <span className={valueFirst ? "text-muted" : "text-faint"}>{label}</span>;
   return (
     <span className="inline-flex items-baseline gap-1 text-12">
-      <span className="text-faint">{label}</span>
-      <span className={`font-mono ${color}`}>{children}</span>
+      {valueFirst ? (
+        <>
+          {value}
+          {name}
+        </>
+      ) : (
+        <>
+          {name}
+          {value}
+        </>
+      )}
     </span>
   );
 }

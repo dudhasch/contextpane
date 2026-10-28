@@ -85,8 +85,17 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   } else if (mode === "idle") {
     body = (
       <div className="px-3 py-3 text-12 text-muted">
-        <p>No remediation staged.</p>
-        <p>Scripts stream here when you steer the plan.</p>
+        {forceIdle ? (
+          <>
+            <p>Open a lens to stage an action.</p>
+            <p>The staged script for the newest lens lands here.</p>
+          </>
+        ) : (
+          <>
+            <p>No remediation staged.</p>
+            <p>Scripts stream here when you steer the plan.</p>
+          </>
+        )}
       </div>
     );
   } else if (mode === "review") {

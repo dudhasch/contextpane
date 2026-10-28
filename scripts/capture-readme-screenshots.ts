@@ -196,7 +196,7 @@ try {
   /* 5 · pin the canvas as a recipe, switch to ANOM-INT-309 (Tier 0, 0 tokens), System & Audit open */
   if (shouldRun("05")) {
     await cdp.key("p");
-    await cdp.waitFor(`document.body.innerText.includes("Recipe Pinned")`, 10_000, "the pinned recipe");
+    await cdp.waitFor(`document.body.innerText.includes("Recipe pinned")`, 10_000, "the pinned recipe");
     await openItem("ANOM-INT-309");
     await cdp.waitFor(`${canvasReady("ANOM-INT-309", 1)} && document.querySelector('[data-testid="tenant-breadcrumb"]').innerText.includes("0 tokens")`, 30_000, "the ANOM-INT-309 recipe canvas");
     await cdp.waitFor(`!document.querySelector('[aria-label="Dismiss"]')`, 12_000, "the toasts to clear");

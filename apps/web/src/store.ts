@@ -808,7 +808,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       }
       get().toast({
         tone: res.dataMode === "real-tenant" ? "healthy" : "info",
-        title: res.dataMode === "real-tenant" ? "MCP Mode: Real Tenant Only (Zero Simulated Fallback)" : "MCP Mode: Simulated Lab Enabled",
+        title: res.dataMode === "real-tenant" ? "MCP mode: real tenant only (no simulated fallback)" : "MCP mode: simulated lab",
         detail:
           res.dataMode === "real-tenant"
             ? `MCP servers (@contextpane/mcp-msgraph & @contextpane/mcp-azure-iac) now query your live tenant exclusively. ${get().includeSeeded() ? "Seeded demo tickets stay in the queue (chip on)." : "Seeded demo tickets are hidden."}`
@@ -818,7 +818,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       set({ togglingDataMode: false });
       get().toast({
         tone: "critical",
-        title: "Failed to switch MCP Data Mode",
+        title: "Failed to switch the MCP data mode",
         detail: error instanceof Error ? error.message : String(error),
       });
     }
@@ -907,28 +907,40 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
   },
 
   async stageFreeRoamRemediation(input) {
-    set({
+    // WP8: streams like /api/remediate, so the rail ticker, the ghost lines and the script reveal apply.
+    // The previous action's drawer belongs to another lens; the rail ghosts its script until the new one lands.
+    set((s) => ({
       drawerOpen: true,
       remediateStatus: "loading",
+      remediateProgress: [],
+      drawer: null,
+      approveLog: [],
       drawerTab: "powershell",
-      drawerFocusBanner: `Free-Roam Staged Action · ${input.title ?? input.prompt.slice(0, 60)}`,
-    });
+      drawerFocusBanner: `Free-Roam staged action · ${input.title ?? input.prompt.slice(0, 60)}`,
+      railStream: { seq: (s.railStream?.seq ?? 0) + 1, source: "remediate", script: null, previous: s.drawer?.ticketId.startsWith("FREE-") ? s.drawer.powershellScript : null },
+    }));
     try {
-      const result = await api.freeRoamRemediate(input);
+      const result = await streamPost<RemediateResponse>("/api/free-roam/remediate", input, (event) =>
+        set((s) => {
+          const script = event.stage === "bundle:ready" && typeof event.data?.powershellScript === "string" ? event.data.powershellScript : null;
+          return { remediateProgress: [...s.remediateProgress, event], ...(script ? { railStream: withRailScript(s.railStream, script, "remediate") } : {}) };
+        }),
+      );
       set({
         drawer: result.drawer,
+        railStream: null,
         remediateStatus: "ready",
       });
       get().toast({
         tone: result.drawer.verificationStatus.verdict === "Verified Safe" ? "healthy" : "warning",
-        title: `Free-Roam Action Staged · ${result.drawer.verificationStatus.verdict}`,
-        detail: `${result.drawer.title} · Pre-Flight AST & -WhatIf verified`,
+        title: `Free-Roam action staged · ${result.drawer.verificationStatus.verdict}`,
+        detail: `${result.drawer.title} · pre-flight AST and -WhatIf verified`,
       });
     } catch (error) {
-      set({ remediateStatus: "error" });
+      set({ remediateStatus: "error", railStream: null });
       get().toast({
         tone: "critical",
-        title: "Free-Roam Remediation Synthesis Failed",
+        title: "Free-Roam remediation synthesis failed",
         detail: error instanceof Error ? error.message : String(error),
       });
     }
@@ -979,7 +991,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     set({ savedBoards: next });
     get().toast({
       tone: "healthy",
-      title: `Saved Free-Roam Board "${cleanName}"`,
+      title: `Saved Free-Roam board "${cleanName}"`,
       detail: `${dashboards.length} lens(es) saved to local workspace storage.`,
     });
   },
@@ -993,7 +1005,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     });
     get().toast({
       tone: "info",
-      title: `Loaded Board "${found.name}"`,
+      title: `Loaded board "${found.name}"`,
       detail: `Restored ${found.dashboards.length} lens(es).`,
     });
   },
@@ -1087,7 +1099,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     set((s) => ({ unseen: s.unseen.includes(item.scenarioId) ? s.unseen : [...s.unseen, item.scenarioId] }));
     get().toast({
       tone: "meta",
-      title: `📥 New ERP Drop: ${item.displayId}${attachments.length ? ` (${attachments.join(", ")})` : ""}`,
+      title: `📥 New ERP drop: ${item.displayId}${attachments.length ? ` (${attachments.join(", ")})` : ""}`,
       detail: `${item.title} · ${item.custom?.extraction.entities.filter((e) => e.resolvedTo).length ?? 0} entities matched live`,
       action: { label: `Open ${item.displayId}`, onClick: () => void get().selectScenario(item.scenarioId) },
     });
@@ -1424,11 +1436,11 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       const v = updated.verificationStatus;
       get().toast({
         tone: v.verdict === "Verification Failed" ? "critical" : v.verdict === "Verified Safe" ? "healthy" : "warning",
-        title: v.verdict === "Verification Failed" ? "Auto-Fix re-ran the pre-flight: still failing" : `Auto-Fix re-verified: ${v.verdict}`,
+        title: v.verdict === "Verification Failed" ? "Auto-fix re-ran the pre-flight: still failing" : `Auto-fix re-verified: ${v.verdict}`,
         detail: v.findings.slice(0, 2).join(" · "),
       });
     } catch (error) {
-      get().toast({ tone: "critical", title: "Auto-Fix failed", detail: error instanceof Error ? error.message : String(error) });
+      get().toast({ tone: "critical", title: "Auto-fix failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
 
@@ -1490,7 +1502,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
         get().toast({
           tone: "critical",
-          title: "Health check failed · Auto-rollback restored previous state",
+          title: "Health check failed · auto-rollback restored the previous state",
           detail: "Canary health check failed — 1-Click Undo script executed automatically to restore the previous tenant state",
         });
         return;
@@ -1858,7 +1870,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     try {
       const { skill, promoted } = await api.compileSkill(get().scenarioId);
       set((s) => ({ compiledSkills: [...s.compiledSkills.filter((x) => x.id !== skill.id), skill] }));
-      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? "Saved as Instant Auto-Fix Rule" : "Rule not promoted", detail: "Runs in <1ms next time this issue happens" });
+      get().toast({ tone: promoted ? "healthy" : "warning", title: promoted ? "Saved as instant auto-fix rule" : "Rule not promoted", detail: "Runs in <1ms next time this issue happens" });
     } catch (e) { get().toast({ tone: "critical", title: "Compile failed", detail: e instanceof Error ? e.message : String(e) }); }
   },
   selectTimelineSlice(sliceId) {

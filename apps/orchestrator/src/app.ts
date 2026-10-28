@@ -254,15 +254,25 @@ const FreeRoamRemediateSchema = z.object({
   tenantId: z.string().optional(),
 });
 
+/** Free-Roam staging streams like /api/remediate (SSE `progress` / `result` / `error`); plain JSON otherwise. */
 app.post("/api/free-roam/remediate", async (c) => {
   const body = FreeRoamRemediateSchema.parse(await c.req.json());
-  const result = await stageFreeRoamRemediation({
+  const input = {
     prompt: body.prompt,
     ...(body.title ? { title: body.title } : {}),
     ...(body.scriptPreview ? { scriptPreview: body.scriptPreview } : {}),
     ...(body.tenantId ? { tenantId: body.tenantId } : {}),
+  };
+  if (!wantsSse(c)) return c.json(await stageFreeRoamRemediation(input));
+  return streamSSE(c, async (stream) => {
+    const send = (event: string, data: unknown) => stream.writeSSE({ event, data: JSON.stringify(data) });
+    try {
+      const result = await stageFreeRoamRemediation(input, (p: ProgressEvent) => void send("progress", p));
+      await send("result", result);
+    } catch (error) {
+      await send("error", { error: error instanceof Error ? error.message : String(error) });
+    }
   });
-  return c.json(result);
 });
 
 app.post("/api/anomalies/scan", async (c) => {

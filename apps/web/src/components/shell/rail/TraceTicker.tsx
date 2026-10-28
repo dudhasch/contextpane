@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProgressEvent } from "@/lib/api";
+import { stageLabel } from "@/lib/format";
 import { cleanProgressMessage } from "../../canvas/ProgressRail";
 
 const FINISHED_STAGE = /(^|:)(done|routed|ready)$/;
@@ -40,7 +41,7 @@ export function TraceTicker({ events, busy, label }: { events: ProgressEvent[]; 
   return (
     <div className="flex min-w-0 flex-1 items-start gap-3" data-trace={label ?? "busy"} aria-live="polite">
       <ol className="min-w-0 flex-1 font-mono text-11">
-        {shown.length === 0 && <li className="truncate text-faint">{label ? `${label} · ` : ""}connecting…</li>}
+        {shown.length === 0 && <li className="truncate text-faint">{label ? `${stageLabel(label)} · ` : ""}connecting…</li>}
         {shown.map((e, i) => {
           const last = offset + i === events.length - 1;
           // A finished stage (`agent:3:done`, `bundle:ready`) keeps its own time; only a running one ticks.
@@ -48,7 +49,9 @@ export function TraceTicker({ events, busy, label }: { events: ProgressEvent[]; 
           return (
             <li key={`${e.stage}-${offset + i}`} className="flex min-w-0 items-baseline gap-2">
               <span className="w-14 shrink-0 text-right text-faint">+{fmtMs(ms)}</span>
-              <span className={`shrink-0 ${last ? "text-signal" : "text-muted"}`}>{e.stage.replace(/_/g, " ")}</span>
+              <span className={`shrink-0 ${last ? "text-signal" : "text-muted"}`} title={e.stage}>
+                {stageLabel(e.stage)}
+              </span>
               <span className={`min-w-0 truncate ${last ? "text-text" : "text-muted"}`} title={cleanProgressMessage(e.message)}>
                 {cleanProgressMessage(e.message)}
               </span>

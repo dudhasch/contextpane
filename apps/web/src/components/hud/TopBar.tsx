@@ -37,11 +37,11 @@ export function TopBar() {
       : { word: "sim", tone: "primary", title: "Connected · simulated lab providers" };
 
   return (
-    <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 border-b border-hairline bg-surface px-3">
+    <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 overflow-hidden border-b border-hairline bg-surface px-3">
       <button
         type="button"
         onClick={() => openFreeRoam()}
-        title="Return to Free-Roam Startpage (Knowledge & Tenant Explorer)"
+        title="Return to the Free-Roam start page (knowledge and tenant explorer)"
         className="flex shrink-0 items-center gap-2 pr-1 text-left transition-opacity hover:opacity-85"
       >
         <span className="grid size-6 place-items-center rounded-md bg-signal/15 text-signal">
@@ -50,46 +50,49 @@ export function TopBar() {
         <span className="text-13 font-semibold tracking-tight">ContextPane</span>
       </button>
 
-      <div className="flex min-w-0 shrink items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <Button
           variant={freeRoamOpen ? "primary" : "outline"}
           icon={<Compass />}
           onClick={() => openFreeRoam()}
-          title="Open Free-Roam Startpage — open any lens without a ticket"
+          title="Open the Free-Roam start page: open any lens without a ticket"
           data-testid="topbar-freeroam-button"
+          className="shrink-0"
         >
-          Free-Roam Startpage
+          Free-Roam
         </Button>
         <WorkQueue />
-        <span className="shrink-0 font-mono text-11 text-faint" title="Open work items in the queue" data-testid="queue-open-count">
+        <span className="shrink-0 font-mono text-11 whitespace-nowrap text-faint" title="Open work items in the queue" data-testid="queue-open-count">
           {openCount} open
         </span>
         <Button
           variant="outline"
           icon={<FilePlus2 />}
           onClick={() => setComposerOpen(true)}
-          title="Paste any unscripted support ticket or outline a cloud engineering project/goal (n)"
+          title="Paste any unscripted support ticket or outline a cloud engineering project goal (n)"
           data-testid="topbar-new-ticket-button"
+          className="shrink-0"
         >
-          New Ticket / Outline Project Goal
+          New ticket
         </Button>
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      {/* Below 1440 px the three utility buttons drop to icons (label in the tooltip). */}
+      <div className="flex shrink-0 items-center gap-1.5">
         {activeRecipeId ? (
-          <Button variant="primary" icon={<PinOff />} onClick={unpinRecipe} title="Release the pinned recipe (p)">
-            Recipe Pinned
+          <Button variant="primary" icon={<PinOff />} onClick={unpinRecipe} title="Recipe pinned · release it (p)" aria-label="Recipe pinned">
+            <span className="hidden min-[1440px]:inline">Recipe pinned</span>
           </Button>
         ) : (
-          <Button variant="outline" icon={<Pin />} onClick={() => void pinRecipe()} disabled={canvasStatus !== "ready"} title="Pin the canvas as a View Recipe: later scenario switches hydrate with 0 LLM tokens (p)">
-            Pin Recipe
+          <Button variant="outline" icon={<Pin />} onClick={() => void pinRecipe()} disabled={canvasStatus !== "ready"} title="Pin the canvas as a view recipe: later scenario switches hydrate with 0 LLM tokens (p)" aria-label="Pin recipe">
+            <span className="hidden min-[1440px]:inline">Pin recipe</span>
           </Button>
         )}
-        <Button variant={voiceOpen ? "meta" : "outline"} icon={<Mic />} onClick={() => setVoiceOpen(!voiceOpen)} title="Voice Steer (v)">
-          Voice Steer
+        <Button variant={voiceOpen ? "primary" : "outline"} icon={<Mic />} onClick={() => setVoiceOpen(!voiceOpen)} title="Voice steer (v)" aria-label="Voice steer">
+          <span className="hidden min-[1440px]:inline">Voice steer</span>
         </Button>
-        <Button variant="outline" icon={<RotateCcw />} onClick={() => void resetDrift()} loading={resetting} title="Restore the drifted lab state of every scenario for the next demo take (0)">
-          Reset Drift
+        <Button variant="outline" icon={<RotateCcw />} onClick={() => void resetDrift()} loading={resetting} title="Reset drift: restore the drifted lab state of every scenario for the next demo take (0)" aria-label="Reset drift">
+          <span className="hidden min-[1440px]:inline">Reset drift</span>
         </Button>
         <Button
           variant="ghost"
@@ -99,7 +102,7 @@ export function TopBar() {
           title={`Theme: ${THEME_LABEL[theme.preference]}${theme.preference === "system" ? ` (${THEME_LABEL[theme.resolved]})` : ""}. Click for ${THEME_LABEL[THEME_NEXT[theme.preference]]}.`}
           data-testid="topbar-theme-toggle"
         />
-        <div className="ml-1 flex items-center gap-2 border-l border-hairline pl-2.5 font-mono text-11 text-muted" data-testid="topbar-status-cluster">
+        <div className="ml-1 flex min-w-0 items-center gap-2 border-l border-hairline pl-2.5 font-mono text-11 text-muted" data-testid="topbar-status-cluster">
           <button
             type="button"
             disabled={togglingDataMode}
@@ -111,12 +114,10 @@ export function TopBar() {
             }
             aria-label={`Data mode: ${dataMode === "real-tenant" ? "real tenant only" : "lab"}. Toggle.`}
             data-testid="topbar-datamode-toggle"
-            className="inline-flex h-6 items-center rounded px-1 font-sans whitespace-nowrap transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-signal disabled:opacity-60"
+            className="inline-flex h-6 min-w-0 shrink items-center overflow-hidden rounded px-1 font-sans whitespace-nowrap transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-signal disabled:opacity-60"
           >
-            <span data-testid="freeroam-datamode-toggle" data-mode={dataMode}>
-              <span className={dataMode === "real-tenant" ? "text-healthy" : "text-faint"}>Real tenant only</span>
-              <span aria-hidden className="text-faint"> / </span>
-              <span className={dataMode === "real-tenant" ? "text-faint" : "text-text"}>Lab</span>
+            <span data-testid="freeroam-datamode-toggle" data-mode={dataMode} className="truncate">
+              {dataMode === "real-tenant" ? <span className="text-healthy">Real tenant</span> : <span className="text-text">Lab</span>}
             </span>
           </button>
           <Pill variant="status" tone={connection.tone} title={connection.title}>
@@ -127,8 +128,9 @@ export function TopBar() {
             icon={<Activity />}
             onClick={() => setSystemOpen(!systemOpen)}
             title="Router savings, audit log and live provider status (t)"
+            className="shrink-0"
           >
-            System &amp; Audit
+            System &amp; audit
           </Button>
         </div>
       </div>

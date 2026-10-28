@@ -159,6 +159,41 @@ describe("Free-Roam Landing Page & MCP Data Mode ('real-tenant' vs 'simulated-la
     expect(body.drawer.verificationStatus.astCheckPassed).toBe(true);
   });
 
+  test("POST /api/free-roam/remediate streams progress like /api/remediate when SSE is requested", async () => {
+    const res = await app.request("/api/free-roam/remediate", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify({
+        prompt: "Audit Conditional Access policies and enforce break-glass exclusion group",
+        title: "Free-Roam CA Posture Remediation",
+      }),
+    });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const parsed = (await res.text())
+      .split("\n\n")
+      .filter((b) => b.trim())
+      .map((b) => ({
+        event: /^event: ?(.*)$/m.exec(b)?.[1]?.trim(),
+        data: JSON.parse(
+          b
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trimStart())
+            .join("\n"),
+        ) as Record<string, any>,
+      }));
+    const stages = parsed.filter((p) => p.event === "progress").map((p) => p.data.stage as string);
+    expect(stages[0]).toBe("code:start");
+    expect(stages).toContain("bundle:ready");
+    expect(stages.at(-1)).toBe("preflight:done");
+    const bundle = parsed.find((p) => p.data.stage === "bundle:ready")!;
+    expect(bundle.data.data.powershellScript).toContain("SupportsShouldProcess");
+    const result = parsed.at(-1)!;
+    expect(result.event).toBe("result");
+    expect(result.data.drawer.remediationId).toStartWith("rem-freeroam-");
+    expect(result.data.drawer.powershellScript).toBe(bundle.data.data.powershellScript);
+  });
+
   test("POST /api/anomalies/scan inspects MCP datasets and registers live anomalies", async () => {
     setPersistedDataMode("simulated-lab");
     const res = await app.request("/api/anomalies/scan", {
