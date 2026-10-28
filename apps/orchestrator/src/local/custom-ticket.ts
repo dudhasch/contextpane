@@ -28,8 +28,8 @@ import { correlateUpstreamCloudStatus, correlateUpstreamCloudStatusSync } from "
 import {
   assessTicketElementNeeds,
   buildDeterministicRoutingDecision,
+  buildTemplateCards,
   synthesizeAndPersistMissingElements,
-  synthesizeAndPersistMissingElementsSync,
 } from "./dynamic-catalog.ts";
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 import {
@@ -441,13 +441,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       }
     : rawExtraction;
 
-  const synthesizedElements = hasMissingElements
-    ? synthesizeAndPersistMissingElementsSync({
-        ticketId: id,
-        ticketPrompt: `${title}\n${body}`,
-        decision: routingDecision,
-      })
-    : undefined;
+  const synthesizedElements = hasMissingElements ? buildTemplateCards(routingDecision) : undefined;
   const t3Ms = Math.max(1, Math.round(performance.now() - t3Start));
 
   const t4Start = performance.now();

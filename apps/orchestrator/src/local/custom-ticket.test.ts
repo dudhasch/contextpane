@@ -213,7 +213,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const card = entry.synthesizedElements?.[0];
     expect(card?.elementId).toBe(elementId);
     expect(card?.synthesisMeta.synthesizerModel).toBe("deterministic-template");
-    expect(card?.synthesisMeta.tsxStubPath).toBe(`data/synthesized-elements/${elementId}.tsx`);
+    expect(card?.synthesisMeta.tsxStubPath).toBe("");
     expect(loadDynamicCatalog().dynamicElements.some((e) => e.elementId === elementId && e.synthesizerModel !== "deterministic-template")).toBe(false);
 
     // Verify brief & layout have zero INC-4092 Finance leakage and include Upstream Cloud Status correlation
@@ -481,14 +481,16 @@ describe("sub-agent pipeline sequencing (L-05, L-07)", () => {
 });
 
 describe("dynamic catalog honesty (L-03)", () => {
-  test("the deterministic path labels its card a template and writes nothing in tests", async () => {
-    const { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElementsSync, TEMPLATE_SYNTHESIZER } = await import("./dynamic-catalog.ts");
+  test("the deterministic path labels its card a template and never persists it", async () => {
+    const { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElements, TEMPLATE_SYNTHESIZER } = await import("./dynamic-catalog.ts");
     const before = loadDynamicCatalog().dynamicElements.length;
     const decision = buildDeterministicRoutingDecision({ title: "Template provenance probe", body: "probe", matchedSeededComponents: [] });
-    const [card] = synthesizeAndPersistMissingElementsSync({ ticketId: "CUSTOM-PROBE1", ticketPrompt: "probe", decision });
+    // Offline the async synthesizer makes no model call and falls back to the template.
+    const [card] = await synthesizeAndPersistMissingElements({ ticketId: "CUSTOM-PROBE1", ticketPrompt: "probe", decision, gatekeeperModel: "deterministic-router" });
     expect(card?.synthesisMeta.synthesizerModel).toBe(TEMPLATE_SYNTHESIZER);
     expect(card?.synthesisMeta.gatekeeperModel).toBe("deterministic-router");
     expect(card?.synthesisMeta.source).toBe("fallback");
+    expect(card?.synthesisMeta.tsxStubPath).toBe("");
     expect(loadDynamicCatalog().dynamicElements.length).toBe(before);
     expect(existsSync("../../data/synthesized-elements/TemplateProvenanceProbeCard.tsx")).toBe(false);
   });
