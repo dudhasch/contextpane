@@ -188,7 +188,9 @@ function listActiveScenarios(includeSeededOverride?: boolean): ScenarioListItem[
  * In "real-tenant" mode, the 6 seeded demo scenarios are filtered out unless ?includeSeeded=1.
  */
 app.get("/api/scenarios", (c) => {
-  const includeSeeded = /^(1|true)$/i.test(c.req.query("includeSeeded") ?? "") ? true : undefined;
+  // 1/true forces the seeded demo tickets in, 0/false out (the web chip); absent follows the data mode.
+  const raw = c.req.query("includeSeeded") ?? "";
+  const includeSeeded = /^(1|true)$/i.test(raw) ? true : /^(0|false)$/i.test(raw) ? false : undefined;
   return c.json({ scenarios: listActiveScenarios(includeSeeded), dataMode: getPersistedDataMode() });
 });
 

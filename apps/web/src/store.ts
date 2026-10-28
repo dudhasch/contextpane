@@ -57,6 +57,18 @@ export interface SavedFreeRoamBoard {
 }
 
 const SAVED_BOARDS_KEY = "contextpane:freeroam-boards:v1";
+const INCLUDE_SEEDED_KEY = "contextpane:include-seeded:v1";
+
+/** The operator's "Seeded demo tickets" choice; null = follow the data mode (on in Simulated Lab, off in Real Tenant). */
+function loadIncludeSeeded(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(INCLUDE_SEEDED_KEY);
+    return raw === "1" ? true : raw === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
 
 function loadSavedBoardsFromStorage(): SavedFreeRoamBoard[] {
   if (typeof window === "undefined") return [];
@@ -314,6 +326,8 @@ interface WorkbenchState {
   /* unified work queue & ERP inbox */
   queueOpen: boolean;
   queueFilter: QueueFilter;
+  /** "Seeded demo tickets" queue chip: null follows the data mode. */
+  includeSeededOverride: boolean | null;
   queueQuery: string;
   /** Work items that arrived (ERP drops) and have not been opened yet: the dot on the queue button. */
   unseen: string[];
@@ -374,6 +388,9 @@ interface WorkbenchState {
   stepQueue(delta: 1 | -1): Promise<void>;
   setQueueOpen(open: boolean): void;
   setQueueFilter(filter: QueueFilter): void;
+  /** Effective state of the "Seeded demo tickets" chip. */
+  includeSeeded(): boolean;
+  setIncludeSeeded(on: boolean): Promise<void>;
   setQueueQuery(query: string): void;
   /** `[🎲 Drop Random ERP Ticket]`: the orchestrator writes a folder into input/tickets/ and the watcher ingests it. */
   simulateDrop(archetype?: DropArchetype): Promise<void>;
@@ -558,6 +575,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   queueOpen: false,
   queueFilter: "all",
+  includeSeededOverride: loadIncludeSeeded(),
   queueQuery: "",
   unseen: [],
   dropStatus: "idle",
@@ -646,7 +664,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set((s) => ({
         dataMode: res.dataMode,
         togglingDataMode: false,
-        scenarios: res.scenarios,
+        scenarios: s.includeSeededOverride === null ? res.scenarios : s.scenarios,
         health: s.health ? { ...s.health, dataMode: res.dataMode } : s.health,
         speculativeEpoch: s.speculativeEpoch + 1,
         speculativeSelectionCache: {},
@@ -655,7 +673,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       void get().loadFreeRoamInventory();
       if (!get().freeRoamOpen) {
         // If current scenario was filtered out in real-tenant mode, switch to Free-Roam Landing Page
-        const stillExists = res.scenarios.some((s) => s.scenarioId === get().scenarioId);
+        const stillExists = get().scenarios.some((s) => s.scenarioId === get().scenarioId);
         if (!stillExists) {
           set({ freeRoamOpen: true });
         } else {
@@ -667,7 +685,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         title: res.dataMode === "real-tenant" ? "MCP Mode: Real Tenant Only (Zero Simulated Fallback)" : "MCP Mode: Simulated Lab Enabled",
         detail:
           res.dataMode === "real-tenant"
-            ? "MCP servers (@contextpane/mcp-msgraph & @contextpane/mcp-azure-iac) now query your live tenant exclusively. Seeded demo scenarios are hidden."
+            ? `MCP servers (@contextpane/mcp-msgraph & @contextpane/mcp-azure-iac) now query your live tenant exclusively. ${get().includeSeeded() ? "Seeded demo tickets stay in the queue (chip on)." : "Seeded demo tickets are hidden."}`
             : "MCP servers now include seeded Contoso & Fabrikam lab fixtures and scenarios.",
       });
     } catch (error) {
@@ -866,7 +884,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async loadScenarios() {
     try {
-      const { scenarios } = await api.scenarios();
+      const { scenarios } = await api.scenarios(get().includeSeededOverride ?? undefined);
       // Unscripted tickets live in the orchestrator's registry; mirror them so getScenarioEntry works here too.
       for (const s of scenarios) {
         if (!s.custom) continue;
@@ -893,7 +911,21 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   orderedQueue() {
-    return orderWorkItems(get().scenarios, get().convergence);
+    return orderWorkItems(get().scenarios, get().convergence, { pinSeeded: get().includeSeeded() });
+  },
+
+  includeSeeded() {
+    return get().includeSeededOverride ?? get().dataMode !== "real-tenant";
+  },
+
+  async setIncludeSeeded(on) {
+    set({ includeSeededOverride: on });
+    try {
+      window.localStorage.setItem(INCLUDE_SEEDED_KEY, on ? "1" : "0");
+    } catch {
+      /* private window: the choice lasts for this tab */
+    }
+    await get().loadScenarios();
   },
 
   async stepQueue(delta) {

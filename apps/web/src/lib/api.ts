@@ -470,7 +470,8 @@ export interface DynamicCatalogResponse {
 
 export const api = {
   health: () => request<HealthResponse>("/api/health"),
-  scenarios: () => request<{ scenarios: ScenarioListItem[] }>("/api/scenarios"),
+  /** includeSeeded: true / false forces the seeded demo tickets in / out; undefined follows the server's data mode. */
+  scenarios: (includeSeeded?: boolean) => request<{ scenarios: ScenarioListItem[] }>(`/api/scenarios${includeSeeded === undefined ? "" : `?includeSeeded=${includeSeeded ? 1 : 0}`}`),
   brief: (scenarioId: string, fresh = false) => request<BriefResponse>(`/api/scenarios/${scenarioId}/brief${fresh ? "?refresh=true" : ""}`),
   hydrate: (recipeId: string, scenarioId: string) => request<HydrateResponse>(`/api/recipe/${encodeURIComponent(recipeId)}/hydrate?scenarioId=${scenarioId}`),
   recipes: () => request<{ recipes: ViewRecipe[] }>("/api/recipes"),

@@ -41,6 +41,7 @@ export function useDemoHotkeys() {
         case "4":
         case "5":
         case "6":
+        case "7":
         case "8":
         case "9": {
           // Position in the unified queue (newest first, resolved last), as the popover numbers them.
