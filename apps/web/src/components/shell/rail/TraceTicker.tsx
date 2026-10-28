@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { ProgressEvent } from "@/lib/api";
 import { cleanProgressMessage } from "../../canvas/ProgressRail";
 
+const FINISHED_STAGE = /(^|:)(done|routed|ready)$/;
+
 function fmtMs(ms: number): string {
   return ms >= 10_000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`;
 }
@@ -41,7 +43,8 @@ export function TraceTicker({ events, busy, label }: { events: ProgressEvent[]; 
         {shown.length === 0 && <li className="truncate text-faint">{label ? `${label} · ` : ""}connecting…</li>}
         {shown.map((e, i) => {
           const last = offset + i === events.length - 1;
-          const ms = last ? e.elapsedMs + Math.max(0, Math.round(now - lastArrival.current.at)) : e.elapsedMs;
+          // A finished stage (`agent:3:done`, `bundle:ready`) keeps its own time; only a running one ticks.
+          const ms = last && !FINISHED_STAGE.test(e.stage) ? e.elapsedMs + Math.max(0, Math.round(now - lastArrival.current.at)) : e.elapsedMs;
           return (
             <li key={`${e.stage}-${offset + i}`} className="flex min-w-0 items-baseline gap-2">
               <span className="w-14 shrink-0 text-right text-faint">+{fmtMs(ms)}</span>

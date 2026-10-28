@@ -6,6 +6,7 @@ import { onDemo } from "@/lib/demo";
 import { fmtMs, SOURCE_LABEL } from "@/lib/format";
 import { catStyle } from "@/lib/provenance";
 import { selectConvergence, useWorkbench } from "@/store";
+import { Ghost } from "../canvas/Section";
 import { Button } from "../ui/Button";
 import { Pill, type Tone } from "../ui/Pill";
 import { cleanInlineSlugs, EnrichedText, humanizeClarifierSlug, NO_ENTITIES, NO_SELECTIONS, type SelectionItem } from "./EnrichedText";
@@ -32,6 +33,8 @@ export function PlanSection({ brief }: { brief: ScenarioBrief }) {
   }, [questions, stepIds]);
   const unmapped = questions.filter((q) => !(q.stepId && stepIds.has(q.stepId)));
   const hasTasks = Boolean((brief.subAgentTasks && brief.subAgentTasks.length > 0) || triageStatus === "loading");
+  // WP6: a refine keeps the plan mounted; summary and step details ghost until the new routing lands.
+  const briefPending = useWorkbench((s) => s.pendingRefine.brief);
 
   return (
     <section className="mt-1 border-t border-hairline pt-1.5" data-testid="summary-plan">
@@ -59,12 +62,14 @@ export function PlanSection({ brief }: { brief: ScenarioBrief }) {
         )}
       </div>
       {questions.length > 0 && <ScopeBar scope={scope} unmapped={unmapped} mappedCount={questions.length - unmapped.length} />}
-      <p className="mt-0.5 text-13 text-text" data-testid="summary-text">
-        <EnrichedText text={cleanInlineSlugs(brief.summary)} entities={NO_ENTITIES} selections={selections} />
+      <p className="mt-0.5 text-13 text-text" data-testid="summary-text" aria-busy={briefPending || undefined}>
+        <Ghost pending={briefPending}>
+          <EnrichedText text={cleanInlineSlugs(brief.summary)} entities={NO_ENTITIES} selections={selections} />
+        </Ghost>
       </p>
-      <ol className="mt-0.5 divide-y divide-hairline-2">
+      <ol className="mt-0.5 divide-y divide-hairline-2" aria-busy={briefPending || undefined}>
         {brief.steps.map((step, i) => (
-          <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} questions={byStep.get(step.id)} scope={scope} />
+          <PlanStep key={step.id} step={step} index={i + 1} resolved={resolved} selections={selections} questions={byStep.get(step.id)} scope={scope} pending={briefPending} />
         ))}
       </ol>
       <FleetPill />
@@ -424,6 +429,8 @@ function ScopeBar({ scope, unmapped, mappedCount }: { scope: ScopeDraft; unmappe
 
 /** One clarifying question: its label and a row of small chips; the free-text answer while editing. */
 function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft }) {
+  // While a refine streams the chips keep their look but take no input (the cursor says why).
+  const locked = useWorkbench((s) => s.refiningGoal);
   const rawVal = scope.draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
   const currentVal = humanizeClarifierSlug(rawVal, q);
   const isPresetOption = q.options.some(
@@ -449,9 +456,10 @@ function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft 
               type="button"
               data-testid={`clarifier-opt-${q.id}-${opt.id}`}
               aria-pressed={active}
+              disabled={locked}
               onClick={() => scope.setAnswer(q.id, cleanLabel)}
               title={opt.description ? `${cleanLabel} — ${opt.description}` : cleanLabel}
-              className={`inline-flex h-5 min-w-6 items-center overflow-hidden rounded-sm border px-1.5 text-11 transition-colors ${
+              className={`inline-flex h-5 min-w-6 items-center overflow-hidden rounded-sm border px-1.5 text-11 transition-colors disabled:cursor-progress ${
                 active ? "shrink-[0.2] border-signal/40 bg-signal/12 text-signal-strong" : "shrink border-hairline text-muted hover:border-signal/40 hover:text-text"
               }`}
             >
@@ -471,6 +479,7 @@ function ScopeQuestion({ q, scope }: { q: ClarifyingQuestion; scope: ScopeDraft 
             type="text"
             value={isPresetOption ? "" : currentVal}
             onChange={(e) => scope.setAnswer(q.id, e.target.value)}
+            disabled={locked}
             placeholder={q.customHint ?? "Or type a custom parameter…"}
             data-testid={`clarifier-input-${q.id}`}
             className="h-5 min-w-0 flex-1 rounded-sm border border-hairline bg-transparent px-1.5 text-11 text-text placeholder:text-faint focus:outline-1 focus:outline-signal"
@@ -517,6 +526,7 @@ function PlanStep({
   selections,
   questions,
   scope,
+  pending = false,
 }: {
   step: ResolutionStep;
   index: number;
@@ -524,6 +534,8 @@ function PlanStep({
   selections: SelectionItem[];
   questions: ClarifyingQuestion[] | undefined;
   scope: ScopeDraft;
+  /** WP6: the plan is being regenerated; the detail line ghosts in place until the new step lands. */
+  pending?: boolean;
 }) {
   const scenarioId = useWorkbench((s) => s.scenarioId);
   const steps = useWorkbench((s) => s.brief?.steps ?? NO_STEPS);
@@ -587,9 +599,9 @@ function PlanStep({
           data-testid="plan-step-text"
         >
           <span className="mr-1 font-semibold text-[color:var(--cat)]">{cleanInlineSlugs(step.title)}</span>
-          <span className={checked ? "text-muted line-through decoration-healthy/60" : "text-text"}>
+          <Ghost pending={pending} className={checked ? "text-muted line-through decoration-healthy/60" : "text-text"}>
             <EnrichedText text={cleanInlineSlugs(step.detail)} entities={NO_ENTITIES} selections={selections} />
-          </span>
+          </Ghost>
         </span>
         {questions?.map((q) => <ScopeQuestion key={q.id} q={q} scope={scope} />)}
       </div>

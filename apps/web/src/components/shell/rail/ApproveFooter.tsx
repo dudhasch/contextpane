@@ -28,6 +28,8 @@ export function ApproveFooter() {
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const preflight = usePreflight();
+  // WP6: while a refine or a fix generation streams, the drawer on screen is about to be replaced.
+  const regenerating = useWorkbench((s) => s.refiningGoal) || status === "loading";
 
   let actions: ReactNode;
   if (drawer?.approval.state === "rolled-back" || reverted) {
@@ -88,8 +90,8 @@ export function ApproveFooter() {
         variant={simulate ? "primary" : "healthy"}
         size="md"
         className={`flex-1 ${ACTION} ${simulate ? "!bg-warning !text-ground hover:!bg-warning/90" : ""}`}
-        disabled={preflight.blocked}
-        title={preflight.blocked ? "Fix or override the pre-flight first" : undefined}
+        disabled={preflight.blocked || regenerating}
+        title={regenerating ? "The fix is being regenerated for the new scope" : preflight.blocked ? "Fix or override the pre-flight first" : undefined}
         onClick={() => void approve("approve")}
         icon={simulate ? <FlaskConical /> : mode === "break-glass" ? <Zap /> : <GitPullRequest />}
       >

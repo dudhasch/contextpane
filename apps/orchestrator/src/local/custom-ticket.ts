@@ -24,6 +24,7 @@ import {
 } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } from "@contextpane/mcp-msgraph";
 import { config } from "../config.ts";
+import type { ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus, correlateUpstreamCloudStatusSync } from "./cloud-status-correlator.ts";
 import {
   assessTicketElementNeeds,
@@ -641,14 +642,17 @@ export async function triageCustomTicketAsync(
 /**
  * Interactive Goal Clarifier refinement: applies operator-selected option pills or free-text answers
  * to a custom ticket/project, re-synthesizing its brief, dynamic cards, and PowerShell/IaC remediation.
+ * `onProgress` receives one `agent:<n>:start` / `agent:<n>:done` event per sub-agent, the done events
+ * carrying that agent's partial payload (WP6 choreography).
  */
 export async function refineCustomTicketGoal(
   scenarioId: string,
   clarifiedAnswers: Record<string, string>,
+  onProgress?: ProgressSink,
 ): Promise<CustomScenarioEntry | null> {
   const existing = getCustomScenario(scenarioId);
   if (!existing) return null;
-  const updated = withQuestionStepIds(await refineEntryWithSubAgentsAsync(existing, clarifiedAnswers));
+  const updated = withQuestionStepIds(await refineEntryWithSubAgentsAsync(existing, clarifiedAnswers, onProgress));
   registerCustomScenario(updated);
   save();
   return updated;

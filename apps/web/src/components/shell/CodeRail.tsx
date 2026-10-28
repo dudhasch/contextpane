@@ -8,6 +8,7 @@ import { LiveConsole } from "./rail/LiveConsole";
 import { NoteAndDocs } from "./rail/NoteAndDocs";
 import { ProverStrip } from "./rail/ProverStrip";
 import { ScriptsTab } from "./rail/ScriptsTab";
+import { StreamingScript } from "./rail/StreamingScript";
 import { TraceTicker } from "./rail/TraceTicker";
 import { useHasIntune } from "./rail/shared";
 
@@ -40,6 +41,10 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   const liveConsoleStreaming = useWorkbench((s) => s.liveConsoleStreaming);
   const liveConsoleStep = useWorkbench((s) => s.liveConsoleStep);
   const liveConsoleLines = useWorkbench((s) => s.liveConsoleLines);
+  const refiningGoal = useWorkbench((s) => s.refiningGoal);
+  const refineProgress = useWorkbench((s) => s.refineProgress);
+  const railStream = useWorkbench((s) => s.railStream);
+  const scenarioId = useWorkbench((s) => s.scenarioId);
   const hasIntune = useHasIntune();
   // Free-Roam keeps the rail quiet unless it staged its own action (FREE-… bundle or one in flight).
   const freeRoamStaged = Boolean(drawer?.ticketId.startsWith("FREE-")) || remediateStatus === "loading";
@@ -47,6 +52,10 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   const tabs = hasIntune ? [...TABS, DEVICE_HEALTH_TAB] : TABS;
   const activeTab: CodeRailTab = tab === "devicehealth" && !hasIntune ? "powershell" : tab;
   const showFooter = mode !== "idle" && (drawer !== null || remediateStatus !== "idle" || mode === "console");
+  // WP6: anything the rail is waiting on (fix generation, a scope refine, an approve / revert run).
+  const streaming = remediateStatus === "loading" || refiningGoal || liveConsoleStreaming;
+  // The arriving script replaces the staged one while it is stale, and previews in the idle rail.
+  const showStream = railStream !== null && (mode === "idle" || mode === "staging") && (!drawer || refiningGoal || remediateStatus === "loading");
 
   const goScripts = () => useWorkbench.setState({ codeRailMode: "staging", liveConsoleOpen: false });
   const selectTab = (t: CodeRailTab) => {
@@ -57,6 +66,7 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
   // What the ticker shows: fix generation streams real events; approve / revert report one step line.
   const trace = useMemo((): { key: string; label: string; events: ProgressEvent[]; busy: boolean } => {
     if (remediateStatus === "loading") return { key: "remediate", label: "remediate", events: remediateProgress, busy: true };
+    if (refiningGoal) return { key: "refine", label: "refine", events: refineProgress, busy: true };
     if (liveConsoleStreaming) {
       const stage = /revert|rollback/i.test(liveConsoleStep ?? "") ? "rollback" : "approve";
       const last = liveConsoleLines.at(-1);
@@ -67,10 +77,12 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
       return { key: `console-${stage}`, label: stage, events, busy: true };
     }
     return { key: "idle", label: "idle", events: [], busy: false };
-  }, [remediateStatus, remediateProgress, liveConsoleStreaming, liveConsoleStep, liveConsoleLines]);
+  }, [remediateStatus, remediateProgress, refiningGoal, refineProgress, liveConsoleStreaming, liveConsoleStep, liveConsoleLines]);
 
   let body: ReactNode;
-  if (mode === "idle") {
+  if (showStream) {
+    body = <StreamingScript stream={railStream} ticketId={drawer?.ticketId ?? scenarioId} busy={refiningGoal || remediateStatus === "loading"} />;
+  } else if (mode === "idle") {
     body = (
       <div className="px-3 py-3 text-12 text-muted">
         <p>No remediation staged.</p>
@@ -192,9 +204,14 @@ export function CodeRail({ forceIdle = false }: { forceIdle?: boolean }) {
             <ChevronLeft className="size-3.5" />
           </button>
           <span className="text-11 whitespace-nowrap text-muted [writing-mode:vertical-rl]">Muse Code</span>
-          <div className="flex flex-col items-center gap-1.5" aria-label="Script status">
-            {TABS.map((t) => (
-              <span key={t.id} title={`${t.label}: ${mode}`} className={`size-1.5 rounded-full ${mode === "idle" ? "bg-faint" : "bg-signal"}`} />
+          <div className="flex flex-col items-center gap-1.5" aria-label="Script status" data-streaming={streaming || undefined}>
+            {TABS.map((t, i) => (
+              <span
+                key={t.id}
+                title={`${t.label}: ${streaming ? "streaming" : mode}`}
+                style={streaming ? { animationDelay: `${i * 160}ms` } : undefined}
+                className={`size-1.5 rounded-full transition-colors duration-150 ease-[var(--ease-ops)] ${streaming ? "bg-signal motion-safe:animate-pulse-dot" : mode === "idle" ? "bg-faint" : "bg-signal"}`}
+              />
             ))}
           </div>
         </div>

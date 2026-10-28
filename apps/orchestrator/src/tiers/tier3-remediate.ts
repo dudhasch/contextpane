@@ -234,6 +234,12 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       report("llm:skip", config.forceLocal ? "CTX_FORCE_LOCAL=true → deterministic bundle" : "No META_API_KEY → deterministic bundle");
     }
 
+    // WP6: the script is final here; the rail streams it while the pre-flight and staging run.
+    report("bundle:ready", `Script ready (${bundle.powershellScript.split("\n").length} lines) · pre-flight next`, {
+      powershellScript: bundle.powershellScript,
+      ...(bundle.terraformDiff ? { terraformDiff: bundle.terraformDiff } : {}),
+    });
+
     /* ---- pre-flight ---- */
     const verification = await preflight(bundle, ctx, plan, report);
 

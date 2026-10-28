@@ -20,6 +20,7 @@ import {
   isScenarioId,
   isTenantId,
   type ComponentType,
+  type CustomScenarioEntry,
   type RouterTelemetry,
   type ScenarioId,
   type ScenarioListItem,
@@ -50,7 +51,7 @@ import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skil
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
-import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, triageCustomTicketAsync } from "./local/custom-ticket.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, triageCustomTicketAsync, withQuestionStepIds } from "./local/custom-ticket.ts";
 import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import {
@@ -421,18 +422,15 @@ const RefineGoalBodySchema = z.object({
   clarifiedAnswers: z.record(z.string(), z.string()),
 });
 
-app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
-  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
-  const body = RefineGoalBodySchema.parse(await c.req.json());
-  const updated = await refineCustomTicketGoal(scenarioId, body.clarifiedAnswers);
-  if (!updated) {
-    return c.json({ error: `${scenarioId} is not a custom ticket/project` }, 404);
-  }
+/** Partial-payload keys that change the ticket brief (plan steps, scope chips, agent / cloud line). */
+const BRIEF_KEYS = ["clarifyingQuestions", "clarifiedAnswers", "elementRouting", "cloudStatusCorrelation", "subAgentTasks"] as const;
+
+async function finishRefine(scenarioId: string, updated: CustomScenarioEntry) {
   remediationStore.clear(scenarioId);
   invalidateContext(scenarioId);
   const ctx = await gatherContext(scenarioId, { fresh: true });
   const brief = buildScenarioBrief(ctx);
-  return c.json({
+  return {
     ok: true,
     scenario: customScenarioListItem(updated, Boolean(convergenceStore.get(scenarioId))),
     brief,
@@ -441,6 +439,53 @@ app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
     subAgentTasks: updated.subAgentTasks ?? [],
     synthesizedElements: updated.synthesizedElements ?? [],
     customRemediation: updated.customRemediation ?? null,
+  };
+}
+
+/**
+ * Goal refinement. With `Accept: text/event-stream` (or ?stream=1) it streams one `progress` event per
+ * sub-agent start / completion (WP6); a completion carrying brief data also carries the provisional
+ * `brief` rebuilt from it, so the plan refills before the final `result` (same shape as the JSON reply).
+ */
+app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const body = RefineGoalBodySchema.parse(await c.req.json());
+  const existing = getCustomScenario(scenarioId);
+  if (!existing || !wantsSse(c)) {
+    const updated = existing ? await refineCustomTicketGoal(scenarioId, body.clarifiedAnswers) : null;
+    if (!updated) {
+      return c.json({ error: `${scenarioId} is not a custom ticket/project` }, 404);
+    }
+    return c.json(await finishRefine(scenarioId, updated));
+  }
+  return streamSSE(c, async (stream) => {
+    const send = (event: string, data: unknown) => stream.writeSSE({ event, data: JSON.stringify(data) });
+    // The provisional brief reuses the open ticket's cached context with the partial entry swapped in.
+    const baseCtx = gatherContext(scenarioId).catch(() => null);
+    let provisional: CustomScenarioEntry = existing;
+    let queue: Promise<unknown> = Promise.resolve();
+    const onProgress = (p: ProgressEvent) => {
+      queue = queue.then(async () => {
+        const data = p.data ?? {};
+        if (!BRIEF_KEYS.some((k) => k in data)) return send("progress", p);
+        provisional = withQuestionStepIds({ ...provisional, ...(data as Partial<CustomScenarioEntry>) });
+        const ctx = await baseCtx;
+        const brief = ctx ? buildScenarioBrief({ ...ctx, custom: provisional }) : null;
+        return send("progress", brief ? { ...p, data: { ...data, brief } } : p);
+      });
+    };
+    try {
+      const updated = await refineCustomTicketGoal(scenarioId, body.clarifiedAnswers, onProgress);
+      await queue;
+      if (!updated) {
+        await send("error", { error: `${scenarioId} is not a custom ticket/project` });
+        return;
+      }
+      await send("result", await finishRefine(scenarioId, updated));
+    } catch (error) {
+      await queue.catch(() => undefined);
+      await send("error", { error: error instanceof Error ? error.message : String(error) });
+    }
   });
 });
 

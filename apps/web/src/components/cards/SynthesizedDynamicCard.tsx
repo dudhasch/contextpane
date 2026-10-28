@@ -1,8 +1,8 @@
 import { Cloud, GitCompareArrows, Search, Wrench } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { SynthesizedBlock, SynthesizedDynamicCard as Props } from "@contextpane/catalog";
 import { useWorkbench } from "@/store";
-import { DataTable, Section, SmartTechPath } from "../canvas/Section";
+import { DataTable, Ghost, GhostLines, Section, SmartTechPath } from "../canvas/Section";
 import { DiffView } from "../canvas/DiffView";
 import { Button } from "../ui/Button";
 import { Pill, TONE_TEXT, type Tone } from "../ui/Pill";
@@ -53,11 +53,39 @@ function diffCount(diff: string): string {
   return `+${add} −${del}`;
 }
 
-function renderBlock(block: SynthesizedBlock, filterText: string) {
+/**
+ * WP6: while a refine streams, every block stays mounted with its values ghosted; when the UI
+ * Architect's card lands, the blocks refill one after another (90 ms apart) instead of all at once.
+ */
+const REFILL_STEP_MS = 90;
+
+function useBlockRefill(pending: boolean, count: number): (index: number) => boolean {
+  const [revealed, setRevealed] = useState(Number.POSITIVE_INFINITY);
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    if (pending) {
+      wasPending.current = true;
+      setRevealed(0);
+      return;
+    }
+    if (!wasPending.current) return;
+    wasPending.current = false;
+    let n = 0;
+    const timer = window.setInterval(() => {
+      n += 1;
+      setRevealed(n);
+      if (n >= count) window.clearInterval(timer);
+    }, REFILL_STEP_MS);
+    return () => window.clearInterval(timer);
+  }, [pending, count]);
+  return (index) => pending || index >= revealed;
+}
+
+function renderBlock(block: SynthesizedBlock, filterText: string, pending = false) {
   switch (block.kind) {
     case "quota-gauges":
       return (
-        <div key={block.title} data-block={block.kind}>
+        <div key={block.title} data-block={block.kind} data-ghost={pending || undefined}>
           <BlockHead label={block.title} count={block.gauges.length} />
           <div className="grid grid-cols-1 gap-x-6 gap-y-2.5 pt-1 pb-1 sm:grid-cols-2">
             {block.gauges.map((g) => {
@@ -69,19 +97,26 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
                     <span className="min-w-0 truncate text-text" title={g.label}>
                       {g.label}
                     </span>
-                    <span className={`shrink-0 font-mono text-12 ${tone === "muted" || tone === "healthy" ? "text-text" : TONE_TEXT[tone]}`}>
+                    <Ghost pending={pending} className={`shrink-0 font-mono text-12 ${tone === "muted" || tone === "healthy" ? "text-text" : TONE_TEXT[tone]}`}>
                       {g.used}/{g.limit} {g.unit} · {pct}%
-                    </span>
+                    </Ghost>
                   </div>
                   <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-raised">
-                    <div className={`h-full transition-all ${TRACK_FILL[g.status] ?? "bg-signal"}`} style={{ width: `${pct}%` }} />
+                    <div
+                      className={`h-full transition-[width,opacity] duration-150 ease-[var(--ease-ops)] ${TRACK_FILL[g.status] ?? "bg-signal"} ${pending ? "opacity-0" : ""}`}
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
                   {(g.errorCode || g.detail) && (
                     <div className="mt-1 flex min-w-0 items-baseline gap-1.5 text-11">
-                      {g.errorCode && <span className="shrink-0 font-mono text-muted">{g.errorCode}</span>}
+                      {g.errorCode && (
+                        <Ghost pending={pending} className="shrink-0 font-mono text-muted">
+                          {g.errorCode}
+                        </Ghost>
+                      )}
                       {g.detail && (
                         <span className="min-w-0 truncate text-faint" title={g.detail}>
-                          {g.detail}
+                          <Ghost pending={pending}>{g.detail}</Ghost>
                         </span>
                       )}
                     </div>
@@ -95,7 +130,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
 
     case "policy-chain":
       return (
-        <div key={block.title} data-block={block.kind}>
+        <div key={block.title} data-block={block.kind} data-ghost={pending || undefined}>
           <BlockHead label={block.title} count={block.hops.length} />
           <ol className="space-y-1.5 border-l-2 border-[color:var(--cat)] py-1 pl-3">
             {block.hops.map((hop, idx) => (
@@ -108,14 +143,16 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
                   <RolePermissionHoverPopover query={hop.node}>
                     <span className="truncate font-mono font-semibold text-text">{hop.node}</span>
                   </RolePermissionHoverPopover>
-                  <span className="ml-auto flex shrink-0 items-center gap-2">
+                  <Ghost pending={pending} className="ml-auto flex shrink-0 items-center gap-2">
                     {hop.code && <span className="font-mono text-11 text-faint">{hop.code}</span>}
                     <Pill variant="status" tone={statusTone(hop.effect)}>
                       {hop.effect}
                     </Pill>
-                  </span>
+                  </Ghost>
                 </div>
-                <div className="text-11 text-muted">{hop.detail}</div>
+                <div className="text-11 text-muted">
+                  <Ghost pending={pending}>{hop.detail}</Ghost>
+                </div>
               </li>
             ))}
           </ol>
@@ -126,7 +163,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
       const q = filterText.trim().toLowerCase();
       const filteredRows = q ? block.rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q))) : block.rows;
       return (
-        <div key={block.title} data-block={block.kind}>
+        <div key={block.title} data-block={block.kind} data-ghost={pending || undefined}>
           <BlockHead label={block.title} count={q ? `${filteredRows.length}/${block.rows.length}` : block.rows.length} />
           <DataTable
             bleed
@@ -134,12 +171,12 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
             rows={filteredRows.map((row) =>
               block.columns.map((col) => {
                 const val = String(row[col.key] ?? "—");
-                if (isPathLike(val)) return <SmartTechPath path={val} />;
+                if (isPathLike(val)) return <SmartTechPath path={val} ghost={pending} />;
                 const tone = valueTone(val);
                 return (
-                  <span className={`${col.mono ? "font-mono" : ""} ${tone ? TONE_TEXT[tone] : "text-text"}`} title={val}>
-                    {val}
-                  </span>
+                  <Ghost pending={pending} className={`${col.mono ? "font-mono" : ""} ${tone ? TONE_TEXT[tone] : "text-text"}`}>
+                    <span title={val}>{val}</span>
+                  </Ghost>
                 );
               }),
             )}
@@ -150,34 +187,44 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
 
     case "config-diff":
       return (
-        <div key={block.title} data-block={block.kind}>
+        <div key={block.title} data-block={block.kind} data-ghost={pending || undefined}>
           <BlockHead label={block.title} count={diffCount(block.diff)} aside={<span title={block.filePath}>{block.filePath}</span>} />
-          <DiffView diff={block.diff} maxHeight="max-h-72" />
+          {pending ? (
+            <GhostLines lines={block.diff.replace(/\r\n/g, "\n").split("\n")} className="max-h-72 border-y border-hairline" />
+          ) : (
+            <DiffView diff={block.diff} maxHeight="max-h-72" className="animate-fade-in" />
+          )}
         </div>
       );
 
     case "event-stream": {
       const isArm = /\barm\b/i.test(block.title);
       return (
-        <div key={block.title} data-block={block.kind}>
+        <div key={block.title} data-block={block.kind} data-ghost={pending || undefined}>
           <BlockHead label={block.title} count={`${block.events.length} ${isArm ? "ARM" : "audit"}`} />
           <ul className="divide-y divide-hairline-2 font-mono text-11">
             {block.events.map((ev) => (
               <li key={ev.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1">
                 <span className="text-faint" title={ev.timestamp}>
-                  {ev.timestamp.replace("T", " ").replace(/(\.\d+)?Z$/, "").slice(5)}
+                  <Ghost pending={pending}>{ev.timestamp.replace("T", " ").replace(/(\.\d+)?Z$/, "").slice(5)}</Ghost>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-12 text-text" title={ev.operation}>
-                    {ev.operation}
+                    <Ghost pending={pending}>{ev.operation}</Ghost>
                   </span>
                   <span className="block truncate text-muted" title={`${ev.caller} · ${ev.detail}`}>
-                    {ev.caller} <span className="font-sans">· {ev.detail}</span>
+                    <Ghost pending={pending}>
+                      {ev.caller} <span className="font-sans">· {ev.detail}</span>
+                    </Ghost>
                   </span>
                 </span>
                 <span className="flex flex-col items-end gap-0.5">
-                  <span className={TONE_TEXT[statusTone(ev.status)]}>{ev.status}</span>
-                  <span className="text-faint">{ev.code}</span>
+                  <Ghost pending={pending} className={TONE_TEXT[statusTone(ev.status)]}>
+                    {ev.status}
+                  </Ghost>
+                  <Ghost pending={pending} className="text-faint">
+                    {ev.code}
+                  </Ghost>
                 </span>
               </li>
             ))}
@@ -191,6 +238,9 @@ function renderBlock(block: SynthesizedBlock, filterText: string) {
 export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
   const openRemediation = useWorkbench((s) => s.openRemediation);
   const [filterText, setFilterText] = useState("");
+  // WP6: a refine keeps this section mounted; its blocks ghost until the UI Architect's card lands.
+  const pending = useWorkbench((s) => s.pendingRefine.elements);
+  const blockPending = useBlockRefill(pending, props.blocks.length);
 
   const meta = props.synthesisMeta;
   const quotaBlock = props.blocks.find((b) => b.kind === "quota-gauges");
@@ -221,6 +271,7 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
       state={props.state}
       triggeredBy={triggeredBy}
       synthesized
+      ghost={pending}
       source={meta.source === "fallback" ? "template" : meta.synthesizerModel}
       footerMeta={meta.reusedFromCatalog ? `verified view ×${meta.reuseCount}` : "synthesized view"}
       details={
@@ -261,7 +312,7 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
         const blocksToRender = tab === "all" ? props.blocks : props.blocks.filter((b) => b.kind === tab);
         return (
           <div>
-            <div className="space-y-2">{blocksToRender.map((b) => renderBlock(b, filterText))}</div>
+            <div className="space-y-2">{blocksToRender.map((b) => renderBlock(b, filterText, blockPending(props.blocks.indexOf(b))))}</div>
             {/* The section's one action row. */}
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-hairline-2 pt-2">
               <Button

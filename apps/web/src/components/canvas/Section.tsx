@@ -14,7 +14,7 @@ import {
   useRole,
 } from "@floating-ui/react";
 import { Check, ChevronDown, Copy, Info } from "lucide-react";
-import { useCallback, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
 import { usePopoverPinning } from "@/hooks/usePopoverPinning";
 import { healthTone } from "@/lib/format";
@@ -55,6 +55,11 @@ export interface SectionProps {
   synthesized?: boolean;
   /** Right-aligned controls in the count-toggles row under the title (e.g. a filter input); shown while expanded. */
   toolbar?: ReactNode;
+  /**
+   * WP6: an agent is regenerating this section. It stays mounted; the summary line ghosts in place
+   * and the section is `aria-busy`. Cell-level ghosts inside the body use `<Ghost>`.
+   */
+  ghost?: boolean;
 }
 
 /** Card #1 (the primary diagnostic card) opens expanded by default; auto-collapses when a Selection Mini-Dashboard is open unless explicitly expanded. */
@@ -121,6 +126,7 @@ export function Section({
   children,
   synthesized = false,
   toolbar,
+  ghost = false,
 }: SectionProps) {
   const setDiffOpen = useWorkbench((s) => s.setDiffOpen);
   const expanded = useExpanded(type);
@@ -155,6 +161,8 @@ export function Section({
       data-converged={healthy || undefined}
       data-slice={activeSlice?.relativeLabel}
       data-linked={isLinked || undefined}
+      data-ghost={ghost || undefined}
+      aria-busy={ghost || undefined}
       style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--healthy)" : categoryColor(category) })}
       className={`relative scroll-mt-2 bg-ground px-4 pt-1.5 pb-3 animate-fade-in transition-opacity duration-150 ${isLinked ? "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing || isLinked ? "animate-pulse-ring" : ""} ${synthesized ? AGENT_RULE : ""}`}
     >
@@ -201,7 +209,9 @@ export function Section({
         </div>
       </header>
 
-      <div className="line-clamp-2 text-13 text-muted">{summary}</div>
+      <div className="line-clamp-2 text-13 text-muted">
+        <Ghost pending={ghost}>{summary}</Ghost>
+      </div>
 
       {expanded && (
         <div className="animate-fade-in">
@@ -392,6 +402,67 @@ function ProvenancePopover({
   );
 }
 
+/**
+ * Pending value (WP6 choreography). The old value keeps its box, so nothing shifts: its text turns
+ * transparent and each line box paints as a `--raised` hairline bar that pulses until the agent's
+ * value lands, then the new value fades in (150 ms, `--ease-ops`). Inline, so it wraps exactly like
+ * the text it stands in for; no spinner.
+ */
+export function Ghost({ pending = false, children, className = "" }: { pending?: boolean; children: ReactNode; className?: string }) {
+  const settled = useSettleFade(pending);
+  return (
+    <span
+      data-ghost={pending ? "" : undefined}
+      aria-busy={pending || undefined}
+      className={`${pending ? GHOST_CLASS : settled ? "animate-fade-in" : ""} ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Class string for a ghosted inline box (`Ghost` uses it; a block that cannot be wrapped in a span, a
+ * table cell or a meter track, can apply it directly). Text and every descendant colour go transparent,
+ * the line boxes keep a `--raised` fill (cloned per line) and pulse.
+ */
+export const GHOST_CLASS =
+  "rounded-sm bg-raised text-transparent decoration-transparent box-decoration-clone select-none transition-colors duration-150 ease-[var(--ease-ops)] motion-safe:animate-pulse-dot [&_*]:border-transparent [&_*]:bg-transparent [&_*]:text-transparent [&_*]:decoration-transparent [&_svg]:opacity-0";
+
+/** True for one render cycle after `pending` falls, so the refilled value fades in once. */
+export function useSettleFade(pending: boolean): boolean {
+  const was = useRef(pending);
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (was.current && !pending) setSettled(true);
+    if (pending) setSettled(false);
+    was.current = pending;
+  }, [pending]);
+  return settled;
+}
+
+/**
+ * A script or diff whose new text has not arrived: each old line keeps its indentation and becomes a
+ * ghost bar of its own width, in the same mono metrics as `DiffView` / the rail's code block, so the
+ * block keeps its height when the real lines replace it.
+ */
+export function GhostLines({ lines, className = "" }: { lines: string[]; className?: string }) {
+  return (
+    <pre aria-busy data-ghost="" className={`overflow-hidden bg-ground py-1 font-mono text-11 leading-[1.55] ${className}`}>
+      {lines.map((line, i) => {
+        const indent = /^\s*/.exec(line)?.[0] ?? "";
+        const rest = line.slice(indent.length).trimEnd();
+        return (
+          <div key={i} className="px-3 whitespace-pre">
+            {indent}
+            {rest ? <span className={GHOST_CLASS}>{rest}</span> : " "}
+          </div>
+        );
+      })}
+    </pre>
+  );
+}
+
 /** Small label/value row used in compact summaries. */
 export function Stat({ label, children, tone }: { label: string; children: ReactNode; tone?: Tone }) {
   const color = tone === "critical" ? "text-critical" : tone === "warning" ? "text-warning" : tone === "healthy" ? "text-healthy" : "text-text";
@@ -407,7 +478,7 @@ export function Stat({ label, children, tone }: { label: string; children: React
  * The only path renderer in tables: OMA-URI, registry key or file path as a dim prefix line
  * plus a bold, unwrapped leaf. The full path is in the tooltip and a copy button appears on hover.
  */
-export function SmartTechPath({ path, badge, title }: { path: string; badge?: ReactNode; title?: string }) {
+export function SmartTechPath({ path, badge, title, ghost = false }: { path: string; badge?: ReactNode; title?: string; ghost?: boolean }) {
   const [copied, setCopied] = useState(false);
   const parenMatch = path.match(/^(.*?)\s*(\([^)]+\))$/);
   const corePath = parenMatch ? parenMatch[1]!.trim() : path.trim();
@@ -438,14 +509,14 @@ export function SmartTechPath({ path, badge, title }: { path: string; badge?: Re
         // The badge sits on the dim prefix line so the bold leaf keeps the full column width.
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate font-mono text-11 whitespace-nowrap text-faint" data-testid="smart-tech-prefix">
-            {compactPrefix}
+            <Ghost pending={ghost}>{compactPrefix}</Ghost>
           </span>
           {badge && <span className="ml-auto shrink-0 text-11">{badge}</span>}
         </div>
       )}
       <div className="relative flex min-w-0 items-center">
         <span className="truncate font-mono text-12 font-semibold whitespace-nowrap text-text" data-testid="smart-tech-leaf">
-          {leaf}
+          <Ghost pending={ghost}>{leaf}</Ghost>
         </span>
         <button
           type="button"

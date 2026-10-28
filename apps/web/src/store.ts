@@ -28,6 +28,7 @@ import {
   type ScenarioBrief,
   type ScenarioListItem,
   type SteerLayoutArgs,
+  type SynthesizedDynamicCard,
   type ViewRecipe,
   type WorkbenchScenarioId,
 } from "@contextpane/catalog";
@@ -43,6 +44,7 @@ import {
   type McpDataMode,
   type ProgressEvent,
   type PsaResolutionNote,
+  type RefinePartial,
   type RemediateResponse,
   type TelemetryStats,
   type VisionResponse,
@@ -237,6 +239,62 @@ export interface CardLink {
 export type CodeRailTab = "powershell" | "opentofu" | "graph" | "devicehealth";
 export type CodeRailMode = "idle" | "staging" | "review" | "console" | "note";
 
+/**
+ * WP6 choreography: which parts of the open ticket are stale while a refine streams. Components keep
+ * the stale part mounted and ghost it until the sub-agent that owns it reports (`agent:<n>:done`).
+ */
+export interface PendingRefine {
+  /** Plan steps and summary: cleared when the gatekeeper's routing arrives (`agent:3:routed`). */
+  brief: boolean;
+  /** Synthesized section blocks: cleared when the UI Architect's card arrives (`agent:3:done`). */
+  elements: boolean;
+  /** Remediation script: cleared when the coder's script arrives (`agent:4:done`). */
+  remediation: boolean;
+}
+export const NO_PENDING_REFINE: PendingRefine = { brief: false, elements: false, remediation: false };
+
+/** Script arriving in the code rail while a refine or a fix generation runs; the rail reveals it line by line. */
+export interface RailStream {
+  /** Bumps whenever a different script arrives, so the rail restarts its reveal. */
+  seq: number;
+  source: "refine" | "remediate";
+  /** The script that arrived, or null while its agent is still writing (the rail ghosts `previous`). */
+  script: string | null;
+  /** Script on screen when the run started; lines not in it render as `+` additions. */
+  previous: string | null;
+}
+
+/** Same script keeps the stream (no second reveal); a new one bumps `seq`. */
+function withRailScript(stream: RailStream | null, script: string, source: RailStream["source"]): RailStream {
+  if (stream?.script === script) return stream;
+  return { seq: (stream?.seq ?? 0) + 1, source, script, previous: stream?.previous ?? null };
+}
+
+/** Swaps the synthesized section's props in place: the component id (its React key) never changes mid-refine. */
+function patchSynthesizedLayout(layout: Layout | null, card: SynthesizedDynamicCard | undefined): Layout | null {
+  if (!layout || !card) return layout;
+  let changed = false;
+  const components = layout.components.map((c) => {
+    if (c.type !== "SynthesizedDynamicCard") return c;
+    changed = true;
+    return { ...c, props: card } as typeof c;
+  });
+  return changed ? { ...layout, components } : layout;
+}
+
+/** A refreshed layout keeps the synthesized section's id, so a new elementId does not remount the section. */
+function keepSynthesizedId(prev: Layout | null, next: Layout): Layout {
+  const prevId = prev?.components.find((c) => c.type === "SynthesizedDynamicCard")?.id;
+  if (!prevId) return next;
+  let changed = false;
+  const components = next.components.map((c) => {
+    if (c.type !== "SynthesizedDynamicCard" || c.id === prevId) return c;
+    changed = true;
+    return { ...c, id: prevId };
+  });
+  return changed ? { ...next, components } : next;
+}
+
 interface WorkbenchState {
   /* data */
   /** Free-Roam Startpage / Landing Page mode (default true on boot; false when a ticket/scenario is opened). */
@@ -275,6 +333,12 @@ interface WorkbenchState {
   setCodeRailMode(mode: CodeRailMode): void;
   remediateStatus: CanvasStatus;
   remediateProgress: ProgressEvent[];
+  /** Streamed refine-goal events (WP6), cleared at each refine start; the rail's trace ticker shows the last two. */
+  refineProgress: ProgressEvent[];
+  /** Parts of the open ticket a streaming refine has not refilled yet (ghosted in place, never unmounted). */
+  pendingRefine: PendingRefine;
+  /** Script streaming into the code rail during a refine or fix generation. */
+  railStream: RailStream | null;
   approveLog: string[];
   filter: ComponentType[] | null;
   lastVoice: VoiceResponse | null;
@@ -413,7 +477,8 @@ interface WorkbenchState {
   inboxRemoved(scenarioId: string): Promise<void>;
   pollInbox(): Promise<void>;
   loadBrief(scenarioId?: ScenarioId, fresh?: boolean): Promise<void>;
-  correlate(options?: { fresh?: boolean }): Promise<void>;
+  /** `keepMounted`: the refreshed layout keeps the synthesized section's id (WP6: a refine never remounts it). */
+  correlate(options?: { fresh?: boolean; keepMounted?: boolean }): Promise<void>;
   hydrateRecipe(recipeId: string, scenarioId?: ScenarioId): Promise<void>;
   loadRecipes(): Promise<void>;
   pinRecipe(name?: string): Promise<void>;
@@ -581,6 +646,9 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
   setCodeRailMode: (codeRailMode) => set({ codeRailMode }),
   remediateStatus: "idle",
   remediateProgress: [],
+  refineProgress: [],
+  pendingRefine: NO_PENDING_REFINE,
+  railStream: null,
   approveLog: [],
   filter: null,
   lastVoice: null,
@@ -1075,6 +1143,9 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       codeRailMode: "idle",
       remediateStatus: "idle",
       remediateProgress: [],
+      refineProgress: [],
+      pendingRefine: NO_PENDING_REFINE,
+      railStream: null,
       approveLog: [],
       diffOpen: false,
       filter: null,
@@ -1162,15 +1233,16 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
 
   async correlate(options = {}) {
     const scenarioId = get().scenarioId;
+    const keep = (layout: Layout) => (options.keepMounted ? keepSynthesizedId(get().layout, layout) : layout);
     set({ canvasStatus: "loading", canvasError: null, progress: [] });
     try {
       const result = await streamPost<CorrelateResponse>("/api/correlate", { scenarioId, fresh: options.fresh ?? false }, (event) => {
         set((s) => ({ progress: [...s.progress, event] }));
         // First paint: compact cards from the MCP data, before the model's layout.
-        if (event.stage === "mcp_ready" && event.data?.layout && get().scenarioId === scenarioId) set({ layout: event.data.layout as Layout });
+        if (event.stage === "mcp_ready" && event.data?.layout && get().scenarioId === scenarioId) set({ layout: keep(event.data.layout as Layout) });
       });
       if (get().scenarioId !== scenarioId) return;
-      set({ layout: result.layout, canvasStatus: "ready", activeRecipeId: null });
+      set({ layout: keep(result.layout), canvasStatus: "ready", activeRecipeId: null });
       void get().loadDrawerExtras();
     } catch (error) {
       set({ canvasStatus: "error", canvasError: error instanceof Error ? error.message : String(error) });
@@ -1291,6 +1363,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         voiceOpen: false,
         remediateStatus: "ready",
         remediateProgress: [],
+        railStream: null,
         approveLog: [],
         executionMode: (getScenarioEntry(scenarioId)?.kind ?? "ticket") === "ticket" ? "break-glass" : "gitops",
         openPrOnApprove: !isCustomScenarioId(scenarioId) && Boolean(github?.prOnApprove && github.origin && github.ghAuthenticated),
@@ -1313,13 +1386,23 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       drawerOpen: true,
       voiceOpen: false,
       approveLog: [],
+      // WP6: the rail ghosts the script on screen until the bundle streams in (a refine's script carries over).
+      railStream: s.railStream?.script
+        ? { ...s.railStream, source: "remediate" }
+        : { seq: (s.railStream?.seq ?? 0) + 1, source: "remediate", script: null, previous: s.drawer?.ticketId === scenarioId ? s.drawer.powershellScript : (s.railStream?.previous ?? null) },
     }));
     try {
-      const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) => set((s) => ({ remediateProgress: [...s.remediateProgress, event] })));
+      const result = await streamPost<RemediateResponse>("/api/remediate", { scenarioId }, (event) =>
+        set((s) => {
+          const script = event.stage === "bundle:ready" && typeof event.data?.powershellScript === "string" ? event.data.powershellScript : null;
+          return { remediateProgress: [...s.remediateProgress, event], ...(script && s.scenarioId === scenarioId ? { railStream: withRailScript(s.railStream, script, "remediate") } : {}) };
+        }),
+      );
       // An open ticket is an active incident (break-glass); a proactive anomaly goes through the pipeline.
       const github = get().health?.github;
       set({
         drawer: result.drawer,
+        railStream: null,
         remediateStatus: "ready",
         executionMode: (getScenarioEntry(scenarioId)?.kind ?? "ticket") === "ticket" ? "break-glass" : "gitops",
         // Ad-hoc CUSTOM-/ERP- runs never open a PR unless the box is ticked for that run.
@@ -1327,7 +1410,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       });
       void get().loadDrawerExtras();
     } catch (error) {
-      set({ remediateStatus: "error" });
+      set({ remediateStatus: "error", railStream: null });
       get().toast({ tone: "critical", title: "Remediation failed", detail: error instanceof Error ? error.message : String(error) });
     }
   },
@@ -2238,24 +2321,73 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
   async refineGoal(clarifiedAnswers) {
     const scenarioId = get().scenarioId;
     if (get().refiningGoal) return;
-    set({ refiningGoal: true });
+    // WP6: nothing unmounts. Brief, synthesized section and script stay on screen, ghosted, and
+    // refill one by one as each sub-agent's partial payload streams in.
+    set((s) => ({
+      refiningGoal: true,
+      refineProgress: [],
+      pendingRefine: {
+        brief: true,
+        elements: Boolean(s.layout?.components.some((c) => c.type === "SynthesizedDynamicCard")),
+        remediation: true,
+      },
+      railStream: {
+        seq: (s.railStream?.seq ?? 0) + 1,
+        source: "refine",
+        script: null,
+        previous: s.drawer?.ticketId === scenarioId ? s.drawer.powershellScript : (s.railStream?.script ?? null),
+      },
+    }));
+    const applyPartial = (event: ProgressEvent) => {
+      if (get().scenarioId !== scenarioId) return;
+      const data = (event.data ?? {}) as RefinePartial;
+      set((s) => {
+        const patch: Partial<WorkbenchState> = { refineProgress: [...s.refineProgress, event] };
+        const pending = { ...s.pendingRefine };
+        if (data.brief) {
+          patch.brief = data.brief;
+          // Steps and summary come from the routing; earlier briefs only update chips and the agent line.
+          if (data.elementRouting) pending.brief = false;
+        }
+        if (data.synthesizedElements?.length) {
+          patch.layout = patchSynthesizedLayout(s.layout, data.synthesizedElements[0]);
+          pending.elements = false;
+        }
+        const script = data.customRemediation?.powershellScript;
+        if (script) {
+          patch.railStream = withRailScript(s.railStream, script, "refine");
+          pending.remediation = false;
+        }
+        patch.pendingRefine = pending;
+        return patch;
+      });
+    };
     try {
-      const result = await api.refineGoal(scenarioId, clarifiedAnswers);
+      const result = await api.refineGoalStream(scenarioId, clarifiedAnswers, applyPartial);
+      if (get().scenarioId !== scenarioId) {
+        set({ refiningGoal: false, pendingRefine: NO_PENDING_REFINE });
+        return;
+      }
       const wasDrawerOpen = get().drawerOpen;
       const nowLabel = new Date().toISOString().slice(11, 19) + " UTC";
+      const finalScript = result.customRemediation?.powershellScript;
       set((s) => ({
         brief: result.brief,
         refiningGoal: false,
+        pendingRefine: NO_PENDING_REFINE,
         lastRefinedAt: nowLabel,
+        layout: patchSynthesizedLayout(s.layout, result.synthesizedElements?.[0]),
+        railStream: finalScript ? withRailScript(s.railStream, finalScript, "refine") : s.railStream?.script ? s.railStream : null,
         drawer: null,
         remediateStatus: "idle",
         speculativeEpoch: s.speculativeEpoch + 1,
         speculativeBuffer: s.speculativeBuffer.filter((b) => b.scenarioId !== scenarioId),
       }));
-      await get().correlate({ fresh: true });
+      // The fix regenerates while the canvas re-correlates; both keep their sections mounted.
       if (wasDrawerOpen) {
         void get().remediate();
       }
+      await get().correlate({ fresh: true, keepMounted: true });
       const summaryValues = Object.values(result.clarifiedAnswers).slice(0, 3).join(" · ");
       get().toast({
         tone: "healthy",
@@ -2263,7 +2395,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         detail: `Applied clarified scope: ${summaryValues}`,
       });
     } catch (error) {
-      set({ refiningGoal: false });
+      set((s) => ({ refiningGoal: false, pendingRefine: NO_PENDING_REFINE, railStream: s.railStream?.script ? s.railStream : null }));
       get().toast({
         tone: "critical",
         title: "Goal refinement failed",

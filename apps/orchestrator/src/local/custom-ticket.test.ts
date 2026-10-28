@@ -507,3 +507,192 @@ describe("dynamic catalog honesty (L-03)", () => {
     expect(existsSync("../../data/synthesized-elements/TemplateProvenanceProbeCard.tsx")).toBe(false);
   });
 });
+
+describe("refine-goal progress streaming (WP6)", () => {
+  const kvTicket = {
+    title: "Lynne Robins cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation",
+    body: "Lynne Robins (lynne.robins.contoso@c4a8shili.onmicrosoft.com) cannot access a newly created Key Vault kv-contoso-fin-02 due to soft-delete conflict on recreation in Contoso Finance.",
+    customerName: "Contoso Finance",
+  };
+  type Event = { stage: string; message: string; elapsedMs: number; data?: Record<string, unknown> };
+
+  test("Tier 0 refine (no model): agent:0 start then done with the applied scope, routing and script, all before the result", async () => {
+    const { removeCustomTicket } = await import("./custom-ticket.ts");
+    const entry = registerCustomTicket(kvTicket);
+    const events: Event[] = [];
+    let resolved = false;
+    let lateEvents = 0;
+    try {
+      const updated = await refineCustomTicketGoal(entry.scenarioId, { "target-scope": "Single resource" }, (e) => {
+        if (resolved) lateEvents++;
+        events.push(e);
+      });
+      resolved = true;
+      expect(updated).not.toBeNull();
+      expect(lateEvents).toBe(0);
+      expect(events.map((e) => e.stage)).toEqual(["agent:0:start", "agent:0:done"]);
+      const done = events[1]!.data!;
+      expect(done.clarifiedAnswers).toEqual(updated!.clarifiedAnswers!);
+      expect(done.elementRouting).toBeDefined();
+      expect((done.customRemediation as { powershellScript: string }).powershellScript).toBe(updated!.customRemediation!.powershellScript);
+    } finally {
+      removeCustomTicket(entry.scenarioId);
+    }
+  });
+
+  test("sub-agent pipeline: start events at launch, one done event per sub-agent carrying its partial payload, in causal order before the result", async () => {
+    const { spyOn } = await import("bun:test");
+    const openai = await import("../router/openai.ts");
+    const correlator = await import("./cloud-status-correlator.ts");
+    const { config, providers } = await import("../config.ts");
+    const { buildDeterministicRoutingDecision } = await import("./dynamic-catalog.ts");
+    const { removeCustomTicket } = await import("./custom-ticket.ts");
+
+    const entry = registerCustomTicket(kvTicket);
+    const option = (value: string, i: number) => ({ id: `opt-${i}`, label: value, value, description: value });
+    const questions = [
+      { id: "question-1", question: "What is the root cause and scope?", category: "scope", options: ["Soft-deleted vault", "Missing access", "Name conflict"].map(option) },
+      { id: "question-2", question: "Preferred resolution strategy?", category: "remediation", options: ["Recover the old vault", "Purge then recreate"].map(option) },
+      { id: "question-3", question: "What is the purge protection state?", category: "security", options: ["Enabled", "Disabled"].map(option) },
+    ];
+    const decision = buildDeterministicRoutingDecision({ title: kvTicket.title, body: kvTicket.body, matchedSeededComponents: [] });
+    decision.missingElements[0]!.elementId = "KeyVaultSoftDeleteRecoveryCard";
+    const usage = { prompt: 10, completion: 10, total: 20 };
+    const chatSpy = spyOn(openai, "chatWithForcedTool").mockImplementation((async (_p: unknown, _m: string, _msgs: unknown, tool: { function: { name: string } }) => {
+      const respond = (args: unknown) => ({ toolName: tool.function.name, argumentsRaw: JSON.stringify(args), usage, latencyMs: 5, finishReason: "stop" });
+      switch (tool.function.name) {
+        case "emit_clarifying_questions":
+          return respond({ questions });
+        case "emit_element_routing_decision":
+          return respond(decision);
+        case "emit_synthesized_dynamic_card":
+          return respond({
+            title: "Key Vault soft-delete recovery",
+            headline: "kv-contoso-fin-02 is soft-deleted",
+            domain: "identity",
+            state: "warning",
+            gauges: [{ id: "g1", label: "Retention days left", used: 83, limit: 90, unit: "days", status: "warning" }],
+            diff: "- # vault soft-deleted\n+ Undo-AzKeyVaultRemoval -VaultName kv-contoso-fin-02",
+            recommendedActions: [{ id: "a1", label: "Recover vault", description: "Recover in place", command: "Undo-AzKeyVaultRemoval -VaultName kv-contoso-fin-02", kind: "stage-fix" }],
+          });
+        case "emit_custom_remediation_template":
+          return respond({
+            title: "Recover soft-deleted kv-contoso-fin-02",
+            summary: "Key Vault remediation",
+            powershellScript: "[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$VaultName = 'kv-contoso-fin-02')\nif ($PSCmdlet.ShouldProcess($VaultName, 'Recover')) {\n  Undo-AzKeyVaultRemoval -VaultName $VaultName\n}\n",
+            terraformDiff: "",
+            graphPatch: "{}",
+            rollbackScript: "",
+            executionSteps: ["Recover the vault"],
+          });
+        default:
+          throw new Error(`unexpected tool ${tool.function.name}`);
+      }
+    }) as never);
+    const statusSpy = spyOn(correlator, "correlateUpstreamCloudStatus").mockImplementation((async (input: { ticketText: string; createdAt?: string }) => correlator.correlateUpstreamCloudStatusSync(input)) as never);
+    const mutableConfig = config as { forceLocal: boolean };
+    const mutableMeta = providers.meta as { hasKey: boolean };
+    const previous = { nodeEnv: process.env.NODE_ENV, forceLocal: mutableConfig.forceLocal, hasKey: mutableMeta.hasKey };
+    // The sub-agents only call models outside the test env with a key; the spy above is the model.
+    process.env.NODE_ENV = "development";
+    mutableConfig.forceLocal = false;
+    mutableMeta.hasKey = true;
+    const events: Event[] = [];
+    let resolved = false;
+    let lateEvents = 0;
+    try {
+      const updated = await refineCustomTicketGoal(entry.scenarioId, { "question-2": "Recover the old vault" }, (e) => {
+        if (resolved) lateEvents++;
+        events.push(e);
+      });
+      resolved = true;
+      const stages = events.map((e) => e.stage);
+      const at = (stage: string) => stages.indexOf(stage);
+
+      // Every sub-agent reports a start and a done; nothing arrives after the final result.
+      for (const stage of ["agent:0:start", "agent:0:done", "agent:1:start", "agent:1:done", "agent:2:start", "agent:2:done", "agent:3:start", "agent:3:routed", "agent:3:done", "agent:4:start", "agent:4:done", "agent:5:done"]) {
+        expect(at(stage)).toBeGreaterThanOrEqual(0);
+      }
+      expect(lateEvents).toBe(0);
+      // Causal order: the ticker has a start line at once, the clarifier gates S3/S4, routing precedes the card, S5 closes.
+      expect(stages.slice(0, 2)).toEqual(["agent:0:start", "agent:0:done"]);
+      expect(at("agent:2:start")).toBeLessThan(at("agent:1:done"));
+      expect(at("agent:1:start")).toBeLessThan(at("agent:1:done"));
+      expect(at("agent:1:done")).toBeLessThan(at("agent:3:start"));
+      expect(at("agent:1:done")).toBeLessThan(at("agent:4:start"));
+      expect(at("agent:3:start")).toBeLessThan(at("agent:3:routed"));
+      expect(at("agent:3:routed")).toBeLessThan(at("agent:3:done"));
+      expect(at("agent:4:start")).toBeLessThan(at("agent:4:done"));
+      expect(stages.at(-1)).toBe("agent:5:done");
+      // With the pipeline running, the Tier 0 event does not ship the stale routing or script.
+      expect(events[1]!.data!.elementRouting).toBeUndefined();
+      expect(events[1]!.data!.customRemediation).toBeUndefined();
+
+      // Partial payloads equal what the final entry carries.
+      const data = (stage: string) => events[at(stage)]!.data!;
+      expect((data("agent:1:done").clarifyingQuestions as unknown[]).length).toBe(3);
+      expect((data("agent:2:done").cloudStatusCorrelation as { services: unknown[] }).services.length).toBeGreaterThan(0);
+      expect((data("agent:3:routed").elementRouting as { missingElements: Array<{ elementId: string }> }).missingElements[0]!.elementId).toBe("KeyVaultSoftDeleteRecoveryCard");
+      expect((data("agent:3:done").synthesizedElements as Array<{ elementId: string }>)[0]!.elementId).toBe(updated!.synthesizedElements![0]!.elementId);
+      expect((data("agent:4:done").customRemediation as { powershellScript: string }).powershellScript).toContain("Undo-AzKeyVaultRemoval");
+      expect((data("agent:4:done").customRemediation as Record<string, unknown>)._meta).toBeUndefined();
+      expect((data("agent:5:done").customRemediation as { powershellScript: string }).powershellScript).toBe(updated!.customRemediation!.powershellScript);
+      expect((data("agent:5:done").subAgentTasks as unknown[]).length).toBe(5);
+      // elapsedMs never runs backwards within the pipeline's reporter.
+      const pipelineEvents = events.slice(2);
+      for (let i = 1; i < pipelineEvents.length; i++) expect(pipelineEvents[i]!.elapsedMs).toBeGreaterThanOrEqual(pipelineEvents[i - 1]!.elapsedMs);
+    } finally {
+      process.env.NODE_ENV = previous.nodeEnv;
+      mutableConfig.forceLocal = previous.forceLocal;
+      mutableMeta.hasKey = previous.hasKey;
+      chatSpy.mockRestore();
+      statusSpy.mockRestore();
+      removeCustomTicket(entry.scenarioId);
+    }
+  });
+
+  test("POST /api/tickets/:id/refine-goal streams progress then one result over SSE, and keeps the JSON reply", async () => {
+    const { app } = await import("../app.ts");
+    const { removeCustomTicket } = await import("./custom-ticket.ts");
+    const entry = registerCustomTicket(kvTicket);
+    try {
+      const sse = await app.request(`/api/tickets/${entry.scenarioId}/refine-goal`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "text/event-stream" },
+        body: JSON.stringify({ clarifiedAnswers: { "target-scope": "Single resource" } }),
+      });
+      expect(sse.headers.get("content-type")).toContain("text/event-stream");
+      const blocks = (await sse.text()).split("\n\n").filter((b) => b.trim());
+      const parsed = blocks.map((b) => ({
+        event: /^event: ?(.*)$/m.exec(b)?.[1]?.trim(),
+        data: JSON.parse(
+          b
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trimStart())
+            .join("\n"),
+        ) as Record<string, any>,
+      }));
+      expect(parsed.map((p) => p.event)).toEqual(["progress", "progress", "result"]);
+      expect(parsed[0]!.data.stage).toBe("agent:0:start");
+      // The Tier 0 completion carries the provisional brief, rebuilt before the final result.
+      expect(parsed[1]!.data.data.brief.scenarioId).toBe(entry.scenarioId);
+      expect(parsed[2]!.data.ok).toBe(true);
+      expect(parsed[2]!.data.brief.scenarioId).toBe(entry.scenarioId);
+
+      const json = await app.request(`/api/tickets/${entry.scenarioId}/refine-goal`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clarifiedAnswers: { "target-scope": "Single resource" } }),
+      });
+      expect(json.headers.get("content-type")).toContain("application/json");
+      const body = (await json.json()) as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["brief", "clarifiedAnswers", "clarifyingQuestions", "customRemediation", "ok", "scenario", "subAgentTasks", "synthesizedElements"]);
+
+      const missing = await app.request("/api/tickets/INC-4092/refine-goal?stream=1", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clarifiedAnswers: {} }) });
+      expect(missing.status).toBe(404);
+    } finally {
+      removeCustomTicket(entry.scenarioId);
+    }
+  });
+});

@@ -7,6 +7,8 @@ import type {
   ContextViewMode,
   ContextualMiniDashboard,
   Convergence,
+  CustomRemediationTemplate,
+  ElementRoutingDecision,
   ScenarioId,
   SubAgentTaskRecord,
   TicketExtraction,
@@ -17,6 +19,8 @@ import type {
   ScenarioBrief,
   ScenarioListItem,
   SteerLayoutArgs,
+  SynthesizedDynamicCard,
+  UpstreamCloudStatusCorrelation,
   ViewRecipe,
   VisionExtraction,
   WorkbenchScenarioId,
@@ -279,6 +283,23 @@ export interface RefineGoalResponse {
   clarifyingQuestions: ClarifyingQuestion[];
   clarifiedAnswers: Record<string, string>;
   subAgentTasks: SubAgentTaskRecord[];
+  synthesizedElements?: SynthesizedDynamicCard[];
+  customRemediation?: CustomRemediationTemplate | null;
+}
+
+/**
+ * `data` of a streamed refine-goal progress event (WP6): `agent:<n>:done` carries what that sub-agent
+ * produced; events that change the ticket brief also carry the provisional `brief` rebuilt from them.
+ */
+export interface RefinePartial {
+  brief?: ScenarioBrief;
+  clarifyingQuestions?: ClarifyingQuestion[];
+  clarifiedAnswers?: Record<string, string>;
+  elementRouting?: ElementRoutingDecision;
+  cloudStatusCorrelation?: UpstreamCloudStatusCorrelation;
+  synthesizedElements?: SynthesizedDynamicCard[];
+  customRemediation?: CustomRemediationTemplate;
+  subAgentTasks?: SubAgentTaskRecord[];
 }
 
 export interface SampleTicket { id: string; title: string; body: string; customerName: string }
@@ -519,6 +540,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ clarifiedAnswers }),
     }),
+  /** Streamed refine (SSE): one progress event per sub-agent start / completion, partial payload in `data`. */
+  refineGoalStream: (scenarioId: string, clarifiedAnswers: Record<string, string>, onProgress: (event: ProgressEvent) => void, signal?: AbortSignal) =>
+    streamPost<RefineGoalResponse>(`/api/tickets/${encodeURIComponent(scenarioId)}/refine-goal`, { clarifiedAnswers }, onProgress, signal),
   ticketSamples: () => request<{ samples: SampleTicket[] }>("/api/tickets/samples"),
   inbox: () => request<InboxResponse>("/api/tickets/inbox"),
   simulateDrop: (body: { archetype?: DropArchetype; ticketId?: string } = {}) => request<SimulateDropResponse>("/api/tickets/simulate-drop", { method: "POST", body: JSON.stringify(body) }),

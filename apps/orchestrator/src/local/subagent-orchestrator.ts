@@ -13,6 +13,7 @@ import {
 import { z } from "zod";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool } from "../router/openai.ts";
+import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
 import { assessTicketElementNeeds, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
 
@@ -548,15 +549,24 @@ export function effectiveClarifiedAnswers(questions: ClarifyingQuestion[], opera
   return answers;
 }
 
-export async function runSubAgentPipeline(input: {
-  scenarioId: string;
-  title: string;
-  body: string;
-  probeText: string;
-  createdAt: string;
-  matchedSeededComponents: string[];
-  clarifiedAnswers?: Record<string, string>;
-}): Promise<{
+/**
+ * Streams the pipeline as it runs (WP6): `agent:<n>:start` when a sub-agent launches and
+ * `agent:<n>:done` with whatever it produced, so each block can refill on its own beat. Stage 3
+ * also reports `agent:3:routed` with the gatekeeper's decision (the plan steps) before the
+ * synthesizer finishes the card.
+ */
+export async function runSubAgentPipeline(
+  input: {
+    scenarioId: string;
+    title: string;
+    body: string;
+    probeText: string;
+    createdAt: string;
+    matchedSeededComponents: string[];
+    clarifiedAnswers?: Record<string, string>;
+  },
+  onProgress?: ProgressSink,
+): Promise<{
   routingDecision: ElementRoutingDecision;
   gatekeeperModel: string;
   cloudStatusCorrelation: UpstreamCloudStatusCorrelation;
@@ -568,31 +578,46 @@ export async function runSubAgentPipeline(input: {
 }> {
   const pipelineStart = performance.now();
   const offset = (t: number) => Math.round(t - pipelineStart);
+  const report = progressReporter(onProgress);
   // S2 needs nothing from the other sub-agents, so it probes telemetry for the whole run.
   const t2Start = performance.now();
+  report("agent:2:start", "Telemetry Scout probing live tenant & upstream cloud status");
   const statusPromise = correlateUpstreamCloudStatus({
     ticketText: `${input.title}\n${input.body}`,
     createdAt: input.createdAt,
-  }).then((res) => ({ data: res, wallClockMs: Math.max(1, Math.round(performance.now() - t2Start)) }));
+  }).then((res) => {
+    const wallClockMs = Math.max(1, Math.round(performance.now() - t2Start));
+    report("agent:2:done", `Telemetry Scout correlated ${res.services.length} cloud feeds (${wallClockMs} ms)`, { cloudStatusCorrelation: res });
+    return { data: res, wallClockMs };
+  });
 
   // S1 first: its answers steer the gatekeeper, the UI architect and the coder (L-05, L-07).
   const t1Start = performance.now();
+  report("agent:1:start", "Goal Clarifier scoping target & parameters");
   const clarifierRes = await generateClarifyingQuestions({
     title: input.title,
     body: input.body,
     ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
   }).then((res) => ({ ...res, wallClockMs: Math.max(1, Math.round(performance.now() - t1Start)) }));
   const effectiveAnswers = effectiveClarifiedAnswers(clarifierRes.questions, input.clarifiedAnswers);
+  report("agent:1:done", `Goal Clarifier scoped ${clarifierRes.questions.length} parameters (${clarifierRes.wallClockMs} ms)`, {
+    clarifyingQuestions: clarifierRes.questions,
+    clarifiedAnswers: effectiveAnswers,
+  });
 
   // S3 is a real Spark → Wonder chain: the synthesizer builds what the gatekeeper decided.
   // The gatekeeper call carries its own 10 s budget and falls back to the deterministic seed.
   const t3Start = performance.now();
+  report("agent:3:start", "UI Architect routing the diagnostic view");
   const uiPromise = assessTicketElementNeeds({
     title: input.title,
     body: input.probeText,
     matchedSeededComponents: input.matchedSeededComponents,
     clarifiedAnswers: effectiveAnswers,
   }).then(async (routing) => {
+    report("agent:3:routed", `Gatekeeper routed ${routing.decision.missingElements.length} view element(s) · ${routing.decision.customBrief.steps.length} plan steps`, {
+      elementRouting: routing.decision,
+    });
     const elements = await synthesizeAndPersistMissingElements({
       ticketId: input.scenarioId,
       ticketPrompt: `${input.title}\n${input.body}`,
@@ -600,16 +625,24 @@ export async function runSubAgentPipeline(input: {
       gatekeeperModel: routing.source === "llm" ? routing.modelUsed : "deterministic-router",
       clarifiedAnswers: effectiveAnswers,
     });
-    return { routing, elements, wallClockMs: Math.max(1, Math.round(performance.now() - t3Start)) };
+    const wallClockMs = Math.max(1, Math.round(performance.now() - t3Start));
+    report("agent:3:done", `UI Architect synthesized ${elements.map((e) => e.elementId).join(", ") || "no element"} (${wallClockMs} ms)`, { synthesizedElements: elements });
+    return { routing, elements, wallClockMs };
   });
 
   const t4Start = performance.now();
+  report("agent:4:start", "IaC & PS7 Coder writing the PowerShell 7 runbook");
   const coderPromise = synthesizeCustomRemediation({
     scenarioId: input.scenarioId,
     ticketTitle: input.title,
     ticketBody: input.body,
     clarifiedAnswers: effectiveAnswers,
-  }).then((res) => ({ data: res, wallClockMs: Math.max(1, Math.round(performance.now() - t4Start)) }));
+  }).then((res) => {
+    const wallClockMs = Math.max(1, Math.round(performance.now() - t4Start));
+    const { _meta: _coderMeta, ...customRemediation } = res;
+    report("agent:4:done", `IaC & PS7 Coder wrote ${customRemediation.powershellScript.split("\n").length} script lines (${wallClockMs} ms)`, { customRemediation });
+    return { data: res, wallClockMs };
+  });
 
   const [statusRes, uiRes, coderRes] = await Promise.all([statusPromise, uiPromise, coderPromise]);
 
@@ -683,6 +716,11 @@ export async function runSubAgentPipeline(input: {
     },
   });
 
+  report("agent:5:done", safetyCheck.passed ? `Safety Verifier passed (${safetyCheck.latencyMs} ms)` : `Safety Verifier flagged ${safetyCheck.warnings.length} warning(s)`, {
+    customRemediation,
+    subAgentTasks,
+  });
+
   return {
     routingDecision,
     gatekeeperModel,
@@ -727,19 +765,49 @@ export function enrichRemediationFromCard(rem: CustomRemediationTemplate, card?:
   };
 }
 
-export async function refineEntryWithSubAgentsAsync(entry: CustomScenarioEntry, clarifiedAnswers: Record<string, string>): Promise<CustomScenarioEntry> {
+/**
+ * `onProgress` streams the refine (WP6): `agent:0:done` once the operator's answers are applied
+ * (Tier 0, instant), then the pipeline's per-agent events. Without a model the Tier 0 pass is the
+ * whole refine, so its event carries the routing and the remediation too.
+ */
+export async function refineEntryWithSubAgentsAsync(
+  entry: CustomScenarioEntry,
+  clarifiedAnswers: Record<string, string>,
+  onProgress?: ProgressSink,
+): Promise<CustomScenarioEntry> {
+  const refineStart = performance.now();
+  const report = progressReporter(onProgress);
+  report("agent:0:start", "Applying the clarified scope");
   const synced = applyClarifiedAnswersToEntry(entry, clarifiedAnswers);
-  if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") return synced;
-  const mergedAnswers = synced.clarifiedAnswers ?? clarifiedAnswers;
-  const pipeline = await runSubAgentPipeline({
-    scenarioId: entry.scenarioId,
-    title: entry.ticket.title,
-    body: entry.ticket.body,
-    probeText: entry.ticket.body,
-    createdAt: entry.createdAt,
-    matchedSeededComponents: [],
-    clarifiedAnswers: mergedAnswers,
+  const runsPipeline = providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test";
+  report("agent:0:done", runsPipeline ? "Scope applied · sub-agents re-running" : "Scope applied (Tier 0, 0 tokens)", {
+    clarifyingQuestions: synced.clarifyingQuestions ?? [],
+    clarifiedAnswers: synced.clarifiedAnswers ?? {},
+    // With the pipeline running, the routing and the script are stale until their agents report.
+    ...(runsPipeline
+      ? {}
+      : {
+          ...(synced.elementRouting ? { elementRouting: synced.elementRouting } : {}),
+          ...(synced.customRemediation ? { customRemediation: synced.customRemediation } : {}),
+        }),
   });
+  if (!runsPipeline) return synced;
+  const mergedAnswers = synced.clarifiedAnswers ?? clarifiedAnswers;
+  // One clock for the whole refine: the pipeline's own reporter starts at 0, so shift it by the Tier 0 pass.
+  const offsetMs = Math.round(performance.now() - refineStart);
+  const pipelineSink: ProgressSink | undefined = onProgress ? (event) => onProgress({ ...event, elapsedMs: event.elapsedMs + offsetMs }) : undefined;
+  const pipeline = await runSubAgentPipeline(
+    {
+      scenarioId: entry.scenarioId,
+      title: entry.ticket.title,
+      body: entry.ticket.body,
+      probeText: entry.ticket.body,
+      createdAt: entry.createdAt,
+      matchedSeededComponents: [],
+      clarifiedAnswers: mergedAnswers,
+    },
+    pipelineSink,
+  );
   return {
     ...synced,
     elementRouting: pipeline.routingDecision,
