@@ -1,8 +1,8 @@
 import { ChevronDown, CircleCheckBig, FileCode2, Link2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { CATEGORY_META, formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
+import { formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
 import { healthTone } from "@/lib/format";
-import { CAT_CHIP, CAT_TEXT, cardCategory, catStyle } from "@/lib/provenance";
+import { CAT_CHIP, CAT_TEXT, cardCategory, catStyle, categoryColor } from "@/lib/provenance";
 import { selectActiveTimelineSlice, selectConvergence, useWorkbench } from "@/store";
 import { Pill, type Tone } from "../ui/Pill";
 
@@ -100,7 +100,7 @@ export function CardShell({ type, icon, title, state, triggeredBy, summary, prim
       data-expanded={expanded || undefined}
       data-converged={converged || sliceHealthy || undefined}
       data-slice={activeSlice?.relativeLabel}
-      style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--color-healthy)" : CATEGORY_META[category].color })}
+      style={catStyle(category, { ["--flash-color" as string]: converged && convergeFlash ? "var(--healthy)" : categoryColor(category) })}
       className={`card scroll-mt-2 animate-fade-in border-l-4 transition-[opacity,box-shadow] duration-150 ${borderClass} ${isLinked ? "ring-2 ring-[var(--cat)]" : ""} ${dimmed ? "opacity-55" : ""} ${flashing ? "animate-pulse-ring" : ""}`}
     >
       <header className="flex flex-wrap items-center gap-2">
@@ -277,7 +277,7 @@ export function DataTable({
             ))}
           </colgroup>
         )}
-        <thead className="sticky top-0 z-10 bg-slate-950/95 text-[10px] tracking-wider text-faint uppercase backdrop-blur-sm">
+        <thead className="sticky top-0 z-10 bg-ground/95 text-[10px] tracking-wider text-faint uppercase backdrop-blur-sm">
           <tr>
             {head.map((h) => (
               <th key={h} className="px-2.5 py-2 text-left font-medium whitespace-nowrap">

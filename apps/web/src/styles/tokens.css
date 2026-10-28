@@ -1,51 +1,207 @@
 /*
- * ContextPane design tokens — source of truth is DESIGN.md.
- * Tailwind v4 reads @theme into utilities (bg-canvas, text-primary, font-mono …);
- * the --cp-* aliases exist for raw CSS and inline styles.
+ * ContextPane design tokens: "Graphite & Signal" (dark default + light).
+ * Source of truth is DESIGN.md §1 / §2.
+ *
+ * Layering:
+ *   1. Raw semantic custom properties on :root (--ground, --surface, --signal …),
+ *      overridden per theme. These are what flips at runtime.
+ *   2. `@theme inline static` maps them into Tailwind utilities (bg-surface,
+ *      text-muted, border-hairline, text-signal, bg-signal/12 …). `inline` makes
+ *      the utility reference the raw var directly, so it follows the theme;
+ *      `static` keeps every --color-* var emitted for raw CSS / inline styles.
+ *   3. Legacy names (canvas, elevated, border, primary, meta, selection and the
+ *      --cp-* aliases) resolve to the semantic tokens for one WP cycle so later
+ *      work packages can migrate incrementally. Do not use them in new code.
+ *
+ * Theme selection: `data-theme="dark" | "light"` on <html> (set by
+ * src/lib/theme.ts); with no attribute the OS preference decides.
  */
+
+/* ---------- Dark (default) ---------- */
+:root {
+  --ground: #0e1013;
+  --surface: #15181d;
+  --raised: #1b2027;
+  --hairline: #2a303a;
+  --hairline-2: #1f242b;
+
+  --text: #e8eaee;
+  --muted: #9aa3b1;
+  /* spec #7b8494 measured 4.34:1 on raised; #808a9a is 4.69:1 on raised, 5.10:1 on surface */
+  --faint: #808a9a;
+
+  --signal: #6cb4ff;
+  --signal-ink: #0e1013;
+
+  --critical: #ff6e7e;
+  --warning: #f2b15a;
+  --healthy: #58d39a;
+
+  --dom-licensing: #d9a24a;
+  --dom-identity: #e27088;
+  --dom-intune: #b08cf5;
+  --dom-azure: #4ec3b6;
+  --dom-selection: var(--signal);
+
+  --shadow-color: rgb(0 0 0 / 0.6);
+  --shadow-card-color: rgb(0 0 0 / 0.35);
+
+  color-scheme: dark;
+}
+
+/* ---------- Light (explicit) ---------- */
+:root[data-theme="light"] {
+  --ground: #f6f7f9;
+  --surface: #ffffff;
+  --raised: #eef0f3;
+  --hairline: #e3e6eb;
+  --hairline-2: #eef0f3;
+
+  --text: #16181d;
+  --muted: #5b6472;
+  /* spec #6b7482 measured 4.14:1 on raised; #626b79 is 4.72:1 on raised, 5.03:1 on ground */
+  --faint: #626b79;
+
+  --signal: #0b63c9;
+  --signal-ink: #ffffff;
+
+  --critical: #c8283f;
+  --warning: #9a5b00;
+  --healthy: #0f7a4f;
+
+  --dom-licensing: #8a5a00;
+  --dom-identity: #b0334f;
+  --dom-intune: #6b3fd1;
+  /* spec #0f7d72 measured 4.38:1 on raised; #0d776c is 4.75:1 */
+  --dom-azure: #0d776c;
+  --dom-selection: var(--signal);
+
+  --shadow-color: rgb(16 24 40 / 0.18);
+  --shadow-card-color: rgb(16 24 40 / 0.08);
+
+  color-scheme: light;
+}
+
+/* ---------- Light (OS preference, no explicit choice) ---------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground: #f6f7f9;
+    --surface: #ffffff;
+    --raised: #eef0f3;
+    --hairline: #e3e6eb;
+    --hairline-2: #eef0f3;
+
+    --text: #16181d;
+    --muted: #5b6472;
+    --faint: #626b79;
+
+    --signal: #0b63c9;
+    --signal-ink: #ffffff;
+
+    --critical: #c8283f;
+    --warning: #9a5b00;
+    --healthy: #0f7a4f;
+
+    --dom-licensing: #8a5a00;
+    --dom-identity: #b0334f;
+    --dom-intune: #6b3fd1;
+    --dom-azure: #0d776c;
+    --dom-selection: var(--signal);
+
+    --shadow-color: rgb(16 24 40 / 0.18);
+    --shadow-card-color: rgb(16 24 40 / 0.08);
+
+    color-scheme: light;
+  }
+}
+
+/* ---------- Tailwind mapping ---------- */
+@theme inline static {
+  /* surfaces */
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-hairline: var(--hairline);
+  --color-hairline-2: var(--hairline-2);
+
+  /* text */
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  /* the one interactive accent */
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+
+  /* status (text / dot; fills only at low alpha) */
+  --color-critical: var(--critical);
+  --color-warning: var(--warning);
+  --color-healthy: var(--healthy);
+
+  /* domain hues (title words, entity underlines) */
+  --color-dom-licensing: var(--dom-licensing);
+  --color-dom-identity: var(--dom-identity);
+  --color-dom-intune: var(--dom-intune);
+  --color-dom-azure: var(--dom-azure);
+  --color-dom-selection: var(--dom-selection);
+
+  /*
+   * "-strong": the tone pulled 25% toward --text. Use for text that sits on a
+   * tinted fill of its own tone (bg-critical/15 + text-critical-strong); the
+   * plain tone drops below 4.5:1 on a tinted raised surface in light mode.
+   */
+  --color-signal-strong: color-mix(in oklab, var(--signal) 75%, var(--text));
+  --color-critical-strong: color-mix(in oklab, var(--critical) 75%, var(--text));
+  --color-warning-strong: color-mix(in oklab, var(--warning) 75%, var(--text));
+  --color-healthy-strong: color-mix(in oklab, var(--healthy) 75%, var(--text));
+  --color-meta-strong: color-mix(in oklab, var(--dom-intune) 75%, var(--text));
+
+  /* deprecated aliases (one WP cycle) */
+  --color-canvas: var(--ground);
+  --color-elevated: var(--raised);
+  --color-border: var(--hairline);
+  --color-border-subtle: var(--hairline-2);
+  --color-primary: var(--signal);
+  --color-meta: var(--dom-intune);
+  --color-selection: var(--signal);
+
+  --shadow-popover: 0 12px 32px -8px var(--shadow-color), 0 0 0 1px var(--hairline);
+}
+
 @theme {
-  --color-canvas: #090d16;
-  --color-surface: #111827;
-  --color-elevated: #1e293b;
-  --color-border: #334155;
-  --color-border-subtle: #1f2937;
-
-  --color-primary: #38bdf8;
-  --color-healthy: #10b981;
-  --color-warning: #f59e0b;
-  --color-critical: #f43f5e;
-  --color-meta: #a855f7;
-  /* Cyan: a ContextualMiniDashboard spawned from highlighted text, and its selection badge. */
-  --color-selection: #06b6d4;
-
-  --color-text: #e5e7eb;
-  --color-muted: #94a3b8;
-  --color-faint: #8494ab; /* 4.74:1 on elevated #1e293b, 5.75:1 on surface (AA); was #64748b at 3.07:1 */
-
   --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
+  /* four-step type scale: text-11 / text-12 / text-13 / text-15 (mono uses 11 / 12) */
+  --text-11: 11px;
+  --text-11--line-height: 1.4;
+  --text-12: 12px;
+  --text-12--line-height: 1.45;
+  --text-13: 13px;
+  --text-13--line-height: 1.45;
+  --text-15: 15px;
+  --text-15--line-height: 1.3;
+
   --radius-card: 10px;
   --radius-pill: 6px;
-  --shadow-popover: 0 12px 32px -8px rgba(0, 0, 0, 0.9), 0 0 0 1px #334155;
 
   --ease-ops: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* Deprecated --cp-* aliases for raw CSS and inline styles (one WP cycle). */
 :root {
-  --cp-canvas: #090d16;
-  --cp-surface: #111827;
-  --cp-elevated: #1e293b;
-  --cp-border: #334155;
-  --cp-border-subtle: #1f2937;
-  --cp-primary: #38bdf8;
-  --cp-healthy: #10b981;
-  --cp-warning: #f59e0b;
-  --cp-critical: #f43f5e;
-  --cp-meta: #a855f7;
-  --cp-selection: #06b6d4;
-  --cp-text: #e5e7eb;
-  --cp-text-muted: #94a3b8;
-  --cp-text-faint: #64748b;
-  color-scheme: dark;
+  --cp-canvas: var(--ground);
+  --cp-surface: var(--surface);
+  --cp-elevated: var(--raised);
+  --cp-border: var(--hairline);
+  --cp-border-subtle: var(--hairline-2);
+  --cp-primary: var(--signal);
+  --cp-healthy: var(--healthy);
+  --cp-warning: var(--warning);
+  --cp-critical: var(--critical);
+  --cp-meta: var(--dom-intune);
+  --cp-selection: var(--signal);
+  --cp-text: var(--text);
+  --cp-text-muted: var(--muted);
+  --cp-text-faint: var(--faint);
 }

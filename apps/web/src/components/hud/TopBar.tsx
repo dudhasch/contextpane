@@ -1,7 +1,11 @@
-import { Activity, Building2, Compass, Database, FilePlus2, Mic, Pin, PinOff, RotateCcw } from "lucide-react";
+import { Activity, Building2, Compass, Database, FilePlus2, Mic, Monitor, Moon, Pin, PinOff, RotateCcw, Sun } from "lucide-react";
+import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
 import { WorkQueue } from "./WorkQueue";
+
+const THEME_LABEL: Record<ThemePreference, string> = { dark: "Dark", light: "Light", system: "System" };
+const THEME_NEXT: Record<ThemePreference, ThemePreference> = { dark: "light", light: "system", system: "dark" };
 
 /** Operational top bar: the unified work queue, Free-Roam startpage, MCP Data Mode toggle, recipe, voice, drift reset; everything meta lives behind System & Audit. */
 export function TopBar() {
@@ -24,16 +28,17 @@ export function TopBar() {
   const wsConnected = useWorkbench((s) => s.wsConnected);
   const live = useWorkbench((s) => s.health?.liveCloudMode);
   const openCount = useWorkbench((s) => s.scenarios.filter((x) => !x.resolved && !s.convergence[x.scenarioId]).length);
+  const theme = useTheme();
 
   return (
-    <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3">
+    <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2.5 border-b border-hairline bg-surface px-3">
       <button
         type="button"
         onClick={() => openFreeRoam()}
         title="Return to Free-Roam Startpage (Knowledge & Tenant Explorer)"
         className="flex shrink-0 items-center gap-2 pr-1 text-left transition-opacity hover:opacity-85"
       >
-        <span className="grid size-6 place-items-center rounded-md bg-primary/15 text-primary">
+        <span className="grid size-6 place-items-center rounded-md bg-signal/15 text-signal">
           <Building2 className="size-3.5" />
         </span>
         <span className="text-[13px] font-semibold tracking-tight">ContextPane</span>
@@ -77,8 +82,8 @@ export function TopBar() {
           data-testid="topbar-datamode-toggle"
           className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 font-mono text-[11px] font-semibold transition-colors ${
             dataMode === "real-tenant"
-              ? "border-healthy/50 bg-healthy/15 text-healthy hover:bg-healthy/25"
-              : "border-border bg-elevated text-muted hover:border-primary/40 hover:text-text"
+              ? "border-healthy/50 bg-healthy/15 text-healthy-strong hover:bg-healthy/25"
+              : "border-hairline bg-raised text-muted hover:border-signal/40 hover:text-text"
           }`}
         >
           <Database className="size-3.5" />
@@ -100,6 +105,14 @@ export function TopBar() {
           Reset Drift
         </Button>
         <Button
+          variant="ghost"
+          icon={theme.preference === "light" ? <Sun /> : theme.preference === "system" ? <Monitor /> : <Moon />}
+          onClick={() => theme.cycleTheme()}
+          aria-label="Toggle theme"
+          title={`Theme: ${THEME_LABEL[theme.preference]}${theme.preference === "system" ? ` (${THEME_LABEL[theme.resolved]})` : ""}. Click for ${THEME_LABEL[THEME_NEXT[theme.preference]]}.`}
+          data-testid="topbar-theme-toggle"
+        />
+        <Button
           variant={systemOpen ? "primary" : "ghost"}
           icon={<Activity />}
           onClick={() => setSystemOpen(!systemOpen)}
@@ -107,7 +120,7 @@ export function TopBar() {
           className="relative"
         >
           System &amp; Audit
-          <span className={`absolute top-1 right-1 size-1.5 rounded-full ${wsConnected ? (live ? "bg-healthy" : "bg-primary") : "bg-critical"}`} aria-hidden />
+          <span className={`absolute top-1 right-1 size-1.5 rounded-full ${wsConnected ? (live ? "bg-healthy" : "bg-signal") : "bg-critical"}`} aria-hidden />
         </Button>
       </div>
     </header>

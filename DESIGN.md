@@ -2,79 +2,134 @@
 
 ContextPane is an operational workbench, not a marketing site. Engineers read it for
 hours during escalations, so every decision below optimises for **scan speed, density,
-and unambiguous status**. The system is dark-first; light mode is intentionally out of
-scope for the hackathon build.
+and unambiguous status**. The theme is **Graphite & Signal**: dark by default, with a
+full light mode.
 
 All tokens live in `apps/web/src/styles/tokens.css` as CSS custom properties and are
-mapped into Tailwind v4 via `@theme`. Components never hardcode hex values.
+mapped into Tailwind v4 via `@theme inline`, so utilities such as `bg-surface`,
+`text-muted`, `border-hairline`, `text-signal` or `bg-signal/12` follow the active theme at
+runtime. Components never hardcode hex values.
 
 ---
 
 ## 1. Palette
 
-### Surfaces (dark-first)
+Neutral graphite greys, **one** interactive accent (`--signal`), three status hues used as
+text or a dot, and four desaturated domain hues used on title words and entity underlines.
+Purple is no longer an "AI colour": agent output is marked by `✦` and a dashed hairline.
 
-| Token | Hex | Usage |
-|---|---|---|
-| `--cp-canvas` | `#090D16` | App background, the deepest layer |
-| `--cp-surface` | `#111827` | Panes, HUD bar, drawers |
-| `--cp-elevated` | `#1E293B` | Cards, popovers, floating toolbars |
-| `--cp-border` | `#334155` | All 1px borders and dividers |
-| `--cp-border-subtle` | `#1F2937` | Table row dividers, inset separators |
+### Theme switching
 
-### Semantic accents
+| Mechanism | Effect |
+|---|---|
+| `<html data-theme="dark">` / `"light"` | Explicit theme, set by `src/lib/theme.ts` |
+| no `data-theme` | `prefers-color-scheme` decides (CSS fallback before JS runs) |
+| `localStorage["cp-theme"]` | `"dark"` (default) / `"light"` / `"system"`; `system` follows OS changes live |
+| TopBar toggle (`topbar-theme-toggle`) | Cycles dark → light → system |
 
-| Token | Hex | Meaning |
-|---|---|---|
-| `--cp-primary` | `#38BDF8` | Azure Blue — interactive, links, selected state, Tier 0 |
-| `--cp-healthy` | `#10B981` | Emerald — synced, compliant, verified safe |
-| `--cp-warning` | `#F59E0B` | Amber — drift, degraded, report-only |
-| `--cp-critical` | `#F43F5E` | Rose — blocked, rogue rule, AADSTS failure |
-| `--cp-meta` | `#A855F7` | Meta AI Purple — anything produced by a Muse model |
-| `--cp-selection` | `#06B6D4` | Cyan — a `ContextualMiniDashboard` spawned from highlighted text, and its selection badge |
+`color-scheme` is set to match on `:root`, so native scrollbars and form controls follow.
 
-Each accent ships with a `-dim` (12% alpha fill) and `-ring` (40% alpha border) variant
-so badges, pills and banners share one recipe: dim fill + ring border + solid text.
+### Surfaces
 
-### Provenance categories
-
-Entities and cards are coloured by where the data came from, not by health. The colour is set
-once per element as the `--cat` custom property (`apps/web/src/lib/provenance.ts`, values from
-`CATEGORY_META` in `packages/catalog`), and pills, accents, rings and tabs all read it.
-
-| Category | Hex | Sources |
-|---|---|---|
-| Licensing | `#F59E0B` | SKU pools, license assignment state, group-based licensing |
-| Identity / CA | `#F43F5E` | Users, groups, Conditional Access, sign-ins, AADSTS codes |
-| Intune | `#A855F7` | Settings Catalog policies, device configurations, devices, MDM error codes |
-| Azure | `#14B8A6` | AVD host pool, NSG, Azure Policy, Terraform |
-| Selection | `#06B6D4` | An ad-hoc slice of tenant data the engineer asked for by highlighting text (never a macro-card colour) |
-
-Health still uses the semantic accents above (status pills, emerald once converged), so a
-rose identity card can carry an amber *Drifted* pill.
+| Token | Utility | Dark | Light | Usage |
+|---|---|---|---|---|
+| `--ground` | `bg-ground` | `#0E1013` | `#F6F7F9` | App background, code blocks, table heads |
+| `--surface` | `bg-surface` | `#15181D` | `#FFFFFF` | Zones, TopBar, drawers |
+| `--raised` | `bg-raised` | `#1B2027` | `#EEF0F3` | Popovers, inline chips, hover fills |
+| `--hairline` | `border-hairline` | `#2A303A` | `#E3E6EB` | 1px zone and section separators |
+| `--hairline-2` | `border-hairline-2` | `#1F242B` | `#EEF0F3` | Table row dividers, inset separators |
 
 ### Text
 
-| Token | Hex | Usage |
-|---|---|---|
-| `--cp-text` | `#E5E7EB` | Primary copy |
-| `--cp-text-muted` | `#94A3B8` | Labels, secondary metadata |
-| `--cp-text-faint` | `#64748B` | Timestamps, placeholders, disabled |
+| Token | Utility | Dark | Light | Usage |
+|---|---|---|---|---|
+| `--text` | `text-text` | `#E8EAEE` | `#16181D` | Primary copy |
+| `--muted` | `text-muted` | `#9AA3B1` | `#5B6472` | Labels, secondary metadata |
+| `--faint` | `text-faint` | `#808A9A` | `#626B79` | Timestamps, provenance lines, placeholders |
+
+`--faint` was specified as `#7B8494` (dark) / `#6B7482` (light); both measured below 4.5:1
+on `--raised` (4.34 and 4.14) and were adjusted to the values above.
+
+### Signal and status
+
+| Token | Utility | Dark | Light | Meaning |
+|---|---|---|---|---|
+| `--signal` | `text-signal`, `bg-signal` | `#6CB4FF` | `#0B63C9` | The only interactive accent: links, focus, selected state, primary buttons, selection slices |
+| `--signal-ink` | `text-signal-ink` | `#0E1013` | `#FFFFFF` | Text on a solid `--signal` fill |
+| `--critical` | `text-critical` | `#FF6E7E` | `#C8283F` | Blocked, rogue rule, AADSTS failure |
+| `--warning` | `text-warning` | `#F2B15A` | `#9A5B00` | Drift, degraded, report-only |
+| `--healthy` | `text-healthy` | `#58D39A` | `#0F7A4F` | Synced, compliant, verified safe |
+
+Status is shown as **dot + word** in the status hue (`<Pill variant="status">`), not as a
+filled pill. Where a tinted fill of a tone is unavoidable (legacy fill pills, danger/meta
+buttons, toggles), the label uses the `-strong` token (`text-critical-strong`,
+`text-healthy-strong`, `text-signal-strong`, `text-warning-strong`, `text-meta-strong`):
+the tone mixed 25% toward `--text`, which keeps 4.5:1 on a tint of up to 25% in both themes.
+
+### Domain (provenance) hues
+
+Entities and cards are coloured by where the data came from, not by health. The colour is set
+once per element as the `--cat` custom property (`catStyle()` in `apps/web/src/lib/provenance.ts`),
+which resolves to `var(--dom-<category>)` so it follows the theme; the `CATEGORY_META` hex in
+`packages/catalog` is only the fallback.
+
+| Token | Utility | Dark | Light | Sources |
+|---|---|---|---|---|
+| `--dom-licensing` | `text-dom-licensing` | `#D9A24A` | `#8A5A00` | SKU pools, license assignment state, group-based licensing |
+| `--dom-identity` | `text-dom-identity` | `#E27088` | `#B0334F` | Users, groups, Conditional Access, sign-ins, AADSTS codes |
+| `--dom-intune` | `text-dom-intune` | `#B08CF5` | `#6B3FD1` | Settings Catalog policies, device configurations, devices, MDM error codes |
+| `--dom-azure` | `text-dom-azure` | `#4EC3B6` | `#0D776C` | AVD host pool, NSG, Azure Policy, Terraform |
+| `--dom-selection` | `text-dom-selection` | = `--signal` | = `--signal` | An ad-hoc slice of tenant data the engineer asked for by highlighting text |
+
+Light `--dom-azure` was specified as `#0F7D72` (4.38:1 on `--raised`) and adjusted to `#0D776C`.
+Domain hues go on the **title word** and on **entity underlines** (`<Pill variant="entity">`),
+never as a card fill. Health still uses the status hues, so an identity section can carry a
+warning *Drifted* status.
+
+### Deprecated aliases (one work-package cycle)
+
+Kept so existing components render while they are migrated; do not use in new code.
+
+| Legacy utility / var | Resolves to |
+|---|---|
+| `canvas`, `--cp-canvas` | `--ground` |
+| `surface`, `--cp-surface` | `--surface` |
+| `elevated`, `--cp-elevated` | `--raised` |
+| `border`, `--cp-border` | `--hairline` |
+| `border-subtle`, `--cp-border-subtle` | `--hairline-2` |
+| `primary`, `selection`, `--cp-primary`, `--cp-selection` | `--signal` |
+| `meta`, `--cp-meta` | `--dom-intune` |
+| `--cp-text`, `--cp-text-muted`, `--cp-text-faint` | `--text`, `--muted`, `--faint` |
+| `card` utility | Boxed card; superseded by `section-hairline` (no fill, no radius, top hairline, `12px 0` padding) |
 
 ---
 
 ## 2. Typography
 
+Four steps, nothing in between. Each utility carries its line-height.
+
+| Utility | Size / line-height | Use |
+|---|---|---|
+| `text-11` | 11px / 1.4 | Section labels (600, uppercase, tracking `0.08em`), provenance lines, mono metadata |
+| `text-12` | 12px / 1.45 | Secondary copy, table cells, mono identifiers |
+| `text-13` | 13px / 1.45 | Body (the `body` default) and dense UI labels |
+| `text-15` | 15px / 1.3 | Zone and ticket titles |
+
 | Role | Font | Size / Weight |
 |---|---|---|
-| Dense UI labels, body | **Inter** (variable) | 12–13px / 400–500, 14px for pane titles |
+| Body, dense UI labels | **Inter** (variable) | 13px / 400–500 |
+| Titles | Inter | 15px / 600 |
 | Section headers | Inter | 11px / 600, uppercase, tracking `0.08em` |
-| Identifiers | **JetBrains Mono** (variable) | 12px / 400 |
+| Identifiers, code | **JetBrains Mono** (variable) | 11px or 12px / 400 |
+
+Numerals are tabular everywhere (`font-variant-numeric: tabular-nums` on `body`), so counts,
+latencies and timestamps line up in columns. Legacy `text-[..px]` sizes still present in
+components are collapsed onto this scale in WP8.
 
 **Rule:** anything an engineer would copy into a terminal is monospace. That means UPNs,
 object IDs, tenant IDs, SKU part numbers (`SPE_E5`), `AADSTS` codes, resource names,
 PowerShell snippets, HCL diffs, and latency values. Monospace identifiers get a subtle
-`--cp-elevated` background chip when inline.
+`--raised` background chip when inline.
 
 Fonts are bundled via `@fontsource-variable/*` so the demo renders identically offline.
 
@@ -292,8 +347,9 @@ Semantic icon mapping:
 
 ## 7. Accessibility
 
-- Minimum contrast 4.5:1 for text on every surface (all tokens above pass against
-  `--cp-elevated` and `--cp-surface`).
+- Minimum contrast 4.5:1 for text on every surface: every text, status and domain token
+  passes on `--ground`, `--surface` and `--raised` in both themes, and every `-strong` label
+  passes on a tint of its own tone up to 25%.
 - Every hover popover is also reachable by keyboard focus.
 - Status is never color-only: pills always carry an icon or text label.
 - Demo hotkeys (`?` overlay) are additive; everything remains mouse-operable.

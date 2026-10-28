@@ -45,7 +45,7 @@ export function CodeBlock({ code, render, className = "", maxHeight = "", label 
             onClick={() => setWrap((v) => !v)}
             aria-pressed={wrap}
             title={wrap ? "Disable line wrapping" : "Wrap long lines"}
-            className={`inline-flex h-6 items-center gap-1 rounded border px-1.5 text-[11px] transition-colors ${wrap ? "border-primary/40 bg-primary/15 text-primary" : "border-border bg-elevated text-muted hover:text-text"}`}
+            className={`inline-flex h-6 items-center gap-1 rounded border px-1.5 text-[11px] transition-colors ${wrap ? "border-signal/40 bg-signal/15 text-signal-strong" : "border-hairline bg-raised text-muted hover:text-text"}`}
           >
             <WrapText className="size-3" />
             wrap
@@ -55,7 +55,7 @@ export function CodeBlock({ code, render, className = "", maxHeight = "", label 
               type="button"
               onClick={() => void copy()}
               title="Copy to clipboard"
-              className={`inline-flex h-6 items-center gap-1 rounded border px-1.5 text-[11px] transition-colors ${copied ? "border-healthy/40 bg-healthy/15 text-healthy" : "border-border bg-elevated text-muted hover:text-text"}`}
+              className={`inline-flex h-6 items-center gap-1 rounded border px-1.5 text-[11px] transition-colors ${copied ? "border-healthy/40 bg-healthy/15 text-healthy-strong" : "border-hairline bg-raised text-muted hover:text-text"}`}
             >
               {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
               {copied ? "Copied" : label}
@@ -66,7 +66,7 @@ export function CodeBlock({ code, render, className = "", maxHeight = "", label 
       {render ? (
         render(wrap)
       ) : (
-        <pre className={`overflow-auto rounded-md border border-border-subtle bg-canvas p-3 ${hideToolbar ? "" : "pt-8"} ${maxHeight} font-mono text-[11px] leading-[1.55] text-text ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>{code}</pre>
+        <pre className={`overflow-auto rounded-md border border-hairline-2 bg-ground p-3 ${hideToolbar ? "" : "pt-8"} ${maxHeight} font-mono text-[11px] leading-[1.55] text-text ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>{code}</pre>
       )}
     </div>
   );
