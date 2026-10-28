@@ -22,6 +22,7 @@ import {
   type ScenarioListItem,
   type SteeringDelta,
   type SteeringParams,
+  type SubAgentTaskRecord,
   type TicketExtraction,
   type TicketIntent,
 } from "@contextpane/catalog";
@@ -46,7 +47,7 @@ import {
   refineEntryWithSubAgentsAsync,
   runSubAgentPipeline,
   synthesizeCustomRemediation,
-  verifyAndRepairGeneratedScript,
+  syntaxHeuristicPrecheck,
   type RemediationCoderMeta,
 } from "./subagent-orchestrator.ts";
 
@@ -479,7 +480,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
   const t4Ms = Math.max(1, Math.round(performance.now() - t4Start));
 
   const safetyCheck = rawRemediation
-    ? verifyAndRepairGeneratedScript(rawRemediation.powershellScript, id)
+    ? syntaxHeuristicPrecheck(rawRemediation.powershellScript, id)
     : { repairedScript: "", passed: true, repaired: false, warnings: [], latencyMs: 1 };
   const customRemediation = rawRemediation
     ? { ...rawRemediation, powershellScript: safetyCheck.repairedScript }
@@ -500,7 +501,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       2: { latencyMs: t2Ms, modelId: "cloud-status (seeded, sync)", status: "completed", source: "mcp-probe", tokensUsed: 0 },
       3: { latencyMs: t3Ms, modelId: "deterministic-router -> deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
       4: { latencyMs: t4Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
-      5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "symbolic-verifier", tokensUsed: 0 },
+      5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "syntax-heuristic", modelId: "syntax-heuristic", tokensUsed: 0 },
     },
   });
 
@@ -690,7 +691,7 @@ export async function steerCustomTicket(
   });
   const { _meta, ...template } = coded;
   const coder: RemediationCoderMeta = _meta ?? { modelUsed: "deterministic-template", latencyMs: 1, tokensUsed: 0, status: "fallback", source: "fallback-on-error" };
-  const precheck = verifyAndRepairGeneratedScript(template.powershellScript, scenarioId);
+  const precheck = syntaxHeuristicPrecheck(template.powershellScript, scenarioId);
   const customRemediation: CustomRemediationTemplate = { ...template, powershellScript: precheck.repairedScript };
   const diff = scriptDiff(previousScript, customRemediation.powershellScript, previousSteering.version, steering.version);
 
@@ -766,6 +767,18 @@ export async function steerCustomTicket(
   });
   save();
   return { entry, previousSteering, steering, scriptDiff: diff, coder, cardResynthesized };
+}
+
+/**
+ * Lets the remediation tier write what really happened to a ticket's pipeline records (the coder's
+ * repair iterations, the sandbox verdict) once the fix was staged (U-2). No-op for built-in scenarios.
+ */
+export function patchCustomTicketPipeline(scenarioId: string, patch: (tasks: SubAgentTaskRecord[]) => SubAgentTaskRecord[]): CustomScenarioEntry | null {
+  const existing = getCustomScenario(scenarioId);
+  if (!existing) return null;
+  const entry = registerCustomScenario({ ...existing, subAgentTasks: patch(existing.subAgentTasks ?? []) });
+  save();
+  return entry;
 }
 
 /** Drops a custom ticket (an ERP folder that disappeared from the inbox) and persists the registry. */

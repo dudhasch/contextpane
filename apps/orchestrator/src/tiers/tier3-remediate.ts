@@ -34,7 +34,9 @@ import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from 
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
-import { verifyAndRepairGeneratedScript } from "../local/subagent-orchestrator.ts";
+import { syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
+import { patchCustomTicketPipeline } from "../local/custom-ticket.ts";
+import { runRepairLoop } from "./repair-loop.ts";
 import { auditLedger } from "../store/audit.ts";
 import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
@@ -234,8 +236,52 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       report("llm:skip", config.forceLocal ? "CTX_FORCE_LOCAL=true → deterministic bundle" : "No META_API_KEY → deterministic bundle");
     }
 
-    /* ---- pre-flight ---- */
-    const verification = await preflight(bundle, ctx, plan, report);
+    /* ---- pre-flight, then write-then-test: sandbox findings go back to the coder, at most 2 turns (U-2) ---- */
+    const firstPass = await preflight(bundle, ctx, plan, report);
+    const loop = await runRepairLoop({
+      bundle,
+      verification: firstPass,
+      ctx,
+      requiredCommands: plan.requiredCommands,
+      preflight: (candidate) => preflight(candidate, ctx, plan, report),
+      report,
+    });
+    bundle = loop.bundle;
+    const verification = loop.verification;
+    if (loop.repair.iterations > 0) {
+      usage = addUsage(usage, loop.usage);
+      chain.push(...loop.chain);
+      if (loop.chain.some((c) => c.outcome === "ok")) provider = "meta";
+      report("repair:summary", `${verification.verdict} after ${loop.repair.iterations} repair iteration${loop.repair.iterations === 1 ? "" : "s"}${loop.repair.exhausted ? " (budget exhausted, findings left)" : ""}`);
+    }
+    // The ticket's pipeline records say what the loop and the sandbox did (pill: "4. Coder · 2 iterations · sandbox-verified").
+    if (ctx.custom) {
+      const repairTokens = loop.usage.total;
+      patchCustomTicketPipeline(ctx.ticketId, (tasks) =>
+        tasks.map((t) =>
+          t.stepIndex === 4
+            ? {
+                ...t,
+                iterations: loop.repair.iterations,
+                ...(repairTokens ? { tokensUsed: (t.tokensUsed ?? 0) + repairTokens, tokensPrompt: (t.tokensPrompt ?? 0) + loop.usage.prompt, tokensCompletion: (t.tokensCompletion ?? 0) + loop.usage.completion, source: "llm" as const, status: "completed" as const } : {}),
+                outputSummary: loop.repair.iterations
+                  ? `${t.outputSummary.replace(/ · \d+ repair iteration.*$/, "")} · ${loop.repair.iterations} repair iteration${loop.repair.iterations === 1 ? "" : "s"} from sandbox findings (${repairTokens} tokens)`
+                  : t.outputSummary,
+              }
+            : t.stepIndex === 5
+              ? {
+                  ...t,
+                  modelId: verification.sandboxProvider === "none" ? t.modelId : verification.sandboxProvider,
+                  source: verification.sandboxProvider === "none" ? t.source : ("sandbox-preflight" as const),
+                  status: verification.verdict === "Verified Safe" || verification.verdict === "Verified With Warnings" ? ("completed" as const) : ("fallback" as const),
+                  latencyMs: verification.validationLatencyMs,
+                  outputSummary: `Sandbox pre-flight: ${verification.verdict} · AST ${fmt(verification.astCheckPassed)} · -WhatIf ${fmt(verification.whatIfSafe)}${loop.repair.iterations ? ` after ${loop.repair.iterations} repair iteration${loop.repair.iterations === 1 ? "" : "s"}` : ""}${verification.findings.length ? ` · ${verification.findings.length} finding(s)` : ""}`,
+                  timestamp: new Date().toISOString(),
+                }
+              : t,
+        ),
+      );
+    }
 
     /* ---- stage PR branch ---- */
     report("stage:start", "Staging remediation on a git branch");
@@ -983,7 +1029,7 @@ export async function autofixRemediation(remediationId: string): Promise<ActionA
   if (!drawer) throw new Error(`Remediation '${remediationId}' not found`);
   const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
   const plan = buildRemediationPlan(ctx);
-  const repair = verifyAndRepairGeneratedScript(drawer.powershellScript, drawer.ticketId);
+  const repair = syntaxHeuristicPrecheck(drawer.powershellScript, drawer.ticketId);
   const powershellScript = repair.repairedScript;
   const verification = await preflight({ powershellScript, terraformDiff: drawer.terraformDiff }, ctx, plan, () => {});
   verification.findings = [

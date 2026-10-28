@@ -315,6 +315,37 @@ export type HoverDiagnosticPopover = z.infer<typeof HoverDiagnosticPopoverSchema
 /* 6. ActionApprovalDrawer                                                     */
 /* -------------------------------------------------------------------------- */
 
+export const RepairRoundSchema = z.object({
+  iteration: z.number().int().positive(),
+  /** What the sandbox rejected before this turn (the coder's repair brief). */
+  findingsBefore: z.array(z.string().max(300)),
+  verdictBefore: z.string(),
+  modelId: z.string(),
+  source: z.enum(["llm", "fallback-on-error"]),
+  latencyMs: z.number().int().nonnegative(),
+  tokensUsed: z.number().int().nonnegative(),
+  tokensPrompt: z.number().int().nonnegative().optional(),
+  tokensCompletion: z.number().int().nonnegative().optional(),
+  /** False when the coder returned the same script: the loop stops rather than re-running the sandbox on it. */
+  scriptChanged: z.boolean(),
+  verdictAfter: z.string(),
+  findingsAfter: z.array(z.string().max(300)),
+  /** Sandbox time of the re-run that judged this turn. */
+  preflightLatencyMs: z.number().int().nonnegative(),
+});
+export type RepairRound = z.infer<typeof RepairRoundSchema>;
+
+export const RepairLoopSchema = z.object({
+  iterations: z.number().int().nonnegative(),
+  maxIterations: z.number().int().positive(),
+  rounds: z.array(RepairRoundSchema),
+  /** True when the budget ran out with findings left; the verdict is whatever the sandbox said last, never forced. */
+  exhausted: z.boolean(),
+  /** Why no turn ran (model offline, nothing repairable), when iterations is 0. */
+  skipped: z.string().max(200).optional(),
+});
+export type RepairLoop = z.infer<typeof RepairLoopSchema>;
+
 export const VerificationStatusSchema = z.object({
   /** "Overridden": the pre-flight did not pass and an operator approved it anyway with a recorded justification. */
   verdict: z.enum(["Verified Safe", "Verified With Warnings", "Verification Failed", "Pending", "Overridden"]),
@@ -334,6 +365,12 @@ export const VerificationStatusSchema = z.object({
     .object({ powershellAst: z.number().optional(), terraformFmt: z.number().optional(), terraformValidate: z.number().optional() })
     .optional()
     .describe("Per-check time inside the sandbox"),
+  /** The cheap regex pre-check that ran before the sandbox; never a verdict on its own (U-2). */
+  precheck: z
+    .object({ name: z.literal("syntax-heuristic"), passed: z.boolean(), warnings: z.array(z.string().max(300)).default([]), latencyMs: z.number().int().nonnegative() })
+    .optional(),
+  /** Write-then-test loop (U-2): sandbox findings fed back to the coder, at most maxIterations repair turns before the drawer opened. */
+  repair: RepairLoopSchema.optional(),
 });
 export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
 

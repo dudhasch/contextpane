@@ -119,8 +119,11 @@ const FORBIDDEN_COMMANDS = ["invoke-expression", "iex", "remove-mguser", "remove
 const DESTRUCTIVE_WILDCARD_RE = /\bRemove-MgUser\s+-All\b|\bRemove-AzResource\b(?![^\n]*-(?:ResourceId|Name|ResourceName))\s+-Force\b|\bFormat-Volume\s+-Force\b/i;
 const DEFAULT_REQUIRED_COMMANDS = ["set-mguserlicense"];
 
-/** Mutating cmdlets: each must run inside $PSCmdlet.ShouldProcess for -WhatIf to be a real dry run. */
-const MUTATING = /\b(Set-Mg\w+|Update-Mg\w+|New-Mg\w+|Remove-Mg\w+|Add-Mg\w+|Invoke-MgLicenseUser|Sync-Mg\w+|Invoke-MgGraphRequest\s+-Method\s+'?(POST|PATCH|PUT|DELETE))/i;
+/**
+ * Mutating cmdlets: each must run inside $PSCmdlet.ShouldProcess for -WhatIf to be a real dry run.
+ * Graph and Az alike: ad-hoc tickets stage Key Vault / NSG / resource changes with Az cmdlets (U-2).
+ */
+const MUTATING = /\b(Set-Mg\w+|Update-Mg\w+|New-Mg\w+|Remove-Mg\w+|Add-Mg\w+|Invoke-MgLicenseUser|Sync-Mg\w+|Invoke-MgGraphRequest\s+-Method\s+'?(POST|PATCH|PUT|DELETE)|Set-Az\w+|Update-Az\w+|New-Az\w+|Remove-Az\w+|Add-Az\w+|Undo-Az\w+|Restore-Az\w+|Invoke-AzRestMethod\s+-Method\s+'?(POST|PATCH|PUT|DELETE))/i;
 
 /**
  * Static -WhatIf proof: the script declares SupportsShouldProcess and every mutating Graph

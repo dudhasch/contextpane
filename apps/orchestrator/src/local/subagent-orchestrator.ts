@@ -431,7 +431,8 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
   };
 }
 
-export interface SafetyVerifierResult {
+export interface SyntaxPrecheckResult {
+  name: "syntax-heuristic";
   repairedScript: string;
   passed: boolean;
   repaired: boolean;
@@ -440,10 +441,13 @@ export interface SafetyVerifierResult {
 }
 
 /**
- * Sub-Agent 5 (Safety & Rollback Verifier): performs real PowerShell AST/safety inspection
- * on the generated script (checking for -WhatIf / SupportsShouldProcess, balanced braces,
- * non-empty target parameters, and absence of destructive wildcards like Remove-MgUser -All).
- * If SupportsShouldProcess is missing on an otherwise safe script, repairs it before returning.
+ * The cheap pre-check that runs before any sandbox: brace counting, a destructive-wildcard
+ * regex, an empty-default-parameter regex and the SupportsShouldProcess guard. It is a
+ * heuristic, not an AST parse and not a verdict (M-01, U-2): the real verification is the
+ * pre-flight in `preflight/*` (pwsh AST + cmdlet allow-list + terraform validate, in the
+ * Modal sandbox when configured). When the guard is the only thing missing it wraps the
+ * script in one, keeping a leading param() block as the first statement; Auto-Fix and the
+ * triage path use that.
  */
 /** Splits a script's leading param(...) block (balanced parentheses) from the statements after it. */
 function splitParamBlock(lines: string[]): { paramLines: string[]; bodyLines: string[] } {
@@ -457,7 +461,7 @@ function splitParamBlock(lines: string[]): { paramLines: string[]; bodyLines: st
   return { paramLines: [], bodyLines: lines };
 }
 
-export function verifyAndRepairGeneratedScript(script: string, scenarioId: string): SafetyVerifierResult {
+export function syntaxHeuristicPrecheck(script: string, scenarioId: string): SyntaxPrecheckResult {
   const started = performance.now();
   const warnings: string[] = [];
   let current = script.trim();
@@ -501,6 +505,7 @@ export function verifyAndRepairGeneratedScript(script: string, scenarioId: strin
   }
 
   return {
+    name: "syntax-heuristic",
     repairedScript: current,
     passed: warnings.length === 0,
     repaired,
@@ -517,7 +522,8 @@ export interface SubAgentStepMeasurement {
   /** Prompt / completion split, stored on the record so the Router Savings HUD can show it (HARD_CASES 10). */
   usage?: TokenUsage;
   status?: "completed" | "running" | "fallback";
-  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error" | "not-attempted";
+  source?: SubAgentTaskRecord["source"];
+  iterations?: number;
   outputSummary?: string;
 }
 
@@ -627,6 +633,7 @@ export function buildSubAgentPipelineRecords(input: {
       ...(m[4]?.startOffsetMs !== undefined ? { startOffsetMs: m[4].startOffsetMs } : {}),
       ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
       ...(m[4]?.usage ? { tokensPrompt: m[4].usage.prompt, tokensCompletion: m[4].usage.completion } : {}),
+      ...(m[4]?.iterations !== undefined ? { iterations: m[4].iterations } : {}),
       inputSummary: `Target parameters: ${activePairs.join(", ")}`,
       outputSummary: !m[4] ? "Not run for this ticket" : m[4].outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
       timestamp: now,
@@ -636,15 +643,15 @@ export function buildSubAgentPipelineRecords(input: {
       task: "preflight-and-undo",
       agentName: "5. Safety Verifier",
       role: "Safety & Rollback Verifier Sub-Agent",
-      modelId: m[5] ? (m[5].modelId ?? "symbolic-formal-verifier") : "not run",
+      modelId: m[5] ? (m[5].modelId ?? "syntax-heuristic") : "not run",
       status: m[5] ? (m[5].status ?? "completed") : "fallback",
-      source: m[5] ? (m[5].source ?? "symbolic-verifier") : "not-attempted",
+      source: m[5] ? (m[5].source ?? "syntax-heuristic") : "not-attempted",
       latencyMs: m[5]?.latencyMs ?? 0,
       ...(m[5]?.startOffsetMs !== undefined ? { startOffsetMs: m[5].startOffsetMs } : {}),
       ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
       ...(m[5]?.usage ? { tokensPrompt: m[5].usage.prompt, tokensCompletion: m[5].usage.completion } : {}),
-      inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`,
-      outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
+      inputSummary: `Syntax pre-check (braces, guard, wildcards) for ${input.scenarioId}; sandbox pre-flight when the fix is staged`,
+      outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Syntax pre-check passed; the sandbox pre-flight runs when the fix is staged",
       timestamp: now,
     },
   ];
@@ -737,7 +744,7 @@ export async function runSubAgentPipeline(input: {
 
   const enrichedRemediation = enrichRemediationFromCard(coderRes.data, synthesizedElements[0]);
   const t5Start = performance.now();
-  const safetyCheck = verifyAndRepairGeneratedScript(enrichedRemediation.powershellScript, input.scenarioId);
+  const safetyCheck = syntaxHeuristicPrecheck(enrichedRemediation.powershellScript, input.scenarioId);
   const customRemediation: CustomRemediationTemplate = {
     ...enrichedRemediation,
     powershellScript: safetyCheck.repairedScript,
@@ -792,14 +799,14 @@ export async function runSubAgentPipeline(input: {
       5: {
         latencyMs: safetyCheck.latencyMs,
         startOffsetMs: offset(t5Start),
-        modelId: "symbolic-formal-verifier",
+        modelId: "syntax-heuristic",
         status: safetyCheck.passed ? "completed" : "fallback",
-        source: "symbolic-verifier",
+        source: "syntax-heuristic",
         outputSummary: safetyCheck.passed
           ? safetyCheck.repaired
-            ? "Auto-wrapped script in SupportsShouldProcess (-WhatIf) & verified AST safety"
-            : "Verified 0 syntax errors, SupportsShouldProcess guard & 1-click rollback script ready"
-          : `Flagged ${safetyCheck.warnings.length} pre-flight safety warning(s): ${safetyCheck.warnings.join(" ")}`,
+            ? "Syntax pre-check: wrapped the script in a SupportsShouldProcess (-WhatIf) guard; the sandbox pre-flight runs when the fix is staged"
+            : "Syntax pre-check passed (braces, guard, no destructive wildcards); the sandbox pre-flight runs when the fix is staged"
+          : `Syntax pre-check flagged ${safetyCheck.warnings.length} warning(s): ${safetyCheck.warnings.join(" ")}`,
       },
     },
   });

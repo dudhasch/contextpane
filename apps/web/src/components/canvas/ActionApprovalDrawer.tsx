@@ -992,6 +992,8 @@ function SafetyAndUndoTab({ drawer, onCopy }: { drawer: Drawer; onCopy: (text: s
         )}
       </section>
 
+      <RepairLoopTimeline drawer={drawer} />
+
       {/* Bottom Section: 1-Click Undo / Rollback Script */}
       <section className="space-y-2.5 rounded-lg border border-slate-800 bg-canvas/60 p-3.5" data-testid="rollback-tab">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1457,10 +1459,48 @@ function VerificationBadge({ drawer }: { drawer: Drawer }) {
           : v.verdict === "Overridden"
             ? "⚠ Pre-Flight Overridden by Operator"
             : "Checking…";
+  // U-2: how many write-then-test turns the sandbox findings cost before this verdict.
+  const iterations = v.repair?.iterations ?? 0;
   return (
-    <Pill tone={tone} icon={tone === "healthy" ? <ShieldCheck /> : <ShieldAlert />} mono={false} className="font-semibold" title={v.verdict}>
+    <Pill tone={tone} icon={tone === "healthy" ? <ShieldCheck /> : <ShieldAlert />} mono={false} className="font-semibold" title={iterations ? `${v.verdict} · ${iterations} repair iteration${iterations === 1 ? "" : "s"} (${v.sandboxProvider})` : v.verdict}>
       {label}
+      {iterations > 0 && <span className="ml-1 font-mono text-[10px] opacity-80" data-testid="verification-iterations">· {iterations} iter{v.repair?.exhausted ? " · budget exhausted" : ""}</span>}
     </Pill>
+  );
+}
+
+/** U-2: the write-then-test loop as a per-iteration timeline (sandbox findings → coder → sandbox again). */
+function RepairLoopTimeline({ drawer }: { drawer: Drawer }) {
+  const repair = drawer.verificationStatus.repair;
+  if (!repair || repair.iterations === 0) return null;
+  return (
+    <section className="space-y-1.5 rounded-lg border border-slate-800 bg-canvas/60 p-3.5 text-[11.5px]" data-testid="repair-loop-timeline">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[12.5px] font-semibold text-text">Write-then-test · {repair.iterations}/{repair.maxIterations} repair iteration{repair.iterations === 1 ? "" : "s"}</div>
+        <span className={`font-mono text-[11px] ${repair.exhausted ? "text-warning" : "text-healthy"}`}>
+          {repair.exhausted ? "budget exhausted · findings left, verdict not forced" : `sandbox verdict: ${drawer.verificationStatus.verdict}`}
+        </span>
+      </div>
+      <ol className="space-y-1">
+        {repair.rounds.map((r) => (
+          <li key={r.iteration} className="rounded border border-border-subtle bg-surface/70 px-2 py-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-1 font-mono text-[10.5px]">
+              <span className="font-semibold text-text">
+                #{r.iteration} · {r.verdictBefore} → {r.verdictAfter}
+              </span>
+              <span className="text-muted">
+                {r.source === "llm" ? `${r.modelId} · ${r.tokensUsed} tok · ${r.latencyMs} ms` : "coder offline"} · sandbox {r.preflightLatencyMs} ms{r.scriptChanged ? "" : " · script unchanged"}
+              </span>
+            </div>
+            <ul className="mt-0.5 text-[11px] text-muted">
+              {r.findingsBefore.slice(0, 3).map((f, i) => (
+                <li key={i}>↳ {f}</li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

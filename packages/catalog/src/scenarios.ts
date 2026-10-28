@@ -239,8 +239,11 @@ export const SubAgentTaskRecordSchema = z.object({
   role: z.string(),
   modelId: z.string(),
   status: z.enum(["completed", "running", "fallback"]),
-  /** "not-attempted": no model call was made for this step (offline or deterministic path). */
-  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "fallback-on-error", "not-attempted"]).optional(),
+  /**
+   * "not-attempted": no model call was made for this step (offline or deterministic path).
+   * "syntax-heuristic": the regex pre-check only; "sandbox-preflight": the real AST / -WhatIf / terraform run.
+   */
+  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "syntax-heuristic", "sandbox-preflight", "fallback-on-error", "not-attempted"]).optional(),
   latencyMs: z.number().int().nonnegative(),
   /** When the step started, in ms after the pipeline started; absent for steps that never ran on a clock. */
   startOffsetMs: z.number().int().nonnegative().optional(),
@@ -248,6 +251,8 @@ export const SubAgentTaskRecordSchema = z.object({
   /** Prompt / completion split of tokensUsed, when the provider reported one (HARD_CASES 10). */
   tokensPrompt: z.number().int().nonnegative().optional(),
   tokensCompletion: z.number().int().nonnegative().optional(),
+  /** Write-then-test repair turns this step ran (the coder, U-2); absent when the loop did not run. */
+  iterations: z.number().int().nonnegative().optional(),
   inputSummary: z.string(),
   outputSummary: z.string(),
   timestamp: z.string(),

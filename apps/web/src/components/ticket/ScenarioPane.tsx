@@ -348,7 +348,13 @@ function UnifiedStatusAndAgentBar({
                             : "border-amber-500/40 bg-amber-500/10 text-amber-300 hover:border-primary/50 hover:text-text"
                     }`}
                   >
-                    <span>{isBusy ? "●" : taskRanForReal(t) ? "✓" : "⚠"} {stageName}</span>
+                    <span>
+                      {isBusy ? "●" : taskRanForReal(t) ? "✓" : "⚠"} {stageName}
+                      {t.stepIndex === 4 && t.iterations !== undefined && t.iterations > 0 && (
+                        <span className="text-faint" data-testid="coder-iterations"> · {t.iterations} iteration{t.iterations === 1 ? "" : "s"}</span>
+                      )}
+                      {t.stepIndex === 5 && t.source === "sandbox-preflight" && <span className="text-faint"> · sandbox-verified</span>}
+                    </span>
                     {!isBusy && t.startOffsetMs !== undefined && <span className="text-faint">+{t.startOffsetMs}·{t.latencyMs}ms</span>}
                   </button>
                   {idx < displayTasks.length - 1 && <span className="text-[9px] text-faint">→</span>}

@@ -171,6 +171,8 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           latencyMs: t.latencyMs,
           usedModel: t.source === "llm",
           source: t.source ?? t.status,
+          tokensUsed: t.tokensUsed ?? 0,
+          iterations: t.iterations,
         }))
       : [];
 
@@ -209,6 +211,10 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
               <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10px]">
                 <span className={agent.usedModel ? "text-primary" : "text-muted"}>{agent.modelId}</span>
                 {!agent.usedModel && <span className="text-warning">{agent.source}</span>}
+                {agent.iterations !== undefined && agent.iterations > 0 && (
+                  <span className="text-healthy" title="Write-then-test repair turns: sandbox findings fed back to the coder">{agent.iterations} iter</span>
+                )}
+                {agent.tokensUsed > 0 && <span className="text-muted">{agent.tokensUsed} tok</span>}
                 <span className="text-muted">{agent.latencyMs} ms</span>
               </div>
             </div>
