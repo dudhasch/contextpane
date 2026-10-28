@@ -507,7 +507,7 @@ export const api = {
   fleet: (scenarioId: string) => request<{ fleet: Fleet }>(`/api/fleet/immunize/${scenarioId}`),
   campaign: (scenarioId: string) => request<{ campaign: { campaignId: string; branches: Array<{ tenant: string; branch: string }>; verified: boolean; latencyMs: number } }>(`/api/fleet/campaign/${scenarioId}`, { method: "POST", body: "{}" }),
   runbookUrl: (scenarioId: string) => `/api/runbooks/${scenarioId}.md`,
-  exploreSelection: (body: { scenarioId: string; selectedText: string; refinementText?: string; viewMode?: ContextViewMode; customTicketText?: string }) =>
+  exploreSelection: (body: { scenarioId: string; selectedText: string; refinementText?: string; viewMode?: ContextViewMode; customTicketText?: string; prefetch?: boolean }) =>
     request<ExploreSelectionResponse>("/api/explore-selection", { method: "POST", body: JSON.stringify(body) }),
   triageCustom: (body: { title: string; body: string; customerName?: string; clarifiedAnswers?: Record<string, string> }) =>
     request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),

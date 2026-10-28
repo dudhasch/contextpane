@@ -7,7 +7,7 @@ import { models, providers } from "../config.ts";
  * At startup every configured Meta id is checked against the served list and an
  * unserved id is swapped for its stand-in, so a stale .env.local pin costs nothing.
  */
-const STAND_INS: Record<string, string> = {
+export const STAND_INS: Record<string, string> = {
   "muse-glimmer-30b": "muse-spark-1.3",
   "muse-code": "muse-wonder-1.0",
 };
@@ -21,6 +21,19 @@ export interface MetaModelResolution {
 }
 
 let resolution: Promise<unknown> = Promise.resolve();
+let lastResolution: MetaModelResolution | null = null;
+let resolutionError: string | null = null;
+
+/** What the startup check found, for /api/config and /api/health: a stand-in is never silent. */
+export function describeMetaModelResolution() {
+  return {
+    checked: lastResolution !== null,
+    error: resolutionError,
+    standIns: STAND_INS,
+    substituted: lastResolution?.substituted ?? [],
+    missing: lastResolution?.missing ?? [],
+  };
+}
 
 /** Settles once the startup model check has run (or failed), so no request uses an unresolved id. */
 export function metaModelsResolved(): Promise<unknown> {
@@ -28,7 +41,17 @@ export function metaModelsResolved(): Promise<unknown> {
 }
 
 export function resolveMetaModels(timeoutMs = 8000): Promise<MetaModelResolution | null> {
-  const pending = resolveMetaModelsNow(timeoutMs);
+  const pending = resolveMetaModelsNow(timeoutMs).then(
+    (r) => {
+      lastResolution = r;
+      resolutionError = null;
+      return r;
+    },
+    (error: unknown) => {
+      resolutionError = error instanceof Error ? error.message : String(error);
+      throw error;
+    },
+  );
   resolution = pending.catch(() => null);
   return pending;
 }

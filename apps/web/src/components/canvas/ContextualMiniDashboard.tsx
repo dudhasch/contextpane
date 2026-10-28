@@ -1,7 +1,7 @@
 import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ClipboardCopy, ExternalLink, GitCompare, ShieldAlert, Sparkles, Wand2, Wrench, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { ContextViewMode, ContextualMiniDashboard as Card, MetricTone } from "@contextpane/catalog";
-import { fmtMs } from "@/lib/format";
+import { fmtMs, provenanceBadge } from "@/lib/format";
 import { selectActiveTimelineSlice, useWorkbench, type MiniDashboardEntry, type RowFilter } from "@/store";
 import { Button } from "../ui/Button";
 import { CONTEXT_MODE_LIST, CONTEXT_MODE_META, ContextModeIcon } from "../ui/ContextModeIcons";
@@ -195,6 +195,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
 
       <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-faint" title={card.sourceQuery}>
         <span className="truncate">{cleanSubtitle}</span>
+        {entry.provider && <LensProvenance entry={entry} />}
         {refinementText && (
           <span className="rounded border border-selection/35 bg-selection/8 px-1.5 py-0.2 text-[10px] text-selection" data-testid="mini-refinement-pill">
             context: &quot;{refinementText}&quot;
@@ -369,6 +370,17 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
 /* -------------------------------------------------------------------------- */
 /* 1. DASHBOARD MODE (KPIs + Distribution Bars + Compact Top Rows)            */
 /* -------------------------------------------------------------------------- */
+
+/** Which model composed this lens (or that none did), with the time of that call. */
+function LensProvenance({ entry }: { entry: MiniDashboardEntry }) {
+  const badge = provenanceBadge({ provider: entry.provider ?? "local", modelId: entry.modelId, latencyMs: entry.serverLatencyMs ?? entry.latencyMs });
+  const cls = badge.tone === "healthy" ? "border-healthy/40 text-healthy" : badge.tone === "meta" ? "border-meta/40 text-meta" : "border-border-subtle text-muted";
+  return (
+    <span className={`inline-flex h-5 items-center rounded border px-1.5 text-[11px] ${cls}`} title={badge.title} data-testid="lens-provenance">
+      {badge.label}
+    </span>
+  );
+}
 
 function DashboardModeBody({
   card,

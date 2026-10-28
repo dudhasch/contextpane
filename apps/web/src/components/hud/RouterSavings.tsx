@@ -1,5 +1,5 @@
 import { PiggyBank } from "lucide-react";
-import { TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens } from "@/lib/format";
+import { TIER_COLOR, TIER_ROUTE, fmtMs, fmtTokens, isOpenWeightProvider } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import type { RouterTier } from "@contextpane/catalog";
 import { Dot, Pill, TONE_DOT, TONE_TEXT, type Tone } from "../ui/Pill";
@@ -43,6 +43,17 @@ export function RouterSavingsBody() {
   const total = stats?.totalRequests ?? 0;
   const spent = stats?.totalTokens ?? 0;
   const pct = total ? Math.round((zero / total) * 100) : 0;
+  // Every answer a model produced (cached ones included), and the part the open weights produced.
+  let modelAnswers = 0;
+  let openWeightAnswers = 0;
+  for (const s of Object.values(stats?.tiers ?? {})) {
+    for (const [p, n] of Object.entries(s?.byProvider ?? {})) {
+      if (p === "local") continue;
+      modelAnswers += n;
+      if (isOpenWeightProvider(p)) openWeightAnswers += n;
+    }
+  }
+  const openPct = modelAnswers ? Math.round((openWeightAnswers / modelAnswers) * 100) : 0;
 
   const rows = TIER_ROWS.map((row) => {
     const parts = row.tiers.map((t) => stats?.tiers[t]).filter((s): s is NonNullable<typeof s> => Boolean(s));
@@ -71,11 +82,18 @@ export function RouterSavingsBody() {
         <Pill tone="primary">vs Tier 2 · {fmtTokens(baseline.tokens)} tok / {fmtMs(baseline.ms)}</Pill>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-5 gap-2">
         <Stat label="0-token req" value={`${zero}`} sub={`${pct}% of ${total}`} tone="primary" />
         <Stat label="Tokens saved" value={fmtTokens(saved.tokens)} sub={`${fmtTokens(spent)} spent`} tone="healthy" />
         <Stat label="Latency saved" value={fmtMs(saved.ms)} sub="cumulative" tone="healthy" />
         <Stat label="API credit saved" value={fmtUsd(usdSaved)} sub={`@ $${pricePer1M.toFixed(2)}/1M tok`} tone="healthy" title="Estimated: tokens saved × blended price (CTX_PRICE_USD_PER_1M_TOKENS)" />
+        <Stat
+          label="Open weights"
+          value={`${openPct}%`}
+          sub={`${openWeightAnswers} of ${modelAnswers} answers`}
+          tone="healthy"
+          title="Share of model answers (live or served from the persisted cache) produced by Muse Glimmer 30B open weights"
+        />
       </div>
 
       <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-surface">

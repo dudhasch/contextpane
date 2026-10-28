@@ -81,6 +81,10 @@ export const ProviderTelemetrySchema = z.object({
   modelId: z.string().describe("Model id as the provider names it, or 'deterministic' for Tier 0 / local fallback."),
   latencyMs: z.number().int().nonnegative(),
   tokensUsed: z.number().int().nonnegative(),
+  /** Served from a persisted model answer; latencyMs is then the serve time. */
+  cached: z.boolean().optional(),
+  /** Wall time of the model call that produced a cached answer. */
+  generatedLatencyMs: z.number().int().nonnegative().optional(),
 });
 export type ProviderTelemetry = z.infer<typeof ProviderTelemetrySchema>;
 

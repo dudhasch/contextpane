@@ -81,13 +81,16 @@ const HOVER_SEED_FILE = join(config.dataDir, "hover-cache.seed.json");
 const hoverKey = (scope: string, entityId: string) => `${scope}|${entityId.toLowerCase()}`;
 
 /**
- * Cache scope of a scenario. INC-4092 keeps its tenant id, so the tracked Glimmer answers
- * in data/hover-cache.seed.json stay valid; every other scenario has its own scope.
+ * The two PSA tickets keep their tenant id as cache scope, which is how the tracked Glimmer
+ * answers in data/hover-cache.seed.json are keyed (tenant-contoso-01|…, tenant-fabrikam-02|…);
+ * every anomaly and custom ticket has its own scope.
  */
+const TENANT_SCOPED_TICKETS: Record<string, string> = { "INC-4092": "tenant-contoso-01", "INC-4099": "tenant-fabrikam-02" };
+
 export function hoverScope(scenarioId: string): string {
   const base = baseScenarioOf(scenarioId);
   if (!base) return scenarioId;
-  return base === "INC-4092" ? "tenant-contoso-01" : base;
+  return TENANT_SCOPED_TICKETS[base] ?? base;
 }
 /** Set when data/hover-cache.json was created from the seed at this start-up. */
 export let hoverCacheSeeded = false;
@@ -110,11 +113,22 @@ function loadHoverCache(): Map<string, CachedHover> {
     const file = JSON.parse(readFileSync(HOVER_CACHE_FILE, "utf8")) as { entries?: Record<string, CachedHover> };
     // Quick actions are always rebuilt from the scenario context, so an answer cached with a retired action kind stays usable.
     const knownKinds = new Set<string>(QuickActionKindSchema.options);
-    return new Map(
+    const map = new Map(
       Object.entries(file.entries ?? {})
         .map(([k, e]) => [k, { ...e, args: { ...e.args, quickActions: (e.args?.quickActions ?? []).filter((a) => knownKinds.has(a.kind)) } }] as const)
         .filter(([, e]) => HoverDiagnosticArgsSchema.safeParse(e.args).success),
     );
+    // Caches written before INC-4099 was tenant-scoped keyed it as "INC-4099|…": keep those answers
+    // under the new scope unless the seeded Glimmer answer already holds the key.
+    for (const [key, entry] of [...map]) {
+      const [scope, ...rest] = key.split("|");
+      const target = scope ? TENANT_SCOPED_TICKETS[scope] : undefined;
+      if (!target) continue;
+      map.delete(key);
+      const moved = `${target}|${rest.join("|")}`;
+      if (!map.has(moved)) map.set(moved, entry);
+    }
+    return map;
   } catch (error) {
     console.warn(`  [hover] ignoring unreadable ${HOVER_CACHE_FILE}: ${error instanceof Error ? error.message : String(error)}`);
     return new Map();
@@ -216,7 +230,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
       popover: HoverDiagnosticPopoverSchema.parse({
         ...withGroundTruth(cached.args, buildHoverDiagnostic(ctx, { entityId: input.entityId, entityType })),
         latencyBudgetMs: 350,
-        providerTelemetry: { tier: "Tier 1A", provider: cached.provider, modelId, latencyMs, tokensUsed: 0 },
+        providerTelemetry: { tier: "Tier 1A", provider: cached.provider, modelId, latencyMs, tokensUsed: 0, cached: true, generatedLatencyMs: Math.round(cached.latencyMs) },
       }),
       telemetry: telemetry.record({
         requestId,
@@ -383,6 +397,7 @@ export function buildBriefHovers(
         modelId: cached ? `${cached.modelId} (cached)` : "deterministic",
         latencyMs: 1,
         tokensUsed: 0,
+        ...(cached ? { cached: true, generatedLatencyMs: Math.round(cached.latencyMs) } : {}),
       },
     });
   }

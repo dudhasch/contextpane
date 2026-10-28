@@ -96,6 +96,11 @@ export interface MiniDashboardEntry {
   latencyMs: number;
   modelId: string;
   tokenCount: number;
+  /** Who composed the card ("local" = deterministic) and how the rows were matched (server truth). */
+  provider?: string;
+  matchedBy?: "rows" | "dataset" | "none";
+  /** Server-side time of the call that produced the card (the model call, or the deterministic slice). */
+  serverLatencyMs?: number;
   speculativeHit?: boolean;
   savedLatencyMs?: number;
 }
@@ -113,6 +118,8 @@ export interface SpeculativeSelectionSlot {
   status: "inflight" | "resolved" | "failed";
   promise: Promise<import("./lib/api").ExploreSelectionResponse | null>;
   response?: import("./lib/api").ExploreSelectionResponse;
+  /** Sent as a silent pre-fetch, which may run on the scale-to-zero open-weight GPU. */
+  prefetch?: boolean;
 }
 
 export interface SpeculativeBufferSlot {
@@ -202,6 +209,8 @@ export interface HoverEntry {
   popover?: HoverDiagnosticPopover;
   error?: string;
   latencyMs?: number;
+  /** Pre-filled from the scenario brief and not yet confirmed by a /api/hover call. */
+  seeded?: boolean;
 }
 
 /** A left-pane entity the pointer is on: its card lights up in the category colour, the rest dim. */
@@ -429,7 +438,7 @@ interface WorkbenchState {
   /** Silent kinematic pre-warm for text selection (zero Midas-touch jitter: never mutates visible UI until click). */
   prewarmSelectionExplore(
     rawText: string,
-    options?: { refinementText?: string; viewMode?: ContextViewMode },
+    options?: { refinementText?: string; viewMode?: ContextViewMode; prefetch?: boolean },
   ): Promise<import("./lib/api").ExploreSelectionResponse | null>;
   discardSpeculativeSelection(rawText?: string): void;
   prewarmQueueScenario(scenarioId: ScenarioId): Promise<void>;
@@ -720,6 +729,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         latencyMs: Math.round(performance.now() - started),
         modelId: result.modelId,
         tokenCount: result.tokenCount,
+        provider: result.provider,
+        ...(result.slice?.matchedBy ? { matchedBy: result.slice.matchedBy } : {}),
+        serverLatencyMs: result.latencyMs,
       };
       set((s) => ({
         freeRoamDashboards: [entry, ...s.freeRoamDashboards].slice(0, 12),
@@ -1012,7 +1024,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const seededHovers: Record<string, HoverEntry> = {};
       if (hovers) {
         for (const [eid, pop] of Object.entries(hovers)) {
-          seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1 };
+          seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1, seeded: true };
         }
       }
       const savedMs = Math.max(12, Math.round((prewarmedSlot.resolvedAt ?? performance.now()) - prewarmedSlot.startedAt));
@@ -1039,7 +1051,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         const seededHovers: Record<string, HoverEntry> = {};
         if (hovers) {
           for (const [eid, pop] of Object.entries(hovers)) {
-            seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1 };
+            seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1, seeded: true };
           }
         }
         set((s) => ({
@@ -1137,6 +1149,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return;
     }
     const existing = get().hovers[key];
+    if (existing?.seeded && existing.popover && existing.popover.providerTelemetry.provider !== "local") {
+      // Shown at once from the brief; confirm it with the server, which serves the persisted model answer
+      // (0 tokens, no GPU) and records it, so the Router Savings HUD counts what was actually shown.
+      set((s) => ({ hovers: { ...s.hovers, [key]: { ...existing, seeded: false } } }));
+      void api
+        .hover({ scenarioId, entityId, ...(entityType ? { entityType } : {}) })
+        .then((result) => {
+          if (get().scenarioId === scenarioId) set((s) => ({ hovers: { ...s.hovers, [key]: { status: "ready", popover: result.popover, latencyMs: result.telemetry.latencyMs } } }));
+        })
+        .catch(() => undefined);
+      return;
+    }
     if (existing && existing.status !== "error") return;
     set((s) => ({ hovers: { ...s.hovers, [key]: { status: "loading" } } }));
     const started = performance.now();
@@ -1720,6 +1744,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         ...(refinementText ? { refinementText } : {}),
         viewMode,
         ...(customText ? { customTicketText: customText } : {}),
+        ...(options.prefetch ? { prefetch: true } : {}),
       })
       .then((res) => {
         if (get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
@@ -1768,6 +1793,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         startedAt,
         status: "inflight",
         promise,
+        ...(options.prefetch ? { prefetch: true } : {}),
       };
       return {
         speculativeSelectionCache: nextCache,
@@ -1969,7 +1995,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       let savedLatencyMs = 0;
 
       if (validSpecSlot) {
-        result = validSpecSlot.response ?? (await validSpecSlot.promise);
+        // A pre-fetch may be waiting on a cold open-weight GPU: give it 4 s, then ask the hosted chain.
+        result =
+          validSpecSlot.response ??
+          (await (validSpecSlot.prefetch
+            ? Promise.race([validSpecSlot.promise, new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 4000))])
+            : validSpecSlot.promise));
         if (result && get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
           speculativeHit = true;
           const prewarmElapsed = Math.round((validSpecSlot.resolvedAt ?? performance.now()) - validSpecSlot.startedAt);
@@ -2017,6 +2048,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           latencyMs: speculativeHit ? Math.min(1, Math.round(promoteMs)) : Math.round(performance.now() - clickStartedAt),
           modelId: result!.modelId,
           tokenCount: result!.tokenCount,
+          provider: result!.provider,
+          matchedBy: result!.slice.matchedBy,
+          serverLatencyMs: result!.latencyMs,
           speculativeHit,
           ...(speculativeHit ? { savedLatencyMs } : {}),
         };

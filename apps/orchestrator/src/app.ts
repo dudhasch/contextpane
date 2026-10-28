@@ -31,7 +31,7 @@ import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
 import { applyScenarioState } from "./local/lab.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext, resolveScenarioId } from "./mcp/context.ts";
-import { metaModelsResolved } from "./router/meta-models.ts";
+import { describeMetaModelResolution, metaModelsResolved } from "./router/meta-models.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
 import { auditLedger } from "./store/audit.ts";
@@ -143,10 +143,11 @@ app.get("/api/health", async (c) => {
     mcp,
     telemetrySubscribers: telemetry.stats().subscribers,
     openWeightInference: { ...OPEN_WEIGHT_INFERENCE_CONFIG, hoverTiers: [...config.openWeightTiers], maxContainers: 1 },
+    metaModelResolution: describeMetaModelResolution(),
   });
 });
 
-app.get("/api/config", (c) => c.json({ ...describeConfig(), dataMode: getPersistedDataMode() }));
+app.get("/api/config", (c) => c.json({ ...describeConfig(), dataMode: getPersistedDataMode(), metaModelResolution: describeMetaModelResolution() }));
 app.get("/api/mcp/status", async (c) => c.json(await sources.status()));
 
 /* -------------------------------- scenarios -------------------------------- */
@@ -311,6 +312,8 @@ const ExploreBodySchema = z.object({
   refinementText: z.string().max(SELECTION_MAX_CHARS * 2).optional(),
   viewMode: ContextViewModeSchema.optional(),
   customTicketText: z.string().max(8000).optional(),
+  /** Silent selectionchange pre-fetch: may run on the open-weight GPU (CTX_OPEN_WEIGHT_TIERS=…,selection-prefetch). */
+  prefetch: z.boolean().optional(),
 });
 
 /**
@@ -326,6 +329,7 @@ app.post("/api/explore-selection", async (c) => {
     ...(body.refinementText ? { refinementText: body.refinementText } : {}),
     ...(body.viewMode ? { viewMode: body.viewMode } : {}),
     ...(body.customTicketText ? { customTicketText: body.customTicketText } : {}),
+    ...(body.prefetch ? { prefetch: true } : {}),
   });
   return c.json(result);
 });

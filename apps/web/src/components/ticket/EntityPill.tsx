@@ -14,9 +14,9 @@ import {
 } from "@floating-ui/react";
 import { AlertTriangle, Cloud, Cpu, ExternalLink, Hash, Laptop, ShieldBan, SlidersHorizontal, Sparkles, UserRound, Users, Wrench } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { lookupRoleOrPermission, type EnrichedEntity, type EntityType, type QuickAction } from "@contextpane/catalog";
+import { lookupRoleOrPermission, type EnrichedEntity, type EntityType, type ProviderTelemetry, type QuickAction } from "@contextpane/catalog";
 import { onDemo } from "@/lib/demo";
-import { healthTone } from "@/lib/format";
+import { healthTone, provenanceBadge } from "@/lib/format";
 import { CAT_CHIP, catStyle } from "@/lib/provenance";
 import { selectActiveTimelineSlice, selectHover, useWorkbench } from "@/store";
 import { Button } from "../ui/Button";
@@ -260,13 +260,21 @@ function HoverPopoverBody({ entityId, tone, onClose }: { entityId: string; tone:
           ))}
         </div>
       )}
-      <div className="flex items-center justify-between border-t border-border-subtle pt-1.5 text-[10px] text-faint">
-        <span className="inline-flex items-center gap-1">
-          <Cpu className="size-3" />
-          Live Entra &amp; Azure Context · &lt;1ms
-        </span>
-        <span>{entry.latencyMs && entry.latencyMs > 1 ? `${entry.latencyMs} ms` : "<1ms"}</span>
-      </div>
+      <HoverProvenance telemetry={t} serveMs={entry.latencyMs} />
+    </div>
+  );
+}
+
+/** Which model produced the headline (facts and actions are always the deterministic diagnostic). */
+function HoverProvenance({ telemetry, serveMs }: { telemetry: ProviderTelemetry; serveMs: number | undefined }) {
+  const badge = provenanceBadge(telemetry);
+  return (
+    <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-1.5 text-[11px] text-faint" data-testid="hover-provenance">
+      <span className="inline-flex min-w-0 items-center gap-1" title={badge.title}>
+        <Cpu className={`size-3 shrink-0 ${badge.tone === "healthy" ? "text-healthy" : badge.tone === "meta" ? "text-meta" : ""}`} />
+        <span className={`truncate ${badge.tone === "healthy" ? "text-healthy" : badge.tone === "meta" ? "text-meta" : ""}`}>{badge.label}</span>
+      </span>
+      {serveMs !== undefined && serveMs > 1 && <span className="shrink-0 font-mono">{serveMs} ms</span>}
     </div>
   );
 }
