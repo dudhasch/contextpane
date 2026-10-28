@@ -296,7 +296,7 @@ that fails is repaired by the deterministic hydrator, and every tier falls back 
 | **1A** | `POST /api/hover` | Translates an entity (UPN, group, policy, setting, `AADSTS53003`, `0x87D1FDE8`) into a `HoverDiagnosticPopover`. Facts, actions and the error translation come from the deterministic diagnostic; the model words the headline. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of every scenario is pre-generated and persisted to `data/hover-cache.json`, seeded on a fresh clone from the tracked `data/hover-cache.seed.json` |
 | **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Meta API `muse-spark-1.3` (`minimal`; open-weight Glimmer first only with `CTX_OPEN_WEIGHT_TIERS=hover,catalog`); the SSE stream paints the full deterministic layout from MCP data (`mcp_ready`) before the model answers |
 | **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
-| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the bundle: PowerShell, plus the Terraform diff where the scenario has IaC and the Graph request JSON otherwise (`muse-code` takes the second step once the Meta API serves it). The pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`) and statically proves every mutating cmdlet sits inside `$PSCmdlet.ShouldProcess`, so `-WhatIf` changes nothing; a git worktree force-updates the scenario's canonical `fix/<scenario>-<tenant>-remediation` branch, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
+| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the bundle: PowerShell, plus the Terraform diff where the scenario has IaC and the Graph request JSON otherwise (the brief's `muse-code` is not served by the Meta API: the startup model check swaps the configured `muse-code` for `muse-wonder-1.0` and `GET /api/config` reports it under `metaModelResolution`). The pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`) and statically proves every mutating cmdlet sits inside `$PSCmdlet.ShouldProcess`, so `-WhatIf` changes nothing; a git worktree force-updates the scenario's canonical `fix/<scenario>-<tenant>-remediation` branch, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
 | **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch scenario / generate fix. | `muse-voice-transcribe-1.0` + `muse-spark-1.3` |
 | **Vision** | `POST /api/vision-extract` | The ticket's screenshot (base64 data URI) → `{ errorCode, appId, correlationId, timestamp, deviceState, recommendedComponent }`, Zod-validated, then matched to the sign-in it shows (same AADSTS code and app id, nearest time), which the timeline highlights. No model, no extraction: pixels have no deterministic fallback. | Meta API `muse-spark-1.3` with an `image_url` part (`CTX_MODEL_META_VISION`) |
 
@@ -310,7 +310,7 @@ weights are opt-in: `scripts/Start-GlimmerOpenWeights.ps1` serves Meta's
 full-precision weights on vLLM instead. Telemetry names where Glimmer ran:
 `modal-open-weights`, `runpod` or `local-glimmer-30b`. Any such URL goes into
 `CTX_OPEN_WEIGHT_BASE_URL` (or `MODAL_INFERENCE_BASE_URL` / `RUNPOD_VLLM_BASE_URL`). Baseten (`muse-spark-open-1026`) and Fireworks keys remain optional
-drop-in overrides ahead of Meta.
+drop-in overrides ahead of Meta; neither is configured for the demo, so neither appears in any chain.
 
 Every provider in a chain is bounded by a timeout and falls through on error, timeout,
 missing key or invalid schema. When no provider answers, the deterministic engine produces
@@ -319,8 +319,10 @@ the same catalog components from the same MCP context and the telemetry reports
 provider, model, latency, tokens, fallback chain) and broadcasts it over `/ws`, which
 drives the *router savings* tab of the System & Audit drawer.
 
-**Why forced tool calling?** Baseten's `muse-spark-open-1026` supports OpenAI-compatible
-`tools` / `tool_choice` but not `response_format: { type: "json_schema" }`.
+**Why forced tool calling?** One payload has to work on every provider the router may
+use: the Meta Model API answers `tools` with `tool_choice: "auto"`, and the optional
+Baseten `muse-spark-open-1026` supports `tools` / `tool_choice` but not
+`response_format: { type: "json_schema" }`.
 `packages/catalog` exports `getHydrateLayoutToolDefinition()`, which wraps the entire
 layout schema as a function tool and forces it with
 `tool_choice: { type: "function", function: { name: "hydrate_contextpane_layout" } }`.

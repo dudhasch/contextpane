@@ -12,7 +12,7 @@ import {
   type ContextualMiniDashboard,
   type RouterTelemetry,
 } from "@contextpane/catalog";
-import { config, models, providers } from "../config.ts";
+import { config, models, providerFor, providers } from "../config.ts";
 import { buildScenarioBrief } from "../local/brief.ts";
 import { publishSelection, type SelectionPublication } from "../local/dataplane.ts";
 import { buildSelectionSlice, sliceToCard, type SelectionSlice } from "../local/selection.ts";
@@ -27,7 +27,8 @@ import { ZERO_USAGE, telemetry } from "../telemetry.ts";
  * refers to, publishes them under ptr://<scenario>/selection/<hash> (PII vaulted for the
  * prompt), and muse-spark-1.3 composes the ContextualMiniDashboard from the descriptor and
  * the reference slice. The data plane binds the rows back; the deterministic card answers
- * alone when the model is offline, slow or invalid. Never touches the open-weight GPU.
+ * alone when the model is offline, slow or invalid. The silent selection pre-fetch runs on the
+ * open-weight Muse Glimmer 30B first when CTX_OPEN_WEIGHT_TIERS includes selection-prefetch.
  */
 
 export interface ExploreInput {
@@ -39,6 +40,8 @@ export interface ExploreInput {
   viewMode?: ContextViewMode;
   /** Free-form ticket text the selection came from (an unscripted ticket), for the prompt only. */
   customTicketText?: string;
+  /** Kinematic selectionchange pre-fetch: nobody is waiting, so the open-weight GPU may answer first. */
+  prefetch?: boolean;
 }
 
 export interface ExploreResult {
@@ -49,7 +52,14 @@ export interface ExploreResult {
   modelId: string;
   provider: RouterTelemetry["provider"];
   tokenCount: number;
-  slice: { kind: SelectionSlice["kind"]; matchedBy: SelectionSlice["matchedBy"]; rowCount: number; searched: SelectionSlice["searched"] };
+  slice: {
+    kind: SelectionSlice["kind"];
+    matchedBy: SelectionSlice["matchedBy"];
+    rowCount: number;
+    searched: SelectionSlice["searched"];
+    /** Where the card's rows come from: the MCP source (live-graph, live-azure, seeded-manifest, …), "model-synthesized" or "none". */
+    dataSource: string;
+  };
   descriptor: SelectionPublication["descriptor"];
   telemetry: RouterTelemetry;
 }
@@ -62,11 +72,35 @@ CRITICAL RULES:
 2. Keep every real identifier verbatim, write a domain-accurate title and subtitle, 2-4 KPIs and 2-5 breakdown bars, and one concrete PowerShell 7 / Azure CLI suggested action.
 3. Set rows to {"dataPtr": "<pointer>"}. If descriptor.matchedBy is "none" (an open-ended or custom concept not in the fixed tables), also populate synthesizedRows with 4-5 realistic, domain-accurate rows whose keys match your columns.`;
 
+/** The CorrelationContext source each slice kind reads (keys of ctx.sourcesUsed). */
+const SOURCE_OF_KIND: Record<SelectionSlice["kind"], string> = {
+  "entra-users": "license",
+  "entra-sku-pools": "license",
+  "entra-signins": "signIns",
+  "entra-ca-policies": "policies",
+  "entra-groups": "securityGroups",
+  "intune-devices": "intune",
+  "intune-settings": "intune",
+  "azure-nsg-rules": "drift",
+  "avd-session-hosts": "avd",
+  "workload-identity": "workloadIdentity",
+  "azure-vms": "virtualMachines",
+  "azure-resources": "resourceInventory",
+  "azure-policies": "azurePolicies",
+  "azure-quota-capacity": "regionalQuotas",
+};
+
 /** `<Mail-ReadWrite-assignment-id>`, `<upn>`, `<SG-BreakGlass-Accounts objectId>`: an id the model did not have. */
 export const PLACEHOLDER_RE = /<[A-Za-z][^<>\n]{0,80}>/;
 
-function chainSteps(): ChainStep[] {
+function chainSteps(options: { prefetch?: boolean } = {}): ChainStep[] {
   return [
+    {
+      provider: providers.openWeight.id,
+      modelId: models.openWeightGlimmer,
+      hasKey: providers.openWeight.hasKey && config.openWeightTiers.has("selection-prefetch") && options.prefetch === true,
+      tier: "Tier 1B",
+    },
     { provider: "meta", modelId: models.metaWonder, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
     { provider: "meta", modelId: models.metaCatalog, hasKey: providers.meta.hasKey, tier: "Tier 1B" },
   ];
@@ -98,11 +132,12 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
   let provider: RouterTelemetry["provider"] = "local";
   let modelId = "deterministic";
   let chain: RouterTelemetry["fallbackChain"] = [];
-  const steps = chainSteps();
+  const steps = chainSteps({ prefetch: input.prefetch === true });
 
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const strictRealTenant = sources.getDataMode() === "real-tenant";
-    const isOpenEndedSynthesis = !strictRealTenant && slice.matchedBy === "none";
+    // Never synthesize rows for a concrete identifier the tenant does not have (a vault name, a UPN, a GUID).
+    const isOpenEndedSynthesis = !strictRealTenant && slice.matchedBy === "none" && !slice.missedIdentifier;
     const baseTool = getComposeMiniDashboardToolDefinition();
     const baseParams = baseTool.function.parameters as Record<string, unknown>;
     const baseProps = (baseParams.properties as Record<string, unknown>) ?? {};
@@ -152,15 +187,22 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
       ...(isOpenEndedSynthesis ? {} : { referenceCard: { ...referenceWithoutRows, rows: { dataPtr: ptr } } }),
     };
     const outcome = await runChain(steps, async (step) => {
+      const openWeight = step.provider === providers.openWeight.id;
       const result = await chatWithForcedTool(
-        providers.meta,
+        providerFor(step.provider),
         step.modelId,
         [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: JSON.stringify(payload) },
         ],
         tool,
-        { timeoutMs: config.timeouts.exploreMs, temperature: 0.1, maxTokens: 2800, reasoningEffort: config.reasoning.catalog },
+        {
+          // A cold scale-to-zero GPU needs longer than the interactive budget; a pre-fetch can wait for it.
+          timeoutMs: openWeight ? Math.max(config.timeouts.exploreMs, config.timeouts.openWeightHoverMs * 3) : config.timeouts.exploreMs,
+          temperature: 0.1,
+          maxTokens: openWeight ? config.openWeightHoverMaxTokens : 2800,
+          reasoningEffort: config.reasoning.catalog,
+        },
       );
       const rawArgs = parseToolArguments(result.argumentsRaw) as Record<string, unknown>;
       const synthesizedRowsRaw = Array.isArray(rawArgs?.synthesizedRows) ? (rawArgs.synthesizedRows as Array<Record<string, unknown>>) : null;
@@ -255,7 +297,13 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
     modelId,
     provider,
     tokenCount: usage.total,
-    slice: { kind: slice.kind, matchedBy: slice.matchedBy, rowCount: slice.rows.length, searched: slice.searched },
+    slice: {
+      kind: slice.kind,
+      matchedBy: slice.matchedBy,
+      rowCount: card.rows.length,
+      searched: slice.searched,
+      dataSource: slice.matchedBy === "none" ? (card.rows.length ? "model-synthesized" : "none") : (ctx.sourcesUsed[SOURCE_OF_KIND[slice.kind]] ?? "unknown"),
+    },
     descriptor: publication.descriptor,
     telemetry: event,
   };

@@ -41,6 +41,7 @@ export function useDemoHotkeys() {
         case "4":
         case "5":
         case "6":
+        // "7" is the Vision beat below; inside the open queue every digit 1-9 opens its row (WorkQueue onKey).
         case "8":
         case "9": {
           // Position in the unified queue (newest first, resolved last), as the popover numbers them.
@@ -99,6 +100,9 @@ export function useDemoHotkeys() {
           break;
         case "n":
           s.setComposerOpen(!s.composerOpen);
+          break;
+        case "c":
+          dispatchDemo({ kind: "toggle-clarifier" });
           break;
         case "g":
           void s.simulateDrop();

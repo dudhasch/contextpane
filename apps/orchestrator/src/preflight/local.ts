@@ -111,6 +111,7 @@ const ALLOWED_COMMANDS = new Set([
   "remove-mgoauth2permissiongrant",
   "remove-mgserviceprincipalapproleassignment",
   "remove-mgapplicationpassword",
+  "remove-mgapplicationfederatedidentitycredential",
   "remove-azkeyvault",
   "remove-aznetworksecurityruleconfig",
 ]);

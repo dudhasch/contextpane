@@ -1,5 +1,5 @@
 import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
-import { ChevronDown, Dices, FilePlus2, Inbox, ImageIcon, Radar, Search, Sparkles, Ticket } from "lucide-react";
+import { ChevronDown, Dices, FilePlus2, FlaskConical, Inbox, ImageIcon, Radar, Search, Sparkles, Ticket } from "lucide-react";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { ScenarioListItem, WorkItemOrigin } from "@contextpane/catalog";
 import { ORIGIN_META, ORIGIN_ORDER, matchesFilter, matchesQuery, relativeAge, statusOf, type QueueFilter } from "@/lib/workitem";
@@ -55,9 +55,11 @@ export function WorkQueue() {
   const simulateDrop = useWorkbench((s) => s.simulateDrop);
   const dropStatus = useWorkbench((s) => s.dropStatus);
   const closedId = useWorkbench((s) => (s.resolutionNote?.closed ? s.resolutionNote.scenarioId : null));
+  const includeSeeded = useWorkbench((s) => s.includeSeededOverride ?? s.dataMode !== "real-tenant");
+  const setIncludeSeeded = useWorkbench((s) => s.setIncludeSeeded);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const queue = useMemo(() => orderedQueue(), [scenarios, convergence, orderedQueue]);
+  const queue = useMemo(() => orderedQueue(), [scenarios, convergence, orderedQueue, includeSeeded]);
   const current = queue.find((s) => s.scenarioId === scenarioId);
   const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, queue.filter((s) => matchesFilter(s, f.id, convergence)).length])) as Record<QueueFilter, number>, [queue, convergence]);
   const rows = queue.filter((s) => matchesFilter(s, filter, convergence) && matchesQuery(s, query));
@@ -147,6 +149,16 @@ export function WorkQueue() {
               <Kbd>Ctrl K</Kbd>
             </div>
             <div className="flex flex-wrap items-center gap-1 border-b border-border-subtle px-3 py-1.5">
+              <button
+                type="button"
+                onClick={() => void setIncludeSeeded(!includeSeeded)}
+                aria-pressed={includeSeeded}
+                title={includeSeeded ? "Seeded demo tickets (INC-4092, INC-4099, ANOM-*) are listed first · click to hide them" : "Show the seeded demo tickets (INC-4092, INC-4099, ANOM-*) at the top of the queue"}
+                data-testid="queue-seeded-chip"
+                className={`mr-1 inline-flex h-5 items-center gap-1 rounded-pill border px-2 font-mono text-[10.5px] transition-colors [&>svg]:size-3 ${includeSeeded ? "border-meta/50 bg-meta/15 text-meta" : "border-dashed border-border text-muted hover:text-text"}`}
+              >
+                <FlaskConical /> Seeded demo tickets {includeSeeded ? "on" : "off"}
+              </button>
               {FILTERS.map((f) => (
                 <button
                   key={f.id}
@@ -162,8 +174,8 @@ export function WorkQueue() {
             <ul className="max-h-[360px] overflow-y-auto py-1">
               {rows.length === 0 && (
                 <li className="px-3 py-4 text-center text-[12px] text-faint">
-                  {dataMode === "real-tenant"
-                    ? "No custom tickets or live anomalies in queue yet (Seeded demo tickets are hidden in Real Tenant mode). Click [Scan for Anomalies] or [+ Triage Unscripted Ticket]."
+                  {dataMode === "real-tenant" && !includeSeeded
+                    ? "No custom tickets or live anomalies in queue yet. Turn on [Seeded demo tickets], click [Scan for Anomalies] or [+ Triage Unscripted Ticket]."
                     : "No work items match."}
                 </li>
               )}

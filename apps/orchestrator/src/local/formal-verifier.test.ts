@@ -147,29 +147,44 @@ describe("Tier 3C formal blast-radius prover", () => {
     expect(commented.passed).toBe(true);
   });
 
-  test("buildInverseRollback('INC-4092') populates real SKU GUIDs, Entra user Object GUIDs for Remove-MgGroupMemberByRef, matching CA policy ID, and Allow-Temp-RDP-Diagnostic-Drift", () => {
+  test("buildInverseRollback('INC-4092') resolves groups, users and the CA policy at runtime and keeps conditions.users whole", () => {
     const rb = buildInverseRollback("INC-4092");
-    expect(rb.powershellScript).toContain("6fd2c87f-b296-42f0-b197-1e91e994b900");
-    expect(rb.powershellScript).toContain("06ebc4ee-1bb5-47dd-8120-11324bc54e06");
+    expect(rb.powershellScript).toContain("#Requires -Modules Microsoft.Graph.Users, Microsoft.Graph.Users.Actions");
     expect(rb.powershellScript).toContain("Allow-Temp-RDP-Diagnostic-Drift");
-    expect(rb.powershellScript).toContain("SG-Contoso-Finance-Legacy");
-    expect(rb.powershellScript).toContain("lynne.robins.contoso@c4a8shili.onmicrosoft.com");
-    expect(rb.powershellScript).toContain("diego.siciliani.contoso@c4a8shili.onmicrosoft.com");
-    expect(rb.powershellScript).toContain("patti.fernandez.contoso@c4a8shili.onmicrosoft.com");
-    expect(rb.powershellScript).toContain("-DirectoryObjectId '907668fd-5d90-4f7c-8a5c-112233445501'");
-    expect(rb.powershellScript).toContain("-DirectoryObjectId '907668fd-5d90-4f7c-8a5c-112233445502'");
-    expect(rb.powershellScript).toContain("-DirectoryObjectId '907668fd-5d90-4f7c-8a5c-112233445503'");
-    expect(rb.powershellScript).not.toMatch(/-DirectoryObjectId\s+['"][^'"]*@[^'"]*['"]/);
-    expect(rb.powershellScript).toContain("d09ae604-9c1e-4b9c-9a5d-000000000001");
-    expect(rb.powershellScript).not.toContain("-AddLicenses @() -RemoveLicenses @()");
+    expect(rb.powershellScript).toContain("Get-GroupByName 'SG-Contoso-Finance-Legacy'");
+    for (const upn of ["lynne.robins", "diego.siciliani", "patti.fernandez"]) expect(rb.powershellScript).toContain(`Get-MgUser -UserId '${upn}.contoso@c4a8shili.onmicrosoft.com'`);
+    expect(rb.powershellScript).toContain("[ContextPane-Demo] Block AVD - Contoso Finance Legacy");
+    expect(rb.powershellScript).toContain("Get-CaUsersBody $policy.Conditions.Users");
+    // Synthetic ids from before the H-14/H-15 fix must not come back.
+    for (const fake of ["6fd2c87f-b296-42f0-b197-1e91e994b900", "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c", "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d", "d09ae604-9c1e-4b9c-9a5d-000000000001", "907668fd-5d90-4f7c-8a5c-1122334455"]) {
+      expect(rb.powershellScript).not.toContain(fake);
+    }
+    expect(rb.powershellScript).not.toContain("SilentlyContinue | Out-Null; Invoke-MgLicenseUser");
   });
 
   test("buildInverseRollback('INC-4099') targets BitLocker & Fabrikam devices without leaking Contoso AVD NSG", () => {
     const rb = buildInverseRollback("INC-4099");
-    expect(rb.powershellScript).toContain("intune-bitlocker-legacy-v1");
-    expect(rb.powershellScript).toContain("FABRIKAM-LT-1107");
+    expect(rb.powershellScript).toContain("Get-DeviceConfigurationByName '[ContextPane-Demo] Fabrikam-Legacy-BitLocker-DeviceConfig'");
+    expect(rb.powershellScript).toContain("Sync-DeviceByName 'FABRIKAM-LT-1107'");
+    expect(rb.powershellScript).toContain("Sync-MgDeviceManagementManagedDevice -ManagedDeviceId $d.Id");
+    expect(rb.powershellScript).not.toContain("Invoke-MgDeviceManagementManagedDeviceSyncDevice");
+    expect(rb.powershellScript).not.toContain("b1c2d3e4-1111-4222-8333-444455556666");
     expect(rb.powershellScript).not.toContain("nsg-contoso-avd-hostpool-01");
     expect(rb.restores.join(" ")).not.toContain("nsg-contoso-avd-hostpool-01");
+  });
+
+  test("rollbacks: CA-001 keeps its include set, CA-004 resolved by name, ANOM-LIC-101 restores per-user licenses", () => {
+    const ca = buildInverseRollback("ANOM-CA-204").powershellScript;
+    expect(ca).toContain("Get-CaUsersBody $ca001.Conditions.Users");
+    expect(ca).not.toContain("excludeGroups = @() } }");
+    expect(ca).not.toMatch(/ca00[14][a-d]\d\d-/);
+    const lic = buildInverseRollback("ANOM-LIC-101").powershellScript;
+    expect(lic).toContain("Set-MgUserLicense -UserId $u.Id -AddLicenses");
+    expect(lic).toContain("henrietta.mueller.contoso@");
+    expect(lic).not.toContain("/assignLicense");
+    const app = buildInverseRollback("ANOM-APP-401").powershellScript;
+    expect(app).toContain("New-MgApplicationOwnerByRef");
+    expect(app).not.toContain("app-contoso-erp-sync-prod");
   });
 
   test("Weighted Partial MaxSMT synthesis (ΔW) & 7-bit Proof-Carrying Certificate (0x7F)", () => {

@@ -31,7 +31,7 @@ import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
 import { applyScenarioState } from "./local/lab.ts";
 import { sources } from "./mcp/clients.ts";
 import { gatherContext, invalidateContext, resolveScenarioId } from "./mcp/context.ts";
-import { metaModelsResolved } from "./router/meta-models.ts";
+import { describeMetaModelResolution, metaModelsResolved } from "./router/meta-models.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { githubStatus, listStagedBranches } from "./preflight/staging.ts";
 import { auditLedger } from "./store/audit.ts";
@@ -143,10 +143,11 @@ app.get("/api/health", async (c) => {
     mcp,
     telemetrySubscribers: telemetry.stats().subscribers,
     openWeightInference: { ...OPEN_WEIGHT_INFERENCE_CONFIG, hoverTiers: [...config.openWeightTiers], maxContainers: 1 },
+    metaModelResolution: describeMetaModelResolution(),
   });
 });
 
-app.get("/api/config", (c) => c.json({ ...describeConfig(), dataMode: getPersistedDataMode() }));
+app.get("/api/config", (c) => c.json({ ...describeConfig(), dataMode: getPersistedDataMode(), metaModelResolution: describeMetaModelResolution() }));
 app.get("/api/mcp/status", async (c) => c.json(await sources.status()));
 
 /* -------------------------------- scenarios -------------------------------- */
@@ -187,7 +188,9 @@ function listActiveScenarios(includeSeededOverride?: boolean): ScenarioListItem[
  * In "real-tenant" mode, the 6 seeded demo scenarios are filtered out unless ?includeSeeded=1.
  */
 app.get("/api/scenarios", (c) => {
-  const includeSeeded = /^(1|true)$/i.test(c.req.query("includeSeeded") ?? "") ? true : undefined;
+  // 1/true forces the seeded demo tickets in, 0/false out (the web chip); absent follows the data mode.
+  const raw = c.req.query("includeSeeded") ?? "";
+  const includeSeeded = /^(1|true)$/i.test(raw) ? true : /^(0|false)$/i.test(raw) ? false : undefined;
   return c.json({ scenarios: listActiveScenarios(includeSeeded), dataMode: getPersistedDataMode() });
 });
 
@@ -311,6 +314,8 @@ const ExploreBodySchema = z.object({
   refinementText: z.string().max(SELECTION_MAX_CHARS * 2).optional(),
   viewMode: ContextViewModeSchema.optional(),
   customTicketText: z.string().max(8000).optional(),
+  /** Silent selectionchange pre-fetch: may run on the open-weight GPU (CTX_OPEN_WEIGHT_TIERS=…,selection-prefetch). */
+  prefetch: z.boolean().optional(),
 });
 
 /**
@@ -326,6 +331,7 @@ app.post("/api/explore-selection", async (c) => {
     ...(body.refinementText ? { refinementText: body.refinementText } : {}),
     ...(body.viewMode ? { viewMode: body.viewMode } : {}),
     ...(body.customTicketText ? { customTicketText: body.customTicketText } : {}),
+    ...(body.prefetch ? { prefetch: true } : {}),
   });
   return c.json(result);
 });

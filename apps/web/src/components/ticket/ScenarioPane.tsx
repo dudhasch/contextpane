@@ -2,6 +2,7 @@ import { AlertOctagon, Bot, Check, ChevronRight, CircleCheckBig, ClipboardList, 
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CATEGORY_META, type ClarifyingQuestion, type ContextViewMode, type EnrichedEntity, type ResolutionStep, type ScenarioBrief, type SubAgentTaskRecord, type UpstreamCloudStatusCorrelation } from "@contextpane/catalog";
 import type { ErpAttachment } from "@/lib/api";
+import { onDemo } from "@/lib/demo";
 import { fmtDateTimeUtc, fmtMs, SOURCE_LABEL } from "@/lib/format";
 import { CATEGORY_ORDER, CAT_DOT, CAT_TEXT, catStyle } from "@/lib/provenance";
 import { selectConvergence, useWorkbench } from "@/store";
@@ -21,11 +22,10 @@ export function ScenarioPane() {
   const status = useWorkbench((s) => s.briefStatus);
   const triageStatus = useWorkbench((s) => s.triageStatus);
   if (!brief) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted">
-        {status === "error" ? "Orchestrator unreachable — start apps/orchestrator on :4000" : "Loading scenario…"}
-      </div>
-    );
+    if (status === "error") {
+      return <div className="flex h-full items-center justify-center text-sm text-muted">Orchestrator unreachable — start apps/orchestrator on :4000</div>;
+    }
+    return <ScenarioPaneSkeleton />;
   }
   const hasTasks = Boolean((brief.subAgentTasks && brief.subAgentTasks.length > 0) || triageStatus === "loading");
   return (
@@ -38,6 +38,8 @@ export function ScenarioPane() {
           correlation={brief.cloudStatusCorrelation}
         />
       )}
+      {/* The operator reads the ticket before steering it: body first, clarifier folded to one line (c). */}
+      <ScenarioText brief={brief} />
       {brief.clarifyingQuestions && brief.clarifyingQuestions.length > 0 && (
         <ProjectGoalClarifierCard
           scenarioId={brief.scenarioId}
@@ -46,7 +48,6 @@ export function ScenarioPane() {
         />
       )}
       <SummaryPlan brief={brief} />
-      <ScenarioText brief={brief} />
       <div className="space-y-1.5">
         <EnrichedContext entities={brief.entities} />
         {brief.contract && (
@@ -87,6 +88,55 @@ export function ScenarioPane() {
             </ol>
           </Accordion>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * While the brief loads (a live correlate can take ~30 s): the ticket as the queue already knows it
+ * (title, requester, body for custom and ERP tickets) and skeleton bars, never a blank pane.
+ */
+function ScenarioPaneSkeleton() {
+  const item = useWorkbench((s) => s.scenarios.find((x) => x.scenarioId === s.scenarioId));
+  const ticket = item?.custom?.ticket;
+  return (
+    <div className="flex h-full flex-col gap-2 overflow-y-auto px-3.5 py-2.5" data-testid="scenario-pane-skeleton" aria-busy="true">
+      {item ? (
+        <div>
+          <div className="flex items-center gap-2 font-mono text-[11px] text-muted">
+            <OriginBadge origin={item.origin} short />
+            <span className="font-semibold text-text">{item.displayId}</span>
+            <span className="truncate">{item.tenantName}</span>
+          </div>
+          <h2 className="mt-1 text-[15px] leading-snug font-semibold">{item.title}</h2>
+        </div>
+      ) : (
+        <div className="h-5 w-2/3 animate-pulse rounded bg-surface" />
+      )}
+      <div className="flex h-7 items-center gap-2 rounded-lg border border-border-subtle bg-surface/90 px-2.5 text-[11px] text-muted">
+        <span className="size-2.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        Gathering tenant context and correlating the ticket…
+      </div>
+      {ticket?.body ? (
+        <section className="rounded-[10px] border border-border bg-surface px-3 py-2" data-testid="customer-ticket-card">
+          <div className="section-label mb-1">{item?.origin === "erp-drop" ? "ERP ticket (file drop)" : "Customer ticket"}</div>
+          <p className="text-[12px] leading-snug whitespace-pre-line text-text" data-testid="scenario-body">
+            {ticket.body}
+          </p>
+        </section>
+      ) : (
+        <div className="space-y-1.5 rounded-[10px] border border-border bg-surface px-3 py-2">
+          <div className="h-3 w-1/4 animate-pulse rounded bg-elevated" />
+          <div className="h-3 w-full animate-pulse rounded bg-elevated" />
+          <div className="h-3 w-5/6 animate-pulse rounded bg-elevated" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-elevated" />
+        </div>
+      )}
+      <div className="space-y-1.5 rounded-[10px] border border-border-subtle px-3 py-2">
+        <div className="h-3 w-1/3 animate-pulse rounded bg-surface" />
+        <div className="h-3 w-full animate-pulse rounded bg-surface" />
+        <div className="h-3 w-4/5 animate-pulse rounded bg-surface" />
       </div>
     </div>
   );
@@ -193,8 +243,11 @@ function UnifiedStatusAndAgentBar({
     [displayTasks],
   );
   const hasAdvisory = Boolean(
-    correlation && (correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational")),
+    correlation && (correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational" && s.status !== "unknown")),
   );
+  // Name only the services a probe reported as operational; the rest are "not probed", never "OK".
+  const okServices = correlation?.services.filter((s) => s.status === "operational").map((s) => s.label.replace(/ \(.*\)$| \/ .*$/, "")) ?? [];
+  const unprobed = correlation?.services.filter((s) => s.status === "unknown").length ?? 0;
 
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [selectedStep, setSelectedStep] = useState<number | null>(null);
@@ -260,9 +313,9 @@ function UnifiedStatusAndAgentBar({
               <span className="text-[11px] font-medium text-text">
                 {hasAdvisory
                   ? `Cloud Status: ${correlation.advisories[0]?.region ?? correlation.primaryRegion ?? "Regional"} Advisory`
-                  : correlation.services.length > 0
-                    ? `Cloud Status: ${correlation.services.length} services OK`
-                    : "Cloud Status: no services correlated"}
+                  : okServices.length
+                    ? `Cloud Status: ${okServices.join(", ")} OK${unprobed ? ` · ${unprobed} not probed` : ""}`
+                    : "Cloud Status: not probed"}
               </span>
               <span className="font-mono text-[10px] text-muted">{cloudExpanded ? "▴" : "▾"}</span>
             </button>
@@ -341,13 +394,17 @@ function UnifiedStatusAndAgentBar({
                     ? "bg-rose-400"
                     : p.status === "degraded" || p.status === "advisory"
                       ? "bg-amber-400"
-                      : "bg-emerald-400";
+                      : p.status === "unknown"
+                        ? "bg-slate-500"
+                        : "bg-emerald-400";
                 const border =
                   p.status === "outage"
                     ? "border-rose-500/40 bg-rose-500/12 text-rose-300"
                     : p.status === "degraded" || p.status === "advisory"
                       ? "border-amber-500/40 bg-amber-500/12 text-amber-300"
-                      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
+                      : p.status === "unknown"
+                        ? "border-border-subtle bg-surface text-muted"
+                        : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
                 const shortLabel = cloudServiceLabel(p.serviceId, correlation.primaryRegion);
                 return (
                   <span
@@ -462,7 +519,9 @@ function ProjectGoalClarifierCard({
   const refineGoal = useWorkbench((s) => s.refineGoal);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const lastRefinedAt = useWorkbench((s) => s.lastRefinedAt);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => onDemo((beat, claim) => beat.kind === "toggle-clarifier" && claim() && setExpanded((v) => !v)), []);
+  useEffect(() => setExpanded(false), [scenarioId]);
   const [draft, setDraft] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const q of questions) {
@@ -508,9 +567,10 @@ function ProjectGoalClarifierCard({
             type="button"
             onClick={() => setExpanded(true)}
             data-testid="clarifier-edit-scope"
-            className="shrink-0 rounded border border-primary/35 bg-canvas/80 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary hover:bg-primary/15"
+            title="Change the scope answers (c)"
+            className="shrink-0 rounded border border-primary/35 bg-canvas/80 px-1.5 py-0.5 font-mono text-[11px] font-medium text-primary hover:bg-primary/15"
           >
-            [Edit Scope ▾]
+            Change ▾
           </button>
         </div>
       ) : (

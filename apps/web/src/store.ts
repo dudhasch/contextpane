@@ -57,6 +57,18 @@ export interface SavedFreeRoamBoard {
 }
 
 const SAVED_BOARDS_KEY = "contextpane:freeroam-boards:v1";
+const INCLUDE_SEEDED_KEY = "contextpane:include-seeded:v1";
+
+/** The operator's "Seeded demo tickets" choice; null = follow the data mode (on in Simulated Lab, off in Real Tenant). */
+function loadIncludeSeeded(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(INCLUDE_SEEDED_KEY);
+    return raw === "1" ? true : raw === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
 
 function loadSavedBoardsFromStorage(): SavedFreeRoamBoard[] {
   if (typeof window === "undefined") return [];
@@ -96,6 +108,13 @@ export interface MiniDashboardEntry {
   latencyMs: number;
   modelId: string;
   tokenCount: number;
+  /** Who composed the card ("local" = deterministic) and how the rows were matched (server truth). */
+  provider?: string;
+  matchedBy?: "rows" | "dataset" | "none";
+  /** Where the rows come from (live-graph, live-azure, seeded-manifest, model-synthesized, none, …). */
+  dataSource?: string;
+  /** Server-side time of the call that produced the card (the model call, or the deterministic slice). */
+  serverLatencyMs?: number;
   speculativeHit?: boolean;
   savedLatencyMs?: number;
 }
@@ -113,6 +132,8 @@ export interface SpeculativeSelectionSlot {
   status: "inflight" | "resolved" | "failed";
   promise: Promise<import("./lib/api").ExploreSelectionResponse | null>;
   response?: import("./lib/api").ExploreSelectionResponse;
+  /** Sent as a silent pre-fetch, which may run on the scale-to-zero open-weight GPU. */
+  prefetch?: boolean;
 }
 
 export interface SpeculativeBufferSlot {
@@ -202,6 +223,8 @@ export interface HoverEntry {
   popover?: HoverDiagnosticPopover;
   error?: string;
   latencyMs?: number;
+  /** Pre-filled from the scenario brief and not yet confirmed by a /api/hover call. */
+  seeded?: boolean;
 }
 
 /** A left-pane entity the pointer is on: its card lights up in the category colour, the rest dim. */
@@ -303,6 +326,8 @@ interface WorkbenchState {
   /* unified work queue & ERP inbox */
   queueOpen: boolean;
   queueFilter: QueueFilter;
+  /** "Seeded demo tickets" queue chip: null follows the data mode. */
+  includeSeededOverride: boolean | null;
   queueQuery: string;
   /** Work items that arrived (ERP drops) and have not been opened yet: the dot on the queue button. */
   unseen: string[];
@@ -363,6 +388,9 @@ interface WorkbenchState {
   stepQueue(delta: 1 | -1): Promise<void>;
   setQueueOpen(open: boolean): void;
   setQueueFilter(filter: QueueFilter): void;
+  /** Effective state of the "Seeded demo tickets" chip. */
+  includeSeeded(): boolean;
+  setIncludeSeeded(on: boolean): Promise<void>;
   setQueueQuery(query: string): void;
   /** `[🎲 Drop Random ERP Ticket]`: the orchestrator writes a folder into input/tickets/ and the watcher ingests it. */
   simulateDrop(archetype?: DropArchetype): Promise<void>;
@@ -429,7 +457,7 @@ interface WorkbenchState {
   /** Silent kinematic pre-warm for text selection (zero Midas-touch jitter: never mutates visible UI until click). */
   prewarmSelectionExplore(
     rawText: string,
-    options?: { refinementText?: string; viewMode?: ContextViewMode },
+    options?: { refinementText?: string; viewMode?: ContextViewMode; prefetch?: boolean },
   ): Promise<import("./lib/api").ExploreSelectionResponse | null>;
   discardSpeculativeSelection(rawText?: string): void;
   prewarmQueueScenario(scenarioId: ScenarioId): Promise<void>;
@@ -547,6 +575,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   queueOpen: false,
   queueFilter: "all",
+  includeSeededOverride: loadIncludeSeeded(),
   queueQuery: "",
   unseen: [],
   dropStatus: "idle",
@@ -625,7 +654,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set((s) => ({
         dataMode: res.dataMode,
         togglingDataMode: false,
-        scenarios: res.scenarios,
+        scenarios: s.includeSeededOverride === null ? res.scenarios : s.scenarios,
         health: s.health ? { ...s.health, dataMode: res.dataMode } : s.health,
         speculativeEpoch: s.speculativeEpoch + 1,
         speculativeSelectionCache: {},
@@ -634,7 +663,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       void get().loadFreeRoamInventory();
       if (!get().freeRoamOpen) {
         // If current scenario was filtered out in real-tenant mode, switch to Free-Roam Landing Page
-        const stillExists = res.scenarios.some((s) => s.scenarioId === get().scenarioId);
+        const stillExists = get().scenarios.some((s) => s.scenarioId === get().scenarioId);
         if (!stillExists) {
           set({ freeRoamOpen: true });
         } else {
@@ -646,7 +675,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         title: res.dataMode === "real-tenant" ? "MCP Mode: Real Tenant Only (Zero Simulated Fallback)" : "MCP Mode: Simulated Lab Enabled",
         detail:
           res.dataMode === "real-tenant"
-            ? "MCP servers (@contextpane/mcp-msgraph & @contextpane/mcp-azure-iac) now query your live tenant exclusively. Seeded demo scenarios are hidden."
+            ? `MCP servers (@contextpane/mcp-msgraph & @contextpane/mcp-azure-iac) now query your live tenant exclusively. ${get().includeSeeded() ? "Seeded demo tickets stay in the queue (chip on)." : "Seeded demo tickets are hidden."}`
             : "MCP servers now include seeded Contoso & Fabrikam lab fixtures and scenarios.",
       });
     } catch (error) {
@@ -710,6 +739,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         latencyMs: Math.round(performance.now() - started),
         modelId: result.modelId,
         tokenCount: result.tokenCount,
+        provider: result.provider,
+        ...(result.slice?.matchedBy ? { matchedBy: result.slice.matchedBy } : {}),
+        ...(result.slice?.dataSource ? { dataSource: result.slice.dataSource } : {}),
+        serverLatencyMs: result.latencyMs,
       };
       set((s) => ({
         freeRoamDashboards: [entry, ...s.freeRoamDashboards].slice(0, 12),
@@ -841,7 +874,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   async loadScenarios() {
     try {
-      const { scenarios } = await api.scenarios();
+      const { scenarios } = await api.scenarios(get().includeSeededOverride ?? undefined);
       // Unscripted tickets live in the orchestrator's registry; mirror them so getScenarioEntry works here too.
       for (const s of scenarios) {
         if (!s.custom) continue;
@@ -868,7 +901,21 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   orderedQueue() {
-    return orderWorkItems(get().scenarios, get().convergence);
+    return orderWorkItems(get().scenarios, get().convergence, { pinSeeded: get().includeSeeded() });
+  },
+
+  includeSeeded() {
+    return get().includeSeededOverride ?? get().dataMode !== "real-tenant";
+  },
+
+  async setIncludeSeeded(on) {
+    set({ includeSeededOverride: on });
+    try {
+      window.localStorage.setItem(INCLUDE_SEEDED_KEY, on ? "1" : "0");
+    } catch {
+      /* private window: the choice lasts for this tab */
+    }
+    await get().loadScenarios();
   },
 
   async stepQueue(delta) {
@@ -1002,7 +1049,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const seededHovers: Record<string, HoverEntry> = {};
       if (hovers) {
         for (const [eid, pop] of Object.entries(hovers)) {
-          seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1 };
+          seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1, seeded: true };
         }
       }
       const savedMs = Math.max(12, Math.round((prewarmedSlot.resolvedAt ?? performance.now()) - prewarmedSlot.startedAt));
@@ -1029,7 +1076,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         const seededHovers: Record<string, HoverEntry> = {};
         if (hovers) {
           for (const [eid, pop] of Object.entries(hovers)) {
-            seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1 };
+            seededHovers[hoverKey(scenarioId, eid)] = { status: "ready", popover: pop, latencyMs: 1, seeded: true };
           }
         }
         set((s) => ({
@@ -1127,6 +1174,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return;
     }
     const existing = get().hovers[key];
+    if (existing?.seeded && existing.popover && existing.popover.providerTelemetry.provider !== "local") {
+      // Shown at once from the brief; confirm it with the server, which serves the persisted model answer
+      // (0 tokens, no GPU) and records it, so the Router Savings HUD counts what was actually shown.
+      set((s) => ({ hovers: { ...s.hovers, [key]: { ...existing, seeded: false } } }));
+      void api
+        .hover({ scenarioId, entityId, ...(entityType ? { entityType } : {}) })
+        .then((result) => {
+          if (get().scenarioId === scenarioId) set((s) => ({ hovers: { ...s.hovers, [key]: { status: "ready", popover: result.popover, latencyMs: result.telemetry.latencyMs } } }));
+        })
+        .catch(() => undefined);
+      return;
+    }
     if (existing && existing.status !== "error") return;
     set((s) => ({ hovers: { ...s.hovers, [key]: { status: "loading" } } }));
     const started = performance.now();
@@ -1710,6 +1769,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         ...(refinementText ? { refinementText } : {}),
         viewMode,
         ...(customText ? { customTicketText: customText } : {}),
+        ...(options.prefetch ? { prefetch: true } : {}),
       })
       .then((res) => {
         if (get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
@@ -1758,6 +1818,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         startedAt,
         status: "inflight",
         promise,
+        ...(options.prefetch ? { prefetch: true } : {}),
       };
       return {
         speculativeSelectionCache: nextCache,
@@ -1959,7 +2020,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       let savedLatencyMs = 0;
 
       if (validSpecSlot) {
-        result = validSpecSlot.response ?? (await validSpecSlot.promise);
+        // A pre-fetch may be waiting on a cold open-weight GPU: give it 4 s, then ask the hosted chain.
+        result =
+          validSpecSlot.response ??
+          (await (validSpecSlot.prefetch
+            ? Promise.race([validSpecSlot.promise, new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 4000))])
+            : validSpecSlot.promise));
         if (result && get().speculativeEpoch === epoch && get().scenarioId === scenarioId) {
           speculativeHit = true;
           const prewarmElapsed = Math.round((validSpecSlot.resolvedAt ?? performance.now()) - validSpecSlot.startedAt);
@@ -2007,6 +2073,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           latencyMs: speculativeHit ? Math.min(1, Math.round(promoteMs)) : Math.round(performance.now() - clickStartedAt),
           modelId: result!.modelId,
           tokenCount: result!.tokenCount,
+          provider: result!.provider,
+          matchedBy: result!.slice.matchedBy,
+          ...(result!.slice.dataSource ? { dataSource: result!.slice.dataSource } : {}),
+          serverLatencyMs: result!.latencyMs,
           speculativeHit,
           ...(speculativeHit ? { savedLatencyMs } : {}),
         };
@@ -2046,7 +2116,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({
         tone: "info",
         title: `Context UI${modeSuffix} for "${text.length > 34 ? `${text.slice(0, 33)}…` : text}"${refSuffix}`,
-        detail: `${rowCount} rows · Live Tenant Query · Matched in ${elapsedSec}s`,
+        detail: `${rowCount} rows · ${result.slice?.matchedBy === "none" ? (rowCount ? "model-synthesized, not tenant data" : "no tenant rows matched") : (result.slice?.dataSource ?? "tenant data")} · ${elapsedSec}s`,
       });
     } catch (error) {
       set({ exploreStatus: "error", activeExploreText: null, exploreError: error instanceof Error ? error.message : String(error) });

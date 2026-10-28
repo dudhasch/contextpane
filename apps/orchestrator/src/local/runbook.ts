@@ -56,9 +56,19 @@ function scrubSummary(summary: string, entityIds: readonly string[]): string {
   return scrubKnownIds(summary, entityIds);
 }
 
+const RUNBOOK_MODULES: Record<ScenarioId, string[]> = {
+  "INC-4092": ["Microsoft.Graph.Users.Actions", "Microsoft.Graph.Identity.SignIns", "Az.Network"],
+  "INC-4099": ["Microsoft.Graph.Authentication", "Microsoft.Graph.DeviceManagement.Actions"],
+  "ANOM-LIC-101": ["Microsoft.Graph.Users.Actions"],
+  "ANOM-CA-204": ["Microsoft.Graph.Identity.SignIns"],
+  "ANOM-APP-401": ["Microsoft.Graph.Applications", "Microsoft.Graph.Identity.SignIns"],
+  "ANOM-INT-309": ["Microsoft.Graph.Authentication", "Microsoft.Graph.DeviceManagement.Actions"],
+};
+
 function forwardScript(scenarioId: ScenarioId, signature: string): string {
   const head = [
     "#Requires -Version 7.0",
+    `#Requires -Modules ${RUNBOOK_MODULES[scenarioId].join(", ")}`,
     "[CmdletBinding(SupportsShouldProcess)]",
     "param([string]$TenantId)",
     "$ErrorActionPreference = 'Stop'",
@@ -69,9 +79,9 @@ function forwardScript(scenarioId: ScenarioId, signature: string): string {
   const body: Record<ScenarioId, string[]> = {
     "INC-4092": [
       "# 1. License: move drifted AVD users from the legacy SKU to the target SKU (ptr://inc-4092/entra/users)",
-      "if ($PSCmdlet.ShouldProcess('SG-Contoso-Finance-AVD', 'Set-MgUserLicense SPE_E3 -> SPE_E5')) { Set-MgUserLicense -UserId '{{USER_UPN}}' -AddLicenses @(@{ SkuId = '06ebc4ee-1bb5-47dd-8120-11324bc54e06' }) -RemoveLicenses @('6fd2c87f-b296-42f0-b197-1e91e994b900') | Out-Null }",
+      "if ($PSCmdlet.ShouldProcess('SG-Contoso-Finance-AVD', 'Set-MgUserLicense SPE_E3 -> SPE_E5')) { Set-MgUserLicense -UserId '{{USER_UPN}}' -AddLicenses @(@{ SkuId = '06ebc4ee-1bb5-47dd-8120-11324bc54e06' }) -RemoveLicenses @('05e9a617-0261-4cee-bb44-138d3ef5d965') | Out-Null }",
       "# 2. CA: exclude the entitlement group from the legacy AVD block and switch it to report-only",
-      "if ($PSCmdlet.ShouldProcess('AVD legacy Conditional Access policy', 'Update-MgIdentityConditionalAccessPolicy exclude group, report-only')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'd09ae604-9c1e-4b9c-9a5d-000000000001' -BodyParameter @{ state = 'enabledForReportingButNotEnforced' } | Out-Null }",
+      "if ($PSCmdlet.ShouldProcess('AVD legacy Conditional Access policy', 'Update-MgIdentityConditionalAccessPolicy exclude group, report-only')) { $p = Get-MgIdentityConditionalAccessPolicy -All | Where-Object DisplayName -eq '[ContextPane-Demo] Block AVD - Contoso Finance Legacy' | Select-Object -First 1; if (-not $p) { throw 'Block AVD policy not found' }; Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $p.Id -BodyParameter @{ state = 'enabledForReportingButNotEnforced' } | Out-Null }",
       "# 3. NSG: remove the rogue open-RDP rule and restore Terraform baseline tags on nsg-contoso-avd-hostpool-01",
       "if ($PSCmdlet.ShouldProcess('nsg-contoso-avd-hostpool-01', 'Remove rogue RDP rule, restore baseline')) { Get-AzNetworkSecurityGroup -Name 'nsg-contoso-avd-hostpool-01' | Remove-AzNetworkSecurityRuleConfig -Name 'Allow-Temp-RDP-Diagnostic-Drift' | Set-AzNetworkSecurityGroup | Out-Null }",
     ],

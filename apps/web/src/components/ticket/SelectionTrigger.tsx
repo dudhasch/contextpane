@@ -139,7 +139,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
       if (text.length < SELECTION_MIN_CHARS || text.length > SELECTION_MAX_CHARS) return;
       if (!/@|[0-9a-f]{8}-[0-9a-f]{4}/i.test(text) || refinement.trim().length > 0) return;
       debounceRef.current = window.setTimeout(() => {
-        void prewarmSelection(text, { viewMode });
+        void prewarmSelection(text, { viewMode, prefetch: true });
       }, 90);
     };
     document.addEventListener("selectionchange", onSelectionChange);

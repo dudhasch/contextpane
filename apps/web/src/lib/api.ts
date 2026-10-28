@@ -247,7 +247,7 @@ export interface ExploreSelectionResponse {
   modelId: string;
   provider: RouterTelemetry["provider"];
   tokenCount: number;
-  slice: { kind: string; matchedBy: "rows" | "dataset" | "none"; rowCount: number; searched: Array<{ kind: string; rows: number; matched: number }> };
+  slice: { kind: string; matchedBy: "rows" | "dataset" | "none"; rowCount: number; searched: Array<{ kind: string; rows: number; matched: number }>; dataSource?: string };
   telemetry: RouterTelemetry;
 }
 
@@ -470,7 +470,8 @@ export interface DynamicCatalogResponse {
 
 export const api = {
   health: () => request<HealthResponse>("/api/health"),
-  scenarios: () => request<{ scenarios: ScenarioListItem[] }>("/api/scenarios"),
+  /** includeSeeded: true / false forces the seeded demo tickets in / out; undefined follows the server's data mode. */
+  scenarios: (includeSeeded?: boolean) => request<{ scenarios: ScenarioListItem[] }>(`/api/scenarios${includeSeeded === undefined ? "" : `?includeSeeded=${includeSeeded ? 1 : 0}`}`),
   brief: (scenarioId: string, fresh = false) => request<BriefResponse>(`/api/scenarios/${scenarioId}/brief${fresh ? "?refresh=true" : ""}`),
   hydrate: (recipeId: string, scenarioId: string) => request<HydrateResponse>(`/api/recipe/${encodeURIComponent(recipeId)}/hydrate?scenarioId=${scenarioId}`),
   recipes: () => request<{ recipes: ViewRecipe[] }>("/api/recipes"),
@@ -507,7 +508,7 @@ export const api = {
   fleet: (scenarioId: string) => request<{ fleet: Fleet }>(`/api/fleet/immunize/${scenarioId}`),
   campaign: (scenarioId: string) => request<{ campaign: { campaignId: string; branches: Array<{ tenant: string; branch: string }>; verified: boolean; latencyMs: number } }>(`/api/fleet/campaign/${scenarioId}`, { method: "POST", body: "{}" }),
   runbookUrl: (scenarioId: string) => `/api/runbooks/${scenarioId}.md`,
-  exploreSelection: (body: { scenarioId: string; selectedText: string; refinementText?: string; viewMode?: ContextViewMode; customTicketText?: string }) =>
+  exploreSelection: (body: { scenarioId: string; selectedText: string; refinementText?: string; viewMode?: ContextViewMode; customTicketText?: string; prefetch?: boolean }) =>
     request<ExploreSelectionResponse>("/api/explore-selection", { method: "POST", body: JSON.stringify(body) }),
   triageCustom: (body: { title: string; body: string; customerName?: string; clarifiedAnswers?: Record<string, string> }) =>
     request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),

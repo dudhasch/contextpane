@@ -1,7 +1,7 @@
 import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ClipboardCopy, ExternalLink, GitCompare, ShieldAlert, Sparkles, Wand2, Wrench, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { ContextViewMode, ContextualMiniDashboard as Card, MetricTone } from "@contextpane/catalog";
-import { fmtMs } from "@/lib/format";
+import { fmtMs, provenanceBadge } from "@/lib/format";
 import { selectActiveTimelineSlice, useWorkbench, type MiniDashboardEntry, type RowFilter } from "@/store";
 import { Button } from "../ui/Button";
 import { CONTEXT_MODE_LIST, CONTEXT_MODE_META, ContextModeIcon } from "../ui/ContextModeIcons";
@@ -107,8 +107,9 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
       .replace(/\s*·?\s*ptr:\/\/[^\s·]+/gi, "")
       .replace(/^(?:\s*·\s*)+|(?:\s*·\s*)+$/g, "")
       .trim();
-    return base ? `${base} · Live Tenant Query · Matched in ${elapsedSec}s` : `Live Tenant Query · Matched in ${elapsedSec}s`;
-  }, [card.subtitle, elapsedSec]);
+    const origin = lensOrigin(entry, card.rows.length);
+    return base ? `${base} · ${origin}` : origin;
+  }, [card.subtitle, entry, card.rows.length]);
 
   const copy = async (text: string, what: string) => {
     try {
@@ -195,6 +196,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
 
       <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-faint" title={card.sourceQuery}>
         <span className="truncate">{cleanSubtitle}</span>
+        {entry.provider && <LensProvenance entry={entry} />}
         {refinementText && (
           <span className="rounded border border-selection/35 bg-selection/8 px-1.5 py-0.2 text-[10px] text-selection" data-testid="mini-refinement-pill">
             context: &quot;{refinementText}&quot;
@@ -288,7 +290,7 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
           counts={counts}
           filtered={filtered}
           rowFilter={rowFilter}
-          latencyLabel={`Live Tenant Query · Matched in ${elapsedSec}s`}
+          latencyLabel={`${lensOrigin(entry, card.rows.length)} · ${elapsedSec}s`}
           copy={copy}
           openRemediation={() => openRemediation({ tab: "powershell" })}
         />
@@ -369,6 +371,35 @@ export function ContextualMiniDashboardCard({ entry }: { entry: MiniDashboardEnt
 /* -------------------------------------------------------------------------- */
 /* 1. DASHBOARD MODE (KPIs + Distribution Bars + Compact Top Rows)            */
 /* -------------------------------------------------------------------------- */
+
+const SOURCE_TEXT: Record<string, string> = {
+  "live-graph": "Live Graph query",
+  "live-azure": "Live ARM query",
+  "seeded-manifest": "Seeded lab data",
+  simulated: "Simulated lab data",
+  "model-synthesized": "Model-synthesized rows · not tenant data",
+  "deterministic-knowledge": "Reference knowledge · not tenant data",
+  none: "No tenant rows matched",
+};
+
+/** Where the rows of a lens come from and how they were matched (audit H-11: never an unconditional "Live Tenant Query"). */
+function lensOrigin(entry: MiniDashboardEntry, rowCount: number): string {
+  const source = entry.dataSource ? (SOURCE_TEXT[entry.dataSource] ?? entry.dataSource) : "Tenant data";
+  if (entry.dataSource === "none" || entry.dataSource === "model-synthesized" || entry.dataSource === "deterministic-knowledge") return source;
+  if (entry.matchedBy === "dataset") return `${source} · the phrase names this dataset, no row names it`;
+  return `${source} · ${rowCount} row${rowCount === 1 ? "" : "s"} matched`;
+}
+
+/** Which model composed this lens (or that none did), with the time of that call. */
+function LensProvenance({ entry }: { entry: MiniDashboardEntry }) {
+  const badge = provenanceBadge({ provider: entry.provider ?? "local", modelId: entry.modelId, latencyMs: entry.serverLatencyMs ?? entry.latencyMs });
+  const cls = badge.tone === "healthy" ? "border-healthy/40 text-healthy" : badge.tone === "meta" ? "border-meta/40 text-meta" : "border-border-subtle text-muted";
+  return (
+    <span className={`inline-flex h-5 items-center rounded border px-1.5 text-[11px] ${cls}`} title={badge.title} data-testid="lens-provenance">
+      {badge.label}
+    </span>
+  );
+}
 
 function DashboardModeBody({
   card,
@@ -641,23 +672,9 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
     return out;
   }, [attrColumns, compareRows]);
 
-  const synthGoldenValue = (key: string, liveVal: string): string => {
-    if (goldenRow && goldenRow !== driftedRow && goldenRow[key] !== undefined && goldenRow[key] !== null) {
-      const candidate = String(goldenRow[key]);
-      if (!BAD.test(candidate)) return candidate;
-    }
-    if (/currentsku|assignedsku/i.test(key)) return "SPE_E5";
-    if (/assignmenttype|posture/i.test(key)) return "PIM Eligible (JIT 4h · MFA Required)";
-    if (/result|outcome|errorcode/i.test(key)) return "0 · Succeeded (Compliant / Allowed)";
-    if (/policy|blocking/i.test(key) && liveVal !== "—") return "Excluded / Compliant Grant Satisfied";
-    if (/state|status|compliance/i.test(key)) return "Compliant / Healthy (Golden Baseline)";
-    if (/headroom/i.test(key)) return "16 vCPUs Free (germanywestcentral)";
-    if (/usage|utilization/i.test(key)) return "4/20 (20% · Healthy)";
-    if (/error/i.test(key)) return "0 (None)";
-    if (/drift/i.test(key)) return "in sync";
-    if (BAD.test(liveVal)) return "0 · Healthy / Allowed (Golden Baseline)";
-    return liveVal;
-  };
+  // Diff only against a real healthy row of the same result set; never an invented "golden" value.
+  const baselineRow = goldenRow && goldenRow !== driftedRow ? goldenRow : null;
+  const baselineValue = (key: string): string | null => (baselineRow && baselineRow[key] !== undefined && baselineRow[key] !== null ? String(baselineRow[key]) : null);
 
   const formatCardTitle = (row: Record<string, string | number | boolean | null>, idx: number): string => {
     const rawPrimary = primaryCol ? String(row[primaryCol.key] ?? "") : "";
@@ -676,7 +693,7 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-selection/35 bg-selection/8 px-2.5 py-1 text-[11px]">
         <span className="inline-flex items-center gap-1.5 font-semibold text-selection">
           <GitCompare className="size-3.5 shrink-0" />
-          Side-by-Side Live Drifted State vs. Golden Target Baseline · Comparing {compareRows.length} of {card.rows.length} objects
+          Live drifted state vs. a healthy row of the same result · Comparing {compareRows.length} of {card.rows.length} objects
         </span>
         <span className="font-mono text-[11px] text-muted">
           {differingKeys.size || 1} diverging attribute{differingKeys.size === 1 ? "" : "s"} highlighted (Δ)
@@ -695,8 +712,8 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
           <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-0.5">
             {card.columns.map((c) => {
               const val = String(driftedRow[c.key] ?? "—");
-              const targetVal = synthGoldenValue(c.key, val);
-              const isDiff = val !== targetVal;
+              const targetVal = baselineValue(c.key);
+              const isDiff = targetVal !== null && val !== targetVal;
               return (
                 <div key={c.key} className="contents">
                   <dt className="text-faint">{c.label}</dt>
@@ -715,28 +732,31 @@ function ComparisonModeBody({ card, rowFilter }: { card: Card; rowFilter: RowFil
         <div className="rounded-md border border-healthy/45 bg-healthy/5 p-2 text-[11px]">
           <div className="mb-1 flex items-center justify-between gap-2 border-b border-border-subtle pb-1">
             <span className="truncate font-mono text-[11px] font-semibold text-healthy uppercase">
-              Golden Target Baseline (Desired)
+              {baselineRow ? `Healthy reference · ${formatCardTitle(baselineRow, 0)}` : "Healthy reference"}
             </span>
-            <Pill tone="healthy">Golden Target</Pill>
+            <Pill tone={baselineRow ? "healthy" : "muted"}>{baselineRow ? "Real row" : "No baseline row"}</Pill>
           </div>
-          <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-0.5">
-            {card.columns.map((c) => {
-              const liveVal = String(driftedRow[c.key] ?? "—");
-              const targetVal = synthGoldenValue(c.key, liveVal);
-              const isDiff = liveVal !== targetVal;
-              return (
-                <div key={c.key} className="contents">
-                  <dt className="text-faint">{c.label}</dt>
-                  <dd
-                    className={`truncate font-mono text-[11px] ${isDiff ? "font-semibold text-healthy" : "text-muted"}`}
-                    title={targetVal}
-                  >
-                    {isDiff ? `+ ${targetVal}` : `  ${targetVal}`}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
+          {baselineRow ? (
+            <dl className="grid grid-cols-[minmax(95px,auto)_1fr] gap-x-3 gap-y-0.5">
+              {card.columns.map((c) => {
+                const liveVal = String(driftedRow[c.key] ?? "—");
+                const targetVal = baselineValue(c.key) ?? "—";
+                const isDiff = liveVal !== targetVal;
+                return (
+                  <div key={c.key} className="contents">
+                    <dt className="text-faint">{c.label}</dt>
+                    <dd className={`truncate font-mono text-[11px] ${isDiff ? "font-semibold text-healthy" : "text-muted"}`} title={targetVal}>
+                      {isDiff ? `+ ${targetVal}` : `  ${targetVal}`}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+          ) : (
+            <p className="text-[11px] text-muted" data-testid="comparison-no-baseline">
+              No healthy row in this result set to diff against. Add a peer with the follow-up box (for example &quot;compliant devices&quot;) to compare against a real object.
+            </p>
+          )}
         </div>
       </div>
 
@@ -845,6 +865,10 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
   const stages = useMemo(() => buildBlastRadiusStages(card, refinementText), [card, refinementText]);
   const badCount = useMemo(() => card.rows.filter((r) => classify(r) === "bad").length, [card.rows]);
   const goodCount = useMemo(() => card.rows.filter((r) => classify(r) === "good").length, [card.rows]);
+  const filledStages = stages.filter((st) => st.nodes.length > 0).length;
+  // Read-only when every command in the suggestion only reads; anything else goes through the approval drawer.
+  const commands = card.suggestedAction.scriptPreview.match(/\b[A-Z][a-z]+-[A-Za-z]+\b/g) ?? [];
+  const readOnly = commands.length > 0 && commands.every((c) => /^(Get|Search|Select|Where|Format|Sort|Measure)-/.test(c)) && !/-Method\s+'?(POST|PATCH|PUT|DELETE)/i.test(card.suggestedAction.scriptPreview);
 
   return (
     <div className="mt-2 space-y-2" data-testid="mini-view-blast-radius">
@@ -854,7 +878,7 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
           Impact &amp; Dependency Blast Radius · Affected Cohorts &amp; Rollback Safety
         </span>
         <span className="font-mono text-[11px] text-muted">
-          {card.rows.length} live nodes mapped across 4 dependency hops · {badCount} impacted
+          {card.rows.length} rows grouped into {filledStages} stages · {badCount} impacted
         </span>
       </div>
 
@@ -869,18 +893,18 @@ function BlastRadiusModeBody({ card, refinementText }: { card: Card; refinementT
         </div>
         <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
           <div className="font-mono text-[10px] tracking-wider text-faint uppercase">Dependency Chain</div>
-          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-selection">4 Hops Verified</div>
-          <div className="truncate text-[11px] text-muted">Principal → Object → Policy → Blast</div>
+          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-selection">{filledStages} of {stages.length} stages populated</div>
+          <div className="truncate text-[11px] text-muted" title="Grouped from the rows of this result, not a traced dependency graph">Principal → Object → Policy → Blast</div>
         </div>
         <div className="rounded-md border border-border-subtle bg-surface px-2 py-1.5 text-[11px]">
           <div className="font-mono text-[10px] tracking-wider text-faint uppercase">Healthy Peer Baseline</div>
-          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-healthy">{goodCount} unaffected peers</div>
-          <div className="truncate text-[11px] text-muted">Zero collateral disruption</div>
+          <div className="mt-0.5 font-mono text-[11.5px] font-semibold text-healthy">{goodCount} unaffected rows</div>
+          <div className="truncate text-[11px] text-muted">{goodCount ? "in the same result set" : "no healthy row in this result"}</div>
         </div>
-        <div className="rounded-md border border-healthy/40 bg-healthy/6 px-2 py-1.5 text-[11px]" data-testid="blast-rollback-safety">
-          <div className="font-mono text-[10px] tracking-wider text-healthy uppercase">Rollback Safety Radius</div>
-          <div className="mt-0.5 inline-flex items-center gap-1 font-mono text-[11.5px] font-semibold text-healthy">
-            <CheckCircle2 className="size-3.5 shrink-0" /> Idempotent &amp; Scoped
+        <div className={`rounded-md border px-2 py-1.5 text-[11px] ${readOnly ? "border-healthy/40 bg-healthy/6" : "border-warning/40 bg-warning/6"}`} data-testid="blast-rollback-safety">
+          <div className={`font-mono text-[10px] tracking-wider uppercase ${readOnly ? "text-healthy" : "text-warning"}`}>Suggested command</div>
+          <div className={`mt-0.5 inline-flex items-center gap-1 font-mono text-[11.5px] font-semibold ${readOnly ? "text-healthy" : "text-warning"}`}>
+            {readOnly ? <CheckCircle2 className="size-3.5 shrink-0" /> : <AlertTriangle className="size-3.5 shrink-0" />} {readOnly ? "Read-only" : "Changes state · stage it"}
           </div>
           <div className="truncate text-[11px] text-muted" title={card.suggestedAction.label}>
             Action: {card.suggestedAction.label}

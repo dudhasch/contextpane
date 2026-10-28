@@ -13,7 +13,7 @@ import {
   type MiniDashboardSuggestedAction,
   type ResolutionStep,
 } from "@contextpane/catalog";
-import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
+import { workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
 import { sources } from "../mcp/clients.ts";
 import type { CorrelationContext } from "../mcp/context.ts";
 
@@ -61,6 +61,8 @@ export interface SelectionSlice {
   errorCodeReference?: ErrorCodeReference;
   /** Datasets searched and how many rows each holds, for the "no match" card and the prompt. */
   searched: Array<{ kind: SliceKind; rows: number; matched: number }>;
+  /** The identifier the operator selected that no dataset contains (the card must not invent rows for it). */
+  missedIdentifier?: string;
 }
 
 /**
@@ -145,10 +147,10 @@ export const ERROR_CODE_ENCYCLOPEDIA: Record<string, ErrorCodeReference> = {
     code: "QuotaExceeded",
     symbolicName: "ComputeRegionalQuotaExceeded",
     explanation:
-      "Azure Compute Resource Manager rejected the VM or scale-set deployment because the subscription has reached 100% of its regional vCPU quota for the requested SKU family (Standard_D4s_v5 / DSv5 Family vCPUs in westeurope).",
+      "Azure Compute Resource Manager rejected the VM or scale-set deployment because the subscription has reached 100% of its regional vCPU quota for the requested VM family (or of Total Regional vCPUs) in the target region.",
     troubleshootingChecks: [
-      "Run Get-AzVMUsage -Location westeurope to inspect regional family vCPU and Total Regional vCPUs consumption",
-      "Evaluate paired/sovereign EU peer regions (germanywestcentral, northeurope) with available Standard_D4s_v5 vCPU headroom",
+      "Run Get-AzVMUsage -Location <region> to inspect the family vCPU and Total Regional vCPUs consumption",
+      "Compare headroom for the same VM family in the paired or other allowed regions",
       "Deallocate orphaned VMs or submit a Quota Request via Microsoft.Quota REST API",
     ],
     docsUrl: "https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-resource-quota",
@@ -157,10 +159,10 @@ export const ERROR_CODE_ENCYCLOPEDIA: Record<string, ErrorCodeReference> = {
     code: "RequestDisallowedByPolicy",
     symbolicName: "AzurePolicyDenyEffect",
     explanation:
-      "Azure Resource Manager blocked the deployment or update because an assigned Azure Policy definition with a 'Deny' effect evaluated the target resource payload as non-compliant (e.g. Allowed-Locations-EU-Sovereign or Require-Tag-Environment).",
+      "Azure Resource Manager blocked the deployment or update because an assigned Azure Policy definition with a 'Deny' effect evaluated the target resource payload as non-compliant (e.g. an allowed-locations or a required-tag policy).",
     troubleshootingChecks: [
       "Inspect Activity Log and PolicyInsights to identify the exact policyAssignmentId and policyDefinitionId that triggered Deny",
-      "Verify target resource location against Allowed-Locations-EU-Sovereign allowed values (westeurope, germanywestcentral, northeurope)",
+      "Verify the target resource location against the allowed values of the denying assignment",
       "Ensure mandatory resource tags (Environment, CostCenter) are included in the ARM/Terraform deployment payload",
     ],
     docsUrl: "https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-policy-requestdisallowedbypolicy",
@@ -486,15 +488,13 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
   }
   const entitlement = ctx.license?.data;
   for (const p of ctx.policies?.data ?? []) {
-    const isAvdLegacyBlock = p.displayName.includes("Block AVD");
-    const effectiveId = isAvdLegacyBlock ? "d09ae604-9c1e-4b9c-9a5d-000000000001" : p.id;
-    if (caRows.some((r) => r.id === effectiveId || r.id === p.id)) continue;
+    if (caRows.some((r) => r.id === p.id)) continue;
     // A Block grant only rejects sign-ins while the policy is enforced; report-only never blocks anyone.
     const blocked = blockedBy(p.id, p.displayName);
-    const blocking = isAvdLegacyBlock || blocked.length > 0 || (p.blocks && p.state === "enabled");
+    const blocking = blocked.length > 0 || (p.blocks && p.state === "enabled");
     // Blocked sign-ins of the entitlement group's members tie the policy to that group even when it targets another one.
     const members = new Set(blocked.filter((e) => entitlement?.users.some((u) => u.upn === e.upn)).map((e) => e.upn));
-    const memberCount = members.size || (isAvdLegacyBlock ? 3 : 0);
+    const memberCount = members.size;
     caRows.push({
       displayName: short(p.displayName),
       state: p.state,
@@ -503,10 +503,10 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       excludeGroups: p.excludeGroupNames.join(", ") || "(none)",
       targetApps: p.targetApps.map((a) => a.displayName).join(", "),
       grantControls: p.grant.builtInControls.join(", "),
-      blockedSignIns: blocked.length || (isAvdLegacyBlock ? 3 : 0),
+      blockedSignIns: blocked.length,
       ...(memberCount && entitlement ? { blocksMembersOf: `${entitlement.groupName} (${plural(memberCount, "member")})` } : {}),
-      drift: blocked.length || isAvdLegacyBlock ? `blocked ${plural(blocked.length || 3, "sign-in")} of the affected users` : blocking ? "blocks in-scope users" : "in sync",
-      id: effectiveId,
+      drift: blocked.length ? `blocked ${plural(blocked.length, "sign-in")} of the affected users` : blocking ? "blocks in-scope users" : "in sync",
+      id: p.id,
     });
   }
   // The policy that actually blocks leads, so the title and the suggested action follow it.
@@ -544,9 +544,7 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
         const blocking = m.find((r) => r.role === "blocking" && r.blocksMembersOf);
         const policy =
           blocking &&
-          ctx.policies?.data.find(
-            (p) => p.id === blocking.id || (blocking.id === "d09ae604-9c1e-4b9c-9a5d-000000000001" && p.displayName.includes("Block AVD")),
-          );
+          ctx.policies?.data.find((p) => p.id === blocking.id);
         if (policy && entitlement) {
           // Same change the remediation stages: exclude the entitlement group and switch the block to report-only.
           const rawKeep = policy.excludeGroupIds.length ? policy.excludeGroupIds : ["sg-breakglass-accounts-01"];
@@ -630,7 +628,8 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
     });
   }
 
-  const w = ctx.workloadIdentity ?? (sources.getDataMode() === "real-tenant" ? null : WORKLOAD_IDENTITY);
+  // Only the scenario's own workload-identity posture: the ANOM-APP-401 fixture is not a dataset of every ticket.
+  const w = ctx.workloadIdentity;
   if (w) {
     const rows: Row[] = [
       ...(ctx.workloadIdentity
@@ -783,13 +782,17 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
   }
 
   // Entra security / licensing / policy groups across the tenant (via @contextpane/mcp-msgraph)
-  const groupRows: Row[] = (ctx.securityGroups?.data ?? []).map((g) => ({
-    displayName: g.displayName,
-    members: g.members,
-    assignedSku: g.assignedSku,
-    linkedPolicy: g.linkedPolicy,
-    state: g.state,
-  }));
+  // Never another tenant's groups, whatever the source returned (a Fabrikam group on a Contoso ticket is a leak).
+  const groupRows: Row[] = (ctx.securityGroups?.data ?? [])
+    .filter((g) => g.tenantId === ctx.tenantId)
+    .map((g) => ({
+      displayName: g.displayName,
+      members: g.members,
+      assignedSku: g.assignedSku,
+      linkedPolicy: g.linkedPolicy,
+      state: g.state,
+      tenantId: g.tenantId,
+    }));
   if (groupRows.length) {
     out.push({
       kind: "entra-groups",
@@ -924,8 +927,8 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
             value: `${m.filter((r) => r.provisioningState === "Succeeded").length}/${m.length}`,
             tone: m.every((r) => r.provisioningState === "Succeeded") ? "success" : "warning",
           },
-          { label: "Region", value: String(m[0]?.location ?? "westeurope"), tone: "default" },
-          { label: "VM Size", value: String(m[0]?.vmSize ?? "Standard_D4s_v5"), tone: "default" },
+          { label: "Region", value: String(m[0]?.location ?? "unknown"), tone: "default" },
+          { label: "VM Size", value: String(m[0]?.vmSize ?? "unknown"), tone: "default" },
         ],
         breakdown: (m) => breakdownBy(m, "location", () => "default"),
         action: () => ({
@@ -951,7 +954,7 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
         const loc =
           "location" in r && typeof r.location === "string" && r.location
             ? r.location
-            : (ctx.resourceInventory?.data.location ?? "westeurope");
+            : (ctx.resourceInventory?.data.location ?? "unknown");
         const shortType = r.type.replace(/^Microsoft\./i, "");
         const tagSummary =
           Object.entries(r.tags ?? {})
@@ -1069,6 +1072,7 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
       headroom: q.headroom,
       status: q.status,
     }));
+    const quotaRegions = [...new Set(quotaRows.map((r) => String(r.region)).filter(Boolean))];
     if (quotaRows.length) {
       out.push({
         kind: "azure-quota-capacity",
@@ -1082,22 +1086,32 @@ function datasets(ctx: CorrelationContext, steps: ResolutionStep[]): Dataset[] {
           col("headroom", "Capacity State", { isBadge: true }),
           col("status", "Status", { isBadge: true }),
         ],
-        sourceQuery:
-          `GET /subscriptions/${sub}/providers/Microsoft.Compute/locations/westeurope/usages?api-version=2024-03-01`,
+        sourceQuery: `GET /subscriptions/${sub}/providers/Microsoft.Compute/locations/${quotaRegions[0] ?? "{location}"}/usages?api-version=2024-03-01`,
         title: () => `Regional Quota & Capacity · ${sub}`,
-        subtitle: (m) => `Live Compute/Network/Storage Usages (≥80% + EU peer regions) · ${plural(m.length, "quota")} matched`,
-        kpis: () => [
-          { label: "D4s_v5 (westeurope)", value: "20/20 (100%)", tone: "critical" },
-          { label: "Regional vCPUs", value: "48/50 (96%)", tone: "warning" },
-          { label: "germanywestcentral", value: "16 vCPUs Free", tone: "success" },
-          { label: "northeurope", value: "14 vCPUs Free", tone: "success" },
-        ],
+        subtitle: (m) => `${ctx.regionalQuotas?.source === "live-azure" ? "Live" : "Seeded"} Compute usages · ${quotaRegions.join(", ") || "no region"} · ${plural(m.length, "quota")} matched`,
+        // Every figure comes from the rows: the most utilized quota, then one per region with its free headroom.
+        kpis: (m) => {
+          const used = (r: Row) => {
+            const [cur, lim] = String(r.usage).split("/").map(Number);
+            return { cur: cur ?? 0, lim: lim ?? 0, pct: lim ? Math.round(((cur ?? 0) / lim) * 100) : 0 };
+          };
+          const ranked = [...m].sort((a, b) => used(b).pct - used(a).pct);
+          const top = ranked.slice(0, 2).map((r) => {
+            const u = used(r);
+            return { label: String(r.resource).slice(0, 40), value: `${u.cur}/${u.lim} (${u.pct}%)`, tone: (u.pct >= 100 ? "critical" : u.pct >= 80 ? "warning" : "success") as MetricTone };
+          });
+          const atLimit = m.filter((r) => used(r).pct >= 100).length;
+          const extra: Array<{ label: string; value: string; tone: MetricTone }> = [
+            { label: "At limit", value: String(atLimit), tone: atLimit ? "critical" : "success" },
+            { label: "Quotas ≥80%", value: String(m.filter((r) => used(r).pct >= 80).length), tone: "warning" },
+          ];
+          return [...top, ...extra].slice(0, 4);
+        },
         breakdown: (m) =>
           breakdownBy(m, "status", (v) => (v === "Critical" ? "critical" : v === "Warning" ? "warning" : "success")),
-        action: () => ({
+        action: (m) => ({
           label: "Query regional VM quota usage",
-          scriptPreview:
-            "Get-AzVMUsage -Location westeurope | Where-Object { $_.Limit -gt 0 -and ($_.CurrentValue / $_.Limit) -ge 0.8 } | Select-Object @{n='Resource';e={$_.Name.LocalizedValue}}, CurrentValue, Limit",
+          scriptPreview: `Get-AzVMUsage -Location ${String(m[0]?.region ?? quotaRegions[0] ?? "<location>").replace(/[^a-z0-9]/gi, "")} | Where-Object { $_.Limit -gt 0 -and ($_.CurrentValue / $_.Limit) -ge 0.8 } | Select-Object @{n='Resource';e={$_.Name.LocalizedValue}}, CurrentValue, Limit`,
           ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
         }),
       });
@@ -1130,8 +1144,8 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     /other\s+apps?|same\s+owner|owned\s+by|peer\s+apps?|apps?\s+with|shadow[- ]admin\s+apps?/i.test(combined) ||
     (Boolean(ctx.workloadIdentity) && viewMode === "comparison" && /\bappid\b|44b8e1a7|spn-contoso-erp-sync|alex\.wilber/i.test(combined));
 
-  if (wantsPeerApps && (ctx.workloadIdentity || WORKLOAD_IDENTITY.peerApps?.length)) {
-    const w = ctx.workloadIdentity ?? WORKLOAD_IDENTITY;
+  if (wantsPeerApps && ctx.workloadIdentity?.peerApps?.length) {
+    const w = ctx.workloadIdentity;
     const allPeers = w.peerApps ?? [];
     const sameOwnerOnly = /same\s+owner|other\s+apps?|owned\s+by/i.test(combined) && viewMode !== "comparison";
     const peerList = sameOwnerOnly ? allPeers.filter((a) => a.ownerUpn === w.owner.upn) : allPeers;
@@ -1273,9 +1287,16 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
     if (!best || score > best.score || (score === best.score && order < KIND_ORDER.indexOf(best.ds.kind))) best = { ds, score, matchedBy, rows };
   }
 
+  // An identifier (kv-contoso-fin-prod, a UPN, a GUID) that no row contains is a miss, not a reason to
+  // show whatever the topic dataset happens to hold (the AVD NSG for a Key Vault name, audit H-08).
+  const identifiers = tokens(selection).filter((t) => /^[a-z0-9]+(?:-[a-z0-9]+){2,}$|@|^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t));
+  const identifierMissing = identifiers.length > 0 && !sets.some((d) => d.rows.some((r) => identifiers.some((t) => rowText(r).includes(t))));
+  if (best && best.matchedBy === "dataset" && identifierMissing) best = null;
+
   if (!best) {
     const pickKind = (): SliceKind => {
-      if (/quota|capacity|vcpu|westeurope|germanywestcentral|northeurope|standard_d/i.test(combined)) return "azure-quota-capacity";
+      if (/quota|capacity|vcpu|standard_d/i.test(combined)) return "azure-quota-capacity";
+      if (isArmResourceSelection) return "azure-resources";
       if (/policy|resource|health|location|allow|deny|arm|az/i.test(combined)) return "azure-policies";
       if (/app|spn|oidc|token|secret|claim|subject|federat|github/i.test(combined) || ctx.scenarioId === "ANOM-APP-401") return "workload-identity";
       if (/group|sg-/i.test(combined)) return "entra-groups";
@@ -1283,24 +1304,42 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
       if (ctx.caPosture) return "entra-ca-policies";
       return "entra-signins";
     };
-    const targetKind = pickKind();
-    const fallbackDs = sets.find((d) => d.kind === targetKind) ?? sets.find((d) => d.kind === "azure-policies") ?? sets[0]!;
-    const fallbackRows = fallbackDs.focus.slice(0, 5);
+    const kind = pickKind();
+    const scanned = searched.reduce((n, x) => n + x.rows, 0);
+    const name = (identifiers[0] ?? selection).replace(/'/g, "''").slice(0, 80);
+    const azure = kind.startsWith("azure-");
+    const wantsAccess = /owner|rbac|role|access|permission|who can/i.test(refinement);
+    const search = azure
+      ? `Search-AzGraph -Query "Resources | where name =~ '${name}' | project name, type, resourceGroup, location, subscriptionId"`
+      : kind === "entra-groups"
+        ? `Get-MgGroup -Filter "displayName eq '${name}'" -ConsistencyLevel eventual -CountVariable n`
+        : kind === "workload-identity"
+          ? `Get-MgServicePrincipal -Filter "displayName eq '${name}'" -ConsistencyLevel eventual -CountVariable n`
+          : `Get-MgUser -Search '"displayName:${name}"' -ConsistencyLevel eventual -CountVariable n`;
+    const access = azure && wantsAccess ? `
+$r = Get-AzResource -Name '${name}'; if ($r) { Get-AzRoleAssignment -Scope $r.ResourceId | Select-Object DisplayName, SignInName, RoleDefinitionName }` : "";
     const errorCodeReference = lookupErrorCodeReference(combined);
     return {
-      kind: fallbackDs.kind,
+      kind,
       score: 0,
       matchedBy: "none",
-      title: fallbackDs.title(fallbackRows).slice(0, 90),
-      subtitle: fallbackDs.subtitle(fallbackRows).slice(0, 160),
-      sourceQuery: fallbackDs.sourceQuery.slice(0, 300),
-      columns: fallbackDs.columns,
-      rows: fallbackRows,
-      kpis: fallbackDs.kpis(fallbackRows).slice(0, 4).map((k) => ({ ...k, tone: k.tone ?? "default" })),
-      breakdown: fallbackDs.breakdown(fallbackRows).slice(0, 5),
-      suggestedAction: fallbackDs.action(fallbackRows),
+      title: `No tenant data matched "${selection.slice(0, 60)}"`.slice(0, 90),
+      subtitle: `Searched ${plural(searched.length, "dataset")} · ${plural(scanned, "row")} scanned · 0 matched`.slice(0, 160),
+      sourceQuery: search.slice(0, 300),
+      columns: [col("dataset", "Dataset searched", { mono: true }), col("rows", "Rows", { mono: true }), col("matched", "Matched", { mono: true })],
+      rows: [],
+      kpis: [
+        { label: "Rows matched", value: "0", tone: "warning" },
+        { label: "Datasets searched", value: String(searched.length), tone: "default" },
+      ],
+      breakdown: [
+        { label: "matched", count: 0, pct: 0, tone: "warning" },
+        { label: "not matched", count: scanned, pct: scanned ? 100 : 0, tone: "default" },
+      ],
+      suggestedAction: { label: wantsAccess && azure ? "Look up the resource and its role assignments" : "Search the tenant directly", scriptPreview: `${search}${access}`.slice(0, 1200) },
       ...(errorCodeReference ? { errorCodeReference } : {}),
       searched,
+      ...(identifierMissing ? { missedIdentifier: identifiers[0]! } : {}),
     };
   }
 

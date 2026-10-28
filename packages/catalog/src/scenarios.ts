@@ -99,6 +99,12 @@ export type WorkbenchScenarioId = ScenarioId | CustomScenarioId;
 /** CUSTOM-<hash> for a pasted ticket, ERP-<id> for a folder dropped into input/tickets/#<id>/. */
 export const CUSTOM_SCENARIO_ID_RE = /^(CUSTOM-[A-Z0-9]{4,12}|ERP-[A-Z0-9]{3,16})$/;
 
+/** A staged Free-Roam action: tied to no ticket and no lab scenario, so it is never executed live. */
+export const FREE_ROAM_ACTION_ID_RE = /^FREE-[A-Z0-9]{4,12}$/;
+export function isFreeRoamActionId(value: unknown): value is string {
+  return typeof value === "string" && FREE_ROAM_ACTION_ID_RE.test(value);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Work items: one operational stream, differentiated by origin                */
 /* -------------------------------------------------------------------------- */
@@ -451,7 +457,8 @@ export type ElementRoutingDecision = z.infer<typeof ElementRoutingDecisionSchema
 export const UpstreamServiceHealthSchema = z.object({
   serviceId: z.enum(["azure-regional", "entra-id", "intune", "github-actions"]),
   label: z.string(),
-  status: z.enum(["operational", "advisory", "degraded", "outage"]),
+  /** "unknown": not probed or the feed was unreachable; never reported as operational. */
+  status: z.enum(["operational", "advisory", "degraded", "outage", "unknown"]),
   statusLabel: z.string(),
   summary: z.string(),
   sourceUrl: z.string(),

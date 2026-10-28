@@ -27,12 +27,20 @@ export function statusOf(item: Pick<ScenarioListItem, "origin" | "resolved">, cl
 }
 
 /** Newest first; resolved items sink to the bottom. Position = numeric hotkey (1-9). */
-export function orderWorkItems(items: ScenarioListItem[], convergence: Partial<Record<string, Convergence>> = {}): ScenarioListItem[] {
+/**
+ * Unresolved before resolved, newest first. With `pinSeeded` the seeded demo tickets lead (PSA tickets,
+ * then anomalies), so the 1-9 hotkeys reach them however many custom tickets arrived since.
+ */
+export function orderWorkItems(items: ScenarioListItem[], convergence: Partial<Record<string, Convergence>> = {}, options: { pinSeeded?: boolean } = {}): ScenarioListItem[] {
   const resolved = (i: ScenarioListItem) => i.resolved || Boolean(convergence[i.scenarioId]);
+  const pin = (i: ScenarioListItem) => (!options.pinSeeded || i.custom ? 2 : i.origin === "psa" ? 0 : 1);
   return [...items].sort((a, b) => {
     const ra = resolved(a) ? 1 : 0;
     const rb = resolved(b) ? 1 : 0;
     if (ra !== rb) return ra - rb;
+    const pa = pin(a);
+    const pb = pin(b);
+    if (pa !== pb) return pa - pb;
     return b.createdAt.localeCompare(a.createdAt) || a.scenarioId.localeCompare(b.scenarioId);
   });
 }

@@ -3,7 +3,7 @@
  * beat (an entity pill) listen and act. Keeps the hotkey layer free of refs
  * into deep component trees.
  */
-export type DemoBeat = { kind: "hover"; entityId: string } | { kind: "close-popovers" };
+export type DemoBeat = { kind: "hover"; entityId: string } | { kind: "close-popovers" } | { kind: "toggle-clarifier" };
 
 const EVENT = "contextpane:demo";
 
@@ -29,7 +29,7 @@ export function onDemo(handler: (beat: DemoBeat, claim: () => boolean) => void):
 }
 
 export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> = [
-  { key: "1-9", label: "Open the work item at that position in the queue (inside the open queue all nine; outside it 7 runs Vision)", beat: "One stream: tickets, anomalies, ERP drops, ad-hoc" },
+  { key: "1-9", label: "Open the work item at that position in the queue (7 = Vision outside the open queue)", beat: "One stream: tickets, anomalies, ERP drops, ad-hoc" },
   { key: "Ctrl K", label: "Open the work queue (search, origin filters)", beat: "Unified selector · q also toggles it" },
   { key: "j / k", label: "Next / previous work item", beat: "Step through the queue" },
   { key: "g", label: "Drop a random ERP ticket into input/tickets/", beat: "fs watcher → #2026xxx ingested in ~1 s" },
@@ -46,6 +46,7 @@ export const DEMO_HOTKEYS: Array<{ key: string; label: string; beat: string }> =
   { key: "0", label: "Reset demo drift", beat: "Every scenario back to its drifted state" },
   { key: "r", label: "Re-correlate (fresh)", beat: "Tier 1B/2 forced tool call" },
   { key: "n", label: "Triage an unscripted ticket", beat: "Paste any ticket → CUSTOM-<hash> triaged live" },
+  { key: "c", label: "Expand / collapse the goal clarifier", beat: "Steer scope before the fix is staged" },
   { key: "u", label: "Generate Context UI for the hero phrase", beat: "Highlight any text → cyan Context Lens" },
   { key: "Esc", label: "Close drawers & popovers", beat: "" },
   { key: "?", label: "This overlay", beat: "" },

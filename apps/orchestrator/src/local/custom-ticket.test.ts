@@ -226,7 +226,9 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     expect(brief.summary).not.toContain("inheriting the INC-4092 pattern");
     expect(brief.cloudStatusCorrelation).not.toBeNull();
     expect(brief.cloudStatusCorrelation?.primaryRegion).toBe("westeurope");
-    expect(brief.cloudStatusCorrelation?.advisories.some((a) => a.id === "AZ-WEU-CAP-409")).toBe(true);
+    // No canned advisory: the brief is built without a network probe, so every service is "not probed" (H-02).
+    expect(brief.cloudStatusCorrelation?.advisories).toEqual([]);
+    expect(brief.cloudStatusCorrelation?.services.every((s) => s.status === "unknown")).toBe(true);
     expect(brief.cloudStatusCorrelation?.webSearchCitations.length).toBeGreaterThan(0);
 
     const layout = buildLayout(ctx, { tier: "Tier 0", provider: "local", modelId: "deterministic", latencyMs: 0, tokensUsed: 0, fallbackChain: [], validated: true, repaired: [] });

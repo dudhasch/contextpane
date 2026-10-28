@@ -1,5 +1,5 @@
 import type { RemediationBundleArgs } from "@contextpane/catalog";
-import { CA_POSTURE, INTUNE_SCENARIOS, WORKLOAD_IDENTITY, demoName } from "@contextpane/mcp-msgraph";
+import { CA_POSTURE, INTUNE_SCENARIOS, WORKLOAD_IDENTITY, demoName, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { buildCustomTicketRemediationSync } from "./subagent-orchestrator.ts";
 
@@ -46,7 +46,7 @@ function connectGuard(scopes: string[]): string[] {
     "$ErrorActionPreference = 'Stop'",
     "",
     "$ctx = Get-MgContext",
-    `if (-not $ctx) { throw 'No Microsoft Graph context. Run Connect-MgGraph -TenantId $TenantId -Scopes ${scopes.join(",")}' }`,
+    `if (-not $ctx) { throw "No Microsoft Graph context. Run Connect-MgGraph -TenantId $TenantId -Scopes ${scopes.join(",")}" }`,
     'if ($ctx.TenantId -ne $TenantId) { throw "Connected to tenant $($ctx.TenantId), expected $TenantId" }',
     "",
   ];
@@ -60,7 +60,8 @@ const graphPatch = (requests: Array<{ method: string; url: string; body?: unknow
 
 const SKU_GUIDS: Record<string, string> = {
   SPE_E5: "06ebc4ee-1bb5-47dd-8120-11324bc54e06",
-  SPE_E3: "6fd2c87f-b296-42f0-b197-1e91e994b900",
+  // Microsoft 365 E3. 6fd2c87f-… is Office 365 E3 (ENTERPRISEPACK) and 400s on -RemoveLicenses.
+  SPE_E3: "05e9a617-0261-4cee-bb44-138d3ef5d965",
   Microsoft_365_Copilot: "639dec6b-bb19-468b-871c-c5c441c4b0cb",
 };
 
@@ -70,8 +71,6 @@ const GROUP_IDS: Record<string, string> = {
   "SG-Contoso-M365-E5": "c3d4e5f6-a7b8-4c5d-9e0f-1a2b3c4d5e6f",
   "SG-BreakGlass-Accounts": "957845fd-42ee-4500-b407-ad04487da3c7",
   "SG-ContextPane-Demo-Admins": "171d8a93-1a2a-404d-918e-aa341ca81c63",
-  "SG-Fabrikam-Legal-Workstations": "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a",
-  "SG-Fabrikam-Win11-Devices": "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a",
 };
 
 const INTUNE_PROFILE_IDS: Record<string, string> = {
@@ -101,6 +100,25 @@ const GRAPH_APP_ROLE_IDS: Record<string, string> = {
 
 const FINANCE_SHAREPOINT_SITE_ID = "contoso.sharepoint.com,2c8f9a10-4b11-4e2a-9c55-112233445566,7b3e1120-8a99-4d10-b222-665544332211";
 
+/** Object id of a seeded group in demo-lab-manifest.json (the seed rewrites it with real ids), else null. */
+function manifestGroupId(ctx: CorrelationContext, displayName: string): string | null {
+  try {
+    return getManifestTenant(ctx.tenantId).groups.find((g) => g.displayName === displayName)?.objectId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** PowerShell helper that resolves a group by display name and fails loudly on 0 or >1 matches. */
+const RESOLVE_GROUP_FN = [
+  "function Get-GroupByName([string]$Name) {",
+  `    $g = @(Get-MgGroup -Filter "displayName eq '$($Name -replace "'", "''")'" -ConsistencyLevel eventual -CountVariable n -Top 2)`,
+  "    if ($g.Count -eq 0) { throw \"Group '$Name' not found in tenant $TenantId\" }",
+  "    if ($g.Count -gt 1) { throw \"Group name '$Name' is ambiguous ($($g.Count) matches)\" }",
+  "    return $g[0]",
+  "}",
+];
+
 function isUuid(val: string | undefined): boolean {
   return Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
 }
@@ -126,6 +144,8 @@ function userUuid(upnOrId: string, index = 1): string {
   return known[upnOrId.toLowerCase()] ?? `300${index}a1b2-c3d4-4e5f-8a9b-0c1d2e3f430${index}`;
 }
 
+const LEGACY_GROUP = "SG-Contoso-Finance-Legacy";
+
 function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const inv = ctx.license!.data;
   const rawDrifted = inv.users.filter((u) => u.assignmentState !== "Active");
@@ -144,7 +164,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
   const d = ctx.drift!.data;
   const tenant = ctx.erp.tenant;
   const L: string[] = [
-    ...header(ctx, ["Microsoft.Graph.Users", "Microsoft.Graph.Groups", "Microsoft.Graph.Identity.SignIns"], tenant.displayName, [
+    ...header(ctx, ["Microsoft.Graph.Users", "Microsoft.Graph.Users.Actions", "Microsoft.Graph.Groups", "Microsoft.Graph.Identity.SignIns"], tenant.displayName, [
       `1. Remediate group-based licensing for ${drifted.length} drifted member(s): remove from legacy E3 group`,
       `   SG-Contoso-Finance-Legacy, ensure membership in ${inv.groupName}, and trigger Invoke-MgLicenseUser.`,
       ...(blocking ? [`2. Exclude ${inv.groupName} from Conditional Access policy '${blocking.displayName}'`, "   and switch it to report-only so the block is observable but no longer enforced."] : []),
@@ -152,10 +172,9 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     "param(",
     `    [string]$TenantId = ${ps(tenant.entraTenantId)},`,
     `    [string]$TargetSkuPartNumber = ${ps(inv.sku.skuPartNumber)},`,
-    `    [string]$LegacyGroupId = "6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c",`,
-    `    [string]$TargetGroupId = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",`,
-    `    [string]$ConditionalAccessPolicyId = "d09ae604-9c1e-4b9c-9a5d-000000000001", # ca-contoso-avd-mfa-01`,
+    `    [string]$LegacyGroupName = ${ps(LEGACY_GROUP)},`,
     `    [string]$EntitlementGroupName = ${ps(inv.groupName)},`,
+    ...(blocking && isUuid(blocking.id) ? [`    [string]$ConditionalAccessPolicyId = ${ps(blocking.id)},`] : []),
     ...(blocking ? [`    [string]$PolicyDisplayName = ${ps(blocking.displayName)},`] : []),
     "    [string[]]$DriftedUpns = @(",
     ...drifted.map((u, i) => `        ${ps(u.upn)}${i < drifted.length - 1 ? "," : ""}`),
@@ -163,6 +182,11 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     ")",
     "",
     ...connectGuard(["User.ReadWrite.All", "Group.ReadWrite.All", "Directory.ReadWrite.All", "Policy.ReadWrite.ConditionalAccess"]),
+    "# --- 0. Resolve group object ids in the connected tenant (no hard-coded ids) ---",
+    ...RESOLVE_GROUP_FN,
+    "$legacyGroup = Get-GroupByName $LegacyGroupName",
+    "$group = Get-GroupByName $EntitlementGroupName",
+    "",
     "# --- 1. Group-Based Licensing remediation (Remove-MgGroupMemberByRef + Invoke-MgLicenseUser) ---",
     "foreach ($upn in $DriftedUpns) {",
     "    $user = Get-MgUser -UserId $upn -Property Id,UserPrincipalName,UsageLocation",
@@ -170,11 +194,13 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     "    if (-not $user.UsageLocation) {",
     "        if ($PSCmdlet.ShouldProcess($upn, 'Set UsageLocation CH')) { Update-MgUser -UserId $userId -UsageLocation 'CH' }",
     "    }",
-    '    if ($PSCmdlet.ShouldProcess($upn, "Remove from legacy E3 group SG-Contoso-Finance-Legacy")) {',
-    '        Remove-MgGroupMemberByRef -GroupId $LegacyGroupId -DirectoryObjectId $userId -ErrorAction SilentlyContinue',
+    '    if ($PSCmdlet.ShouldProcess($upn, "Remove from legacy E3 group $LegacyGroupName")) {',
+    "        try { Remove-MgGroupMemberByRef -GroupId $legacyGroup.Id -DirectoryObjectId $userId -ErrorAction Stop }",
+    '        catch { if ($_.Exception.Message -notmatch "does not exist|NotFound|404") { throw }; Write-Host "  $upn was not a member of $LegacyGroupName" }',
     "    }",
-    '    if ($PSCmdlet.ShouldProcess($upn, "Ensure membership in E5 group SG-Contoso-Finance-AVD")) {',
-    '        New-MgGroupMemberByRef -GroupId $TargetGroupId -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } -ErrorAction SilentlyContinue',
+    '    if ($PSCmdlet.ShouldProcess($upn, "Ensure membership in E5 group $EntitlementGroupName")) {',
+    '        try { New-MgGroupMemberByRef -GroupId $group.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } -ErrorAction Stop }',
+    '        catch { if ($_.Exception.Message -notmatch "already exist") { throw } }',
     "    }",
     '    if ($PSCmdlet.ShouldProcess($upn, "Reprocess group-based license assignment for SPE_E5")) {',
     "        Invoke-MgLicenseUser -UserId $upn | Out-Null",
@@ -186,15 +212,22 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     L.push(
       "",
       "# --- 2. Conditional Access remediation (Update-MgIdentityConditionalAccessPolicy) ---",
-      `$group = Get-MgGroup -Filter "displayName eq '$EntitlementGroupName'" -Top 1`,
-      'if (-not $group) { throw "Group $EntitlementGroupName not found" }',
-      "$policy = Get-MgIdentityConditionalAccessPolicy -All | Where-Object { $_.Id -eq $ConditionalAccessPolicyId -or $_.DisplayName -eq $PolicyDisplayName } | Select-Object -First 1",
-      `if (-not $policy) { throw "Conditional Access policy '$PolicyDisplayName' ($ConditionalAccessPolicyId) not found" }`,
-      "$includeGroups = @($policy.Conditions.Users.IncludeGroups) + '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' | Select-Object -Unique",
-      "$excludeGroups = @($policy.Conditions.Users.ExcludeGroups) + $group.Id | Select-Object -Unique",
+      isUuid(blocking.id)
+        ? "$policy = Get-MgIdentityConditionalAccessPolicy -All | Where-Object { $_.Id -eq $ConditionalAccessPolicyId -or $_.DisplayName -eq $PolicyDisplayName } | Select-Object -First 1"
+        : "$policy = Get-MgIdentityConditionalAccessPolicy -All | Where-Object { $_.DisplayName -eq $PolicyDisplayName } | Select-Object -First 1",
+      `if (-not $policy) { throw "Conditional Access policy '$PolicyDisplayName' not found" }`,
+      "# PATCH replaces conditions.users wholesale: carry every include/exclude collection and only add the exclusion.",
+      "$u = $policy.Conditions.Users",
       "$body = @{",
       "    state      = 'enabledForReportingButNotEnforced'",
-      "    conditions = @{ users = @{ includeGroups = @($includeGroups); excludeGroups = @($excludeGroups) } }",
+      "    conditions = @{ users = @{",
+      "        includeUsers  = @($u.IncludeUsers)",
+      "        excludeUsers  = @($u.ExcludeUsers)",
+      "        includeGroups = @($u.IncludeGroups)",
+      "        excludeGroups = @(@($u.ExcludeGroups) + $group.Id | Select-Object -Unique)",
+      "        includeRoles  = @($u.IncludeRoles)",
+      "        excludeRoles  = @($u.ExcludeRoles)",
+      "    } }",
       "}",
       'if ($PSCmdlet.ShouldProcess($PolicyDisplayName, "Exclude $EntitlementGroupName and switch to report-only")) {',
       "    Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter $body",
@@ -208,9 +241,10 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
     ? d.rogueSecurityRules.map((r) => r.ruleName)
     : ["Allow-Temp-RDP-Diagnostic-Drift"];
   const tagFixes = d.tagDrift.filter((t) => t.expectedInTf !== null).map((t) => `${t.key} = "${t.expectedInTf}"`);
-  const avdGroupUuid = GROUP_IDS["SG-Contoso-Finance-AVD"]!;
-  const legacyGroupUuid = GROUP_IDS["SG-Contoso-Finance-Legacy"]!;
-  const blockingPolicyUuid = "d09ae604-9c1e-4b9c-9a5d-000000000001";
+  // Review artefact: ids from the seeded manifest, a {name} placeholder when the tenant is not in it.
+  const avdGroupUuid = manifestGroupId(ctx, inv.groupName) ?? `{${inv.groupName}}`;
+  const legacyGroupUuid = manifestGroupId(ctx, LEGACY_GROUP) ?? `{${LEGACY_GROUP}}`;
+  const blockingPolicyUuid = blocking && isUuid(blocking.id) ? blocking.id : `{${blocking?.displayName ?? "policy"}}`;
   const fallbackUnifiedHclDiff = [
     `--- a/${d.terraformFile || "demo-iac/main.tf"} (live Azure state)`,
     `+++ b/${d.terraformFile || "demo-iac/main.tf"} (Terraform baseline)`,
@@ -277,7 +311,7 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
                   state: "enabledForReportingButNotEnforced",
                   conditions: {
                     users: {
-                      includeGroups: [legacyGroupUuid],
+                      includeGroups: blocking.includeGroupIds.filter((id) => isUuid(id)),
                       excludeGroups: [
                         ...new Set([
                           ...blocking.excludeGroupIds.filter((id) => isUuid(id)),
@@ -324,7 +358,7 @@ function licenseAnomaly(ctx: CorrelationContext): RemediationPlan {
   const failed = inv.users.filter((u) => u.assignmentState === "Error: CountViolation");
   const reclaimSkus = [...new Set(orphaned.flatMap((u) => u.currentSku.split(",").map((s) => s.trim())))].filter((s) => s && s !== "NONE");
   const L: string[] = [
-    ...header(ctx, ["Microsoft.Graph.Users", "Microsoft.Graph.Groups", "Microsoft.Graph.Identity.DirectoryManagement"], "reclaim orphaned seats, resolve CountViolation", [
+    ...header(ctx, ["Microsoft.Graph.Users", "Microsoft.Graph.Users.Actions", "Microsoft.Graph.Groups", "Microsoft.Graph.Identity.DirectoryManagement"], "reclaim orphaned seats, resolve CountViolation", [
       `1. Remove ${reclaimSkus.join(", ") || "SPE_E5"} from ${orphaned.length} disabled account(s) (direct assignments) and drop them from ${inv.groupName}.`,
       `2. Reprocess group-based licensing for ${failed.length} CountViolation member(s) (Invoke-MgLicenseUser).`,
       "   No new licenses are purchased: the reclaimed seats cover the failed assignments.",
@@ -501,7 +535,12 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
   const L: string[] = [
     ...header(
       ctx,
-      ["Microsoft.Graph.Authentication", "Microsoft.Graph.DeviceManagement", "Microsoft.Graph.DeviceManagement.Actions"],
+      [
+        "Microsoft.Graph.Authentication",
+        "Microsoft.Graph.DeviceManagement",
+        "Microsoft.Graph.DeviceManagement.Actions",
+        ...(key === "INC-4099" ? ["Microsoft.Graph.Groups", "Microsoft.Graph.Beta.DeviceManagement"] : []),
+      ],
       key === "INC-4099" ? "resolve the BitLocker policy conflict" : "restore the ASR baseline and remove the firewall conflict",
       [
         ...(probe.asrPolicy ? [`1. Patch '${probe.asrPolicy}': ASR rule ${probe.asrRuleSetting} Audit → Block (golden baseline).`] : []),
@@ -513,10 +552,12 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
     `    [string]$TenantId = ${ps(ctx.erp.tenant.entraTenantId)},`,
     ...(probe.asrPolicy ? [`    [string]$AsrPolicyName = ${ps(demoName(probe.asrPolicy))},`, `    [string]$AsrRule = ${ps(probe.asrRuleSetting!)},`] : []),
     `    [string]$ConflictingProfileName = ${ps(demoName(probe.conflictingProfile))},`,
+    ...(key === "INC-4099" ? [`    [string]$AssignmentGroupName = ${ps(probe.assignmentGroup)},`] : []),
     `    [string[]]$DeviceNames = @(${devices.map(ps).join(", ")})`,
     ")",
     "",
-    ...connectGuard(["DeviceManagementConfiguration.ReadWrite.All", "DeviceManagementManagedDevices.PrivilegedOperations.All"]),
+    ...connectGuard(["DeviceManagementConfiguration.ReadWrite.All", "DeviceManagementManagedDevices.PrivilegedOperations.All", ...(key === "INC-4099" ? ["Group.Read.All"] : [])]),
+    ...(key === "INC-4099" ? RESOLVE_GROUP_FN : []),
   ];
   if (probe.asrPolicy) {
     L.push(
@@ -549,22 +590,43 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
   if (key === "INC-4099") {
     L.push(
       "# --- 2. Deploy Proactive Remediation to clear tattooed BitLocker FVE registry keys ---",
-      "$detectScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\"if (Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE' -Name 'EncryptionMethodWithXtsOs' -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }\"))",
-      "$remediateScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\"Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE' -Name 'EncryptionMethodWithXtsOs','AllowWarningForOtherDiskEncryption' -ErrorAction SilentlyContinue; exit 0\"))",
+      "# The golden baseline writes EncryptionMethodWithXts* = 7 (XTS-AES 256) itself: only a value that",
+      "# exists and is not 7 is the legacy tattoo. Deleting the golden value would fight Intune on every run.",
+      "$detect = @'",
+      "$fve = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE' -ErrorAction SilentlyContinue",
+      "$bad = @('EncryptionMethodWithXtsOs','EncryptionMethodWithXtsFdv','EncryptionMethodWithXtsRdv') | Where-Object { $null -ne $fve.$_ -and $fve.$_ -ne 7 }",
+      "if ($bad) { Write-Output \"Tattooed: $($bad -join ', ')\"; exit 1 } else { exit 0 }",
+      "'@",
+      "$remediate = @'",
+      "$path = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE'",
+      "$fve = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue",
+      "foreach ($name in 'EncryptionMethodWithXtsOs','EncryptionMethodWithXtsFdv','EncryptionMethodWithXtsRdv') {",
+      "    if ($null -ne $fve.$name -and $fve.$name -ne 7) { Remove-ItemProperty -Path $path -Name $name -ErrorAction Stop }",
+      "}",
+      "# Re-apply the golden baseline now: the enrollment client's own scheduled task runs the MDM sync.",
+      "Get-ScheduledTask -TaskPath '\\Microsoft\\Windows\\EnterpriseMgmt\\*' -ErrorAction SilentlyContinue | Where-Object TaskName -eq 'Schedule #3 created by enrollment client' | Start-ScheduledTask",
+      "exit 0",
+      "'@",
       "$healthScriptBody = @{",
       "    displayName             = '[ContextPane] Clear tattooed BitLocker FVE registry keys (INC-4099)'",
-      "    description             = 'Removes tattooed HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs after unassigning Fabrikam-Legacy-BitLocker-DeviceConfig'",
+      "    description             = 'Removes legacy (non XTS-AES 256) HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXts* values left after unassigning Fabrikam-Legacy-BitLocker-DeviceConfig'",
       "    publisher               = 'ContextPane Tier 3'",
       "    runAsAccount            = 'system'",
       "    runAs32Bit              = $false",
       "    enforceSignatureCheck   = $false",
-      "    detectionScriptContent  = $detectScript",
-      "    remediationScriptContent = $remediateScript",
+      "    detectionScriptContent  = [Text.Encoding]::UTF8.GetBytes($detect)",
+      "    remediationScriptContent = [Text.Encoding]::UTF8.GetBytes($remediate)",
       "}",
-      'if ($PSCmdlet.ShouldProcess("SG-Fabrikam-Legal-Workstations", "Deploy tattooed BitLocker FVE registry remediation script")) {',
+      "$assignmentGroup = Get-GroupByName $AssignmentGroupName",
+      "$assignBody = @{ deviceHealthScriptAssignments = @(@{",
+      "    target               = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = $assignmentGroup.Id }",
+      "    runRemediationScript = $true",
+      "    runSchedule          = @{ '@odata.type' = '#microsoft.graph.deviceHealthScriptDailySchedule'; interval = 1; time = '01:00:00'; useUtc = $false }",
+      "}) }",
+      'if ($PSCmdlet.ShouldProcess($AssignmentGroupName, "Deploy tattooed BitLocker FVE registry remediation script")) {',
       "    $deployedScript = New-MgBetaDeviceManagementDeviceHealthScript -BodyParameter $healthScriptBody",
-      '    Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/beta/deviceManagement/deviceHealthScripts/$($deployedScript.Id)/assign" -Body (@{ deviceHealthScriptAssignments = @(@{ target = @{ "@odata.type" = "#microsoft.graph.groupAssignmentTarget"; groupId = "d4e5f6a7-b8c9-4d5e-8f0a-1b2c3d4e5f6a" } }) } | ConvertTo-Json -Depth 10) -ContentType \'application/json\'',
-      '    Write-Host "[OK] Deployed tattooed FVE registry scrubber to SG-Fabrikam-Legal-Workstations" -ForegroundColor Green',
+      '    Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/beta/deviceManagement/deviceHealthScripts/$($deployedScript.Id)/assign" -Body ($assignBody | ConvertTo-Json -Depth 10) -ContentType \'application/json\'',
+      '    Write-Host "[OK] Deployed tattooed FVE registry scrubber to $AssignmentGroupName (daily, remediation on)" -ForegroundColor Green',
       "}",
       "",
     );
@@ -589,7 +651,7 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
           ? `Fix ${ctx.ticketId}: unassign the conflicting legacy BitLocker profile for ${ctx.erp.tenant.displayName}`
           : `Fix ${ctx.ticketId}: restore the ASR baseline and remove the duplicate firewall profile`,
       summary: (key === "INC-4099"
-        ? `Unassigns ${probe.conflictingProfile} from ${probe.assignmentGroup} so only ${golden?.name ?? "the disk encryption baseline"} configures BitLocker (XTS-AES 256, silent), deploys the Intune Proactive Remediation clearing tattooed HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs keys on SG-Fabrikam-Legal-Workstations, and syncs the ${devices.length} NonCompliant devices.`
+        ? `Unassigns ${probe.conflictingProfile} from ${probe.assignmentGroup} so only ${golden?.name ?? "the disk encryption baseline"} configures BitLocker (XTS-AES 256, silent), deploys the Intune Proactive Remediation clearing tattooed (non XTS-AES 256) HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXts* values on ${probe.assignmentGroup}, and syncs the ${devices.length} NonCompliant devices.`
         : `Patches ${probe.asrPolicy} back to the golden baseline (LSASS credential-stealing rule ${asrSetting?.live ?? "Audit"} → Block), unassigns the duplicate legacy ${probe.conflictingProfile} profile from ${probe.assignmentGroup} and syncs the ${devices.length} devices that report an EnableFirewall conflict.`
       ).slice(0, 600),
       powershellScript: `${L.join("\n")}\n`,
@@ -610,9 +672,22 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
                   runAsAccount: "system",
                   runAs32Bit: false,
                   enforceSignatureCheck: false,
-                  targetRegistryKey: "HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs",
-                  assignedToGroupId: GROUP_IDS["SG-Fabrikam-Legal-Workstations"]!,
-                  assignedToGroupName: "SG-Fabrikam-Legal-Workstations",
+                  detectionScriptContent: "<base64 Detect.ps1>",
+                  remediationScriptContent: "<base64 Remediate.ps1>",
+                },
+                note: "targets HKLM:\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXts{Os,Fdv,Rdv} values that are not 7",
+              },
+              {
+                method: "POST",
+                url: "/beta/deviceManagement/deviceHealthScripts/{deviceHealthScriptId}/assign",
+                body: {
+                  deviceHealthScriptAssignments: [
+                    {
+                      target: { "@odata.type": "#microsoft.graph.groupAssignmentTarget", groupId: manifestGroupId(ctx, probe.assignmentGroup) ?? `{${probe.assignmentGroup}}` },
+                      runRemediationScript: true,
+                      runSchedule: { "@odata.type": "#microsoft.graph.deviceHealthScriptDailySchedule", interval: 1, time: "01:00:00", useUtc: false },
+                    },
+                  ],
                 },
               },
             ]
@@ -622,7 +697,7 @@ function intuneFix(ctx: CorrelationContext): RemediationPlan {
       affectedEntities: [
         ...(probe.asrPolicy ? [{ type: "policy" as const, id: probe.asrPolicy, change: `ASR LSASS rule ${asrSetting?.live ?? "Audit"} → Block` }] : []),
         { type: "policy" as const, id: probe.conflictingProfile, change: `unassign from ${probe.assignmentGroup}` },
-        ...(key === "INC-4099" ? [{ type: "setting" as const, id: "HKLM\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs", change: "deploy Detect/Remediate scrubber to SG-Fabrikam-Legal-Workstations" }] : []),
+        ...(key === "INC-4099" ? [{ type: "setting" as const, id: "HKLM\\SOFTWARE\\Policies\\Microsoft\\FVE\\EncryptionMethodWithXtsOs", change: `deploy Detect/Remediate scrubber to ${probe.assignmentGroup}` }] : []),
         ...devices.slice(0, 12).map((d) => ({ type: "device" as const, id: d, change: "sync; re-evaluate compliance" })),
       ].slice(0, 20),
       riskNotes: [
@@ -651,7 +726,7 @@ function workloadIdentityFix(ctx: CorrelationContext): RemediationPlan {
   const grantUuid = "3b4c5d6e-7f8a-4901-9b2c-3d4e5f6a7b8c";
   const overprivilegedRoleIds = w.appPermissions.map((s) => APP_ROLE_ASSIGNMENT_IDS[s] ?? "19dbc75e-c2e2-444c-a770-ec69d8559fc7");
   const L: string[] = [
-    ...header(ctx, ["Microsoft.Graph.Applications", "Microsoft.Graph.Identity.DirectoryManagement", "Microsoft.Graph.Sites"], "remove shadow-admin owner, right-size Graph scopes, federate OIDC", [
+    ...header(ctx, ["Microsoft.Graph.Applications", "Microsoft.Graph.Users", "Microsoft.Graph.Identity.SignIns", "Microsoft.Graph.Identity.DirectoryManagement", "Microsoft.Graph.Sites"], "remove shadow-admin owner, right-size Graph scopes, federate OIDC", [
       `1. Remove app owner ${w.owner.upn} (0 directory roles) from '${w.spn.displayName}'.`,
       `2. Revoke the delegated oauth2PermissionGrant '${w.oauth2PermissionGrant.scope}' (unverified publisher).`,
       `3. Remove over-privileged appRoleAssignments (${w.appPermissions.join(", ")}); grant only ${w.requiredPermissions.join(", ")} and bind Sites.Selected to the Finance SharePoint site.`,

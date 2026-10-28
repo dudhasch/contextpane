@@ -1,4 +1,5 @@
 import { baseScenarioOf, getCustomScenario, isCustomScenarioId, isScenarioId, type ScenarioId } from "@contextpane/catalog";
+import { CA_POSTURE, INTUNE_SCENARIOS, LICENSE_ANOMALY, WORKLOAD_IDENTITY, demoName } from "@contextpane/mcp-msgraph";
 import {
   SHADOW_ADMIN_SCENARIO_ID,
   SHADOW_ADMIN_USER_UPN,
@@ -763,14 +764,50 @@ export interface InverseRollbackBundle {
   restores: string[];
 }
 
-export const SPE_E3_SKU_ID = "6fd2c87f-b296-42f0-b197-1e91e994b900";
+/** Microsoft 365 E3. 6fd2c87f-… is Office 365 E3 (ENTERPRISEPACK), not SPE_E3. */
+export const SPE_E3_SKU_ID = "05e9a617-0261-4cee-bb44-138d3ef5d965";
 export const SPE_E5_SKU_ID = "06ebc4ee-1bb5-47dd-8120-11324bc54e06";
-export const CONTOSO_AVD_CA_POLICY_ID = "d09ae604-9c1e-4b9c-9a5d-000000000001";
+/** Seeded lab id of "[ContextPane-Demo] Block AVD - Contoso Finance Legacy" (demo-lab-manifest.json); the scripts match by display name too. */
+export const CONTOSO_AVD_CA_POLICY_ID = "d09ae604-4c06-4769-ad01-20ec8efa18ad";
+const CONTOSO_AVD_CA_POLICY_NAME = "[ContextPane-Demo] Block AVD - Contoso Finance Legacy";
 
-export const CONTOSO_USER_OBJECT_IDS: Record<string, string> = {
-  "lynne.robins.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445501",
-  "diego.siciliani.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445502",
-  "patti.fernandez.contoso@c4a8shili.onmicrosoft.com": "907668fd-5d90-4f7c-8a5c-112233445503",
+const psq = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+/** Runtime resolvers shared by every inverse script: no object id is hard-coded. */
+const RESOLVERS = [
+  "function Get-GroupByName([string]$Name) {",
+  `    $g = @(Get-MgGroup -Filter "displayName eq '$($Name -replace "'", "''")'" -ConsistencyLevel eventual -CountVariable n -Top 2)`,
+  "    if ($g.Count -ne 1) { throw \"Group '$Name' resolved to $($g.Count) objects\" }",
+  "    return $g[0]",
+  "}",
+  "function Get-CaPolicyByName([string]$Name, [string]$Id) {",
+  "    $p = Get-MgIdentityConditionalAccessPolicy -All | Where-Object { $_.DisplayName -eq $Name -or ($Id -and $_.Id -eq $Id) } | Select-Object -First 1",
+  "    if (-not $p) { throw \"Conditional Access policy '$Name' not found\" }",
+  "    return $p",
+  "}",
+  "# PATCH replaces conditions.users wholesale: always send every include/exclude collection.",
+  "function Get-CaUsersBody($Users, [string[]]$ExcludeGroups) {",
+  "    @{ includeUsers = @($Users.IncludeUsers); excludeUsers = @($Users.ExcludeUsers); includeGroups = @($Users.IncludeGroups); excludeGroups = @($ExcludeGroups); includeRoles = @($Users.IncludeRoles); excludeRoles = @($Users.ExcludeRoles) }",
+  "}",
+  "function Sync-DeviceByName([string]$Name) {",
+  `    $d = Get-MgDeviceManagementManagedDevice -Filter "deviceName eq '$($Name -replace "'", "''")'" -Top 1`,
+  "    if (-not $d) { Write-Warning \"$Name not found in Intune\"; return }",
+  "    Sync-MgDeviceManagementManagedDevice -ManagedDeviceId $d.Id",
+  "}",
+  "function Get-DeviceConfigurationByName([string]$Name) {",
+  "    $c = Get-MgDeviceManagementDeviceConfiguration -All | Where-Object DisplayName -eq $Name | Select-Object -First 1",
+  "    if (-not $c) { throw \"Device configuration '$Name' not found\" }",
+  "    return $c",
+  "}",
+];
+
+const MODULES: Record<string, string[]> = {
+  "INC-4092": ["Microsoft.Graph.Users", "Microsoft.Graph.Users.Actions", "Microsoft.Graph.Groups", "Microsoft.Graph.Identity.SignIns", "Az.Network"],
+  "INC-4099": ["Microsoft.Graph.Groups", "Microsoft.Graph.DeviceManagement", "Microsoft.Graph.DeviceManagement.Actions"],
+  "ANOM-LIC-101": ["Microsoft.Graph.Users", "Microsoft.Graph.Users.Actions", "Microsoft.Graph.Groups"],
+  "ANOM-CA-204": ["Microsoft.Graph.Groups", "Microsoft.Graph.Identity.SignIns"],
+  "ANOM-INT-309": ["Microsoft.Graph.Groups", "Microsoft.Graph.DeviceManagement", "Microsoft.Graph.DeviceManagement.Actions"],
+  [SHADOW_ADMIN_SCENARIO_ID]: ["Microsoft.Graph.Applications", "Microsoft.Graph.Users"],
 };
 
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
@@ -795,68 +832,132 @@ export function buildInverseRollback(scenarioId: ScenarioId | string | null): In
     : "";
   const terraformDiff = rogue ? `--- a/demo-iac/main.tf (post-remediation)\n+++ b/demo-iac/main.tf (rollback to pre-state)\n@@ -1,0 +1,1 @@\n+  security_rule { name = "${rogue.name}" priority = ${rogue.priority} Tcp/3389 from * } # restored by f^-1\n` : "";
 
+  const sp = (target: string, action: string, body: string) => `if ($PSCmdlet.ShouldProcess(${psq(target)}, ${psq(action)})) { ${body} }`;
+  const bitlocker = INTUNE_SCENARIOS["INC-4099"].live;
+  const asr = INTUNE_SCENARIOS["ANOM-INT-309"].live;
+  const caPolicy = (key: "CA-001" | "CA-004") => CA_POSTURE.policies.find((p) => p.key === key)!.displayName;
   const userLines =
     effectiveId === "INC-4092"
       ? [
-          `$SpeE3SkuId = '${SPE_E3_SKU_ID}'`,
-          `$SpeE5SkuId = '${SPE_E5_SKU_ID}'`,
-          `$ConditionalAccessPolicyId = '${CONTOSO_AVD_CA_POLICY_ID}' # ca-contoso-avd-mfa-01`,
+          // Pre-state: the drifted users were members of BOTH groups (manifest), so f^-1 only re-adds the legacy membership.
+          "$legacy = Get-GroupByName 'SG-Contoso-Finance-Legacy'",
+          "$avd = Get-GroupByName 'SG-Contoso-Finance-AVD'",
           ...pre.affected
             .filter((a) => a.kind === "user")
-            .map((a, idx) => {
-              const objectId = CONTOSO_USER_OBJECT_IDS[a.id.toLowerCase()] ?? `907668fd-5d90-4f7c-8a5c-11223344550${idx + 1}`;
-              return `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation SPE_E3 group license & SG-Contoso-Finance-Legacy membership (${a.pre})')) { New-MgGroupMemberByRef -GroupId '6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c' -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/${objectId}" } | Out-Null; Remove-MgGroupMemberByRef -GroupId 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d' -DirectoryObjectId '${objectId}' -ErrorAction SilentlyContinue | Out-Null; Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null } # SG-Contoso-Finance-Legacy (${SPE_E3_SKU_ID} <- ${SPE_E5_SKU_ID})`;
-            }),
-          `if ($PSCmdlet.ShouldProcess('[ContextPane-Demo] Block AVD - Contoso Finance Legacy', 'Restore pre-remediation CA policy state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId '${CONTOSO_AVD_CA_POLICY_ID}' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ includeGroups = @('6f8a9b0c-1d2e-4f3a-9b8c-7d6e5f4a3b2c'); excludeGroups = @('957845fd-42ee-4500-b407-ad04487da3c7') } } } | Out-Null }`,
+            .map((a) =>
+              sp(
+                a.id,
+                `Restore pre-remediation SG-Contoso-Finance-Legacy membership and SPE_E3 group license (${a.pre})`,
+                `$u = Get-MgUser -UserId ${psq(a.id)} -Property Id; New-MgGroupMemberByRef -GroupId $legacy.Id -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($u.Id)" }; Invoke-MgLicenseUser -UserId $u.Id | Out-Null`,
+              ),
+            ),
+          `$policy = Get-CaPolicyByName ${psq(CONTOSO_AVD_CA_POLICY_NAME)} ${psq(CONTOSO_AVD_CA_POLICY_ID)}`,
+          sp(
+            CONTOSO_AVD_CA_POLICY_NAME,
+            "Restore pre-remediation CA policy state (enabled, SG-Contoso-Finance-AVD no longer excluded)",
+            "Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $policy.Id -BodyParameter @{ state = 'enabled'; conditions = @{ users = (Get-CaUsersBody $policy.Conditions.Users @($policy.Conditions.Users.ExcludeGroups | Where-Object { $_ -ne $avd.Id })) } } | Out-Null",
+          ),
           `if ($PSCmdlet.ShouldProcess('${AVD_NSG_NAME}', 'Restore Allow-Temp-RDP-Diagnostic-Drift rule and drifted tags on ${AVD_NSG_NAME}')) { $nsg = Get-AzNetworkSecurityGroup -Name '${AVD_NSG_NAME}' -ResourceGroupName 'rg-contoso-avd-prod'; Add-AzNetworkSecurityRuleConfig -NetworkSecurityGroup $nsg -Name 'Allow-Temp-RDP-Diagnostic-Drift' -Priority 150 -Direction 'Inbound' -Access 'Allow' -Protocol 'Tcp' -SourcePortRange '*' -DestinationPortRange '3389' -SourceAddressPrefix '*' -DestinationAddressPrefix '*' | Set-AzNetworkSecurityGroup | Out-Null }`,
         ]
       : effectiveId === "INC-4099"
         ? [
-            `if ($PSCmdlet.ShouldProcess('intune-bitlocker-legacy-v1', 'Restore legacy Fabrikam-Win10-Legacy-BitLocker-AES128 assignment to SG-Fabrikam-Legal-Workstations')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/intune-bitlocker-legacy-v1/assign' -Body @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = 'b1c2d3e4-1111-4222-8333-444455556666' } }) } | Out-Null }`,
-            ...pre.affected.map(
-              (a) =>
-                `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation BitLocker policy state (${a.pre})')) { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
+            `$profile = Get-DeviceConfigurationByName ${psq(demoName(bitlocker.conflictingProfile))}`,
+            `$group = Get-GroupByName ${psq(bitlocker.assignmentGroup)}`,
+            sp(
+              bitlocker.conflictingProfile,
+              `Restore legacy assignment to ${bitlocker.assignmentGroup}`,
+              "Invoke-MgGraphRequest -Method POST -Uri \"https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/$($profile.Id)/assign\" -Body (@{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = $group.Id } }) } | ConvertTo-Json -Depth 10) -ContentType 'application/json' | Out-Null",
             ),
+            ...pre.affected.map((a) => sp(a.id, `Trigger Intune device sync to restore pre-remediation BitLocker policy state (${a.pre})`, `Sync-DeviceByName ${psq(a.id)}`)),
           ]
         : effectiveId === "ANOM-LIC-101"
           ? [
-              `$SpeE5SkuId = '${SPE_E5_SKU_ID}'`,
-              ...pre.affected.map(
-                (a) =>
-                  `if ($PSCmdlet.ShouldProcess('${a.id}', 'Revert SPE_E5 group license reprocessing (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
-              ),
-              `if ($PSCmdlet.ShouldProcess('SG-Contoso-M365-E5', 'Restore pre-remediation disabled-account license assignments')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/groups/a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d/assignLicense' -Body @{ addLicenses = @(@{ skuId = '${SPE_E5_SKU_ID}' }); removeLicenses = @() } | Out-Null }`,
+              // f reclaimed the seats of the disabled accounts (direct -RemoveLicenses + group removal); f^-1 gives them back per user.
+              `$group = Get-GroupByName ${psq(LICENSE_ANOMALY.groupName)}`,
+              `$skus = Get-MgSubscribedSku -All`,
+              ...LICENSE_ANOMALY.users
+                .filter((u) => u.role === "orphaned")
+                .map((u) =>
+                  sp(
+                    u.upn,
+                    `Restore ${u.heldSkus.join(", ")} (${u.assignmentPath}) on the disabled account`,
+                    [
+                      `$u = Get-MgUser -UserId ${psq(u.upn)} -Property Id`,
+                      ...(u.assignmentPath.includes("Direct")
+                        ? [`Set-MgUserLicense -UserId $u.Id -AddLicenses @($skus | Where-Object SkuPartNumber -in @(${u.heldSkus.map(psq).join(", ")}) | ForEach-Object { @{ SkuId = $_.SkuId } }) -RemoveLicenses @() | Out-Null`]
+                        : []),
+                      `New-MgGroupMemberByRef -GroupId $group.Id -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($u.Id)" }`,
+                    ].join("; "),
+                  ),
+                ),
+              "# The CountViolation members return to Error on the next licensing pass once the seats are taken back; no call needed.",
             ]
           : effectiveId === "ANOM-CA-204"
             ? [
-                `if ($PSCmdlet.ShouldProcess('CA-001', 'Restore pre-remediation CA-001 excludeGroups state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca001a11-2b3c-4d5e-8f9a-0b1c2d3e4f01' -BodyParameter @{ state = 'enabled'; conditions = @{ users = @{ excludeGroups = @() } } } | Out-Null }`,
-                `if ($PSCmdlet.ShouldProcess('CA-004', 'Restore CA-004-Block-Legacy-Auth to report-only state')) { Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId 'ca004d44-5e6f-4a8b-9c0d-3e4f5a6b7c04' -BodyParameter @{ state = 'enabledForReportingButNotEnforced' } | Out-Null }`,
+                `$breakGlass = Get-GroupByName ${psq(CA_POSTURE.breakGlassGroup)}`,
+                `$ca001 = Get-CaPolicyByName ${psq(caPolicy("CA-001"))} ''`,
+                sp(
+                  caPolicy("CA-001"),
+                  `Restore pre-remediation CA-001 state (${CA_POSTURE.breakGlassGroup} not excluded)`,
+                  "Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $ca001.Id -BodyParameter @{ conditions = @{ users = (Get-CaUsersBody $ca001.Conditions.Users @($ca001.Conditions.Users.ExcludeGroups | Where-Object { $_ -ne $breakGlass.Id })) } } | Out-Null",
+                ),
+                `$ca004 = Get-CaPolicyByName ${psq(caPolicy("CA-004"))} ''`,
+                sp(caPolicy("CA-004"), "Restore CA-004 to report-only state", "Update-MgIdentityConditionalAccessPolicy -ConditionalAccessPolicyId $ca004.Id -BodyParameter @{ state = 'enabledForReportingButNotEnforced' } | Out-Null"),
               ]
             : effectiveId === "ANOM-INT-309"
               ? [
-                  `if ($PSCmdlet.ShouldProcess('Contoso-ASR-Endpoint-Baseline', 'Revert ASR LSASS credential rule 9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2 to audit mode')) { Invoke-MgGraphRequest -Method PATCH -Uri 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/asr-contoso-baseline-01' -Body @{ description = 'Revert LSASS rule to Audit mode' } | Out-Null }`,
-                  `if ($PSCmdlet.ShouldProcess('Contoso-FW-Legacy-v1', 'Restore legacy Windows Firewall profile assignment')) { Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/fw-contoso-legacy-v1/assign' -Body @{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = 'c3d4e5f6-2222-4333-8444-555566667777' } }) } | Out-Null }`,
-                  ...pre.affected.map(
-                    (a) =>
-                      `if ($PSCmdlet.ShouldProcess('${a.id}', 'Trigger Intune device sync to restore pre-remediation state (${a.pre})')) { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId '${a.id}' | Out-Null }`,
+                  "$policies = (Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/beta/deviceManagement/configurationPolicies?$select=id,name&$top=100').value",
+                  `$asr = $policies | Where-Object name -eq ${psq(demoName(asr.asrPolicy!))} | Select-Object -First 1`,
+                  `if (-not $asr) { throw ${psq(`Settings Catalog policy '${demoName(asr.asrPolicy!)}' not found`)} }`,
+                  sp(
+                    asr.asrPolicy!,
+                    `Revert ASR rule ${asr.asrRuleSetting} to Audit (Settings Catalog GET + PUT)`,
+                    [
+                      '$policy = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/$($asr.id)"',
+                      '$settings = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/$($asr.id)/settings").value',
+                      "$json = ConvertTo-Json @($settings | ForEach-Object { @{ '@odata.type' = '#microsoft.graph.deviceManagementConfigurationSetting'; settingInstance = $_.settingInstance } }) -Depth 30",
+                      `$patched = $json -replace ${psq(`(${asr.asrRuleSetting})_block"`)}, '$1_audit"'`,
+                      "$body = @{ name = $policy.name; description = $policy.description; platforms = $policy.platforms; technologies = $policy.technologies; roleScopeTagIds = $policy.roleScopeTagIds; settings = ($patched | ConvertFrom-Json -Depth 30) }",
+                      "Invoke-MgGraphRequest -Method PUT -Uri \"https://graph.microsoft.com/beta/deviceManagement/configurationPolicies/$($asr.id)\" -Body ($body | ConvertTo-Json -Depth 30) -ContentType 'application/json' | Out-Null",
+                    ].join("; "),
                   ),
+                  `$profile = Get-DeviceConfigurationByName ${psq(demoName(asr.conflictingProfile))}`,
+                  `$group = Get-GroupByName ${psq(asr.assignmentGroup)}`,
+                  sp(
+                    asr.conflictingProfile,
+                    `Restore legacy Windows Firewall profile assignment to ${asr.assignmentGroup}`,
+                    "Invoke-MgGraphRequest -Method POST -Uri \"https://graph.microsoft.com/v1.0/deviceManagement/deviceConfigurations/$($profile.Id)/assign\" -Body (@{ assignments = @(@{ target = @{ '@odata.type' = '#microsoft.graph.groupAssignmentTarget'; groupId = $group.Id } }) } | ConvertTo-Json -Depth 10) -ContentType 'application/json' | Out-Null",
+                  ),
+                  ...pre.affected.map((a) => sp(a.id, `Trigger Intune device sync to restore pre-remediation state (${a.pre})`, `Sync-DeviceByName ${psq(a.id)}`)),
                 ]
               : (effectiveId as string) === SHADOW_ADMIN_SCENARIO_ID
                 ? [
-                    `if ($PSCmdlet.ShouldProcess('sp-contoso-erp-sync-prod', 'Remove federated GitHub OIDC credential and restore pre-remediation owner & Graph app role assignments')) { Invoke-MgGraphRequest -Method DELETE -Uri 'https://graph.microsoft.com/v1.0/applications/app-contoso-erp-sync-prod/federatedIdentityCredentials/github-actions-prod-deploy' | Out-Null }`,
+                    `$ApplicationObjectId = ${psq(WORKLOAD_IDENTITY.spn.objectId)}`,
+                    `$ServicePrincipalId = ${psq(WORKLOAD_IDENTITY.spn.servicePrincipalId)}`,
+                    sp(WORKLOAD_IDENTITY.federatedCredential.name, "Remove the GitHub Actions federated identity credential created by f", `Remove-MgApplicationFederatedIdentityCredential -ApplicationId $ApplicationObjectId -FederatedIdentityCredentialId ${psq(WORKLOAD_IDENTITY.federatedCredential.name)}`),
+                    sp(WORKLOAD_IDENTITY.owner.upn, "Restore the pre-remediation app owner", `$owner = Get-MgUser -UserId ${psq(WORKLOAD_IDENTITY.owner.upn)} -Property Id; New-MgApplicationOwnerByRef -ApplicationId $ApplicationObjectId -BodyParameter @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($owner.Id)" }`),
+                    "$graphSp = Get-MgServicePrincipal -Filter \"appId eq '00000003-0000-0000-c000-000000000000'\" -Top 1",
+                    `foreach ($roleName in @(${WORKLOAD_IDENTITY.appPermissions.map(psq).join(", ")})) {`,
+                    "    $role = $graphSp.AppRoles | Where-Object Value -eq $roleName | Select-Object -First 1",
+                    '    if ($role -and $PSCmdlet.ShouldProcess($roleName, "Restore pre-remediation appRoleAssignment")) { New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ServicePrincipalId -PrincipalId $ServicePrincipalId -ResourceId $graphSp.Id -AppRoleId $role.Id | Out-Null }',
+                    "}",
+                    "# Not restored on purpose: the unverified delegated grant (re-consent is an admin decision) and the expired secret (cannot be re-created).",
                   ]
                 : pre.affected.map((a) =>
                     a.kind === "device"
-                      ? `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation device configuration state (${a.pre})')) { Sync-MgDeviceManagementManagedDevice -ManagedDeviceId '${a.id}' | Out-Null }`
-                      : `if ($PSCmdlet.ShouldProcess('${a.id}', 'Restore pre-remediation principal state (${a.pre})')) { Invoke-MgLicenseUser -UserId '${a.id}' | Out-Null }`,
+                      ? sp(a.id, `Restore pre-remediation device configuration state (${a.pre})`, `Sync-DeviceByName ${psq(a.id)}`)
+                      : sp(a.id, `Restore pre-remediation principal state (${a.pre})`, `Invoke-MgLicenseUser -UserId ${psq(a.id)} | Out-Null`),
                   );
 
   const powershellScript = [
     "#Requires -Version 7.0",
+    `#Requires -Modules ${(MODULES[effectiveId as string] ?? ["Microsoft.Graph.Users", "Microsoft.Graph.Users.Actions", "Microsoft.Graph.DeviceManagement", "Microsoft.Graph.DeviceManagement.Actions"]).join(", ")}`,
     "[CmdletBinding(SupportsShouldProcess)]",
     "param([string]$TenantId)",
     "$ErrorActionPreference = 'Stop'",
     `# ContextPane inverse rollback f^-1 for ${resolvedId}: restores pre-remediation state`,
+    "if (-not (Get-MgContext)) { throw 'No Microsoft Graph context. Connect-MgGraph first.' }",
+    ...RESOLVERS,
     ...userLines,
     "",
   ].join("\n");

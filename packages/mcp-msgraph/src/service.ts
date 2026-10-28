@@ -1401,7 +1401,7 @@ export const msgraphService = {
       liveCloudMode: false,
       fetchedAt: new Date().toISOString(),
       latencyMs: Math.round(performance.now()),
-      data: SECURITY_GROUPS_FIXTURE.map((g) => ({ ...g })),
+      data: SECURITY_GROUPS_FIXTURE.filter((g) => g.tenantId === tenantId).map((g) => ({ ...g })),
     };
   },
 

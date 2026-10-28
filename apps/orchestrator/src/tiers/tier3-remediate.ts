@@ -11,6 +11,7 @@ import {
   getScenarioEntry,
   getRemediationBundleToolDefinition,
   isCustomScenarioId,
+  isFreeRoamActionId,
   parseToolArguments,
   formatSourceRef,
   zodToToolParameters,
@@ -738,6 +739,25 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       detail: "Rejected by operator; nothing executed",
     });
     return { ...updated, executionLog: ["Rejected by operator"], convergence: null };
+  }
+
+  // A Free-Roam action has no ticket and no lab scenario behind it: approving it stages it, nothing is written.
+  if (isFreeRoamActionId(drawer.ticketId)) {
+    const mode: ExecutionMode = input.mode ?? "break-glass";
+    const approvedBy = input.approvedBy ?? drawer.approval.requiredIdentity;
+    const updated = { ...drawer, approval: { ...drawer.approval, state: "staged" as const, mode, approvedBy, approvedAt: now } };
+    remediationStore.save(updated);
+    const latencyMs = Math.round(performance.now() - started);
+    auditLedger.append({
+      ...verificationProof(updated),
+      actionType: "hitl-approval",
+      delegatedIdentity: approvedBy,
+      latencyMs,
+      execution: "none",
+      executionMode: mode,
+      detail: `staged, not executed · ${updated.title}`.slice(0, 300),
+    });
+    return { ...updated, executionLog: [`Free-Roam action ${drawer.ticketId} approved and staged: no Graph or ARM write (it is not tied to a ticket or a lab scenario).`], convergence: null };
   }
   if (drawer.verificationStatus.verdict === "Verification Failed") {
     throw new Error("Cannot approve a bundle whose pre-flight verification failed");
