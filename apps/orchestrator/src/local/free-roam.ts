@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import {
   ActionApprovalDrawerSchema,
@@ -654,6 +655,7 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
   const requestId = telemetry.nextRequestId("t1s");
   const hash = selectionHash("freeroam", prompt, input.refinementText, input.viewMode);
   const ptr = selectionDataPtr("freeroam", hash);
+  let rowsSynthesized = false;
   const fallbackCard = buildDeterministicFreeRoamKnowledgeCard(
     prompt,
     input.refinementText,
@@ -786,13 +788,14 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
         rows: sanitizedRows,
         rowsPtr: ptr,
       });
-      return { card: composed, usage: result.usage };
+      return { card: composed, usage: result.usage, synthesized: Boolean(synthesizedRowsRaw?.length) };
     });
 
     chain = outcome.chain;
     if (outcome.result && outcome.winner) {
       card = outcome.result.card;
       usage = outcome.result.usage;
+      rowsSynthesized = outcome.result.synthesized;
       provider = outcome.winner.provider;
       modelId = outcome.winner.modelId;
     }
@@ -831,6 +834,8 @@ export async function spawnFreeRoamDashboard(input: SpawnFreeRoamInput): Promise
       matchedBy: "none",
       rowCount: card.rows.length,
       searched: [],
+      // Knowledge lenses are not tenant data: rows are the model's or the deterministic knowledge card's.
+      dataSource: rowsSynthesized ? "model-synthesized" : "deterministic-knowledge",
     },
     descriptor: pub.descriptor,
     telemetry: event,
@@ -853,10 +858,12 @@ export async function stageFreeRoamRemediation(
     input.tenantId && input.tenantId in TENANT_REGISTRY ? (input.tenantId as TenantId) : "tenant-contoso-01";
   const erp = await sources.erp.getTenantContext(tenantId);
   const remediationId = `rem-freeroam-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  // Its own id, never INC-4092: a Free-Roam action must not inherit a scenario's drawer, rollback or lab write (audit H-05).
+  const actionId = `FREE-${createHash("sha256").update(`${tenantId}|${input.prompt}|${remediationId}`).digest("hex").slice(0, 8).toUpperCase()}`;
 
   const title = input.title?.trim() || `Free-Roam Action · ${input.prompt.slice(0, 64)}`;
   const synthesized = await synthesizeCustomRemediation({
-    scenarioId: "INC-4092",
+    scenarioId: actionId,
     ticketTitle: title,
     ticketBody: input.scriptPreview
       ? `${input.prompt}\n\nSuggested PowerShell snippet:\n${input.scriptPreview}`
@@ -892,7 +899,7 @@ export async function stageFreeRoamRemediation(
 
   const drawer = ActionApprovalDrawerSchema.parse({
     remediationId,
-    ticketId: "INC-4092",
+    ticketId: actionId,
     tenantId,
     title: (synthesized.title || title).slice(0, 120),
     summary: synthesized.summary.slice(0, 600),

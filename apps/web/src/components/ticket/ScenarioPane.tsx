@@ -173,8 +173,11 @@ function UnifiedStatusAndAgentBar({
     [displayTasks],
   );
   const hasAdvisory = Boolean(
-    correlation && (correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational")),
+    correlation && (correlation.advisories.length > 0 || correlation.services.some((s) => s.status !== "operational" && s.status !== "unknown")),
   );
+  // Name only the services a probe reported as operational; the rest are "not probed", never "OK".
+  const okServices = correlation?.services.filter((s) => s.status === "operational").map((s) => s.label.replace(/ \(.*\)$| \/ .*$/, "")) ?? [];
+  const unprobed = correlation?.services.filter((s) => s.status === "unknown").length ?? 0;
 
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [selectedStep, setSelectedStep] = useState<number | null>(null);
@@ -233,7 +236,9 @@ function UnifiedStatusAndAgentBar({
               <span className="text-[10.5px] font-medium text-text">
                 {hasAdvisory
                   ? `Cloud Status: ${correlation.advisories[0]?.region ?? correlation.primaryRegion ?? "Regional"} Advisory`
-                  : "Cloud Status: Azure, Entra, Intune, GitHub OK"}
+                  : okServices.length
+                    ? `Cloud Status: ${okServices.join(", ")} OK${unprobed ? ` · ${unprobed} not probed` : ""}`
+                    : "Cloud Status: not probed"}
               </span>
               <span className="font-mono text-[10px] text-muted">{cloudExpanded ? "▴" : "▾"}</span>
             </button>
@@ -313,13 +318,17 @@ function UnifiedStatusAndAgentBar({
                     ? "bg-rose-400"
                     : p.status === "degraded" || p.status === "advisory"
                       ? "bg-amber-400"
-                      : "bg-emerald-400";
+                      : p.status === "unknown"
+                        ? "bg-slate-500"
+                        : "bg-emerald-400";
                 const border =
                   p.status === "outage"
                     ? "border-rose-500/40 bg-rose-500/12 text-rose-300"
                     : p.status === "degraded" || p.status === "advisory"
                       ? "border-amber-500/40 bg-amber-500/12 text-amber-300"
-                      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
+                      : p.status === "unknown"
+                        ? "border-border-subtle bg-surface text-muted"
+                        : "border-emerald-500/30 bg-emerald-500/8 text-emerald-300";
                 const shortLabel =
                   p.serviceId === "azure-regional"
                     ? !correlation.primaryRegion || correlation.primaryRegion === "Global"

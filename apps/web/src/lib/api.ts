@@ -247,7 +247,7 @@ export interface ExploreSelectionResponse {
   modelId: string;
   provider: RouterTelemetry["provider"];
   tokenCount: number;
-  slice: { kind: string; matchedBy: "rows" | "dataset" | "none"; rowCount: number; searched: Array<{ kind: string; rows: number; matched: number }> };
+  slice: { kind: string; matchedBy: "rows" | "dataset" | "none"; rowCount: number; searched: Array<{ kind: string; rows: number; matched: number }>; dataSource?: string };
   telemetry: RouterTelemetry;
 }
 

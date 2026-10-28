@@ -488,26 +488,8 @@ function hoverResource(ctx: CorrelationContext, resourceName: string): HoverDiag
     };
   }
   if (!d || d.resourceName.toLowerCase() !== resourceName.toLowerCase()) {
-    const rLow = resourceName.toLowerCase();
-    if (rLow === "westeurope" || rLow === "germanywestcentral" || rLow === "northeurope") {
-      const isBlocked = rLow === "westeurope";
-      return {
-        entityId: resourceName,
-        entityType: "resource",
-        status: isBlocked ? "critical" : "healthy",
-        headline: isBlocked
-          ? `${resourceName}: Standard_D4s_v5 quota 20/20 (100% Full) · Denied by Allowed-Locations-EU-Sovereign`.slice(0, 120)
-          : `${resourceName}: 4/20 Standard_D4s_v5 vCPUs used · Allowed by EU-Sovereign Policy`.slice(0, 120),
-        errorCodeTranslation: null,
-        facts: [
-          fact("Subscription", "sub-contoso-prod-01 (20505597-043c-4742-a884-42dc3f621aef)", true),
-          fact("StandardDSv5Family Quota", isBlocked ? "20 / 20 vCPUs (QuotaExceeded)" : "4 / 20 vCPUs (16 Free)", true, isBlocked ? "critical" : "healthy"),
-          fact("Allowed Locations Policy", isBlocked ? "Denied (RequestDisallowedByPolicy)" : "Allowed (EU Sovereign)", false, isBlocked ? "critical" : "healthy"),
-          fact("Upstream Cloud Status", isBlocked ? "Advisory AZ-WEU-CAP-409 (Dv5 constrained)" : "Operational (3 AZs Available)", false, isBlocked ? "warning" : "healthy"),
-        ],
-        quickActions: [{ id: "generate-fix", label: "Generate Fix & Stage PR", kind: "generate-fix", targetEntityId: resourceName, destructive: false }],
-      };
-    }
+    const region = regionHover(ctx, resourceName);
+    if (region) return region;
     return {
       entityId: resourceName,
       entityType: "resource",
@@ -538,23 +520,82 @@ function hoverResource(ctx: CorrelationContext, resourceName: string): HoverDiag
   };
 }
 
-function hoverSku(ctx: CorrelationContext, sku: string): HoverDiagnosticArgs {
-  if (sku.toLowerCase().includes("standard_d4s_v5") || sku.toLowerCase().includes("standarddsv5")) {
+/** "<used>/<limit>" from a quota row. */
+function quotaUse(usage: string): { used: number; limit: number; pct: number } {
+  const [u, l] = usage.split("/").map((n) => Number(n.trim()));
+  const used = Number.isFinite(u) ? u! : 0;
+  const limit = Number.isFinite(l) ? l! : 0;
+  return { used, limit, pct: limit ? Math.round((used / limit) * 100) : 0 };
+}
+
+/**
+ * An Azure region named in the ticket: only the quota rows and policy results the context holds for it
+ * (audit H-03: no invented D4s_v5 20/20, EU-sovereign denial or AZ-WEU-CAP-409 for any westeurope string).
+ */
+function regionHover(ctx: CorrelationContext, name: string): HoverDiagnosticArgs | null {
+  const rLow = name.toLowerCase();
+  if (!/^[a-z]+[0-9]?$/.test(rLow) || !/(europe|us|asia|central|south|north|east|west|uk|france|germany|switzerland)/.test(rLow)) return null;
+  const quotas = (ctx.regionalQuotas?.data ?? []).filter((q) => q.region.toLowerCase() === rLow);
+  const denying = (ctx.azurePolicies?.data ?? []).filter((p) => p.compliance === "NonCompliant" && /deny/i.test(p.effect));
+  if (!quotas.length) {
+    return {
+      entityId: name,
+      entityType: "resource",
+      status: "unknown",
+      headline: `${name}: no quota data for this region in the tenant context`,
+      errorCodeTranslation: null,
+      facts: [fact("Quota rows", ctx.regionalQuotas ? `none for ${name}` : "not gathered for this scenario", false)],
+      quickActions: [],
+    };
+  }
+  const ranked = [...quotas].sort((a, b) => quotaUse(b.usage).pct - quotaUse(a.usage).pct);
+  const top = ranked[0]!;
+  const full = ranked.filter((q) => quotaUse(q.usage).pct >= 100);
+  const source = ctx.regionalQuotas?.source === "live-azure" ? "live ARM usages" : "seeded lab data";
+  return {
+    entityId: name,
+    entityType: "resource",
+    status: full.length ? "critical" : quotaUse(top.usage).pct >= 80 ? "warning" : "healthy",
+    headline: `${name}: ${top.resource} ${top.usage} (${top.utilization})${full.length > 1 ? ` · ${full.length} quotas at limit` : ""}`.slice(0, 120),
+    errorCodeTranslation: null,
+    facts: [
+      ...ranked.slice(0, 4).map((q) => fact(q.resource.slice(0, 40), `${q.usage} · ${q.headroom}`, true, q.status === "Critical" ? "critical" : q.status === "Warning" ? "warning" : "healthy")),
+      ...denying.slice(0, 2).map((p) => fact("Deny policy", `${p.name} · ${p.nonCompliantResources} non-compliant`, false, "critical")),
+      fact("Source", source, false),
+    ].slice(0, 8),
+    quickActions: [],
+  };
+}
+
+/** A VM size such as Standard_D4s_v5: the quota rows that name its family, nothing else. */
+function vmSkuHover(ctx: CorrelationContext, sku: string): HoverDiagnosticArgs {
+  const family = sku.replace(/^standard_?/i, "").replace(/family$/i, "").replace(/[0-9]+/, "").replace(/_/g, "").toLowerCase();
+  const rows = (ctx.regionalQuotas?.data ?? []).filter((q) => family.length >= 2 && q.resource.toLowerCase().replace(/[^a-z]/g, "").includes(family.replace(/[^a-z]/g, "")));
+  if (!rows.length) {
     return {
       entityId: sku,
       entityType: "sku",
-      status: "critical",
-      headline: `${sku} (StandardDSv5Family): 20/20 vCPUs in westeurope (QuotaExceeded) · 16 free in germanywestcentral`.slice(0, 120),
+      status: "unknown",
+      headline: `${sku}: no quota row for this VM family in the tenant context`,
       errorCodeTranslation: null,
-      facts: [
-        fact("VM Family", "StandardDSv5Family (4 vCPUs, 16 GiB RAM)", true),
-        fact("westeurope Quota", "20 / 20 vCPUs (100% Full — QuotaExceeded)", true, "critical"),
-        fact("germanywestcentral Quota", "4 / 20 vCPUs (16 vCPUs Available)", true, "healthy"),
-        fact("northeurope Quota", "6 / 20 vCPUs (14 vCPUs Available)", true, "healthy"),
-      ],
-      quickActions: [{ id: "generate-fix", label: "Generate Fix & Stage PR", kind: "generate-fix", targetEntityId: sku, destructive: false }],
+      facts: [fact("Check", `Get-AzVMUsage -Location <region> | Where-Object { $_.Name.Value -like '*${family.toUpperCase()}*' }`, true)],
+      quickActions: [],
     };
   }
+  const full = rows.filter((q) => quotaUse(q.usage).pct >= 100);
+  return {
+    entityId: sku,
+    entityType: "sku",
+    status: full.length ? "critical" : rows.some((q) => quotaUse(q.usage).pct >= 80) ? "warning" : "healthy",
+    headline: rows.map((q) => `${q.region} ${q.usage}`).join(" · ").replace(/^/, `${sku}: `).slice(0, 120),
+    errorCodeTranslation: null,
+    facts: rows.slice(0, 6).map((q) => fact(`${q.region}`, `${q.resource} ${q.usage} (${q.utilization}) · ${q.headroom}`, true, q.status === "Critical" ? "critical" : q.status === "Warning" ? "warning" : "healthy")),
+    quickActions: [],
+  };
+}
+
+function hoverSku(ctx: CorrelationContext, sku: string): HoverDiagnosticArgs {
+  if (/^standard_[a-z0-9_]+$/i.test(sku) || /^standard[a-z0-9]+family$/i.test(sku)) return vmSkuHover(ctx, sku);
   const inv = ctx.license?.data;
   const pool = inv?.skuPools.find((p) => p.skuPartNumber.toLowerCase() === sku.toLowerCase());
   const holders = inv?.users.filter((u) => u.currentSku.toLowerCase().includes(sku.toLowerCase())) ?? [];

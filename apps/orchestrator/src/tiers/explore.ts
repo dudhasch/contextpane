@@ -52,7 +52,14 @@ export interface ExploreResult {
   modelId: string;
   provider: RouterTelemetry["provider"];
   tokenCount: number;
-  slice: { kind: SelectionSlice["kind"]; matchedBy: SelectionSlice["matchedBy"]; rowCount: number; searched: SelectionSlice["searched"] };
+  slice: {
+    kind: SelectionSlice["kind"];
+    matchedBy: SelectionSlice["matchedBy"];
+    rowCount: number;
+    searched: SelectionSlice["searched"];
+    /** Where the card's rows come from: the MCP source (live-graph, live-azure, seeded-manifest, …), "model-synthesized" or "none". */
+    dataSource: string;
+  };
   descriptor: SelectionPublication["descriptor"];
   telemetry: RouterTelemetry;
 }
@@ -64,6 +71,24 @@ CRITICAL RULES:
 1. NEVER slap the highlighted text onto an unrelated template (e.g., NEVER mention AADSTS7000222, Directory.ReadWrite.All, or github-actions-erp-sync when the query is about Key Vault RBAC/owners or another domain!).
 2. Keep every real identifier verbatim, write a domain-accurate title and subtitle, 2-4 KPIs and 2-5 breakdown bars, and one concrete PowerShell 7 / Azure CLI suggested action.
 3. Set rows to {"dataPtr": "<pointer>"}. If descriptor.matchedBy is "none" (an open-ended or custom concept not in the fixed tables), also populate synthesizedRows with 4-5 realistic, domain-accurate rows whose keys match your columns.`;
+
+/** The CorrelationContext source each slice kind reads (keys of ctx.sourcesUsed). */
+const SOURCE_OF_KIND: Record<SelectionSlice["kind"], string> = {
+  "entra-users": "license",
+  "entra-sku-pools": "license",
+  "entra-signins": "signIns",
+  "entra-ca-policies": "policies",
+  "entra-groups": "securityGroups",
+  "intune-devices": "intune",
+  "intune-settings": "intune",
+  "azure-nsg-rules": "drift",
+  "avd-session-hosts": "avd",
+  "workload-identity": "workloadIdentity",
+  "azure-vms": "virtualMachines",
+  "azure-resources": "resourceInventory",
+  "azure-policies": "azurePolicies",
+  "azure-quota-capacity": "regionalQuotas",
+};
 
 /** `<Mail-ReadWrite-assignment-id>`, `<upn>`, `<SG-BreakGlass-Accounts objectId>`: an id the model did not have. */
 export const PLACEHOLDER_RE = /<[A-Za-z][^<>\n]{0,80}>/;
@@ -111,7 +136,8 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
 
   if (!config.forceLocal && steps.some((s) => s.hasKey)) {
     const strictRealTenant = sources.getDataMode() === "real-tenant";
-    const isOpenEndedSynthesis = !strictRealTenant && slice.matchedBy === "none";
+    // Never synthesize rows for a concrete identifier the tenant does not have (a vault name, a UPN, a GUID).
+    const isOpenEndedSynthesis = !strictRealTenant && slice.matchedBy === "none" && !slice.missedIdentifier;
     const baseTool = getComposeMiniDashboardToolDefinition();
     const baseParams = baseTool.function.parameters as Record<string, unknown>;
     const baseProps = (baseParams.properties as Record<string, unknown>) ?? {};
@@ -271,7 +297,13 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
     modelId,
     provider,
     tokenCount: usage.total,
-    slice: { kind: slice.kind, matchedBy: slice.matchedBy, rowCount: slice.rows.length, searched: slice.searched },
+    slice: {
+      kind: slice.kind,
+      matchedBy: slice.matchedBy,
+      rowCount: card.rows.length,
+      searched: slice.searched,
+      dataSource: slice.matchedBy === "none" ? (card.rows.length ? "model-synthesized" : "none") : (ctx.sourcesUsed[SOURCE_OF_KIND[slice.kind]] ?? "unknown"),
+    },
     descriptor: publication.descriptor,
     telemetry: event,
   };

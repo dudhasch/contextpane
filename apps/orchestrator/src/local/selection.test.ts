@@ -181,8 +181,9 @@ describe("highlight → selection slice", () => {
     expect(resourceHealth.slice.matchedBy).not.toBe("none");
     expect(resourceHealth.card.rows.length).toBeGreaterThan(0);
 
+    // The workload-identity dataset belongs to ANOM-APP-401 only (H-06), so the OIDC subject is probed there.
     const oidcSub = await exploreSelection({
-      scenarioId: "INC-4092",
+      scenarioId: "ANOM-APP-401",
       selectedText: "subject identifier",
     });
     expect(oidcSub.slice.kind).toBe("workload-identity");
@@ -196,6 +197,77 @@ describe("highlight → selection slice", () => {
     });
     expect(aadsts53003.card.errorCodeReference?.code).toBe("AADSTS53003");
     expect(aadsts53003.card.errorCodeReference?.explanation).toContain("Conditional Access");
+  });
+});
+
+describe("fixture leaks (audit H-01, H-06..H-10)", () => {
+  test("every row of every slice belongs to the scenario's tenant", async () => {
+    for (const [id, text] of [["INC-4092", "legacy block group"], ["INC-4092", "security groups"], ["INC-4099", "security groups"], ["INC-4099", "legacy block group"]] as const) {
+      const { ctx, slice: s } = await slice(id, text);
+      expect(s.rows.length).toBeGreaterThan(0);
+      expect({ id, text, leaks: s.rows.filter((r) => r.tenantId !== undefined && r.tenantId !== ctx.tenantId).map((r) => r.displayName) }).toEqual({ id, text, leaks: [] });
+      expect(s.rows.every((r) => r.tenantId === ctx.tenantId)).toBe(true);
+    }
+    const contoso = (await slice("INC-4092", "legacy block group")).slice;
+    expect(contoso.rows.some((r) => String(r.displayName).includes("Fabrikam"))).toBe(false);
+  });
+
+  test("an identifier the tenant does not have is a zero-row matchedBy none card, never another dataset's rows", async () => {
+    const { ctx } = await slice("INC-4092", "x");
+    const s = buildSelectionSlice(ctx, "kv-contoso-fin-prod", buildScenarioBrief(ctx).steps, { refinementText: "owner list" });
+    expect(s.matchedBy).toBe("none");
+    expect(s.rows).toEqual([]);
+    expect(s.missedIdentifier).toBe("kv-contoso-fin-prod");
+    expect(s.title).toContain("No tenant data matched");
+    expect(`${s.title} ${s.subtitle}`).not.toMatch(/nsg-contoso|AADSTS53003|events? matched/i);
+    expect(s.suggestedAction.scriptPreview).toContain("Get-AzRoleAssignment");
+    expect(ContextualMiniDashboardSchema.safeParse(sliceToCard(ctx, "kv-contoso-fin-prod", s)).success).toBe(true);
+    const result = await exploreSelection({ scenarioId: "INC-4092", selectedText: "kv-contoso-fin-prod" });
+    expect(result.slice.matchedBy).toBe("none");
+    expect(result.slice.dataSource).toBe("none");
+    expect(result.card.rows).toEqual([]);
+  });
+
+  test("quota KPIs come from the rows, not literals", async () => {
+    const { ctx, slice: s } = await slice("INC-4092", "QuotaExceeded");
+    expect(s.kind).toBe("azure-quota-capacity");
+    const kpiText = s.kpis.map((k) => `${k.label} ${k.value}`).join(" | ");
+    const top = [...s.rows].sort((a, b) => {
+      const pct = (r: typeof a) => {
+        const [c, l] = String(r.usage).split("/").map(Number);
+        return l ? (c ?? 0) / l : 0;
+      };
+      return pct(b) - pct(a);
+    })[0]!;
+    expect(kpiText).toContain(String(top.usage));
+    // Every number shown must be a usage present in the rows (no literal 20/20 unless a row says so).
+    for (const m of kpiText.matchAll(/(\d+)\/(\d+)/g)) expect(s.rows.some((r) => String(r.usage) === `${m[1]}/${m[2]}`)).toBe(true);
+    // Live rows without a 20/20 quota never show one.
+    const live = { ...ctx, regionalQuotas: { ...ctx.regionalQuotas!, source: "live-azure" as const, data: [{ resource: "Total Regional vCPUs (germanywestcentral)", region: "germanywestcentral", usage: "6/10", utilization: "60%", headroom: "4 Free", status: "Healthy" as const }] } };
+    const liveSlice = buildSelectionSlice(live, "QuotaExceeded", buildScenarioBrief(live).steps);
+    expect(liveSlice.kpis.map((k) => k.value).join(" ")).not.toContain("20/20");
+    expect(liveSlice.kpis[0]?.value).toBe("6/10 (60%)");
+    expect(liveSlice.suggestedAction.scriptPreview).toContain("-Location germanywestcentral");
+  });
+
+  test("the ANOM-APP-401 workload identity is not a dataset of other scenarios", async () => {
+    for (const id of ["INC-4092", "INC-4099", "ANOM-LIC-101"]) {
+      const { slice: s } = await slice(id, "spn-contoso-erp-sync");
+      expect(s.searched.some((x) => x.kind === "workload-identity")).toBe(false);
+      expect(s.rows.some((r) => JSON.stringify(r).includes("erp-sync"))).toBe(false);
+      expect(s.matchedBy).toBe("none");
+    }
+  });
+
+  test('a "Block AVD" policy reports what the sign-ins show, not 3', async () => {
+    const ctx = await gatherContext("INC-4092");
+    const quiet = { ...ctx, signIns: { ...ctx.signIns!, data: [] }, caPosture: ctx.caPosture ? { ...ctx.caPosture, data: { ...ctx.caPosture.data, legacySignIns: [] } } : null };
+    const s = buildSelectionSlice(quiet, "Block AVD", buildScenarioBrief(quiet).steps);
+    const row = s.rows.find((r) => String(r.displayName).includes("Block AVD"));
+    expect(row).toBeDefined();
+    expect(row!.blockedSignIns).toBe(0);
+    expect(row!.blocksMembersOf).toBeUndefined();
+    expect(row!.id).toBe(ctx.policies!.data.find((p) => p.displayName.includes("Block AVD"))!.id);
   });
 });
 

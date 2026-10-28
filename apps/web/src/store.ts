@@ -99,6 +99,8 @@ export interface MiniDashboardEntry {
   /** Who composed the card ("local" = deterministic) and how the rows were matched (server truth). */
   provider?: string;
   matchedBy?: "rows" | "dataset" | "none";
+  /** Where the rows come from (live-graph, live-azure, seeded-manifest, model-synthesized, none, …). */
+  dataSource?: string;
   /** Server-side time of the call that produced the card (the model call, or the deterministic slice). */
   serverLatencyMs?: number;
   speculativeHit?: boolean;
@@ -731,6 +733,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         tokenCount: result.tokenCount,
         provider: result.provider,
         ...(result.slice?.matchedBy ? { matchedBy: result.slice.matchedBy } : {}),
+        ...(result.slice?.dataSource ? { dataSource: result.slice.dataSource } : {}),
         serverLatencyMs: result.latencyMs,
       };
       set((s) => ({
@@ -2050,6 +2053,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           tokenCount: result!.tokenCount,
           provider: result!.provider,
           matchedBy: result!.slice.matchedBy,
+          ...(result!.slice.dataSource ? { dataSource: result!.slice.dataSource } : {}),
           serverLatencyMs: result!.latencyMs,
           speculativeHit,
           ...(speculativeHit ? { savedLatencyMs } : {}),
@@ -2090,7 +2094,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       get().toast({
         tone: "info",
         title: `Context UI${modeSuffix} for "${text.length > 34 ? `${text.slice(0, 33)}…` : text}"${refSuffix}`,
-        detail: `${rowCount} rows · Live Tenant Query · Matched in ${elapsedSec}s`,
+        detail: `${rowCount} rows · ${result.slice?.matchedBy === "none" ? (rowCount ? "model-synthesized, not tenant data" : "no tenant rows matched") : (result.slice?.dataSource ?? "tenant data")} · ${elapsedSec}s`,
       });
     } catch (error) {
       set({ exploreStatus: "error", activeExploreText: null, exploreError: error instanceof Error ? error.message : String(error) });

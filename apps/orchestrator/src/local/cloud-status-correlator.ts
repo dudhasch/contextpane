@@ -154,7 +154,7 @@ async function probeGitHubStatus(window: IncidentTimestampWindow): Promise<{
 }> {
   const t0 = performance.now();
   const res = await fetchWithShortTimeout("https://www.githubstatus.com/api/v2/summary.json", 850);
-  const latencyMs = Math.max(12, Math.round(performance.now() - t0));
+  const latencyMs = Math.round(performance.now() - t0);
   if (res) {
     try {
       const json = (await res.json()) as {
@@ -192,112 +192,120 @@ async function probeGitHubStatus(window: IncidentTimestampWindow): Promise<{
         advisories,
       };
     } catch {
-      /* fall through to seeded status */
+      /* unreadable answer: unknown below */
     }
   }
-  return {
-    service: {
-      serviceId: "github-actions",
-      label: "GitHub Actions / OIDC",
-      status: "operational",
-      statusLabel: "Operational",
-      summary: "Actions runners, OIDC token exchange (token.actions.githubusercontent.com) & API Requests operational",
-      sourceUrl: "https://www.githubstatus.com/api/v2/summary.json",
-      probeSource: "seeded-status-feed",
-      latencyMs,
-    },
-    advisories: [],
-  };
+  return { service: notProbed("github-actions", "GitHub Actions / OIDC", "https://www.githubstatus.com/api/v2/summary.json", "GitHub status API unreachable: upstream status unknown."), advisories: [] };
 }
+
+/** A service nobody probed: its status is unknown, never a seeded "operational". */
+function notProbed(serviceId: UpstreamServiceHealth["serviceId"], label: string, sourceUrl: string, why: string): UpstreamServiceHealth {
+  return { serviceId, label, status: "unknown", statusLabel: "Not probed", summary: why, sourceUrl, probeSource: "seeded-status-feed", latencyMs: 0 };
+}
+
+const UNPROBED_M365 = "No public machine-readable feed is probed for this service; check Microsoft 365 Service Health in the admin center.";
+
+function decodeXml(text: string): string {
+  return text
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The <item>s of the Azure status RSS feed; an empty list is "no active incident". */
+export function parseAzureStatusFeed(xml: string): Array<{ title: string; description: string; link: string; pubDate: string | null }> {
+  const items: Array<{ title: string; description: string; link: string; pubDate: string | null }> = [];
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+    const body = m[1] ?? "";
+    const tag = (name: string) => decodeXml(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, "i").exec(body)?.[1] ?? "");
+    const title = tag("title");
+    if (title) items.push({ title, description: tag("description"), link: tag("link"), pubDate: tag("pubDate") || null });
+  }
+  return items;
+}
+
+const REGION_WORDS: Record<string, RegExp> = {
+  westeurope: /west europe|westeurope/i,
+  northeurope: /north europe|northeurope/i,
+  germanywestcentral: /germany west central|germanywestcentral/i,
+  uksouth: /uk south|uksouth/i,
+  francecentral: /france central|francecentral/i,
+  switzerlandnorth: /switzerland north|switzerlandnorth/i,
+  eastus: /east us(?! 2)|eastus(?!2)/i,
+  eastus2: /east us 2|eastus2/i,
+  westus2: /west us 2|westus2/i,
+  centralus: /central us|centralus/i,
+  southeastasia: /southeast asia|southeastasia/i,
+};
 
 async function probeAzureStatus(
   region: string,
-  ticketText: string,
   window: IncidentTimestampWindow,
 ): Promise<{
   service: UpstreamServiceHealth;
   advisories: UpstreamAdvisory[];
 }> {
+  const sourceUrl = "https://azure.status.microsoft/en-us/status/feed/";
+  const label = region === "Global" ? "Azure ARM / Global" : `Azure (${region})`;
   const t0 = performance.now();
-  const res = await fetchWithShortTimeout("https://azure.status.microsoft/en-us/status/feed/", 850);
-  const latencyMs = Math.max(18, Math.round(performance.now() - t0));
-  const lower = ticketText.toLowerCase();
-  const isExplicitWeuQuotaAdvisory =
-    (lower.includes("az-weu-cap-409") || lower.includes("quotaexceeded") || lower.includes("allocationfailed") || lower.includes("standard_d4s_v5")) &&
-    region === "westeurope";
-
-  let rssHasIncident = false;
+  const res = await fetchWithShortTimeout(sourceUrl, 850);
+  let items: ReturnType<typeof parseAzureStatusFeed> | null = null;
   if (res) {
     try {
-      const xml = await res.text();
-      rssHasIncident = xml.toLowerCase().includes(region.toLowerCase()) && xml.includes("<item>");
+      items = parseAzureStatusFeed(await res.text());
     } catch {
-      rssHasIncident = false;
+      items = null;
     }
   }
+  const latencyMs = Math.round(performance.now() - t0);
+  if (!items) return { service: notProbed("azure-regional", label, sourceUrl, "Azure status feed unreachable: upstream status unknown."), advisories: [] };
 
-  const advisories: UpstreamAdvisory[] = [];
-  if (isExplicitWeuQuotaAdvisory) {
-    advisories.push({
-      id: "AZ-WEU-CAP-409",
-      provider: "Azure",
-      title: `Azure Compute Capacity Advisory (${region} · Standard_D4s_v5 / Dv5 Series)`,
-      severity: "advisory",
-      region,
-      timestamp: window.windowStart,
-      summary:
-        "ARM control plane is operational (no platform-wide outage), but West Europe (Amsterdam) has constrained on-demand Standard_D4s_v5 vCPU allocation pools for unreserved subscriptions; Microsoft recommends Germany West Central (Frankfurt) or North Europe (Dublin) or requesting a regional vCPU quota increase.",
-      url: "https://azure.status.microsoft/en-us/status",
-    });
-  }
-
-  const isGlobal = region === "Global";
+  // Only what the feed says: an item that names the ticket's region (or any item for a region-less ticket).
+  const regionRe = REGION_WORDS[region];
+  const relevant = items.filter((i) => (regionRe ? regionRe.test(`${i.title} ${i.description}`) : true));
+  const advisories: UpstreamAdvisory[] = relevant.slice(0, 3).map((i, n) => ({
+    id: `AZ-FEED-${n + 1}`,
+    provider: "Azure",
+    title: i.title.slice(0, 160),
+    severity: "advisory",
+    region,
+    timestamp: i.pubDate && Number.isFinite(Date.parse(i.pubDate)) ? new Date(i.pubDate).toISOString() : window.windowStart,
+    summary: (i.description || i.title).slice(0, 400),
+    url: i.link || "https://azure.status.microsoft/en-us/status",
+  }));
   return {
     service: {
       serviceId: "azure-regional",
-      label: isGlobal ? "Azure ARM / Global" : `Azure (${region})`,
-      status: isExplicitWeuQuotaAdvisory ? "advisory" : rssHasIncident ? "degraded" : "operational",
-      statusLabel:
-        isExplicitWeuQuotaAdvisory
-          ? "Capacity Advisory (No ARM Outage)"
-          : rssHasIncident
-            ? "Regional Advisory"
-            : "Operational",
-      summary:
-        isExplicitWeuQuotaAdvisory
-          ? `ARM control plane healthy in ${region}; Standard_D4s_v5 regional vCPU pool constrained + tenant policy/quota gate active`
-          : isGlobal
-            ? "Azure Resource Manager & Global Control Plane operational"
-            : `Azure Resource Manager & Compute healthy in ${region}`,
-      sourceUrl: "https://azure.status.microsoft/en-us/status/feed/",
-      probeSource: res ? "live-status-api" : "seeded-status-feed",
+      label,
+      status: advisories.length ? "degraded" : "operational",
+      statusLabel: advisories.length ? "Active status-feed incident" : "No active incident in the status feed",
+      summary: advisories.length ? advisories.map((a) => a.title).join(" · ").slice(0, 300) : `The Azure status feed lists no active incident${regionRe ? ` for ${region}` : ""}.`,
+      sourceUrl,
+      probeSource: "live-status-api",
       latencyMs,
     },
     advisories,
   };
 }
 
-async function probeMicrosoftLearnAndWebSearch(
-  ticketText: string,
-  region: string,
-  window: IncidentTimestampWindow,
-): Promise<WebSearchOutageCitation[]> {
-  const lower = ticketText.toLowerCase();
-  const query =
-    lower.includes("deploy") || lower.includes("vm") || lower.includes("westeurope")
-      ? `azure vm deployment failed ${region} RequestDisallowedByPolicy QuotaExceeded AllocationFailed`
-      : `${ticketText.slice(0, 80)} azure microsoft status`;
+/** Is the ticket about VM / deployment capacity? Whole words only ("jvm" and "vmware" are not VMs). */
+const VM_OR_DEPLOY_RE = /\bvms?\b|virtual machines?|\bdeploy(?:ment|ing|ed)?\b|\bquota(?:exceeded)?\b|allocationfailed|\ballocation\b/i;
 
+async function probeMicrosoftLearnAndWebSearch(ticketText: string, region: string): Promise<WebSearchOutageCitation[]> {
+  const query = VM_OR_DEPLOY_RE.test(ticketText)
+    ? `azure vm deployment failed ${region === "Global" ? "" : region} RequestDisallowedByPolicy QuotaExceeded AllocationFailed`
+    : `${ticketText.slice(0, 80)} azure microsoft status`;
   const citations: WebSearchOutageCitation[] = [];
-  const res = await fetchWithShortTimeout(
-    `https://learn.microsoft.com/api/search?search=${encodeURIComponent(query)}&locale=en-us&$top=2`,
-    850,
-  );
+  const res = await fetchWithShortTimeout(`https://learn.microsoft.com/api/search?search=${encodeURIComponent(query)}&locale=en-us&$top=2`, 850);
   if (res) {
     try {
-      const data = (await res.json()) as {
-        results?: Array<{ title?: string; description?: string; url?: string }>;
-      };
+      const data = (await res.json()) as { results?: Array<{ title?: string; description?: string; url?: string }> };
       for (const item of (data.results ?? []).slice(0, 2)) {
         if (item.title && item.url) {
           citations.push({
@@ -309,149 +317,52 @@ async function probeMicrosoftLearnAndWebSearch(
         }
       }
     } catch {
-      /* fallback below */
+      /* no citations */
     }
   }
-
-  if (citations.length === 0) {
-    if (lower.includes("deploy") || lower.includes("vm") || lower.includes("westeurope") || lower.includes("subscription")) {
-      citations.push(
-        {
-          title: "Resolve errors for resource quota (QuotaExceeded / OperationNotAllowed) — Azure Resource Manager",
-          snippet:
-            `When deploying Microsoft.Compute/virtualMachines in ${region}, ARM returns OperationNotAllowed / QuotaExceeded when regional Standard_Dv5 family vCPU usage reaches 100% of subscription limit (20/20 vCPUs). Check Get-AzVMUsage -Location ${region}.`,
-          url: "https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-resource-quota",
-          source: "Microsoft Learn Documentation Correlation",
-        },
-        {
-          title: "Resolve RequestDisallowedByPolicy (Allowed Locations) — Azure Governance & Policy",
-          snippet:
-            `Deployment failed in ${region} during window ${window.correlatedAtLabel} matches tenant-level Azure Policy 'Allowed Locations' restricting production compute to sovereign-approved regions (germanywestcentral, northeurope).`,
-          url: "https://learn.microsoft.com/en-us/azure/governance/policy/troubleshoot/general#requestdisallowedbypolicy",
-          source: "Microsoft Learn Documentation Correlation",
-        },
-      );
-    } else {
-      citations.push({
-        title: "Azure Service Health & Microsoft Entra Status Correlation",
-        snippet: `No upstream multi-tenant platform outage matched during ${window.correlatedAtLabel}; root cause is isolated to tenant configuration and policy state.`,
-        url: "https://azure.status.microsoft/en-us/status",
-        source: "Cloud Status Correlation Engine",
-      });
-    }
-  }
-  return citations;
+  return citations.length ? citations : referenceDocs(ticketText);
 }
 
-export function correlateUpstreamCloudStatusSync(input: {
-  ticketText: string;
-  createdAt?: string;
-}): UpstreamCloudStatusCorrelation {
-  const window = extractIncidentTimestampWindow(input.ticketText, input.createdAt);
-  const primaryRegion = extractPrimaryAzureRegion(input.ticketText);
-  const lower = input.ticketText.toLowerCase();
-  const isVmOrDeployIssue =
-    lower.includes("vm") ||
-    lower.includes("virtual machine") ||
-    lower.includes("deploy") ||
-    lower.includes("quota") ||
-    lower.includes("westeurope") ||
-    lower.includes("allocation");
-
-  const advisories: UpstreamAdvisory[] = [];
-  if (isVmOrDeployIssue && primaryRegion === "westeurope") {
-    advisories.push({
-      id: "AZ-WEU-CAP-409",
-      provider: "Azure",
-      title: `Azure Compute Capacity Advisory (${primaryRegion} · Standard_D4s_v5 / Dv5 Series)`,
-      severity: "advisory",
-      region: primaryRegion,
-      timestamp: window.windowStart,
-      summary:
-        "ARM control plane is operational (no platform-wide outage), but West Europe (Amsterdam) has constrained on-demand Standard_D4s_v5 vCPU allocation pools for unreserved subscriptions; Microsoft recommends Germany West Central (Frankfurt) or North Europe (Dublin) or requesting a regional vCPU quota increase.",
-      url: "https://azure.status.microsoft/en-us/status",
-    });
-  }
-
-  const services: UpstreamServiceHealth[] = [
+/** Static documentation links for the ticket's error class: references, not tenant or status facts. */
+function referenceDocs(ticketText: string): WebSearchOutageCitation[] {
+  if (!VM_OR_DEPLOY_RE.test(ticketText)) return [];
+  return [
     {
-      serviceId: "azure-regional",
-      label: `Azure (${primaryRegion})`,
-      status: isVmOrDeployIssue && primaryRegion === "westeurope" ? "advisory" : "operational",
-      statusLabel:
-        isVmOrDeployIssue && primaryRegion === "westeurope"
-          ? "Capacity Advisory (No ARM Outage)"
-          : "Operational",
-      summary:
-        isVmOrDeployIssue && primaryRegion === "westeurope"
-          ? `ARM control plane healthy in ${primaryRegion}; Standard_D4s_v5 regional vCPU pool constrained + tenant policy/quota gate active`
-          : `Azure Resource Manager & Compute healthy in ${primaryRegion}`,
-      sourceUrl: "https://azure.status.microsoft/en-us/status/feed/",
-      probeSource: "seeded-status-feed",
-      latencyMs: 18,
+      title: "Resolve errors for resource quotas — Azure Resource Manager",
+      snippet: "How to read QuotaExceeded / OperationNotAllowed and check family vCPU usage with Get-AzVMUsage -Location <region>.",
+      url: "https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-resource-quota",
+      source: "Microsoft Learn (reference link, not searched)",
     },
     {
-      serviceId: "entra-id",
-      label: "Entra ID",
-      status: "operational",
-      statusLabel: "Operational",
-      summary: "Authentication, Conditional Access evaluation & Microsoft Graph v1.0 endpoints operational (0 active EN* advisories)",
-      sourceUrl: "https://status.cloud.microsoft",
-      probeSource: "seeded-status-feed",
-      latencyMs: 14,
-    },
-    {
-      serviceId: "intune",
-      label: "Intune",
-      status: "operational",
-      statusLabel: "Operational",
-      summary: "Device MDM check-in, Settings Catalog & Compliance evaluation operational (0 active IT* advisories)",
-      sourceUrl: "https://status.cloud.microsoft",
-      probeSource: "seeded-status-feed",
-      latencyMs: 15,
-    },
-    {
-      serviceId: "github-actions",
-      label: "GitHub Actions / OIDC",
-      status: "operational",
-      statusLabel: "Operational",
-      summary: "Actions runners, OIDC token exchange (token.actions.githubusercontent.com) & API Requests operational",
-      sourceUrl: "https://www.githubstatus.com/api/v2/summary.json",
-      probeSource: "seeded-status-feed",
-      latencyMs: 12,
+      title: "Troubleshoot RequestDisallowedByPolicy — Azure Policy",
+      snippet: "How to find the policy assignment that denied a deployment.",
+      url: "https://learn.microsoft.com/en-us/azure/governance/policy/troubleshoot/general#requestdisallowedbypolicy",
+      source: "Microsoft Learn (reference link, not searched)",
     },
   ];
+}
 
-  const webSearchCitations: WebSearchOutageCitation[] =
-    isVmOrDeployIssue
-      ? [
-          {
-            title: "Resolve errors for resource quota (QuotaExceeded / OperationNotAllowed) — Azure Resource Manager",
-            snippet: `When deploying Microsoft.Compute/virtualMachines in ${primaryRegion}, ARM returns OperationNotAllowed / QuotaExceeded when regional Standard_Dv5 family vCPU usage reaches 100% of subscription limit (20/20 vCPUs). Check Get-AzVMUsage -Location ${primaryRegion}.`,
-            url: "https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-resource-quota",
-            source: "Microsoft Learn Documentation Correlation",
-          },
-          {
-            title: "Resolve RequestDisallowedByPolicy (Allowed Locations) — Azure Governance & Policy",
-            snippet: `Deployment failed in ${primaryRegion} during window ${window.correlatedAtLabel} matches tenant-level Azure Policy 'Allowed Locations' restricting production compute to sovereign-approved regions (germanywestcentral, northeurope).`,
-            url: "https://learn.microsoft.com/en-us/azure/governance/policy/troubleshoot/general#requestdisallowedbypolicy",
-            source: "Microsoft Learn Documentation Correlation",
-          },
-        ]
-      : [
-          {
-            title: "Azure Service Health & Microsoft Entra Status Correlation",
-            snippet: `No upstream multi-tenant platform outage matched during ${window.correlatedAtLabel}; root cause is isolated to tenant configuration and policy state.`,
-            url: "https://azure.status.microsoft/en-us/status",
-            source: "Cloud Status Correlation Engine",
-          },
-        ];
+function summarize(window: IncidentTimestampWindow, region: string, services: UpstreamServiceHealth[], advisories: UpstreamAdvisory[]): string {
+  if (advisories.length) return `Correlated at ${window.correlatedAtLabel}: ${advisories.length} status-feed item(s) for ${region}: ${advisories.map((a) => a.title).join("; ")}`.slice(0, 500);
+  const ok = services.filter((s) => s.status === "operational").map((s) => s.label);
+  const unknown = services.filter((s) => s.status === "unknown").map((s) => s.label);
+  if (!ok.length) return `Correlated at ${window.correlatedAtLabel}: upstream status not probed (${unknown.join(", ")}); no outage can be ruled out from here.`;
+  return `Correlated at ${window.correlatedAtLabel}: no active incident for ${ok.join(", ")}${unknown.length ? `; not probed: ${unknown.join(", ")}` : ""}.`;
+}
 
-  const overallCorrelationSummary =
-    advisories.length > 0
-      ? `Correlated at ${window.correlatedAtLabel}: No global Azure/Entra outage, but ${primaryRegion} has an active Standard_D4s_v5 capacity advisory (AZ-WEU-CAP-409) combined with tenant-side Regional vCPU Quota (20/20 full) and Azure Policy 'Allowed Locations' enforcement.`
-      : `Correlated at ${window.correlatedAtLabel}: Azure (${primaryRegion}), Entra ID, Intune, and GitHub Actions are 100% operational — issue is confirmed tenant-local.`;
-
+/**
+ * Synchronous variant for the brief's first paint: no network, so nothing is claimed. Every service is
+ * "not probed" until the async correlation (POST /api/cloud-status/correlate, the triage pipeline) runs.
+ */
+export function correlateUpstreamCloudStatusSync(input: { ticketText: string; createdAt?: string }): UpstreamCloudStatusCorrelation {
+  const window = extractIncidentTimestampWindow(input.ticketText, input.createdAt);
+  const primaryRegion = extractPrimaryAzureRegion(input.ticketText);
+  const services: UpstreamServiceHealth[] = [
+    notProbed("azure-regional", primaryRegion === "Global" ? "Azure ARM / Global" : `Azure (${primaryRegion})`, "https://azure.status.microsoft/en-us/status/feed/", "Not probed yet."),
+    notProbed("entra-id", "Entra ID", "https://status.cloud.microsoft", UNPROBED_M365),
+    notProbed("intune", "Intune", "https://status.cloud.microsoft", UNPROBED_M365),
+    notProbed("github-actions", "GitHub Actions / OIDC", "https://www.githubstatus.com/api/v2/summary.json", "Not probed yet."),
+  ];
   return {
     windowStart: window.windowStart,
     windowEnd: window.windowEnd,
@@ -459,55 +370,27 @@ export function correlateUpstreamCloudStatusSync(input: {
     extractedTimeExpression: window.extractedTimeExpression,
     primaryRegion,
     services,
-    advisories,
-    webSearchCitations,
-    overallCorrelationSummary,
+    advisories: [],
+    webSearchCitations: referenceDocs(input.ticketText),
+    overallCorrelationSummary: summarize(window, primaryRegion, services, []),
   };
 }
 
-export async function correlateUpstreamCloudStatus(input: {
-  ticketText: string;
-  createdAt?: string;
-}): Promise<UpstreamCloudStatusCorrelation> {
+export async function correlateUpstreamCloudStatus(input: { ticketText: string; createdAt?: string }): Promise<UpstreamCloudStatusCorrelation> {
   const window = extractIncidentTimestampWindow(input.ticketText, input.createdAt);
   const primaryRegion = extractPrimaryAzureRegion(input.ticketText);
-
   const [github, azure, webSearchCitations] = await Promise.all([
     probeGitHubStatus(window),
-    probeAzureStatus(primaryRegion, input.ticketText, window),
-    probeMicrosoftLearnAndWebSearch(input.ticketText, primaryRegion, window),
+    probeAzureStatus(primaryRegion, window),
+    probeMicrosoftLearnAndWebSearch(input.ticketText, primaryRegion),
   ]);
-
-  const entraService: UpstreamServiceHealth = {
-    serviceId: "entra-id",
-    label: "Entra ID",
-    status: "operational",
-    statusLabel: "Operational",
-    summary: "Authentication, Conditional Access evaluation & Microsoft Graph v1.0 endpoints operational (0 active EN* advisories)",
-    sourceUrl: "https://status.cloud.microsoft",
-    probeSource: "seeded-status-feed",
-    latencyMs: 14,
-  };
-
-  const intuneService: UpstreamServiceHealth = {
-    serviceId: "intune",
-    label: "Intune",
-    status: "operational",
-    statusLabel: "Operational",
-    summary: "Device MDM check-in, Settings Catalog & Compliance evaluation operational (0 active IT* advisories)",
-    sourceUrl: "https://status.cloud.microsoft",
-    probeSource: "seeded-status-feed",
-    latencyMs: 15,
-  };
-
-  const services: UpstreamServiceHealth[] = [azure.service, entraService, intuneService, github.service];
+  const services: UpstreamServiceHealth[] = [
+    azure.service,
+    notProbed("entra-id", "Entra ID", "https://status.cloud.microsoft", UNPROBED_M365),
+    notProbed("intune", "Intune", "https://status.cloud.microsoft", UNPROBED_M365),
+    github.service,
+  ];
   const advisories: UpstreamAdvisory[] = [...azure.advisories, ...github.advisories];
-
-  const overallCorrelationSummary =
-    advisories.length > 0
-      ? `Correlated at ${window.correlatedAtLabel}: No global Azure/Entra outage, but ${primaryRegion} has an active Standard_D4s_v5 capacity advisory (AZ-WEU-CAP-409) combined with tenant-side Regional vCPU Quota (20/20 full) and Azure Policy 'Allowed Locations' enforcement.`
-      : `Correlated at ${window.correlatedAtLabel}: Azure (${primaryRegion}), Entra ID, Intune, and GitHub Actions are 100% operational — issue is confirmed tenant-local.`;
-
   return {
     windowStart: window.windowStart,
     windowEnd: window.windowEnd,
@@ -517,6 +400,6 @@ export async function correlateUpstreamCloudStatus(input: {
     services,
     advisories,
     webSearchCitations,
-    overallCorrelationSummary,
+    overallCorrelationSummary: summarize(window, primaryRegion, services, advisories),
   };
 }
