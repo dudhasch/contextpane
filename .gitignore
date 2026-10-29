@@ -1,5 +1,7 @@
 # internal working files (audits, review loops, journals, demo audio/video staging): local only
 /archive/
+# the rendered demo video, its raw takes, overlays and edit scripts (~350 MB): local only
+/docs/demo-video/
 
 # dependencies
 node_modules/
