@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInlineSlugs, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
-import { chatWithForcedTool } from "../router/openai.ts";
+import { chatWithForcedTool, metaCallsEnabled } from "../router/openai.ts";
 
 export interface DynamicCatalogEntry {
   elementId: string; title: string; domain: SynthesizedDynamicCard["domain"]; reason: string;
@@ -190,11 +190,11 @@ export async function assessTicketElementNeeds(input: {
   body: string;
   matchedSeededComponents: string[];
   clarifiedAnswers?: Record<string, string>;
-}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; source?: "llm" | "fallback-on-error" }> {
+}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error" }> {
   const started = performance.now();
   const fallback = buildDeterministicRoutingDecision(input);
   const gatekeeperModel = models.metaCatalog;
-  if (providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test") {
+  if (metaCallsEnabled()) {
     try {
       const res = await chatWithForcedTool(
         providers.meta,
@@ -218,6 +218,7 @@ export async function assessTicketElementNeeds(input: {
           modelUsed: gatekeeperModel,
           latencyMs: Math.max(1, Math.round(performance.now() - started)),
           tokensUsed: res.usage.total,
+          usage: res.usage,
           source: "llm",
         };
       }
@@ -297,7 +298,7 @@ export async function synthesizeAndPersistMissingElements(input: {
     const started = performance.now();
     let card: SynthesizedDynamicCard | null = null;
     let tokens = { prompt: 0, completion: 0, total: 0 };
-    if (providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test") {
+    if (metaCallsEnabled()) {
       try {
         const res = await chatWithForcedTool(
           providers.meta,

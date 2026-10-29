@@ -28,6 +28,9 @@ export function ApproveFooter() {
   const revertFromConsole = useWorkbench((s) => s.revertFromConsole);
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.resolutionNote.scenarioId === s.drawer.ticketId));
+  // U-5: "Revert now" only when the server can execute an inverse derived from the pre-change snapshot.
+  const inverseExecutable = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]?.inverseExecutable));
+  const revertLabel = inverseExecutable ? "Revert now" : "Stage revert";
   const preflight = usePreflight();
   // WP6: while a refine or a fix generation streams, the drawer on screen is about to be replaced.
   const regenerating = useWorkbench((s) => s.refiningGoal) || status === "loading";
@@ -59,7 +62,7 @@ export function ApproveFooter() {
     actions = (
       <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="live-console-actions">
         <Button variant="danger" size="md" icon={<Undo2 />} disabled={streaming} onClick={() => void revertFromConsole()} data-testid="console-revert-button" className={ACTION}>
-          Stage revert
+          {revertLabel}
         </Button>
         <Button variant="healthy" size="md" icon={<Check />} disabled={streaming} onClick={() => confirmAndCloseConsole()} data-testid="console-confirm-ok-button" className={`flex-1 ${ACTION}`}>
           Confirm and close
@@ -113,8 +116,8 @@ export function ApproveFooter() {
           <Check className={`size-3.5 shrink-0 ${resolved ? "text-healthy" : "text-faint"}`} aria-hidden />
           {summary}
         </span>
-        <Button variant="ghost" size="sm" icon={<Undo2 />} onClick={() => void revertFromConsole()} title="Stage the inverse script (f⁻¹) for this change">
-          Stage revert
+        <Button variant="ghost" size="sm" icon={<Undo2 />} onClick={() => void revertFromConsole()} title={inverseExecutable ? "Execute the inverse (f⁻¹) derived from the pre-change snapshot" : "Stage the inverse script (f⁻¹) for this change"}>
+          {revertLabel}
         </Button>
       </div>
     );

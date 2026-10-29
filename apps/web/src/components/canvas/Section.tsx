@@ -14,7 +14,7 @@ import {
   useRole,
 } from "@floating-ui/react";
 import { Check, ChevronDown, Copy, Info } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { formatSourceRef, type CanvasComponentType, type HealthState, type SourceRef } from "@contextpane/catalog";
 import { usePopoverPinning } from "@/hooks/usePopoverPinning";
 import { healthTone } from "@/lib/format";
@@ -577,6 +577,7 @@ export function DataTable({
   colWidths,
   cellPy = "py-1.5",
   bleed = false,
+  onRowClick,
 }: {
   head: string[];
   rows: ReactNode[][];
@@ -585,6 +586,8 @@ export function DataTable({
   colWidths?: string[];
   cellPy?: string;
   bleed?: boolean;
+  /** Rows become buttons: a lens row click steers the fix (U-1). */
+  onRowClick?: (index: number) => void;
 }) {
   const edge = bleed ? "first:pl-4 last:pr-4" : "first:pl-0 last:pr-0";
   return (
@@ -608,7 +611,24 @@ export function DataTable({
         </thead>
         <tbody className="divide-y divide-hairline-2">
           {rows.map((r, i) => (
-            <tr key={i} className={`align-top transition-opacity ${rowClassName?.(i) ?? ""}`}>
+            <tr
+              key={i}
+              className={`align-top transition-opacity ${onRowClick ? "cursor-pointer hover:bg-raised focus-visible:outline-1 focus-visible:outline-signal" : ""} ${rowClassName?.(i) ?? ""}`}
+              {...(onRowClick
+                ? {
+                    onClick: () => onRowClick(i),
+                    onKeyDown: (e: ReactKeyboardEvent<HTMLTableRowElement>) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onRowClick(i);
+                      }
+                    },
+                    tabIndex: 0,
+                    role: "button",
+                    "data-testid": `lens-row-${i}`,
+                  }
+                : {})}
+            >
               {r.map((cell, j) => (
                 <td key={j} className={`px-2.5 ${cellPy} ${edge}`}>
                   {cell}

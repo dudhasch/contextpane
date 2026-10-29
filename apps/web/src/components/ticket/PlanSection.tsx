@@ -270,7 +270,13 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                           {isBusy ? "●" : ran ? "✓" : "⚠"}
                         </span>
                         <span className="shrink-0 font-medium">{stageMeta?.name ?? t.agentName}</span>
-                        <span className="min-w-0 truncate text-faint">{stageMeta?.role ?? t.role}</span>
+                        <span className="min-w-0 truncate text-faint">
+                          {stageMeta?.role ?? t.role}
+                          {t.stepIndex === 4 && t.iterations !== undefined && t.iterations > 0 && (
+                            <span data-testid="coder-iterations"> · {t.iterations} iteration{t.iterations === 1 ? "" : "s"}</span>
+                          )}
+                          {t.stepIndex === 5 && t.source === "sandbox-preflight" && <span> · sandbox-verified</span>}
+                        </span>
                         {!isBusy && <span className="ml-auto shrink-0 font-mono text-faint">{t.startOffsetMs !== undefined ? `+${t.startOffsetMs}·` : ""}{t.latencyMs} ms</span>}
                       </button>
                     </li>
@@ -388,8 +394,25 @@ function useScopeDraft(scenarioId: string, questions: ClarifyingQuestion[], clar
 function ScopeControls({ scope }: { scope: ScopeDraft }) {
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const lastRefinedAt = useWorkbench((s) => s.lastRefinedAt);
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const steeringVersion = useWorkbench((s) => s.brief?.steering?.version ?? 0);
+  const lastSteer = useWorkbench((s) => (s.lastSteer && s.lastSteer.scenarioId === s.brief?.scenarioId ? s.lastSteer : null));
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-11">
+      {steerStatus === "pending" ? (
+        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-signal" data-testid="steering-pending-badge">
+          <span className="size-2 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          re-parameterising…
+        </span>
+      ) : steeringVersion > 0 ? (
+        <span
+          className="shrink-0 font-mono text-faint"
+          title={lastSteer ? `Last steer ${lastSteer.at}: ${lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tokens` : "deterministic coder"}` : "Steering version"}
+          data-testid="steering-version-badge"
+        >
+          steering v{steeringVersion}
+        </span>
+      ) : null}
       {lastRefinedAt && !refiningGoal && (
         <span className="inline-flex shrink-0 items-center gap-1 font-mono text-healthy" data-testid="clarifier-refreshed-badge" title={`Plan updated ${lastRefinedAt}`}>
           <Check className="size-3" />
@@ -456,6 +479,9 @@ function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: Clarifying
 function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; scope: ScopeDraft; first?: boolean }) {
   // While a refine streams the chips keep their look but take no input (the cursor says why).
   const locked = useWorkbench((s) => s.refiningGoal);
+  // U-1: a chip toggle steers the script at once (one coder call); "Update plan" stays the full re-triage.
+  const steer = useWorkbench((s) => s.steer);
+  const steering = useWorkbench((s) => s.steerStatus === "pending");
   const rawVal = scope.draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
   const currentVal = humanizeClarifierSlug(rawVal, q);
   const isPresetOption = q.options.some(
@@ -481,8 +507,11 @@ function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; sco
               type="button"
               data-testid={`clarifier-opt-${q.id}-${opt.id}`}
               aria-pressed={active}
-              disabled={locked}
-              onClick={() => scope.setAnswer(q.id, cleanLabel)}
+              disabled={locked || (steering && !active)}
+              onClick={() => {
+                scope.setAnswer(q.id, cleanLabel);
+                if (!active) void steer({ clarifier: { [q.id]: cleanLabel }, source: "clarifier" });
+              }}
               title={opt.description ? `${cleanLabel} — ${opt.description}` : cleanLabel}
               className={`inline-flex min-h-5 max-w-full shrink-0 items-center rounded-sm border px-1.5 text-left text-11 transition-colors disabled:cursor-progress ${
                 active ? "border-signal/40 bg-signal/12 text-signal-strong" : "border-hairline text-muted hover:border-signal/40 hover:text-text"
@@ -504,6 +533,11 @@ function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; sco
             type="text"
             value={isPresetOption ? "" : currentVal}
             onChange={(e) => scope.setAnswer(q.id, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              const typed = e.currentTarget.value.trim();
+              if (typed && typed !== rawVal) void steer({ clarifier: { [q.id]: typed }, source: "operator" });
+            }}
             disabled={locked}
             placeholder={q.customHint ?? "Or type a custom parameter…"}
             data-testid={`clarifier-input-${q.id}`}

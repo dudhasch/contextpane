@@ -1,6 +1,6 @@
-import { ExternalLink, GitPullRequest, Lightbulb, RotateCcw, Zap } from "lucide-react";
-import type { ReactNode } from "react";
-import type { ExecutionMode } from "@contextpane/catalog";
+import { ExternalLink, GitPullRequest, Lightbulb, RotateCcw, Sparkles, Zap } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { isSteeringStale, type ExecutionMode } from "@contextpane/catalog";
 import { useWorkbench, type CodeRailTab } from "@/store";
 import { SmartTechPath } from "../../canvas/Section";
 import { DiffView } from "../../canvas/DiffView";
@@ -75,8 +75,10 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
         <ExecutionModeSwitch drawer={drawer} />
       </div>
 
+      <SteeringStaleBanner drawer={drawer} />
+
       <div data-testid="path-a">
-        {tab === "powershell" && <ScriptCode code={drawer.powershellScript} name={`${drawer.ticketId.toLowerCase()}-fix.ps1 · PowerShell 7`} />}
+        {tab === "powershell" && <SteeredScript drawer={drawer} />}
         {tab === "graph" && <ScriptCode code={drawer.graphPatch || "[]"} name="graph-patch.json · Microsoft Graph" />}
         {tab === "opentofu" &&
           (drawer.terraformDiff ? (
@@ -102,6 +104,85 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
             ))}
           </div>
         </section>
+      )}
+    </div>
+  );
+}
+
+/** U-1: a staged script that predates the current steering says so and offers one coder call to catch up. */
+function SteeringStaleBanner({ drawer }: { drawer: Drawer }) {
+  const currentSteering = useWorkbench((s) => (s.brief && s.brief.scenarioId === drawer.ticketId ? s.brief.steering : null));
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const steer = useWorkbench((s) => s.steer);
+  const liveConsoleOpen = useWorkbench((s) => s.liveConsoleOpen);
+  const stale = Boolean(currentSteering && isSteeringStale(drawer.steering ?? null, currentSteering));
+  if ((!stale && steerStatus !== "pending") || liveConsoleOpen || drawer.approval.state !== "pending") return null;
+  return (
+    <div
+      className={`${RAIL_INSET} ${RAIL_FRAME} flex min-w-0 items-center justify-between gap-2 px-3 py-1.5 font-mono text-11 ${steerStatus === "pending" ? "text-signal" : "!border-warning/50 text-warning"}`}
+      data-testid="steering-stale-banner"
+    >
+      {steerStatus === "pending" ? (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="size-2.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          re-parameterising the script for steering v{(currentSteering?.version ?? 0) + (stale ? 0 : 1)}…
+        </span>
+      ) : (
+        <>
+          <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+            <Sparkles className="size-3.5 shrink-0" aria-hidden />
+            stale steering · script built for v{drawer.steering?.version ?? 0} · current v{currentSteering?.version ?? 0}
+          </span>
+          <button
+            type="button"
+            onClick={() => void steer({ source: "operator" })}
+            className="inline-flex shrink-0 items-center gap-1 font-sans text-12 font-medium hover:underline"
+            data-testid="steering-regenerate-button"
+          >
+            <RotateCcw className="size-3" aria-hidden />
+            Regenerate
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The PowerShell tab: what the last steer changed (steering vN → vM) above the script, shimmering while a steer re-parameterises it (U-1). */
+function SteeredScript({ drawer }: { drawer: Drawer }) {
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const lastSteer = useWorkbench((s) => (s.lastSteer?.scenarioId === drawer.ticketId ? s.lastSteer : null));
+  const [showDiff, setShowDiff] = useState(true);
+  return (
+    <div className="relative flex flex-col gap-2">
+      {lastSteer?.diff && steerStatus !== "pending" && (
+        <div className={`${RAIL_INSET} ${RAIL_FRAME} overflow-hidden bg-ground`} data-testid="steering-script-diff">
+          <button
+            type="button"
+            onClick={() => setShowDiff((v) => !v)}
+            aria-expanded={showDiff}
+            className="flex h-8 w-full min-w-0 items-center justify-between gap-2 px-3 text-left text-11 hover:bg-raised"
+          >
+            <span className="truncate font-medium text-signal">
+              What changed · steering v{lastSteer.fromVersion} → v{lastSteer.toVersion}
+            </span>
+            <span className="shrink-0 font-mono text-faint">
+              {lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tok · ${lastSteer.coder.latencyMs} ms` : "deterministic coder"} {showDiff ? "▴" : "▾"}
+            </span>
+          </button>
+          {showDiff && <DiffView diff={lastSteer.diff} maxHeight="max-h-56" edges="none" />}
+        </div>
+      )}
+      <div className={steerStatus === "pending" ? "opacity-60" : ""}>
+        <ScriptCode code={drawer.powershellScript} name={`${drawer.ticketId.toLowerCase()}-fix.ps1 · PowerShell 7`} />
+      </div>
+      {steerStatus === "pending" && (
+        <div className="pointer-events-none absolute inset-0 flex items-start justify-center animate-shimmer" data-testid="steering-shimmer">
+          <span className="mt-10 inline-flex items-center gap-1.5 rounded-pill border border-signal/40 bg-ground/90 px-2.5 py-1 font-mono text-11 text-signal">
+            <span className="size-2 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            re-parameterising…
+          </span>
+        </div>
       )}
     </div>
   );

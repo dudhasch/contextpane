@@ -34,7 +34,10 @@ import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from 
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
-import { verifyAndRepairGeneratedScript } from "../local/subagent-orchestrator.ts";
+import { syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
+import { patchCustomTicketPipeline } from "../local/custom-ticket.ts";
+import { runRepairLoop } from "./repair-loop.ts";
+import { captureEntitySnapshot, compareSnapshots } from "../local/snapshot.ts";
 import { auditLedger } from "../store/audit.ts";
 import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
@@ -235,14 +238,62 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       report("llm:skip", config.forceLocal ? "CTX_FORCE_LOCAL=true → deterministic bundle" : "No META_API_KEY → deterministic bundle");
     }
 
-    // WP6: the script is final here; the rail streams it while the pre-flight and staging run.
+    // WP6: the rail streams the script while the pre-flight and staging run; a repair turn re-emits it below.
     report("bundle:ready", `Script ready (${bundle.powershellScript.split("\n").length} lines) · pre-flight next`, {
       powershellScript: bundle.powershellScript,
       ...(bundle.terraformDiff ? { terraformDiff: bundle.terraformDiff } : {}),
     });
 
-    /* ---- pre-flight ---- */
-    const verification = await preflight(bundle, ctx, plan, report);
+    /* ---- pre-flight, then write-then-test: sandbox findings go back to the coder, at most 2 turns (U-2) ---- */
+    const firstPass = await preflight(bundle, ctx, plan, report);
+    const loop = await runRepairLoop({
+      bundle,
+      verification: firstPass,
+      ctx,
+      requiredCommands: plan.requiredCommands,
+      preflight: (candidate) => preflight(candidate, ctx, plan, report),
+      report,
+    });
+    bundle = loop.bundle;
+    const verification = loop.verification;
+    if (loop.repair.iterations > 0) {
+      usage = addUsage(usage, loop.usage);
+      chain.push(...loop.chain);
+      if (loop.chain.some((c) => c.outcome === "ok")) provider = "meta";
+      report("bundle:ready", `Repaired script (${bundle.powershellScript.split("\n").length} lines) · ${verification.verdict}`, {
+        powershellScript: bundle.powershellScript,
+        ...(bundle.terraformDiff ? { terraformDiff: bundle.terraformDiff } : {}),
+      });
+      report("repair:summary", `${verification.verdict} after ${loop.repair.iterations} repair iteration${loop.repair.iterations === 1 ? "" : "s"}${loop.repair.exhausted ? " (budget exhausted, findings left)" : ""}`);
+    }
+    // The ticket's pipeline records say what the loop and the sandbox did (pill: "4. Coder · 2 iterations · sandbox-verified").
+    if (ctx.custom) {
+      const repairTokens = loop.usage.total;
+      patchCustomTicketPipeline(ctx.ticketId, (tasks) =>
+        tasks.map((t) =>
+          t.stepIndex === 4
+            ? {
+                ...t,
+                iterations: loop.repair.iterations,
+                ...(repairTokens ? { tokensUsed: (t.tokensUsed ?? 0) + repairTokens, tokensPrompt: (t.tokensPrompt ?? 0) + loop.usage.prompt, tokensCompletion: (t.tokensCompletion ?? 0) + loop.usage.completion, source: "llm" as const, status: "completed" as const } : {}),
+                outputSummary: loop.repair.iterations
+                  ? `${t.outputSummary.replace(/ · \d+ repair iteration.*$/, "")} · ${loop.repair.iterations} repair iteration${loop.repair.iterations === 1 ? "" : "s"} from sandbox findings (${repairTokens} tokens)`
+                  : t.outputSummary,
+              }
+            : t.stepIndex === 5
+              ? {
+                  ...t,
+                  modelId: verification.sandboxProvider === "none" ? t.modelId : verification.sandboxProvider,
+                  source: verification.sandboxProvider === "none" ? t.source : ("sandbox-preflight" as const),
+                  status: verification.verdict === "Verified Safe" || verification.verdict === "Verified With Warnings" ? ("completed" as const) : ("fallback" as const),
+                  latencyMs: verification.validationLatencyMs,
+                  outputSummary: `Sandbox pre-flight: ${verification.verdict} · AST ${fmt(verification.astCheckPassed)} · -WhatIf ${fmt(verification.whatIfSafe)}${loop.repair.iterations ? ` after ${loop.repair.iterations} repair iteration${loop.repair.iterations === 1 ? "" : "s"}` : ""}${verification.findings.length ? ` · ${verification.findings.length} finding(s)` : ""}`,
+                  timestamp: new Date().toISOString(),
+                }
+              : t,
+        ),
+      );
+    }
 
     /* ---- stage PR branch ---- */
     report("stage:start", "Staging remediation on a git branch");
@@ -290,6 +341,8 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       staging,
       approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },
       providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
+      // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on (U-1).
+      ...(ctx.custom?.steering ? { steering: { version: ctx.custom.steering.version, digest: ctx.custom.steering.digest } } : {}),
     });
     remediationStore.save(drawer);
     auditLedger.append({
@@ -785,9 +838,15 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let writeSummary = "";
   let write: LabWriteOutcome | null = null;
   let verification = drawer.verificationStatus;
+  // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
+  const preSnapshot = mode === "break-glass" && before ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
 
   if (mode === "break-glass") {
     log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
+    if (preSnapshot) {
+      const captured = [preSnapshot.users.length ? `${preSnapshot.users.length} user${preSnapshot.users.length === 1 ? "" : "s"}` : null, preSnapshot.caPolicies.length ? `${preSnapshot.caPolicies.length} CA polic${preSnapshot.caPolicies.length === 1 ? "y" : "ies"}` : null, preSnapshot.nsg ? `NSG ${preSnapshot.nsg.name} (${preSnapshot.nsg.rules.length} rules)` : null, preSnapshot.intune ? "Intune assignments" : null, preSnapshot.workloadIdentity ? "workload identity" : null].filter(Boolean);
+      log.push(`Pre-change snapshot captured (${captured.join(", ") || "no entity"}) for f⁻¹ and the read-back probe`);
+    }
     if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
       // A custom bundle has no lab write behind it: it is only executed when the approved script really runs.
       const plannedSteps = before.custom.customRemediation.executionSteps ?? [];
@@ -801,11 +860,31 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         log.push(...script.log);
       }
       if (scriptRan?.ok) {
-        writeSummary = `${drawer.title} (approved script exited 0)`;
-        write = { source: "live-graph", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: [] };
-        state = "executed";
-        execution = "live-graph";
+        // Exit code 0 is not "executed": the read-back probe against the pre-change snapshot decides (HARD_CASES 2).
         invalidateContext(scenarioId);
+        let changed: string[] | null = null;
+        if (preSnapshot) {
+          try {
+            const after = await gatherContext(scenarioId, { fresh: true });
+            const post = await captureEntitySnapshot(after, remediatedUpns);
+            changed = compareSnapshots(preSnapshot, post).differences.map((d) => d.path);
+          } catch {
+            changed = null;
+          }
+        }
+        if (changed && changed.length) {
+          writeSummary = `${drawer.title} (approved script exited 0; read-back shows ${changed.length} changed entit${changed.length === 1 ? "y" : "ies"})`;
+          write = { source: "live-graph", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: changed.map((id) => ({ id, ok: true, status: 200 })) };
+          state = "executed";
+          execution = "live-graph";
+          log.push(`Read-back probe: ${changed.slice(0, 5).join(", ")}${changed.length > 5 ? ", …" : ""} changed against the pre-change snapshot → executed`);
+        } else {
+          writeSummary = `${drawer.title} (approved script exited 0; read-back shows no change in the snapshotted entities)`;
+          write = { source: "simulated", latencyMs: scriptRan.latencyMs, summary: writeSummary, results: [], fallbackReason: changed === null ? "read-back probe unavailable" : "read-back probe found no change in the snapshotted entities (licences, Conditional Access, NSG, Intune)" };
+          state = "approved";
+          execution = "simulated";
+          log.push(`Approved script exited 0, but ${write.fallbackReason}; it is not reported as executed and the ticket stays open.`);
+        }
       } else {
         const fallbackReason = scriptRan ? "approved script failed; nothing reported as executed" : "custom bundles are staged, not executed";
         writeSummary = `${drawer.title} · staged, not executed`;
@@ -814,8 +893,10 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         execution = "simulated";
         log.push(`No Graph or ARM write: ${fallbackReason}. The ticket stays open.`);
       }
-    } else if (isLiveCloudMode() && labScenarioId) {
-      if (config.allowExecute) {
+    } else if (labScenarioId) {
+      // The lab write runs in every mode; outside live mode the services simulate it and the in-process lab state
+      // follows, so the read-back probe and the inverse have something real to compare against (U-5).
+      if (isLiveCloudMode() && config.allowExecute) {
         log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
         const script = await runApprovedScript(drawer);
         log.push(...script.log);
@@ -906,9 +987,14 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
           execution,
           remediatedUpns,
           reclaimedUpns,
+          preSnapshotAt: preSnapshot?.capturedAt ?? null,
+          // Revert can execute only what approve could: a live write path (lab scenario) or, under CTX_ALLOW_EXECUTE, the inverse script.
+          inverseExecutable: Boolean(preSnapshot) && execution === "live-graph" && isLiveCloudMode() && (labScenarioId !== null || config.allowExecute),
+          inverseReason: !preSnapshot ? "no pre-change snapshot" : execution !== "live-graph" ? "nothing was written live" : !isLiveCloudMode() ? "LIVE_CLOUD_MODE=false" : labScenarioId === null && !config.allowExecute ? "custom ticket without CTX_ALLOW_EXECUTE" : "inverse derived from the pre-change snapshot",
         }
       : null;
   if (convergence) {
+    if (preSnapshot) convergenceStore.setSnapshot(scenarioId, preSnapshot);
     convergenceStore.set(convergence);
     log.push(`Canvas converged via notifications/resources/updated (Tier 0, 0 tokens) · ${latencyMs} ms end to end`);
   }
@@ -935,6 +1021,46 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   return { ...updated, executionLog: log, convergence };
 }
 
+/**
+ * Re-stages a pending drawer after the ticket was steered (U-1): the bundle is rebuilt from the
+ * entry's re-parameterised remediation, the real pre-flight runs again and the drawer records the
+ * steering version it now matches. An approved or executed drawer is never rewritten.
+ */
+export async function restageRemediationForSteering(remediationId: string): Promise<ActionApprovalDrawer> {
+  const started = performance.now();
+  const drawer = remediationStore.get(remediationId);
+  if (!drawer) throw new Error(`Remediation '${remediationId}' not found`);
+  if (drawer.approval.state !== "pending") return drawer;
+  const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
+  const plan = buildRemediationPlan(ctx);
+  const bundle = plan.bundle;
+  const verification = await preflight(bundle, ctx, plan, () => {});
+  const step4 = ctx.custom?.subAgentTasks?.find((t) => t.stepIndex === 4);
+  const usedLlm = step4?.source === "llm";
+  const steering = ctx.custom?.steering;
+  const updated: ActionApprovalDrawer = {
+    ...drawer,
+    title: bundle.title.slice(0, 120),
+    summary: bundle.summary.slice(0, 600),
+    powershellScript: bundle.powershellScript,
+    terraformDiff: bundle.terraformDiff,
+    graphPatch: bundle.graphPatch,
+    affectedEntities: bundle.affectedEntities.slice(0, 20).map((e) => ({ ...e, change: e.change.slice(0, 200) })),
+    verificationStatus: verification,
+    synthesizedBy: { planner: usedLlm ? models.metaWonder : "deterministic", coder: usedLlm ? (step4?.modelId ?? models.metaWonder) : "deterministic", provider: usedLlm ? "meta" : "local" },
+    ...(steering ? { steering: { version: steering.version, digest: steering.digest } } : {}),
+  };
+  remediationStore.save(updated);
+  auditLedger.append({
+    ...verificationProof(updated),
+    actionType: "remediation-verified",
+    delegatedIdentity: updated.approval.requiredIdentity,
+    latencyMs: Math.round(performance.now() - started),
+    detail: `${verification.verdict} · re-staged for steering v${steering?.version ?? 0} · ${verification.sandboxProvider}`.slice(0, 300),
+  });
+  return updated;
+}
+
 /** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the signed-in delegated identity. */
 /**
  * Auto-Fix (L-08): repairs the ShouldProcess guard on the server, re-runs the real pre-flight
@@ -947,7 +1073,7 @@ export async function autofixRemediation(remediationId: string): Promise<ActionA
   if (!drawer) throw new Error(`Remediation '${remediationId}' not found`);
   const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
   const plan = buildRemediationPlan(ctx);
-  const repair = verifyAndRepairGeneratedScript(drawer.powershellScript, drawer.ticketId);
+  const repair = syntaxHeuristicPrecheck(drawer.powershellScript, drawer.ticketId);
   const powershellScript = repair.repairedScript;
   const verification = await preflight({ powershellScript, terraformDiff: drawer.terraformDiff }, ctx, plan, () => {});
   verification.findings = [
@@ -997,9 +1123,14 @@ export function overrideRemediation(remediationId: string, justification: string
 }
 
 async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: boolean; log: string[] }> {
+  return runScriptText(drawer.powershellScript, `Invoke-Remediate-${drawer.ticketId}`);
+}
+
+/** CTX_ALLOW_EXECUTE only: runs a script as the signed-in delegated identity; the inverse rollback uses the same runner (U-5). */
+export async function runScriptText(script: string, name: string): Promise<{ ok: boolean; log: string[] }> {
   const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
-  const file = join(dir, `Invoke-Remediate-${drawer.ticketId}.ps1`);
-  writeFileSync(file, drawer.powershellScript, "utf8");
+  const file = join(dir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.ps1`);
+  writeFileSync(file, script, "utf8");
   try {
     const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
     const log = result.stdout.split("\n").filter(Boolean).slice(-20);

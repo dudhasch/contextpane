@@ -57,7 +57,8 @@ describe("Tier 3C formal blast-radius prover", () => {
     expect(bundle.hcl + bundle.terraformDiff).toContain("Allow-Temp-RDP-Diagnostic-Drift");
     expect(JSON.parse(bundle.graphPatch).scenarioId).toBe("INC-4092");
     expect(verifyInverseRollback("INC-4092").passed).toBe(true);
-    const idem = verifyIdempotency("INC-4092");
+    const idem = verifyIdempotency("INC-4092")!;
+    expect(idem).not.toBeNull();
     expect(idem.passed).toBe(true);
     expect(idem.idempotent).toBe(true);
     expect(idem.forkIsolated).toBe(true);

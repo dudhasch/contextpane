@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SynthesizedDomainSchema, SynthesizedDynamicCardSchema, SynthesizedPrimitiveKindSchema, type SynthesizedDynamicCard } from "./schemas/components.ts";
 import { CANVAS_COMPONENT_TYPES, type CanvasComponentType } from "./schemas/layout.ts";
 import { EntityTypeSchema, ProvenanceCategorySchema, type ProvenanceCategory } from "./schemas/primitives.ts";
+import { SteeringParamsSchema, type SteeringParams } from "./steering.ts";
 import type { TenantId } from "./tenants.ts";
 
 /**
@@ -240,12 +241,20 @@ export const SubAgentTaskRecordSchema = z.object({
   role: z.string(),
   modelId: z.string(),
   status: z.enum(["completed", "running", "fallback"]),
-  /** "not-attempted": no model call was made for this step (offline or deterministic path). */
-  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "fallback-on-error", "not-attempted"]).optional(),
+  /**
+   * "not-attempted": no model call was made for this step (offline or deterministic path).
+   * "syntax-heuristic": the regex pre-check only; "sandbox-preflight": the real AST / -WhatIf / terraform run.
+   */
+  source: z.enum(["llm", "mcp-probe", "symbolic-verifier", "syntax-heuristic", "sandbox-preflight", "fallback-on-error", "not-attempted"]).optional(),
   latencyMs: z.number().int().nonnegative(),
   /** When the step started, in ms after the pipeline started; absent for steps that never ran on a clock. */
   startOffsetMs: z.number().int().nonnegative().optional(),
   tokensUsed: z.number().int().nonnegative().optional(),
+  /** Prompt / completion split of tokensUsed, when the provider reported one (HARD_CASES 10). */
+  tokensPrompt: z.number().int().nonnegative().optional(),
+  tokensCompletion: z.number().int().nonnegative().optional(),
+  /** Write-then-test repair turns this step ran (the coder, U-2); absent when the loop did not run. */
+  iterations: z.number().int().nonnegative().optional(),
   inputSummary: z.string(),
   outputSummary: z.string(),
   timestamp: z.string(),
@@ -290,6 +299,8 @@ export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenar
   clarifiedAnswers?: Record<string, string>;
   /** Per-task sub-agent execution pipeline telemetry for this ticket/project. */
   subAgentTasks?: SubAgentTaskRecord[];
+  /** Typed operator steering (clarifier pills, row clicks, card actions) the coder was last fed (U-1). */
+  steering?: SteeringParams;
 }
 
 export type AnyScenarioEntry = ScenarioRegistryEntry | CustomScenarioEntry;
@@ -567,6 +578,8 @@ export const ScenarioBriefSchema = z.object({
   clarifiedAnswers: z.record(z.string(), z.string()).default({}),
   /** Per-task sub-agent execution pipeline telemetry for this ticket/project. */
   subAgentTasks: z.array(SubAgentTaskRecordSchema).default([]),
+  /** Typed operator steering with provenance; null for built-in scenarios (U-1). */
+  steering: SteeringParamsSchema.nullable().default(null),
   /** The origin badge: psa | anomaly | erp-drop | unscripted. */
   originKind: WorkItemOriginSchema.default("psa"),
   /** `#2026323` for an ERP drop; `#<scenarioId>` otherwise. */

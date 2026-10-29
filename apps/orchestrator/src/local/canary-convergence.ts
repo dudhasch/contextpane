@@ -2,6 +2,7 @@ import { getCustomScenario, isCustomScenarioId, isScenarioId, SCENARIO_REGISTRY,
 import {
   AVD_SUBNET,
   buildInverseRollback,
+  hasSymbolicModel,
   postState,
   reachable,
   verifyFormalInvariants,
@@ -21,6 +22,11 @@ import {
  * never claims the bundle ran: when a live write landed (liveWriteApplied) the
  * change is reported as still in the tenant; otherwise nothing left the
  * pre-remediation state and the tenant is reported unchanged.
+ *
+ * Every probe here evaluates the symbolic model (`probeSource: "symbolic"`), never
+ * the tenant; an id without a symbolic model gets `probeSource: "none"` and no probe
+ * is reported as passed. The caller runs it only for an executed approval or an
+ * explicit rollback drill (HARD_CASES 4, 6).
  */
 
 export const CANARY_COHORT = "SG-Canary-Ring0" as const;
@@ -66,6 +72,9 @@ export interface CanaryProbes {
   synthetic?: SyntheticProbes;
 }
 
+/** Where the probes read from: the symbolic fixture model, or nothing (no model for this id). */
+export type CanaryProbeSource = "symbolic" | "none";
+
 export interface CanaryStage {
   stage: CanaryStageName;
   at: string;
@@ -77,6 +86,9 @@ export interface CanaryStage {
 export interface CanaryConvergenceResult {
   scenarioId: ScenarioId | string;
   mode: CanaryMode;
+  /** "live-graph" when the approval wrote to the tenant; "simulated" for a staged approval or a drill. */
+  execution: "live-graph" | "simulated";
+  probeSource: CanaryProbeSource;
   stages: CanaryStage[];
   finalState: CanaryFinalState;
   canaryCohort: typeof CANARY_COHORT;
@@ -87,7 +99,16 @@ export interface CanaryConvergenceResult {
   auditAction: string;
 }
 
-function buildProbes(scenarioId: ScenarioId | string, simulateCanaryFailure: boolean): CanaryProbes {
+function buildProbes(scenarioId: ScenarioId | string, simulateCanaryFailure: boolean, probeSource: CanaryProbeSource): CanaryProbes {
+  if (probeSource === "none") {
+    // No symbolic model: nothing is evaluated and nothing is reported as passed (HARD_CASES 4).
+    const identity: IdentityProbes = { passed: false, breakGlassPassed: false, breakGlassNonLockout: false, targetsPassed: false, targetRemediation: false, checked: 0, evidence: [] };
+    const network: NetworkProbes = { tcp3389Closed: false, tcp443Open: false, intuneConflicts: 0 };
+    const synthetic: SyntheticProbes = simulateCanaryFailure
+      ? { passed: false, aadsts53003Spike: true, detail: "AADSTS53003 spike in Canary Ring 0 (drill)" }
+      : { passed: false, aadsts53003Spike: false, detail: "No symbolic model for this ticket: synthetic probes not evaluated" };
+    return { identity, network, synthetic };
+  }
   const verification = verifyFormalInvariants(scenarioId);
   const breakGlass = verification.invariants.find((i) => i.id === "break-glass-non-lockout");
   const targets = verification.invariants.find((i) => i.id === "target-remediation");
@@ -128,7 +149,9 @@ export function runCanaryConvergence(scenarioId: ScenarioId | string, options: C
   const liveWriteApplied = mode === "break-glass" && (options.liveWriteApplied ?? false);
   const tenantId = isScenarioId(scenarioId) ? SCENARIO_REGISTRY[scenarioId].tenantId : (custom?.tenantId ?? "tenant-contoso-01");
   const at = new Date().toISOString();
-  const probes = buildProbes(scenarioId, simulateCanaryFailure);
+  const probeSource: CanaryProbeSource = hasSymbolicModel(scenarioId) ? "symbolic" : "none";
+  const execution = liveWriteApplied ? "live-graph" : "simulated";
+  const probes = buildProbes(scenarioId, simulateCanaryFailure, probeSource);
 
   const appliedDetail =
     mode === "gitops"
@@ -171,6 +194,8 @@ export function runCanaryConvergence(scenarioId: ScenarioId | string, options: C
     return {
       scenarioId,
       mode,
+      execution,
+      probeSource,
       stages,
       finalState: "AUTO_ROLLED_BACK",
       canaryCohort: CANARY_COHORT,
@@ -182,24 +207,33 @@ export function runCanaryConvergence(scenarioId: ScenarioId | string, options: C
     };
   }
 
+  // The probe detail reports what was evaluated; a symbolic pass is a pass of the model, not of the tenant.
   stages.push({
     stage: "SYNTHETIC_PROBED",
     at,
     detail:
-      scenarioId === "INC-4092"
-        ? "Synthetic probes passed in Canary Ring 0: break-glass + targets Allow, Tcp/3389 closed, Tcp/443 open, 0 Intune conflicts"
-        : "Synthetic probes passed in Canary Ring 0: break-glass + targets verified healthy, 0 policy conflicts",
+      probeSource === "none"
+        ? (probes.synthetic?.detail ?? "Synthetic probes not evaluated")
+        : probes.synthetic?.passed
+          ? scenarioId === "INC-4092"
+            ? "Synthetic probes passed on the symbolic model: break-glass + targets Allow, Tcp/3389 closed, Tcp/443 open, 0 Intune conflicts"
+            : "Synthetic probes passed on the symbolic model: break-glass + targets healthy, 0 policy conflicts"
+          : "Synthetic probes did not pass on the symbolic model",
     probes,
   });
   stages.push({
     stage: "CONVERGED",
     at,
-    detail: `Canary Ring 0 healthy for ${scenarioId}; tenant converged`,
+    detail: liveWriteApplied
+      ? `Canary Ring 0 healthy for ${scenarioId}; tenant converged`
+      : `Canary Ring 0 evaluated for ${scenarioId}; nothing was written live, so only the canvas converged`,
   });
 
   return {
     scenarioId,
     mode,
+    execution,
+    probeSource,
     stages,
     finalState: "CONVERGED",
     canaryCohort: CANARY_COHORT,

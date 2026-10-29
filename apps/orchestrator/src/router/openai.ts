@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { sessionPiiVault, type OpenAIFunctionTool } from "@contextpane/catalog";
-import { config, type ProviderConfig } from "../config.ts";
+import { config, providers, type ProviderConfig } from "../config.ts";
 import { buildHoverResponseFormat } from "./glimmer-payload.ts";
 
 /** CTX_ROUTER_DEBUG=1 appends every model answer (no headers, no keys) to data/router-debug.jsonl. */
@@ -129,6 +129,14 @@ function promptText(messages: ChatMessage[]): string {
 
 function rejectsNamedToolChoice(error: unknown): boolean {
   return error instanceof ProviderHttpError && error.status === 400 && /tool_choice/i.test(error.message);
+}
+
+/**
+ * Whether the pipeline may call a Meta model at all: a key is configured, CTX_FORCE_LOCAL is off
+ * and this is not a test run. Tests that exercise a model path spy on this and on chatWithForcedTool.
+ */
+export function metaCallsEnabled(): boolean {
+  return providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test";
 }
 
 export async function chatWithForcedTool(

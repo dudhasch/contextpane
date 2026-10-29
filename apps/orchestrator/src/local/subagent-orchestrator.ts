@@ -6,16 +6,18 @@ import {
   type CustomScenarioEntry,
   type ElementRoutingDecision,
   type OpenAIFunctionTool,
+  type SteeringParams,
   type SubAgentTaskRecord,
   type SynthesizedDynamicCard,
   type UpstreamCloudStatusCorrelation,
 } from "@contextpane/catalog";
 import { z } from "zod";
-import { config, models, providers } from "../config.ts";
-import { chatWithForcedTool } from "../router/openai.ts";
+import { models, providers } from "../config.ts";
+import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
 import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
 import { assessTicketElementNeeds, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
+import { deriveSteeringFromAnswers, steeringForCoder } from "./steering.ts";
 
 function humanizeSlug(raw: string): string {
   const trimmed = raw.trim();
@@ -128,6 +130,8 @@ export interface ClarifierSubAgentResult {
   modelUsed: string;
   latencyMs: number;
   tokensUsed: number;
+  /** Prompt / completion split when the provider reported one. */
+  usage?: TokenUsage;
   status: "completed" | "fallback";
   source: "llm" | "fallback-on-error";
 }
@@ -140,7 +144,7 @@ export async function generateClarifyingQuestions(input: {
   const started = performance.now();
   const fallback = generateClarifyingQuestionsSync(input);
   const modelId = models.metaWonder;
-  if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") {
+  if (!metaCallsEnabled()) {
     return {
       questions: fallback,
       modelUsed: `${modelId} (offline)`,
@@ -174,6 +178,7 @@ export async function generateClarifyingQuestions(input: {
         modelUsed: modelId,
         latencyMs: Math.max(1, Math.round(performance.now() - started)),
         tokensUsed: res.usage.total,
+        usage: res.usage,
         status: "completed",
         source: "llm",
       };
@@ -228,17 +233,90 @@ const REMEDIATION_CODER_TOOL: OpenAIFunctionTool = {
   },
 };
 
-export function buildCustomTicketRemediationSync(input: { scenarioId: string; ticketTitle: string; ticketBody: string; clarifiedAnswers?: Record<string, string> }): CustomRemediationTemplate {
+/** The Key Vault a ticket names (kv-contoso-fin-02, "Key Vault kv-x"), or null. */
+function keyVaultNameIn(text: string): string | null {
+  const m = /\b(kv-[a-z0-9][a-z0-9-]{1,22}|(?:key ?vault|vault)\s+([a-z0-9][a-z0-9-]{2,23}))\b/i.exec(text);
+  if (!m) return null;
+  return (m[2] ?? m[1] ?? "").replace(/^(key ?vault|vault)\s+/i, "") || null;
+}
+
+/**
+ * The deterministic coder. It reads the typed steering, so the offline path produces the same
+ * cmdlet family as the model path would: a soft-deleted Key Vault steered to "recover" gets
+ * Undo-AzKeyVaultRemoval, steered to "purge-recreate" gets Remove-AzKeyVault -InRemovedState
+ * followed by New-AzKeyVault. Anything else keeps the generic inspect-first template.
+ */
+export function buildCustomTicketRemediationSync(input: {
+  scenarioId: string;
+  ticketTitle: string;
+  ticketBody: string;
+  clarifiedAnswers?: Record<string, string>;
+  steering?: SteeringParams;
+}): CustomRemediationTemplate {
   const scopeText = Object.values(input.clarifiedAnswers ?? {}).join(" · ") || "Default Scope";
   const cleanTitle = input.ticketTitle.trim() || "Cloud Remediation";
+  const strategy = input.steering?.remediationStrategy?.value;
+  const steeringLine = input.steering ? `# Steering v${input.steering.version}: ${["remediationStrategy", "scope", "governance", "targetResource", "region"].map((k) => { const p = (input.steering as Record<string, { value?: unknown } | undefined>)[k]; return p ? `${k}=${String(p.value)}` : null; }).filter(Boolean).join(" ") || "defaults"}` : "# Steering: defaults";
+  const vault = input.steering?.targetResource?.value ?? keyVaultNameIn(`${input.ticketTitle}\n${input.ticketBody}`);
+  const whatIf = (target: string, action: string, body: string[]) =>
+    [
+      "#Requires -Version 7.0",
+      "[CmdletBinding(SupportsShouldProcess = $true)]",
+      // No region literal unless the operator steered one: the vault's own location is read back at run time.
+      `param([string]$Target = "${target}", [string]$ResourceGroupName = "", [string]$Location = "${input.steering?.region?.value ?? ""}")`,
+      "$ErrorActionPreference = 'Stop'",
+      `# Clarified Scope: ${scopeText}`,
+      steeringLine,
+      `if ($PSCmdlet.ShouldProcess($Target, "${action.replace(/"/g, "'")}")) {`,
+      ...body.map((l) => `  ${l}`),
+      "}",
+      "",
+    ].join("\n");
+  if (vault && /key ?vault|kv-|soft[- ]delete|purge/i.test(`${input.ticketTitle} ${input.ticketBody}`) && (strategy === "recover" || strategy === "purge-recreate")) {
+    const recover = strategy === "recover";
+    const script = recover
+      ? whatIf(vault, `Recover soft-deleted Key Vault ${vault} in place`, [
+          "$deleted = Get-AzKeyVault -InRemovedState | Where-Object { $_.VaultName -eq $Target -and (-not $Location -or $_.Location -eq $Location) } | Select-Object -First 1",
+          "if (-not $deleted) { throw \"Key Vault $Target is not in the soft-deleted state\" }",
+          "Undo-AzKeyVaultRemoval -VaultName $Target -ResourceGroupName $deleted.ResourceGroupName -Location $deleted.Location | Out-Null",
+          "Get-AzKeyVault -VaultName $Target | Select-Object VaultName, ResourceGroupName, EnablePurgeProtection",
+        ])
+      : whatIf(vault, `Purge soft-deleted Key Vault ${vault} and recreate it clean`, [
+          "$deleted = Get-AzKeyVault -InRemovedState | Where-Object { $_.VaultName -eq $Target -and (-not $Location -or $_.Location -eq $Location) } | Select-Object -First 1",
+          "if (-not $deleted) { throw \"Key Vault $Target is not in the soft-deleted state\" }",
+          "if ($deleted.EnablePurgeProtection) { throw \"Key Vault $Target has purge protection: it cannot be purged before its retention ends\" }",
+          "Remove-AzKeyVault -VaultName $Target -Location $deleted.Location -InRemovedState -Force",
+          "New-AzKeyVault -VaultName $Target -ResourceGroupName ($ResourceGroupName ? $ResourceGroupName : $deleted.ResourceGroupName) -Location $deleted.Location -EnablePurgeProtection | Out-Null",
+        ]);
+    return {
+      title: `${recover ? "Recover" : "Purge & recreate"} Key Vault ${vault}`.slice(0, 120),
+      summary: recover
+        ? `Recovers the soft-deleted Key Vault ${vault} in place with Undo-AzKeyVaultRemoval; keys, secrets and access policies return as they were (${scopeText}).`
+        : `Purges the soft-deleted Key Vault ${vault} and recreates it clean; refused by Azure while purge protection is on (${scopeText}).`,
+      powershellScript: script,
+      terraformDiff: "",
+      graphPatch: JSON.stringify({ scenarioId: input.scenarioId, keyVault: vault, strategy, clarifiedScope: input.clarifiedAnswers ?? {} }, null, 2),
+      rollbackScript: recover
+        ? whatIf(vault, `Soft-delete Key Vault ${vault} again (reverses the recovery)`, ["Remove-AzKeyVault -VaultName $Target -Force"])
+        : whatIf(vault, `Remove the recreated Key Vault ${vault} (the purged vault cannot be restored)`, ["Remove-AzKeyVault -VaultName $Target -Force"]),
+      affectedEntities: [{ type: "resource", id: vault, change: recover ? "soft-deleted -> recovered in place" : "soft-deleted -> purged, recreated empty" }],
+      requiredCommands: recover ? ["get-azkeyvault", "undo-azkeyvaultremoval"] : ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"],
+      riskNotes: recover
+        ? ["Recovery keeps every key, secret and certificate; nothing is lost."]
+        : ["Purging is irreversible: every key and secret in the vault is destroyed.", "Azure refuses the purge while purge protection is enabled."],
+      executionSteps: recover
+        ? [`[Step 1/2] Confirm ${vault} is soft-deleted in $Location`, `[Step 2/2] Undo-AzKeyVaultRemoval and read the vault back`]
+        : [`[Step 1/2] Confirm ${vault} is soft-deleted and not purge-protected`, `[Step 2/2] Remove-AzKeyVault -InRemovedState, then New-AzKeyVault`],
+    };
+  }
   return {
     title: `Remediate ${input.scenarioId}: ${cleanTitle}`.slice(0, 120),
     summary: `Remediation bundle for "${cleanTitle}" (${scopeText}).`,
-    powershellScript: `#Requires -Version 7.0\n[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$Target = "${input.scenarioId}")\n$ErrorActionPreference = 'Stop'\n# Clarified Scope: ${scopeText}\nif ($PSCmdlet.ShouldProcess($Target, "Apply remediation for ${cleanTitle.replace(/"/g, "'")}")) {\n  Get-AzResource | Select-Object -First 5\n}\n`,
+    powershellScript: whatIf(input.steering?.targetResource?.value ?? input.scenarioId, `Apply remediation for ${cleanTitle}`, ["Get-AzResource | Select-Object -First 5"]),
     terraformDiff: `--- a/demo-iac/remediation.tf\n+++ b/demo-iac/remediation.tf\n@@ -1,3 +1,5 @@\n+# Scenario: ${input.scenarioId}\n+# Scope: ${scopeText}\n`,
     graphPatch: JSON.stringify({ scenarioId: input.scenarioId, clarifiedScope: input.clarifiedAnswers ?? {} }, null, 2),
     rollbackScript: `#Requires -Version 7.0\n[CmdletBinding(SupportsShouldProcess = $true)]\nparam([string]$Target = "${input.scenarioId}")\n`,
-    affectedEntities: [{ type: "resource", id: input.scenarioId, change: `Apply clarified remediation (${scopeText})`.slice(0, 180) }],
+    affectedEntities: [{ type: "resource", id: input.steering?.targetResource?.value ?? input.scenarioId, change: `Apply clarified remediation (${scopeText})`.slice(0, 180) }],
     requiredCommands: ["get-azresource"],
     riskNotes: ["All mutating cmdlets are wrapped in $PSCmdlet.ShouldProcess (-WhatIf safe)."],
     executionSteps: [`[Step 1/2] Inspect live state for ${input.scenarioId} (${scopeText})`, `[Step 2/2] Run the approved PowerShell 7 remediation`],
@@ -249,22 +327,32 @@ export interface RemediationCoderMeta {
   modelUsed: string;
   latencyMs: number;
   tokensUsed: number;
+  /** Prompt / completion split when the provider reported one. */
+  usage?: TokenUsage;
   status: "completed" | "fallback";
   source: "llm" | "fallback-on-error";
 }
 
 export type SynthesizedRemediationWithMeta = CustomRemediationTemplate & { _meta?: RemediationCoderMeta };
 
-export async function synthesizeCustomRemediation(input: {
+export interface CoderInput {
   scenarioId: string;
   ticketTitle: string;
   ticketBody: string;
   clarifiedAnswers?: Record<string, string>;
-}): Promise<SynthesizedRemediationWithMeta> {
+  /** Typed operator steering; the prompt receives it as the contract the script must honour (U-1). */
+  steering?: SteeringParams;
+  /** The script a re-parameterisation starts from: the model changes only what the steering requires. */
+  previousScript?: string;
+  /** Sandbox findings from the last pre-flight; a repair turn fixes exactly these (U-2). */
+  repairFindings?: string[];
+}
+
+export async function synthesizeCustomRemediation(input: CoderInput): Promise<SynthesizedRemediationWithMeta> {
   const started = performance.now();
   const fallback = buildCustomTicketRemediationSync(input);
   const modelId = models.metaWonder;
-  if (!providers.meta.hasKey || config.forceLocal || process.env.NODE_ENV === "test") {
+  if (!metaCallsEnabled()) {
     return {
       ...fallback,
       _meta: {
@@ -285,10 +373,23 @@ export async function synthesizeCustomRemediation(input: {
           role: "system",
           content:
             "You are Sub-Agent 4 (IaC & PowerShell 7 Coder · muse-wonder-1.0) in ContextPane. " +
-            "Synthesize a concise, domain-accurate 15-line PowerShell 7 script (using [CmdletBinding(SupportsShouldProcess = $true)] and $PSCmdlet.ShouldProcess), unified Terraform diff, rollback script, and 3 executionSteps directly matching the operator's ticket AND their selected `clarifiedAnswers`. " +
-            "CRITICAL: The PowerShell cmdlets MUST reflect the exact resolution strategy chosen in `clarifiedAnswers`!",
+            "Synthesize a concise, domain-accurate 15-line PowerShell 7 script (using [CmdletBinding(SupportsShouldProcess = $true)] and $PSCmdlet.ShouldProcess), unified Terraform diff, rollback script, and 3 executionSteps directly matching the operator's ticket AND the typed `steering` contract (remediationStrategy, scope, governance, targetResource, targetIds, region, dryRun) derived from their clarifier answers and in-card selections. " +
+            "CRITICAL: The PowerShell cmdlets MUST reflect `steering.remediationStrategy` exactly (recover => in-place recovery cmdlets such as Undo-AzKeyVaultRemoval, never a purge; purge-recreate => Remove-… -InRemovedState then New-…; gitops-bundle => declarative Terraform plus a thin runbook). " +
+            (input.previousScript ? "A `previousScript` is supplied: re-parameterise it — keep its structure, parameter names and guards, change only the lines the new steering requires, and keep every unrelated line byte-identical. " : "") +
+            (input.repairFindings?.length ? "`repairFindings` lists what the sandbox pre-flight rejected in the previous script: fix exactly those findings (add the missing param() block, wrap every mutating cmdlet in $PSCmdlet.ShouldProcess, remove forbidden commands) and change nothing else. " : ""),
         },
-        { role: "user", content: JSON.stringify(input) },
+        {
+          role: "user",
+          content: JSON.stringify({
+            scenarioId: input.scenarioId,
+            ticketTitle: input.ticketTitle,
+            ticketBody: input.ticketBody,
+            clarifiedAnswers: input.clarifiedAnswers ?? {},
+            ...(input.steering ? { steering: steeringForCoder(input.steering) } : {}),
+            ...(input.previousScript ? { previousScript: input.previousScript } : {}),
+            ...(input.repairFindings?.length ? { repairFindings: input.repairFindings } : {}),
+          }),
+        },
       ],
       REMEDIATION_CODER_TOOL,
       { timeoutMs: 32000, temperature: 0.1, maxTokens: 4000, reasoningEffort: "low" },
@@ -310,6 +411,7 @@ export async function synthesizeCustomRemediation(input: {
           modelUsed: modelId,
           latencyMs: Math.max(1, Math.round(performance.now() - started)),
           tokensUsed: res.usage.total,
+          usage: res.usage,
           status: "completed",
           source: "llm",
         },
@@ -330,7 +432,8 @@ export async function synthesizeCustomRemediation(input: {
   };
 }
 
-export interface SafetyVerifierResult {
+export interface SyntaxPrecheckResult {
+  name: "syntax-heuristic";
   repairedScript: string;
   passed: boolean;
   repaired: boolean;
@@ -339,10 +442,13 @@ export interface SafetyVerifierResult {
 }
 
 /**
- * Sub-Agent 5 (Safety & Rollback Verifier): performs real PowerShell AST/safety inspection
- * on the generated script (checking for -WhatIf / SupportsShouldProcess, balanced braces,
- * non-empty target parameters, and absence of destructive wildcards like Remove-MgUser -All).
- * If SupportsShouldProcess is missing on an otherwise safe script, repairs it before returning.
+ * The cheap pre-check that runs before any sandbox: brace counting, a destructive-wildcard
+ * regex, an empty-default-parameter regex and the SupportsShouldProcess guard. It is a
+ * heuristic, not an AST parse and not a verdict (M-01, U-2): the real verification is the
+ * pre-flight in `preflight/*` (pwsh AST + cmdlet allow-list + terraform validate, in the
+ * Modal sandbox when configured). When the guard is the only thing missing it wraps the
+ * script in one, keeping a leading param() block as the first statement; Auto-Fix and the
+ * triage path use that.
  */
 /** Splits a script's leading param(...) block (balanced parentheses) from the statements after it. */
 function splitParamBlock(lines: string[]): { paramLines: string[]; bodyLines: string[] } {
@@ -356,7 +462,7 @@ function splitParamBlock(lines: string[]): { paramLines: string[]; bodyLines: st
   return { paramLines: [], bodyLines: lines };
 }
 
-export function verifyAndRepairGeneratedScript(script: string, scenarioId: string): SafetyVerifierResult {
+export function syntaxHeuristicPrecheck(script: string, scenarioId: string): SyntaxPrecheckResult {
   const started = performance.now();
   const warnings: string[] = [];
   let current = script.trim();
@@ -400,6 +506,7 @@ export function verifyAndRepairGeneratedScript(script: string, scenarioId: strin
   }
 
   return {
+    name: "syntax-heuristic",
     repairedScript: current,
     passed: warnings.length === 0,
     repaired,
@@ -413,8 +520,11 @@ export interface SubAgentStepMeasurement {
   startOffsetMs?: number;
   modelId?: string;
   tokensUsed?: number;
+  /** Prompt / completion split, stored on the record so the Router Savings HUD can show it (HARD_CASES 10). */
+  usage?: TokenUsage;
   status?: "completed" | "running" | "fallback";
-  source?: "llm" | "mcp-probe" | "symbolic-verifier" | "fallback-on-error" | "not-attempted";
+  source?: SubAgentTaskRecord["source"];
+  iterations?: number;
   outputSummary?: string;
 }
 
@@ -431,10 +541,13 @@ export function telemetryFromSubAgentTasks(tasks: SubAgentTaskRecord[]): {
   const modelSteps = tasks.filter((t) => t.stepIndex === 1 || t.stepIndex === 3 || t.stepIndex === 4);
   const llmSteps = modelSteps.filter((t) => t.source === "llm");
   const total = llmSteps.reduce((sum, t) => sum + (t.tokensUsed ?? 0), 0);
+  // The split is what the records carry; a step without one contributes only to the total.
+  const prompt = llmSteps.reduce((sum, t) => sum + (t.tokensPrompt ?? 0), 0);
+  const completion = llmSteps.reduce((sum, t) => sum + (t.tokensCompletion ?? 0), 0);
   return {
     provider: llmSteps.length ? "meta" : "local",
     modelId: llmSteps.length ? [...new Set(llmSteps.map((t) => t.modelId))].join(" + ") : "deterministic-router",
-    tokensUsed: { prompt: 0, completion: 0, total },
+    tokensUsed: { prompt, completion, total },
     fallbackChain: modelSteps.map((t) => ({
       provider: t.source === "llm" ? "meta" : "local",
       modelId: t.modelId,
@@ -472,6 +585,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[1]?.latencyMs ?? 0,
       ...(m[1]?.startOffsetMs !== undefined ? { startOffsetMs: m[1].startOffsetMs } : {}),
       ...(m[1]?.tokensUsed !== undefined ? { tokensUsed: m[1].tokensUsed } : {}),
+      ...(m[1]?.usage ? { tokensPrompt: m[1].usage.prompt, tokensCompletion: m[1].usage.completion } : {}),
       inputSummary: `Ticket "${input.title.slice(0, 70)}"`,
       outputSummary: !m[1] ? "Not run for this ticket" : m[1].outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
       timestamp: now,
@@ -487,6 +601,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[2]?.latencyMs ?? 0,
       ...(m[2]?.startOffsetMs !== undefined ? { startOffsetMs: m[2].startOffsetMs } : {}),
       ...(m[2]?.tokensUsed !== undefined ? { tokensUsed: m[2].tokensUsed } : {}),
+      ...(m[2]?.usage ? { tokensPrompt: m[2].usage.prompt, tokensCompletion: m[2].usage.completion } : {}),
       inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`,
       outputSummary: !m[2] ? "Not run for this ticket" : m[2].outputSummary ?? "Correlated live tenant objects & health advisories",
       timestamp: now,
@@ -502,6 +617,7 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[3]?.latencyMs ?? 0,
       ...(m[3]?.startOffsetMs !== undefined ? { startOffsetMs: m[3].startOffsetMs } : {}),
       ...(m[3]?.tokensUsed !== undefined ? { tokensUsed: m[3].tokensUsed } : {}),
+      ...(m[3]?.usage ? { tokensPrompt: m[3].usage.prompt, tokensCompletion: m[3].usage.completion } : {}),
       inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`,
       outputSummary: !m[3] ? "Not run for this ticket" : m[3].outputSummary ?? `Synthesized ${elementsLabel}`,
       timestamp: now,
@@ -517,6 +633,8 @@ export function buildSubAgentPipelineRecords(input: {
       latencyMs: m[4]?.latencyMs ?? 0,
       ...(m[4]?.startOffsetMs !== undefined ? { startOffsetMs: m[4].startOffsetMs } : {}),
       ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
+      ...(m[4]?.usage ? { tokensPrompt: m[4].usage.prompt, tokensCompletion: m[4].usage.completion } : {}),
+      ...(m[4]?.iterations !== undefined ? { iterations: m[4].iterations } : {}),
       inputSummary: `Target parameters: ${activePairs.join(", ")}`,
       outputSummary: !m[4] ? "Not run for this ticket" : m[4].outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
       timestamp: now,
@@ -526,14 +644,15 @@ export function buildSubAgentPipelineRecords(input: {
       task: "preflight-and-undo",
       agentName: "5. Safety Verifier",
       role: "Safety & Rollback Verifier Sub-Agent",
-      modelId: m[5] ? (m[5].modelId ?? "symbolic-formal-verifier") : "not run",
+      modelId: m[5] ? (m[5].modelId ?? "syntax-heuristic") : "not run",
       status: m[5] ? (m[5].status ?? "completed") : "fallback",
-      source: m[5] ? (m[5].source ?? "symbolic-verifier") : "not-attempted",
+      source: m[5] ? (m[5].source ?? "syntax-heuristic") : "not-attempted",
       latencyMs: m[5]?.latencyMs ?? 0,
       ...(m[5]?.startOffsetMs !== undefined ? { startOffsetMs: m[5].startOffsetMs } : {}),
       ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
-      inputSummary: `AST + SupportsShouldProcess (-WhatIf) for ${input.scenarioId}`,
-      outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Verified 0 syntax errors & 1-click rollback script ready",
+      ...(m[5]?.usage ? { tokensPrompt: m[5].usage.prompt, tokensCompletion: m[5].usage.completion } : {}),
+      inputSummary: `Syntax pre-check (braces, guard, wildcards) for ${input.scenarioId}; sandbox pre-flight when the fix is staged`,
+      outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Syntax pre-check passed; the sandbox pre-flight runs when the fix is staged",
       timestamp: now,
     },
   ];
@@ -564,6 +683,8 @@ export async function runSubAgentPipeline(
     createdAt: string;
     matchedSeededComponents: string[];
     clarifiedAnswers?: Record<string, string>;
+    /** The steering the entry already carries; its version continues from here. */
+    steering?: SteeringParams;
   },
   onProgress?: ProgressSink,
 ): Promise<{
@@ -572,6 +693,7 @@ export async function runSubAgentPipeline(
   cloudStatusCorrelation: UpstreamCloudStatusCorrelation;
   clarifyingQuestions: ClarifyingQuestion[];
   clarifiedAnswers: Record<string, string>;
+  steering: SteeringParams;
   synthesizedElements: SynthesizedDynamicCard[];
   customRemediation: CustomRemediationTemplate;
   subAgentTasks: SubAgentTaskRecord[];
@@ -604,6 +726,8 @@ export async function runSubAgentPipeline(
     clarifyingQuestions: clarifierRes.questions,
     clarifiedAnswers: effectiveAnswers,
   });
+  // The typed steering both S3 and S4 read; the coder gets it as its contract, not a label string (U-1).
+  const steering = deriveSteeringFromAnswers(clarifierRes.questions, effectiveAnswers, { previous: input.steering });
 
   // S3 is a real Spark → Wonder chain: the synthesizer builds what the gatekeeper decided.
   // The gatekeeper call carries its own 10 s budget and falls back to the deterministic seed.
@@ -637,6 +761,7 @@ export async function runSubAgentPipeline(
     ticketTitle: input.title,
     ticketBody: input.body,
     clarifiedAnswers: effectiveAnswers,
+    steering,
   }).then((res) => {
     const wallClockMs = Math.max(1, Math.round(performance.now() - t4Start));
     const { _meta: _coderMeta, ...customRemediation } = res;
@@ -652,7 +777,7 @@ export async function runSubAgentPipeline(
 
   const enrichedRemediation = enrichRemediationFromCard(coderRes.data, synthesizedElements[0]);
   const t5Start = performance.now();
-  const safetyCheck = verifyAndRepairGeneratedScript(enrichedRemediation.powershellScript, input.scenarioId);
+  const safetyCheck = syntaxHeuristicPrecheck(enrichedRemediation.powershellScript, input.scenarioId);
   const customRemediation: CustomRemediationTemplate = {
     ...enrichedRemediation,
     powershellScript: safetyCheck.repairedScript,
@@ -674,6 +799,7 @@ export async function runSubAgentPipeline(
         startOffsetMs: offset(t1Start),
         modelId: clarifierRes.modelUsed,
         tokensUsed: clarifierRes.tokensUsed,
+        ...(clarifierRes.usage ? { usage: clarifierRes.usage } : {}),
         status: clarifierRes.status,
         source: clarifierRes.source,
       },
@@ -690,6 +816,7 @@ export async function runSubAgentPipeline(
         startOffsetMs: offset(t3Start),
         modelId: `${gatekeeperModel} -> ${uiUsedLlm ? models.metaWonder : "deterministic-template"}`,
         tokensUsed: uiRes.routing.tokensUsed ?? 0,
+        ...(uiRes.routing.usage ? { usage: uiRes.routing.usage } : {}),
         status: uiUsedLlm ? "completed" : "fallback",
         source: uiUsedLlm ? "llm" : "fallback-on-error",
       },
@@ -698,20 +825,21 @@ export async function runSubAgentPipeline(
         startOffsetMs: offset(t4Start),
         modelId: coderRes.data._meta?.modelUsed ?? models.metaWonder,
         tokensUsed: coderRes.data._meta?.tokensUsed ?? 0,
+        ...(coderRes.data._meta?.usage ? { usage: coderRes.data._meta.usage } : {}),
         status: coderRes.data._meta?.status ?? "fallback",
         source: coderRes.data._meta?.source ?? "fallback-on-error",
       },
       5: {
         latencyMs: safetyCheck.latencyMs,
         startOffsetMs: offset(t5Start),
-        modelId: "symbolic-formal-verifier",
+        modelId: "syntax-heuristic",
         status: safetyCheck.passed ? "completed" : "fallback",
-        source: "symbolic-verifier",
+        source: "syntax-heuristic",
         outputSummary: safetyCheck.passed
           ? safetyCheck.repaired
-            ? "Auto-wrapped script in SupportsShouldProcess (-WhatIf) & verified AST safety"
-            : "Verified 0 syntax errors, SupportsShouldProcess guard & 1-click rollback script ready"
-          : `Flagged ${safetyCheck.warnings.length} pre-flight safety warning(s): ${safetyCheck.warnings.join(" ")}`,
+            ? "Syntax pre-check: wrapped the script in a SupportsShouldProcess (-WhatIf) guard; the sandbox pre-flight runs when the fix is staged"
+            : "Syntax pre-check passed (braces, guard, no destructive wildcards); the sandbox pre-flight runs when the fix is staged"
+          : `Syntax pre-check flagged ${safetyCheck.warnings.length} warning(s): ${safetyCheck.warnings.join(" ")}`,
       },
     },
   });
@@ -727,6 +855,7 @@ export async function runSubAgentPipeline(
     cloudStatusCorrelation: statusRes.data,
     clarifyingQuestions: clarifierRes.questions,
     clarifiedAnswers: effectiveAnswers,
+    steering,
     synthesizedElements,
     customRemediation,
     subAgentTasks,
@@ -743,11 +872,12 @@ export function applyClarifiedAnswersToEntry(entry: CustomScenarioEntry, clarifi
   if (updatedRouting) updatedRouting.customBrief.summary = `${updatedRouting.customBrief.summary.replace(/\s*\[Clarified Scope:.*\]$/, "")} [Clarified Scope: ${scopeSummary}]`;
   // A model-written script is never swapped for the template offline; the async refine re-runs the coder (H-20).
   const coderUsedLlm = entry.subAgentTasks?.find((t) => t.stepIndex === 4)?.source === "llm";
+  const steering = deriveSteeringFromAnswers(updatedQuestions, mergedAnswers, { previous: entry.steering });
   const updatedRemediation =
     coderUsedLlm && entry.customRemediation
       ? entry.customRemediation
-      : buildCustomTicketRemediationSync({ scenarioId: entry.scenarioId, ticketTitle: entry.ticket.title, ticketBody: entry.ticket.body, clarifiedAnswers: mergedAnswers });
-  return { ...entry, ...(updatedRouting ? { elementRouting: updatedRouting } : {}), customRemediation: updatedRemediation, clarifyingQuestions: updatedQuestions, clarifiedAnswers: mergedAnswers };
+      : buildCustomTicketRemediationSync({ scenarioId: entry.scenarioId, ticketTitle: entry.ticket.title, ticketBody: entry.ticket.body, clarifiedAnswers: mergedAnswers, steering });
+  return { ...entry, ...(updatedRouting ? { elementRouting: updatedRouting } : {}), customRemediation: updatedRemediation, clarifyingQuestions: updatedQuestions, clarifiedAnswers: mergedAnswers, steering };
 }
 
 export function enrichRemediationFromCard(rem: CustomRemediationTemplate, card?: SynthesizedDynamicCard): CustomRemediationTemplate {
@@ -779,7 +909,7 @@ export async function refineEntryWithSubAgentsAsync(
   const report = progressReporter(onProgress);
   report("agent:0:start", "Applying the clarified scope");
   const synced = applyClarifiedAnswersToEntry(entry, clarifiedAnswers);
-  const runsPipeline = providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test";
+  const runsPipeline = metaCallsEnabled();
   report("agent:0:done", runsPipeline ? "Scope applied · sub-agents re-running" : "Scope applied (Tier 0, 0 tokens)", {
     clarifyingQuestions: synced.clarifyingQuestions ?? [],
     clarifiedAnswers: synced.clarifiedAnswers ?? {},
@@ -805,6 +935,7 @@ export async function refineEntryWithSubAgentsAsync(
       createdAt: entry.createdAt,
       matchedSeededComponents: [],
       clarifiedAnswers: mergedAnswers,
+      ...(synced.steering ? { steering: synced.steering } : {}),
     },
     pipelineSink,
   );
@@ -814,5 +945,6 @@ export async function refineEntryWithSubAgentsAsync(
     synthesizedElements: pipeline.synthesizedElements,
     customRemediation: pipeline.customRemediation,
     subAgentTasks: pipeline.subAgentTasks,
+    steering: pipeline.steering,
   };
 }

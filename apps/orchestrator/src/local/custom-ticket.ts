@@ -13,12 +13,16 @@ import {
   registerCustomScenario,
   unregisterCustomScenario,
   type CanvasComponentType,
+  type CustomRemediationTemplate,
   type CustomScenarioEntry,
   type CustomScenarioId,
   type ErpDropSource,
   type ExtractedEntity,
   type ScenarioId,
   type ScenarioListItem,
+  type SteeringDelta,
+  type SteeringParams,
+  type SubAgentTaskRecord,
   type TicketExtraction,
   type TicketIntent,
 } from "@contextpane/catalog";
@@ -33,14 +37,19 @@ import {
   synthesizeAndPersistMissingElements,
 } from "./dynamic-catalog.ts";
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
+import { metaCallsEnabled } from "../router/openai.ts";
+import { applySteeringDelta, clarifiedAnswersFromSteering, deriveSteeringFromAnswers, scriptDiff } from "./steering.ts";
 import {
   applyClarifiedAnswersToEntry,
   buildCustomTicketRemediationSync,
   buildSubAgentPipelineRecords,
   generateClarifyingQuestionsSync,
+  normalizeQuestionsHumanReadable,
   refineEntryWithSubAgentsAsync,
   runSubAgentPipeline,
-  verifyAndRepairGeneratedScript,
+  synthesizeCustomRemediation,
+  syntaxHeuristicPrecheck,
+  type RemediationCoderMeta,
 } from "./subagent-orchestrator.ts";
 
 /**
@@ -472,23 +481,6 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
   const synthesizedElements = hasMissingElements ? buildTemplateCards(routingDecision) : undefined;
   const t3Ms = Math.max(1, Math.round(performance.now() - t3Start));
 
-  const t4Start = performance.now();
-  const rawRemediation = hasMissingElements
-    ? buildCustomTicketRemediationSync({
-        scenarioId: id,
-        ticketTitle: title,
-        ticketBody: body,
-      })
-    : undefined;
-  const t4Ms = Math.max(1, Math.round(performance.now() - t4Start));
-
-  const safetyCheck = rawRemediation
-    ? verifyAndRepairGeneratedScript(rawRemediation.powershellScript, id)
-    : { repairedScript: "", passed: true, repaired: false, warnings: [], latencyMs: 1 };
-  const customRemediation = rawRemediation
-    ? { ...rawRemediation, powershellScript: safetyCheck.repairedScript }
-    : undefined;
-
   const initialAnswers: Record<string, string> = Object.fromEntries(
     clarifyingQuestions.map((q) => {
       const raw = input.clarifiedAnswers?.[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
@@ -498,6 +490,28 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       return [q.id, matched ? matched.label : raw];
     }),
   );
+  // The typed steering the deterministic coder reads (U-1): version 0, every answer sourced from the clarifier.
+  const steering = deriveSteeringFromAnswers(clarifyingQuestions, initialAnswers, { now: createdAt });
+
+  const t4Start = performance.now();
+  const rawRemediation = hasMissingElements
+    ? buildCustomTicketRemediationSync({
+        scenarioId: id,
+        ticketTitle: title,
+        ticketBody: body,
+        clarifiedAnswers: initialAnswers,
+        steering,
+      })
+    : undefined;
+  const t4Ms = Math.max(1, Math.round(performance.now() - t4Start));
+
+  const safetyCheck = rawRemediation
+    ? syntaxHeuristicPrecheck(rawRemediation.powershellScript, id)
+    : { repairedScript: "", passed: true, repaired: false, warnings: [], latencyMs: 1 };
+  const customRemediation = rawRemediation
+    ? { ...rawRemediation, powershellScript: safetyCheck.repairedScript }
+    : undefined;
+
   const subAgentTasks = buildSubAgentPipelineRecords({
     scenarioId: id,
     title,
@@ -513,7 +527,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       2: { latencyMs: t2Ms, modelId: "cloud-status (seeded, sync)", status: "completed", source: "mcp-probe", tokensUsed: 0 },
       3: { latencyMs: t3Ms, modelId: "deterministic-router -> deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
       4: { latencyMs: t4Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
-      5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "symbolic-verifier", tokensUsed: 0 },
+      5: { latencyMs: safetyCheck.latencyMs, status: safetyCheck.passed ? "completed" : "fallback", source: "syntax-heuristic", modelId: "syntax-heuristic", tokensUsed: 0 },
     },
   });
 
@@ -543,6 +557,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     clarifyingQuestions,
     clarifiedAnswers: initialAnswers,
     subAgentTasks,
+    steering,
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
   };
 
@@ -578,6 +593,7 @@ export async function triageCustomTicketAsync(
     cloudStatusCorrelation,
     clarifyingQuestions,
     clarifiedAnswers: initialAnswers,
+    steering,
     synthesizedElements,
     customRemediation,
     subAgentTasks,
@@ -631,6 +647,7 @@ export async function triageCustomTicketAsync(
     clarifyingQuestions,
     clarifiedAnswers: initialAnswers,
     subAgentTasks,
+    steering,
     ...(options.erpDrop ? { erpDrop: options.erpDrop } : {}),
   };
 
@@ -656,6 +673,141 @@ export async function refineCustomTicketGoal(
   registerCustomScenario(updated);
   save();
   return updated;
+}
+
+export interface SteerOutcome {
+  entry: CustomScenarioEntry;
+  previousSteering: SteeringParams;
+  steering: SteeringParams;
+  /** Unified diff from the script the steering started from to the re-parameterised one; "" when nothing changed. */
+  scriptDiff: string;
+  coder: RemediationCoderMeta;
+  /** True when the Wonder card was re-synthesised too (rerun "coder+ui"); false when only its diff block was rewritten. */
+  cardResynthesized: boolean;
+}
+
+/**
+ * Steering that moves code (U-1): one pill toggle, row click or typed parameter becomes a new
+ * SteeringParams version, and exactly one coder call re-parameterises the current script against
+ * it. The synthesized card's config-diff block is rewritten from the real script diff, so the
+ * card and the PowerShell tab agree without a second Wonder call; `rerun: "coder+ui"` adds the
+ * card synthesis on request (HARD_CASES 3).
+ */
+export async function steerCustomTicket(
+  scenarioId: string,
+  delta: SteeringDelta,
+  options: { rerun?: "coder" | "coder+ui"; previousScript?: string } = {},
+): Promise<SteerOutcome | null> {
+  const existing = getCustomScenario(scenarioId);
+  if (!existing) return null;
+  const now = new Date().toISOString();
+  const baseQuestions = existing.clarifyingQuestions?.length
+    ? existing.clarifyingQuestions
+    : generateClarifyingQuestionsSync({ title: existing.ticket.title, body: existing.ticket.body, ...(existing.clarifiedAnswers ? { clarifiedAnswers: existing.clarifiedAnswers } : {}) });
+  const previousSteering = existing.steering ?? deriveSteeringFromAnswers(baseQuestions, existing.clarifiedAnswers, { now: existing.createdAt });
+  const steering = applySteeringDelta(previousSteering, delta, baseQuestions, now);
+  const clarifiedAnswers = { ...(existing.clarifiedAnswers ?? {}), ...clarifiedAnswersFromSteering(steering) };
+  const clarifyingQuestions = normalizeQuestionsHumanReadable(baseQuestions, clarifiedAnswers);
+  const previousScript = options.previousScript ?? existing.customRemediation?.powershellScript ?? "";
+
+  const coded = await synthesizeCustomRemediation({
+    scenarioId,
+    ticketTitle: existing.ticket.title,
+    ticketBody: existing.ticket.body,
+    clarifiedAnswers,
+    steering,
+    ...(previousScript ? { previousScript } : {}),
+  });
+  const { _meta, ...template } = coded;
+  const coder: RemediationCoderMeta = _meta ?? { modelUsed: "deterministic-template", latencyMs: 1, tokensUsed: 0, status: "fallback", source: "fallback-on-error" };
+  const precheck = syntaxHeuristicPrecheck(template.powershellScript, scenarioId);
+  const customRemediation: CustomRemediationTemplate = { ...template, powershellScript: precheck.repairedScript };
+  const diff = scriptDiff(previousScript, customRemediation.powershellScript, previousSteering.version, steering.version);
+
+  // The card follows the script: its config-diff block is the real diff of the re-parameterisation.
+  let synthesizedElements = existing.synthesizedElements ?? [];
+  let cardResynthesized = false;
+  if (options.rerun === "coder+ui" && existing.elementRouting && metaCallsEnabled()) {
+    const cards = await synthesizeAndPersistMissingElements({
+      ticketId: scenarioId,
+      ticketPrompt: `${existing.ticket.title}\n${existing.ticket.body}`,
+      decision: existing.elementRouting,
+      gatekeeperModel: existing.subAgentTasks?.find((t) => t.stepIndex === 3)?.modelId.split(" -> ")[0] ?? "deterministic-router",
+      clarifiedAnswers,
+    });
+    if (cards.length) {
+      synthesizedElements = cards;
+      cardResynthesized = true;
+    }
+  }
+  const diffBlock = {
+    kind: "config-diff" as const,
+    title: `Remediation Script · steering v${steering.version}`,
+    filePath: "remediation.ps1",
+    language: "powershell" as const,
+    diff: diff || scriptDiff("", customRemediation.powershellScript, previousSteering.version, steering.version),
+  };
+  synthesizedElements = synthesizedElements.map((card, idx) =>
+    idx !== 0
+      ? card
+      : {
+          ...card,
+          blocks: card.blocks.some((b) => b.kind === "config-diff") ? card.blocks.map((b) => (b.kind === "config-diff" ? diffBlock : b)) : [...card.blocks, diffBlock].slice(0, 6),
+          recommendedActions: card.recommendedActions.map((a) => (a.kind === "stage-fix" ? { ...a, command: customRemediation.executionSteps?.[1] ?? a.command } : a)),
+        },
+  );
+
+  // The pipeline records say what this steer spent: S4 is the coder call, S5 the syntax pre-check.
+  const subAgentTasks = (existing.subAgentTasks ?? []).map((t) => {
+    if (t.stepIndex === 4) {
+      return {
+        ...t,
+        modelId: coder.modelUsed,
+        status: coder.status,
+        source: coder.source,
+        latencyMs: coder.latencyMs,
+        tokensUsed: coder.tokensUsed,
+        ...(coder.usage ? { tokensPrompt: coder.usage.prompt, tokensCompletion: coder.usage.completion } : {}),
+        inputSummary: `Steering v${steering.version}: ${Object.entries(clarifiedAnswers).map(([k, v]) => `${k}=${v}`).join(", ")}`,
+        outputSummary: coder.source === "llm" ? `Re-parameterised the script for steering v${steering.version} (${coder.tokensUsed} tokens)` : `Re-parameterised the deterministic template for steering v${steering.version}`,
+        timestamp: now,
+      };
+    }
+    if (t.stepIndex === 5) {
+      return {
+        ...t,
+        latencyMs: precheck.latencyMs,
+        status: precheck.passed ? ("completed" as const) : ("fallback" as const),
+        outputSummary: precheck.passed ? "Syntax pre-check passed on the re-parameterised script; sandbox pre-flight runs when the drawer is re-staged" : `Syntax pre-check flagged: ${precheck.warnings.join(" ")}`,
+        timestamp: now,
+      };
+    }
+    return t;
+  });
+
+  const entry = registerCustomScenario({
+    ...existing,
+    steering,
+    clarifiedAnswers,
+    clarifyingQuestions,
+    customRemediation,
+    ...(synthesizedElements.length ? { synthesizedElements } : {}),
+    subAgentTasks,
+  });
+  save();
+  return { entry, previousSteering, steering, scriptDiff: diff, coder, cardResynthesized };
+}
+
+/**
+ * Lets the remediation tier write what really happened to a ticket's pipeline records (the coder's
+ * repair iterations, the sandbox verdict) once the fix was staged (U-2). No-op for built-in scenarios.
+ */
+export function patchCustomTicketPipeline(scenarioId: string, patch: (tasks: SubAgentTaskRecord[]) => SubAgentTaskRecord[]): CustomScenarioEntry | null {
+  const existing = getCustomScenario(scenarioId);
+  if (!existing) return null;
+  const entry = registerCustomScenario({ ...existing, subAgentTasks: patch(existing.subAgentTasks ?? []) });
+  save();
+  return entry;
 }
 
 /** Drops a custom ticket (an ERP folder that disappeared from the inbox) and persists the registry. */

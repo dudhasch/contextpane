@@ -19,8 +19,10 @@ import type {
   ScenarioBrief,
   ScenarioListItem,
   SteerLayoutArgs,
-  SynthesizedDynamicCard,
+  SteeringParams,
+  SteeringSource,
   UpstreamCloudStatusCorrelation,
+  SynthesizedDynamicCard,
   ViewRecipe,
   VisionExtraction,
   WorkbenchScenarioId,
@@ -70,7 +72,21 @@ export interface RemediateResponse {
   telemetry: RouterTelemetry;
 }
 
-export interface CanaryTrace { scenarioId: string; mode: string; finalState: "CONVERGED" | "AUTO_ROLLED_BACK"; canaryCohort: string; tenantRestored?: boolean; stages: Array<{ stage: string; detail: string; probes?: unknown }>; probes: { identity: { passed: boolean }; network: { tcp3389Closed?: boolean; tcp443Open?: boolean; intuneConflicts?: number } } }
+export interface CanaryTrace {
+  scenarioId: string;
+  mode: string;
+  /** "live-graph" when the approval wrote to the tenant; "simulated" for a staged approval or a drill. */
+  execution?: "live-graph" | "simulated";
+  /** "symbolic": probes evaluated the fixture model; "none": no model for this ticket, nothing evaluated. */
+  probeSource?: "symbolic" | "none";
+  finalState: "CONVERGED" | "AUTO_ROLLED_BACK";
+  canaryCohort: string;
+  /** True only when the orchestrator executed the inverse and it landed. */
+  rollbackExecuted?: boolean;
+  tenantRestored?: boolean;
+  stages: Array<{ stage: string; detail: string; probes?: unknown }>;
+  probes: { identity: { passed: boolean }; network: { tcp3389Closed?: boolean; tcp443Open?: boolean; intuneConflicts?: number } };
+}
 export interface ApproveResponse {
   drawer: ActionApprovalDrawer & { executionLog: string[] };
   convergence: Convergence | null;
@@ -151,7 +167,8 @@ export interface FormalResponse {
   };
   blastRadius: { targetBlockedToAllowed: number; breakGlassAllowedToAllowed: number; collateralChanges: number; rows: Array<{ cohort: string; entities: string[]; before: string; after: string; attempts: number }> };
   rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[] };
-  idempotency: { passed: boolean; idempotent: boolean };
+  /** null: no symbolic model for this ticket, so no fixture transform was checked. */
+  idempotency: { passed: boolean; idempotent: boolean } | null;
   asrBlast?: AsrBlast | null;
 }
 export interface IntuneHealthCsp { settingName: string; cspUri?: string; registryPath?: string; tattooedOnUnassign?: boolean }
@@ -264,7 +281,7 @@ export interface TriageCustomResponse {
   subAgentTasks?: SubAgentTaskRecord[];
   dataPtrs: string[];
   dataPlane: { datasets: number; bytes: number; piiMetrics: PiiMetrics };
-  verification: { formal: { passed: boolean | null; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean }; baseScenarioId: ScenarioId };
+  verification: { formal: { passed: boolean | null; invariants: number; ids: string[]; latencyMs: number }; idempotency: { passed: boolean | null }; baseScenarioId: ScenarioId };
   timelineSlices: number;
   latencyMs: number;
   telemetry: RouterTelemetry;
@@ -300,6 +317,52 @@ export interface RefinePartial {
   synthesizedElements?: SynthesizedDynamicCard[];
   customRemediation?: CustomRemediationTemplate;
   subAgentTasks?: SubAgentTaskRecord[];
+}
+
+/** PATCH /api/tickets/:id/steer (U-1): one steering interaction, one coder call, the re-staged drawer. */
+export interface SteerBody {
+  clarifier?: Record<string, string>;
+  params?: Record<string, string | boolean | string[]>;
+  rowClick?: { key: string; value: string; label?: string };
+  source?: SteeringSource;
+  rerun?: "coder" | "coder+ui";
+}
+export interface SteerResponse {
+  ok: boolean;
+  scenario: ScenarioListItem;
+  brief: ScenarioBrief;
+  steering: SteeringParams;
+  previousVersion: number;
+  clarifiedAnswers: Record<string, string>;
+  clarifyingQuestions: ClarifyingQuestion[];
+  subAgentTasks: SubAgentTaskRecord[];
+  synthesizedElements: SynthesizedDynamicCard[];
+  customRemediation: { title: string; summary: string; powershellScript: string } | null;
+  /** Unified diff from the previous script to the re-parameterised one; "" when nothing changed. */
+  scriptDiff: string;
+  cardResynthesized: boolean;
+  drawer: ActionApprovalDrawer | null;
+  coder: { modelId: string; source: string; latencyMs: number; tokensUsed: number; usage?: { prompt: number; completion: number; total: number } };
+  latencyMs: number;
+  telemetry: RouterTelemetry;
+}
+
+/** POST /api/rollback (U-5): what the server did, and the read-back against the pre-change snapshot. */
+export interface RollbackResponse {
+  ok: boolean;
+  scenarioId: string;
+  /** True only when a live inverse landed and the read-back matches the snapshot. */
+  executed: boolean;
+  execution: "live-graph" | "simulated" | "none";
+  reason: string;
+  latencyMs: number;
+  inverseSource: "pre-snapshot" | "static-reference" | "none";
+  rollback: { powershellScript: string; terraformDiff: string; graphPatch: string; restores: string[]; note?: string; sections?: string[] };
+  executionLog: string[];
+  canary: { probeSource: "live-read" | "simulated-read"; matchesPreSnapshot: boolean; differences: Array<{ path: string; before: unknown; after: unknown }>; capturedAt: string } | null;
+  preSnapshotAt: string | null;
+  convergenceCleared: boolean;
+  error?: string;
 }
 
 export interface SampleTicket { id: string; title: string; body: string; customerName: string }
@@ -521,8 +584,7 @@ export const api = {
   timeline: (scenarioId: string) => request<TimelineResponse>(`/api/timeline/${scenarioId}`),
   skills: () => request<{ skills: SkillDef[] }>("/api/skills"),
   compileSkill: (scenarioId: string) => request<{ skill: SkillDef; promoted: boolean }>("/api/skills/compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
-  rollback: (scenarioId: string) =>
-    request<{ ok: boolean; executed: boolean; reason?: string; latencyMs: number; executionLog?: string[] }>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
+  rollback: (scenarioId: string) => request<RollbackResponse>("/api/rollback", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   dataplaneDetail: (scenarioId: string) => request<DataPlaneDetailResponse>(`/api/dataplane/${scenarioId}`),
   commercial: (scenarioId: string) => request<{ reconciliation: Commercial }>(`/api/reconcile/commercial/${scenarioId}`),
   reverseCompile: (scenarioId: string) => request<{ result: ReverseResult }>("/api/iac/reverse-compile", { method: "POST", body: JSON.stringify({ scenarioId }) }),
@@ -535,6 +597,8 @@ export const api = {
     request<TriageCustomResponse>("/api/tickets/triage-custom", { method: "POST", body: JSON.stringify(body) }),
   clarifyQuestions: (body: { title: string; body: string; clarifiedAnswers?: Record<string, string> }) =>
     request<ClarifyQuestionsResponse>("/api/tickets/clarify-questions", { method: "POST", body: JSON.stringify(body) }),
+  steer: (scenarioId: string, body: SteerBody) =>
+    request<SteerResponse>(`/api/tickets/${encodeURIComponent(scenarioId)}/steer`, { method: "PATCH", body: JSON.stringify(body) }),
   refineGoal: (scenarioId: string, clarifiedAnswers: Record<string, string>) =>
     request<RefineGoalResponse>(`/api/tickets/${encodeURIComponent(scenarioId)}/refine-goal`, {
       method: "POST",

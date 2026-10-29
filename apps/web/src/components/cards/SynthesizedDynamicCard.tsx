@@ -105,7 +105,15 @@ function useBlockRefill(pending: boolean, count: number): (index: number) => boo
   return (index) => pending || index >= revealed;
 }
 
-function renderBlock(block: SynthesizedBlock, filterText: string, pending = false, cardTitle?: string) {
+type RowSteer = (key: string, value: string, label: string) => void;
+
+/** The column a row click steers with: the card's rowParamKey, else the first name/id/resource-like column. */
+function rowSteerColumn(block: Extract<SynthesizedBlock, { kind: "data-table" }>): string | null {
+  if (block.rowParamKey && block.columns.some((c) => c.key === block.rowParamKey)) return block.rowParamKey;
+  return block.columns.find((c) => /^(name|id|resource|resourceName|target|vault|policy|device|user|upn)$/i.test(c.key))?.key ?? null;
+}
+
+function renderBlock(block: SynthesizedBlock, filterText: string, pending = false, cardTitle?: string, onRowSteer?: RowSteer) {
   switch (block.kind) {
     case "quota-gauges":
       return (
@@ -186,12 +194,27 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
     case "data-table": {
       const q = filterText.trim().toLowerCase();
       const filteredRows = q ? block.rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q))) : block.rows;
+      const steerKey = onRowSteer ? rowSteerColumn(block) : null;
       return (
         <div key={block.title} data-block={block.kind} data-ghost={pending || undefined} className={BLOCK_FRAME}>
-          <BlockHead label={block.title} cardTitle={cardTitle} count={q ? `${filteredRows.length}/${block.rows.length}` : block.rows.length} />
+          <BlockHead
+            label={block.title}
+            cardTitle={cardTitle}
+            count={q ? `${filteredRows.length}/${block.rows.length}` : block.rows.length}
+            aside={steerKey ? "click a row to target the fix" : undefined}
+          />
           <DataTable
             className="px-3 pb-1"
             head={block.columns.map((c) => c.label)}
+            onRowClick={
+              steerKey
+                ? (i) => {
+                    const row = filteredRows[i];
+                    const value = row ? String(row[steerKey] ?? "") : "";
+                    if (value) onRowSteer?.("targetResource", value, block.columns.map((c) => String(row?.[c.key] ?? "")).filter(Boolean).join(" · "));
+                  }
+                : undefined
+            }
             rows={filteredRows.map((row) =>
               block.columns.map((col) => {
                 const val = String(row[col.key] ?? "—");
@@ -261,10 +284,18 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
 
 export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; triggeredBy: string[] }) {
   const openRemediation = useWorkbench((s) => s.openRemediation);
+  const steer = useWorkbench((s) => s.steer);
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const targetResource = useWorkbench((s) => s.brief?.steering?.targetResource ?? null);
   const [filterText, setFilterText] = useState("");
   // WP6: a refine keeps this section mounted; its blocks ghost until the UI Architect's card lands.
   const pending = useWorkbench((s) => s.pendingRefine.elements);
   const blockPending = useBlockRefill(pending, props.blocks.length);
+  // U-1: a row click narrows the fix to that resource; an action with setsParams steers before it opens the rail.
+  const onRowSteer = (key: string, value: string, label: string) => {
+    if (steerStatus === "pending") return;
+    void steer({ rowClick: { key, value, label }, source: "row-click" });
+  };
 
   const meta = props.synthesisMeta;
   const quotaBlock = props.blocks.find((b) => b.kind === "quota-gauges");
@@ -336,7 +367,16 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
         const blocksToRender = tab === "all" ? props.blocks : props.blocks.filter((b) => b.kind === tab);
         return (
           <div>
-            <div className="space-y-2">{blocksToRender.map((b) => renderBlock(b, filterText, blockPending(props.blocks.indexOf(b)), props.title))}</div>
+            {targetResource && (
+              <p className="mb-2 flex min-w-0 items-baseline gap-1.5 text-11" data-testid="steering-target-pill">
+                <span className="shrink-0 text-signal">Fix targets</span>
+                <span className="min-w-0 truncate font-mono text-text">{targetResource.value}</span>
+                <span className="shrink-0 text-faint">
+                  · {targetResource.source === "row-click" ? "from a row click" : targetResource.source === "clarifier" ? "from the clarifier" : "typed by the operator"}
+                </span>
+              </p>
+            )}
+            <div className="space-y-2">{blocksToRender.map((b) => renderBlock(b, filterText, blockPending(props.blocks.indexOf(b)), props.title, onRowSteer))}</div>
             {/* The section's one action row. */}
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-hairline-2 pt-2">
               <Button
@@ -344,7 +384,10 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
                 variant="outline"
                 icon={<Wrench />}
                 data-testid="synth-stage-fix-btn"
-                onClick={() => openRemediation({ tab: "powershell", focusBanner: `Focused: ${primaryCtaLabel}` })}
+                onClick={() => {
+                  if (stageAction?.setsParams && Object.keys(stageAction.setsParams).length) void steer({ params: stageAction.setsParams, source: "operator" });
+                  openRemediation({ tab: "powershell", focusBanner: `Focused: ${primaryCtaLabel}` });
+                }}
               >
                 {primaryCtaLabel}
               </Button>
