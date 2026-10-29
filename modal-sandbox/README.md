@@ -1,12 +1,47 @@
-# modal-sandbox: Tier 3B pre-flight and optional open-weight hosting on Modal
+# modal-sandbox: Muse Glimmer 30B on an L40S, and the pwsh + Terraform pre-flight sandbox
 
-Three independent Modal apps:
+ContextPane's Modal infrastructure. Two deployments carry the demo:
+- **Open-weight hover tier.** Meta's **Muse Glimmer 30B** runs on our own GPU, with output constrained by a grammar.
+- **Write-then-test sandbox.** A **warm verification container** checks every remediation script before an operator can approve it.
 
-| File | App | What it does |
-|---|---|---|
-| `contextpane_sandbox.py` | `contextpane-sandbox` | Tier 3B verifiable pre-flight: `validate_remediation` web endpoint |
-| `glimmer_open_weights.py` | `contextpane-glimmer` | Optional open-weight Muse Glimmer 30B (GGUF Q4_K_M) on llama-server, one L40S (Tier 1A / 1B) |
-| `open_weights_vllm.py` | `contextpane-open-weights` | Alternative: full-precision `meta-models/Muse-Glimmer-30B` on vLLM, one H100 |
+```text
+ orchestrator (Bun)                          Modal
+ ─────────────────────                       ────────────────────────────────────────────────
+ tiers/tier1-hover.ts  ── POST /v1/chat ──▶  contextpane-glimmer   1× L40S · llama-server
+   json_schema response_format                Muse-Glimmer-30B Q4_K_M · GBNF from the schema
+   (router/glimmer-payload.ts)                Volume contextpane-glimmer-weights · 120 s scale-down
+ preflight/modal.ts    ── POST (bearer) ──▶  contextpane-sandbox   4 vCPU · warm class
+   runModalPreflight                          persistent pwsh AST server · Terraform 1.9.8 + azurerm
+   warmModalSandbox ({warmup:true})           validate_remediation → verdict, findings, checkLatencyMs
+```
+
+| File | App | What it does | Key lines |
+|---|---|---|---|
+| `glimmer_open_weights.py` | `contextpane-glimmer` | Muse Glimmer 30B (GGUF Q4_K_M, 16.8 GB) on llama.cpp `llama-server`, one L40S, strict `HoverDiagnostic` JSON schema (Tier 1A) | GPU `:46`, weight-size floor `:57`, schema `:139`, flags `:176-200`, Volume `:222`, `/health` readiness `:245` |
+| `contextpane_sandbox.py` | `contextpane-sandbox` | Tier 3B pre-flight for the write-then-test loop: PowerShell AST + cmdlet allow-list, `terraform fmt -check`, `terraform validate` | warm class `:283`, endpoint `:354` |
+| `open_weights_vllm.py` | `contextpane-open-weights` | Alternative: full-precision `meta-models/Muse-Glimmer-30B` on vLLM 0.10.1.1, one H100 | |
+| `app.py` | (not a Modal app) | Pure-stdlib Python mirror of `apps/orchestrator/src/local/formal-verifier.ts`: symbolic invariants, inverse sketch, idempotency, blast-radius replay | |
+
+How the orchestrator uses them:
+
+| Concern | Where |
+|---|---|
+| Glimmer in the hover chain (open weights first, then Meta) | [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](../apps/orchestrator/src/tiers/tier1-hover.ts#L52) |
+| Background warm-up of every pill, persisted | [`tier1-hover.ts:412`](../apps/orchestrator/src/tiers/tier1-hover.ts#L412) → `data/hover-cache.json` (seed: `data/hover-cache.seed.json`) |
+| Strict response format for open-weight hovers | [`router/glimmer-payload.ts:93`](../apps/orchestrator/src/router/glimmer-payload.ts#L93), attached in `router/openai.ts` |
+| Sandbox call, local fallback on error | [`preflight/modal.ts:65`](../apps/orchestrator/src/preflight/modal.ts#L65), [`tier3-remediate.ts`](../apps/orchestrator/src/tiers/tier3-remediate.ts) |
+| Repair turns driven by sandbox findings (≤ 2) | [`tiers/repair-loop.ts:34`](../apps/orchestrator/src/tiers/repair-loop.ts#L34) |
+
+Measured on the deployed apps: a Glimmer hover takes ~22–25 s warm and the cold boot is 17.7 s. That is why every answer is generated ahead of time and persisted, and the operator reads hovers from the cache in milliseconds. A warm sandbox pre-flight takes ~0.7 s.
+
+**The sandbox holds no tenant credentials and runs offline checks only.** Its single secret is the bearer token `CTX_MODAL_SANDBOX_TOKEN` that the orchestrator presents. It holds no Azure, Graph or Terraform state credentials, and it never reaches a tenant. Per bundle it runs three checks:
+- a `pwsh` AST parse plus the cmdlet allow-list;
+- the `SupportsShouldProcess` declaration check;
+- `terraform fmt -check` and `terraform validate` against a working directory set up at image build with `terraform init -backend=false`.
+
+It runs no `terraform plan` and has no OpenTofu binary; the rail's "OpenTofu" tab shows HCL that Terraform 1.9.8 validates. `-WhatIf` is never executed here.
+
+**Live runs happen outside the sandbox, after Approve.** The live write runs on the orchestrator host, as the engineer's own delegated identity (the Graph sign-in from `Connect-ContextPaneGraph.ps1` and the Az token cache), and only with `LIVE_CLOUD_MODE=true`. The approved PowerShell itself runs only with `CTX_ALLOW_EXECUTE=true` ([`runScriptText`, tier3-remediate.ts:1130](../apps/orchestrator/src/tiers/tier3-remediate.ts#L1130)). Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
 
 ## Tier 3B pre-flight sandbox
 
@@ -81,6 +116,19 @@ downloads the weights, deploys and writes the URL and token into `.env.local`:
 pwsh ./scripts/Start-GlimmerOpenWeights.ps1                 # Modal; telemetry provider "modal-open-weights"
 pwsh ./scripts/Start-GlimmerOpenWeights.ps1 -Target Local   # llama-server on 127.0.0.1:8080; "local-glimmer-30b"
 ```
+
+Start-up checks before the container takes traffic:
+
+```python
+model_path = os.path.join(WEIGHTS_DIR, GGUF_FILE)
+if not weights_complete(model_path):          # missing, or under MIN_GGUF_BYTES (16,000,000,000)
+    model_path = ensure_weights()
+require_complete_weights(model_path)          # raises on a truncated pull
+proc = subprocess.Popen(cmd)
+wait_for_health(proc)                         # polls http://127.0.0.1:8080/health until {"status": "ok"}
+```
+
+llama-server opens its port before the GGUF is loaded and answers `/health` with 503 while it loads. Modal routes traffic as soon as the port opens, so `serve()` returns only once `/health` reports `ok`. It fails if llama-server exits, or if 14 minutes pass first (the `startup_timeout` is 15 minutes). `CTX_GLIMMER_MIN_GGUF_BYTES` overrides the size floor for a smaller quant.
 
 Credit guardrails on the Modal target:
 

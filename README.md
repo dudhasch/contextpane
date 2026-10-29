@@ -1,743 +1,327 @@
+<div align="center">
+
 # ContextPane
 
-**A local-first, MCP-driven, catalog-constrained Generative UI workbench for MSP Azure & Microsoft 365 engineers.**
+**An operator-steered remediation workbench for MSP engineers on Microsoft Entra ID, Intune and Azure.**
 
-Built from scratch for the **Meta Global AI Developer Hackathon** (Oct 26 – Nov 4, 2026),
-*Build for Your World* track. See [`HACKATHON_ATTRIBUTION.md`](./HACKATHON_ATTRIBUTION.md).
+[![Track](https://img.shields.io/badge/Meta_Hackathon-Indie_Developer_Track-6cb4ff?style=flat-square)](HACKATHON_ATTRIBUTION.md)
+[![Models](https://img.shields.io/badge/Meta_Muse-Glimmer_30B_·_Spark_1.3_·_Wonder_1.0_·_Voice_Transcribe-b69cff?style=flat-square)](#3-meta-muse-models-in-execution-order)
+[![Open weights](https://img.shields.io/badge/Open_weights-Muse_Glimmer_30B_on_Modal_L40S-58d39a?style=flat-square)](modal-sandbox/README.md)
+[![Tests](https://img.shields.io/badge/bun_test-278_passing-58d39a?style=flat-square)](#6-quickstart-and-verification)
+[![License](https://img.shields.io/badge/license-MIT-9aa3b1?style=flat-square)](LICENSE)
 
-ContextPane takes a commercial ERP escalation ticket or a proactive tenant anomaly, correlates
-it live against Entra ID (licenses, Conditional Access, sign-in logs), Intune (Settings Catalog,
-device configurations) and Azure (AVD, NSG drift vs. Terraform, Azure Policy), and renders the
-answer as **Zod-validated UI components, never chat prose**. A 4-tier compute
-router makes sure the cheapest possible path answers each request: a pinned View Recipe
-costs **0 tokens and <150 ms**, an inline hover costs one `muse-glimmer-30b` / `muse-spark-1.3` call, and
-only an explicit *Generate Fix* click escalates to `muse-wonder-1.0` with a
-verifiable pre-flight sandbox and a Human-in-the-Loop approval drawer.
+</div>
 
-| | |
+> **ContextPane** correlates live multi-cloud tenant state with a vague support ticket. It traces the incident across Microsoft Entra ID, Intune and Azure ARM, composes any missing diagnostic UI on the fly with **Muse Wonder**, and stages sandbox-checked PowerShell 7 and Terraform fixes. Every fix comes with a 1-click inverse (f⁻¹), and nothing touches a tenant until a human approves it.
+
+<p align="center">
+  <img src="docs/assets/hero-flight-deck.webp" alt="ContextPane flight deck loop: hover a pill to get a Muse Glimmer 30B diagnostic, highlight text to get a Muse Wonder lens, flip a scope chip and the Muse Code rail re-parameterises the script" width="100%">
+  <br><sub>11.8 s loop, captured live from the running stack: ① Glimmer hover popover ② selection → Muse Wonder lens ③ scope chip → steering v1 → script diff in the Muse Code rail. A <a href="docs/assets/hero-flight-deck.gif">GIF fallback</a> is also included.</sub>
+</p>
+
+<p align="center"><img src="docs/assets/01-flight-deck-3zone.png" alt="The three-zone flight deck at 1440×900: ticket and plan, diagnostic lens canvas, Muse Code rail" width="100%"></p>
+
+---
+
+## Contents
+
+1. [Hackathon compliance matrix](#1-hackathon-compliance-matrix)
+2. [What ContextPane is not](#2-what-contextpane-is-not)
+3. [Meta Muse models in execution order](#3-meta-muse-models-in-execution-order)
+4. [Five systems deep dives](#4-five-systems-deep-dives)
+5. [What is live, what is simulated](#5-what-is-live-what-is-simulated)
+6. [Quickstart and verification](#6-quickstart-and-verification)
+7. [Monorepo map](#7-monorepo-map)
+
+---
+
+## 1. Hackathon compliance matrix
+
+| Field | Value |
 |---|---|
-| ![INC-4092 in ticket mode: summary and resolution plan, provenance pills, hover popover on the affected UPN](docs/screenshots/01-workbench-hover-popover.png) | ![Unified HCL diff, live Azure NSG vs the Terraform baseline](docs/screenshots/02-iac-diff-modal.png) |
-| **1 · Ticket mode + inline hover.** INC-4092's left pane opens with the Summary & Resolution Plan and the *Detected & Enriched Context* pills, coloured by provenance (amber licensing, rose identity / CA, violet Intune, teal Azure). Hovering Lynne's UPN opens the `HoverDiagnosticPopover` from the Muse Glimmer 30B cache: assigned vs expected SKU, assignment state, group memberships and the last AADSTS53003 block with its policy, plus `[Inspect Blocking CA Policy]` and `[Stage License Fix]`. | **2 · IaC diff.** The live `nsg-contoso-avd-hostpool-01` in Azure against `demo-iac/main.tf`: tag drift plus a rogue RDP rule open to `*`. |
-| ![Tier 3 approval drawer with Path A copy and dry-run proof and Path B with the Break-Glass / GitOps switch](docs/screenshots/03-tier3-approval-drawer.png) | ![ANOM-CA-204 tenant anomaly with the Conditional Access card expanded on its policies](docs/screenshots/04-tenant-anomaly-ca-policy.png) |
-| **3 · Tier 3 HITL drawer.** `muse-wonder-1.0` wrote the PowerShell + Terraform bundle and the pre-flight (PowerShell AST, static `-WhatIf` proof, `terraform fmt` + `validate`) says **Verified Safe**. Path A copies the script or the Terraform with a `[Dry-Run (-WhatIf) Verified]` badge; Path B approves it as **Emergency Break-Glass** (live write + reconcile commit) or **Pure GitOps** (PR and sandbox plan only). The fix is staged on `fix/INC-4092-contoso-remediation`. | **4 · Tenant anomaly.** ANOM-CA-204: step 1 of the plan expands the Conditional Access card on its policy tab. CA-001 lacks the break-glass exclusion and CA-004 is still Report-Only; the CodeLens in the card header (`conditional-access/CA-001.json:L9-L11`) opens the diff against the golden baseline. |
-| ![ANOM-INT-309 hydrated from a pinned recipe with 0 LLM tokens, System & Audit drawer open](docs/screenshots/05-recipe-switch-system-audit.png) | ![A cyan ContextualMiniDashboard spawned from the highlighted phrase "temporary RDP" in the INC-4092 ticket](docs/screenshots/06-highlight-generate-context-ui.png) |
-| **5 · Zero-token recipe switch.** The canvas pinned on ANOM-CA-204 re-hydrates ANOM-INT-309 (ASR rule in Audit, firewall conflict on 11 devices) through Tier 0 with 0 LLM tokens; the System & Audit drawer tallies the router savings per tier. | **6 · Highlight any text → Generate Context UI.** The engineer highlighted *temporary RDP* in the ticket; the orchestrator sliced the live NSG read (`ptr://inc-4092/selection/<hash>`) and `muse-spark-1.3` composed the cyan `ContextualMiniDashboard`: KPIs, breakdown, the rogue rule row and a targeted `Remove-AzNetworkSecurityRuleConfig`. The cyan *Selection #1* badge in the text pulses the card. |
-| ![An unscripted ticket pasted into the composer, triaged live into CUSTOM-<hash>](docs/screenshots/07-unscripted-ticket-triage.png) | ![INC-4092 after a Break-Glass approval: RESOLVED & VERIFIED badge, every step checked, the auto-drafted Customer & PSA Resolution Note](docs/screenshots/08-ticket-closure-psa-note.png) |
-| **7 · Unscripted ticket.** *ERP sync app failing with expired secret AADSTS7000222 and contractor still listed as owner* pasted into `[+ Triage Unscripted Ticket]`: the Tier 0 entity & intent extractor resolves the SPN, the owner UPN and the error code against the live tenant, registers `CUSTOM-<hash>` with `ptr://custom-<hash>/…` pointers and inherits the ANOM-APP-401 pattern (bundle, invariants, timeline). | **8 · End-to-end closure.** After *Approve · Execute Live & Reconcile* the status badge turns `RESOLVED & VERIFIED ✓`, the plan is checked off and the *Customer & PSA Resolution Note* is drafted from the ledger: formal invariants, canary probes, Git branch @ commit, archived `f⁻¹`. *Mark Ticket Closed in PSA* logs `ticket.closed`. |
-| ![The unified work queue popover over a freshly dropped ERP ticket: origin filter pills, every work item with its origin badge, status and age, the dropped ticket with its attachment1.png card](docs/screenshots/09-unified-work-queue-erp-drop.png) | |
-| **9 · One queue, four origins.** A folder `#2026xxx/ticketbody.json + attachment1.png` dropped into `input/tickets/` (here by `🎲 Drop Random ERP Ticket`) is ingested by the inbox watcher in about a second: it joins the queue as `ERP File Drop · NEW`, the toast offers *Open*, and its screenshot renders in the left pane with `[Extract Telemetry via Muse Vision]` reading the file from disk. The queue popover (`Ctrl+K`) is the whole stream: `PSA Ticket`, `Live Graph Anomaly`, `ERP File Drop`, `Ad-Hoc Triage`, search and filter pills, `1`–`9` by position. | |
+| **Event** | Meta Global AI Developer Hackathon, 2026-10-26 → 2026-11-04 |
+| **Track** | Indie Developer Track (solo entry: Timur Dudhasch, GitHub `dudhasch`) |
+| **Themes** | *Build for Your World* (the author's own MSP operations work) · *Push the Frontier* (open-weight hover tier, generative UI under a schema, write-then-test agent loop) |
+| **Meta models called** | `muse-glimmer-30b` (open weights, Modal L40S) · `muse-spark-1.3` · `muse-wonder-1.0` · `muse-voice-transcribe-1.0`. `muse-code` is configured but not served by the Meta Model API, so the router sends those calls to `muse-wonder-1.0` and reports the swap ([details](#model-stand-ins)) |
+| **Provenance** | Built inside the hackathon window. See [HACKATHON_ATTRIBUTION.md](HACKATHON_ATTRIBUTION.md) |
+| **License** | MIT |
+| **Media** | Animated WebP/GIF loops and annotated PNGs in [`docs/assets/`](docs/assets). No video files in the repository |
 
-Screenshots are 1600×900 captures of the live workbench (`bun run scripts/capture-readme-screenshots.ts`).
+### Bonus prize qualifications
 
-## One work queue: tickets, anomalies, ERP drops, ad-hoc triage
-
-An MSP engineer does not think in modes. Reactive PSA tickets, anomalies the orchestrator detects in
-the live tenant, ticket folders an ERP exports to disk and text pasted from a chat are one operational
-stream; they only differ by where they came from. The top bar therefore holds one control: the **work
-queue** button (`#INC-4092 · Contoso Finance · … · OPEN ▾`, `Ctrl+K`). Its popover lists every item
-newest first with an origin badge (`PSA Ticket`, `Live Graph Anomaly`, `ERP File Drop`, `Ad-Hoc Triage`),
-the status pill the left pane uses (`NEW`, `OPEN`, `ACTIVE DRIFT`, `RESOLVED ✓`, `CLOSED ✓`), the tenant,
-requester and base pattern, the attachment count and the age; resolved items sink to the bottom. A search
-box matches ids, customers, requesters, error codes and intents, filter pills count each origin, and the
-footer holds the two ways new work enters: `[+ Triage Unscripted Ticket]` and `[🎲 Drop Random ERP Ticket]`.
-Hotkeys `1`–`9` open by queue position, `j` / `k` step, `g` drops, `n` pastes. New drops never steal the
-workbench: a `📥 New ERP Drop: #2026323 (attachment1.png)` toast with *Open* and a count on the queue button
-announce them (`GET /api/scenarios` carries `origin`, `displayId` and `createdAt` for every row).
-
-### Live ERP inbox: `input/tickets/#<id>/ticketbody.json` + `attachment1.png`
-
-`apps/orchestrator/src/local/erp-inbox.ts` watches `<root>/input/tickets/` (`fs.watch` for immediacy plus a
-1 s directory scan for certainty, so nested creates on Windows and half-written JSON never slip through).
-A folder such as `#2026323/` with a `ticketbody.json` is ingested as soon as the JSON parses:
-
-- **Flexible ERP JSON**: `id` / `ticketId` (derived from the folder name when omitted), `title` / `subject`,
-  `body` / `description` / `summary`, `customer` / `tenantName`, `requester` / `user` (string or object),
-  `priority`, `createdAt`. Every `.png`, `.jpg`, `.jpeg` or `.webp` next to it is discovered, listed or not.
-- **Safe `#` handling**: the scenario id is `ERP-2026323`, the display id `#2026323`, and every URL encodes
-  the folder (`/api/tickets/inbox-attachment/%232026323/attachment1.png`), since a bare `#` is a URL fragment.
-- **Same pipeline as a pasted ticket**: the Tier 0 entity & intent extractor matches the text and the
-  requester against the live-seeded `c4a8shili.onmicrosoft.com` / `rg-contoso-avd-prod` objects, picks the
-  base pattern, and the item gets `ptr://erp-2026323/…` pointers, a brief with the requester, priority and
-  attachments, the inherited bundle, formal invariants and timeline. `GET /api/tickets/inbox` lists the inbox;
-  a folder that disappears leaves the queue on the next scan.
-- **Vision from disk**: `[Extract Telemetry via Muse Vision]` on a dropped ticket calls `POST /api/vision/triage`;
-  the orchestrator reads the file from `input/tickets/<folder>/` and sends it to `muse-spark-1.3` as an image
-  part. Offline, a deterministic fallback answers from the PNG's `tEXt` chunks and the ticket text (Tier 0,
-  0 tokens) and matches the sign-in log the same way.
-- **Random drops**: `pwsh ./scripts/New-RandomErpTicketDrop.ps1 [-TicketId "#2026323"] [-Archetype AVD|Intune|CA|WorkloadIdentity|Licensing|Mixed]`
-  writes a realistic ticket (Lynne, Diego, Patti, Alex Wilber, `spn-contoso-erp-sync`; `AADSTS53003`,
-  `0x87D1FDE8`, `AADSTS7000222`, `CountViolation`; `vdpool-contoso-fin-01`, `nsg-contoso-avd-hostpool-01`,
-  `Intune-Win11-ASR-Baseline`, `CA-001`) and a 640×400 screenshot of the matching error dialog.
-  `POST /api/tickets/simulate-drop` (the `🎲` button, hotkey `g`) does the same from the orchestrator's own
-  generator (`local/erp-drop-generator.ts`, a dependency-free PNG writer with a 5×7 pixel font), so the UI
-  button, PowerShell and Explorer all go through the identical watcher path. The seeded example
-  `input/tickets/#2026323/` is in git; generated drops are ignored and the smoke test removes its own.
-
-## Tickets and tenant anomalies
-
-**Tickets** are customer escalations from the ERP; **Tenant Anomalies** are drifts found proactively in
-the managed tenant. Both sit in the one work queue above. Every scenario renders only
-the cards it needs, compact by default, each with a `border-l-4` accent and a *Triggered by* badge
-in the colour of the left-pane entities that spawned it. Hovering a pill rings its card and dims the
-others; clicking it expands the card on the matching tab.
-
-| Scenario | Tenant | What drifted | Cards | Fix |
-|---|---|---|---|---|
-| **INC-4092** | Contoso Finance | 3 AVD users on SPE_E3 instead of SPE_E5, AADSTS53003 from the legacy CA block, NSG tag drift and a rogue RDP rule | License · Sign-ins / CA · AVD / NSG / Azure Policy | License extension + Terraform |
-| **INC-4099** | Fabrikam Legal | BitLocker `0x87D1FDE8`: a 2024 device configuration conflicts with the disk encryption baseline, devices non-compliant, AADSTS53000 | Intune · Sign-ins / CA | Unassign the legacy profile |
-| **ANOM-LIC-101** | Contoso Finance | 15/15 SPE_E5 seats used (CountViolation for 2 new hires) while 3 disabled leavers still hold E5 + Copilot | License | Reclaim the orphaned seats |
-| **ANOM-CA-204** | Contoso Finance | CA-001 (phishing-resistant MFA for admins) has no break-glass exclusion; CA-004 (block legacy auth) left in Report-Only | Sign-ins / CA | Exclude SG-BreakGlass-Accounts, enforce CA-004 |
-| **ANOM-INT-309** | Contoso Finance | ASR rule *Block credential stealing from LSASS* is Audit instead of Block; a legacy firewall profile conflicts on 11 devices | Intune | ASR rule to Block, unassign the duplicate profile |
-| **ANOM-APP-401** | Contoso Finance | `spn-contoso-erp-sync`: expired secret (`AADSTS7000222`), overprivileged Graph scopes, shadow-admin app owner | Sign-ins / CA (Identity) | Remove owner + grant, right-size to `User.Read.All` + `Sites.Selected`, federate GitHub Actions OIDC |
-
-The left pane holds the Summary & Resolution Plan (numbered steps; clicking one focuses its card and
-tab), the ticket or anomaly text with inline pills, the *Detected & Enriched Context* pills grouped by
-provenance, and the contract and infrastructure spec in collapsed accordions.
-
-## Day-2 architectural upgrades
-
-Four upgrades, all kept off the main canvas cards (see `DESIGN.md`):
-
-1. **Tier 3C Formal Blast-Radius Prover** (`apps/orchestrator/src/local/formal-verifier.ts`, Python mirror `modal-sandbox/app.py`): a deterministic symbolic prover (<100 ms, no GPU) proves break-glass non-lockout, target Blocked→Allowed remediation, and NSG 5-tuple reachability (`Internet→AVDSubnet TCP/3389` empty, AVD control plane 443 intact) before Approve unlocks. `GET /api/formal/:scenarioId` returns the proof, the 30-day counterfactual Blast-Radius Matrix, the pre-verified inverse rollback bundle `f⁻¹`, and the `f(f(S)) = f(S)` copy-on-write idempotency check. The matrix, proof and `[Inverse Rollback (f⁻¹)]` tab live inside the Action Approval drawer; converged canvases get a `[1-Click Undo / Rollback (f⁻¹)]` button (`POST /api/rollback`, <1 s).
-2. **Tier 3 → Tier 0 Skill Compiler** (`apps/orchestrator/src/local/skill-compiler.ts`): `POST /api/skills/compile` captures the verified execution trace, runs a 100-case property fuzzer (tenant IDs, user/SKU counts, groups, policy IDs; 100/100 Zod-valid + formally verified), and promotes the skill to `data/compiled-skills.json`. Later matches run at Tier 0 (0 tokens, <2 ms) with a `Tier 0 Compiled Skill (100/100 fuzz verified)` badge in System & Audit.
-3. **Bi-Temporal Time-Travel Scrubber** (`GET /api/timeline/:scenarioId`): 4–5 `[valid_from, valid_to]` causal slices per scenario (INC-4092: `T-18m` healthy → `T-14m` drift → `T-06m` first `AADSTS53003` → `NOW` → `T+Fix` counterfactual), rendered as one pill bar above the cards. Scrubbing re-hydrates at Tier 0 in <2 ms and rings the changed card.
-4. **`ptr://` v2 + PII Pseudonym Vault** (`packages/catalog/src/dataplane.ts`): relational projections such as `ptr://inc-4092/entra/users?where=driftStatus:drifted&select=upn,currentSku,expectedSku&order=upn` (invalid queries fail closed), and `@pii(classification: "EU-GDPR-Personal")` fields (`upn`, `displayName`, `ipAddress`, `userId`, `deviceName`) vaulted per session (`upn_tok_01 ↔ …`). `GET /api/dataplane/:scenarioId` exposes `piiMetrics` with `zeroRawPiiInLlmPrompt: true`, also shown in System & Audit.
-
-`CTX_OPEN_WEIGHT_TIERS=hover` stays set throughout: none of this wakes the Modal L40S GPU.
-
-### Places 5–8
-
-5. **Closed-Loop Canary Convergence & Dead-Man's Switch** (`apps/orchestrator/src/local/canary-convergence.ts`): every approval returns a 4-stage trace `APPLIED → CANARY_RING_0 (SG-Canary-Ring0) → SYNTHETIC_PROBED → CONVERGED`. Synthetic probes run a CA What-If over target + break-glass personas and check `TCP/3389` closed, `TCP/443` open, 0 Intune conflicts. The drawer's *Simulate Canary Probe Failure* checkbox (or `simulateCanaryFailure: true` on `POST /api/remediate/approve`) makes Stage 3 detect an `AADSTS53003` spike, fire the pre-verified `f⁻¹` rollback, land on `AUTO_ROLLED_BACK`, and log `autonomous-rollback` to the audit ledger.
-6. **3-Way Commercial Reconciler & Reverse-IaC** (`commercial-reconciler.ts`): `GET /api/reconcile/commercial/:scenarioId` reconciles Git baseline ↔ live Graph `subscribedSkus` ↔ Pax8 contract `CNT-2026-884` — Path A reclaims 3 `SPE_E5` + 2 Copilot orphaned seats ($0/mo, $285/mo waste eliminated) vs Path B +3 `SPE_E5` (+$171/mo). Shown only in the expanded License card tab and the drawer. `POST /api/iac/reverse-compile` emits OpenTofu HCL + `import {}` blocks (plan: `0 to add, 0 to destroy`) with semantic shadow/duplicate findings.
-7. **Fleet Immunization & Runbooks** (`fleet-immunizer.ts`, `runbook.ts`): `GET /api/fleet/immunize/:scenarioId` extracts a zero-PII causal signature (e.g. `AVD-E3-SKU-Mismatch-With-Open-RDP`) and matches 5 fleet tenants; `POST /api/fleet/campaign/:scenarioId` formal-verifies and stages fleet GitOps branches. `GET /api/runbooks/:scenarioId.md` exports the verified SOP (root cause, `T-18m→T+Fix` timeline, zero-PII `ptr://` queries, formal proofs, forward + `f⁻¹` scripts) via the drawer's and System & Audit's *Export Runbook (.md)*.
-8. **Glimmer Grammar-Constrained Sampling** (`modal-sandbox/glimmer_open_weights.py`, `apps/orchestrator/src/router/glimmer-payload.ts`): open-weight hover calls carry strict `response_format: {type:"json_schema", json_schema:{name:"HoverDiagnostic", strict:true}}` (GBNF on llama-server, no `ptr://` slot), plus `--cache-type-k/v q8_0` and optional `--model-draft --draft-max 8 --draft-min 2` via `CTX_GLIMMER_DRAFT_MODEL`. Config is exposed in `/api/health` (`openWeightInference`) and System & Audit. `max_containers=1`; no GPU is booted by tests.
-
-### Final MSP domain-depth pass
-
-- **Intune CSP-IR + Proactive Remediation verifier:** Intune settings in INC-4099 (`0x87D1FDE8`) and ANOM-INT-309 now carry `cspUri` (`./Device/Vendor/MSFT/BitLocker/EncryptionMethodByDriveType`, `./Vendor/MSFT/Policy/Config/Defender/AttackSurfaceReductionRules`), `registryPath` (`HKLM\SOFTWARE\Policies\Microsoft\FVE\…`) and `tattooedOnUnassign`. `GET /api/intune/health-script/:scenarioId` returns the paired `Detect.ps1`/`Remediate.ps1`; the formal verifier proves Detect is 100% read-only (no `Set-*`/`Remove-*`/`New-*`, no mutating Graph calls, `exit 0/1`, <2048 chars) and `Detect(Remediate(S_broken)) == 0`, with the tattoo scrub + `syncDevice` in Remediate. For ANOM-INT-309 the Blast-Radius Matrix stages a per-rule exclusion: flipping ASR to Block without it would block 14 legitimate `LexwareUpdater.exe` executions on 4 Finance workstations.
-- **ANOM-APP-401 — Workload Identity / Shadow-Admin / OIDC:** expired SPN secret (`AADSTS7000222`) where GitHub Actions OIDC federation belongs, 90-day activity proving only `User.Read.All` + `Sites.Selected` are used (vs `Directory.ReadWrite.All` etc. granted), and a 2-hop shadow-admin path `alex.wilber → OWNS_APP → ADD_CREDENTIAL → ASSUME_SPN → GLOBAL_ADMIN`. The 4th formal invariant proves `TransitiveTier0ShadowAdmins(P_post) == EMPTY` after owner/grant removal and right-sizing; the Tier 3 bundle stages `azuread_application_federated_identity_credential` with provenance `golden-tenant/entra/apps/spn-contoso-erp-sync.json:L12-L34`. Hover pills for the new scenario are seeded deterministically in `data/hover-cache.seed.json` — the L40S GPU stays at 0 containers.
-
-### Live agency & end-to-end closure
-
-The last layer makes the workbench answer *any* question an engineer asks of the ticket, not only the scripted ones.
-The default view stays calm: nothing new renders until the engineer highlights text or opens the composer.
-
-1. **Context Lens primitive** (`ContextualMiniDashboard` in `packages/catalog/src/schemas/mini-dashboard.ts`): a Zod-validated, polymorphic card
-   (`selectionText`, `title`, `subtitle`, `sourceQuery`, `provenanceCategory: "selection"`, 2–4 `kpis`, 2–5 `breakdown` bars,
-   dynamic `columns`, `rowsPtr: ptr://<scenario>/selection/<hash>`, bound `rows`, one `suggestedAction` with a `scriptPreview`).
-   `compose_contextual_mini_dashboard` is the forced tool `muse-spark-1.3` answers with; its `rows` slot is `{ dataPtr }` only.
-2. **Highlight any text → Generate Context UI** (`POST /api/explore-selection`, `apps/orchestrator/src/local/selection.ts`,
-   `tiers/explore.ts`): selecting 3–120 characters in the ticket or anomaly text shows a floating `✨ Generate Context UI for "…"` pill.
-   The deterministic slicer searches every dataset of the gathered MCP context (Entra users & SKU pools, sign-ins, Conditional
-   Access, Intune devices & settings, the workload identity, NSG rules, AVD session hosts, Azure Policy), publishes the matching rows
-   under `ptr://<scenario>/selection/<hash>` with the PII vault applied, and the model composes the card from the descriptor
-   (pseudonymised sample, aggregates, reference card). The card mounts at the top of the canvas with a cyan `border-l-4`,
-   a `Spawned from selection: "…" · <ms>` badge, `[Copy Graph/PowerShell Query]` and `[× Dismiss]`; the phrase in the text
-   becomes a cyan *Selection #n* badge whose hover pulses the card (`ring-2`). Deterministic fallback, Tier 1B, no GPU.
-3. **Unscripted tickets** (`POST /api/tickets/triage-custom`, `local/custom-ticket.ts`): `[+ Triage Unscripted Ticket]` opens a
-   modal with subject, body, customer and three 1-click samples. The Tier 0 entity & intent extractor (0 tokens, <5 ms) matches
-   UPNs, first/last names, `AADSTS*` / `0x87D*` codes, SKUs, groups, policies, devices and resources against the live-seeded tenant
-   objects and votes for a base pattern (INC-4092, INC-4099, ANOM-LIC-101, ANOM-CA-204, ANOM-INT-309 or ANOM-APP-401). The
-   `CUSTOM-<hash>` scenario keeps its own id everywhere — brief, `ptr://custom-<hash>/…` data plane, layout, hovers (cache
-   shared with the base), remediation bundle, convergence, audit rows — while gathering, formal invariants and bi-temporal slices
-   are inherited from the base. Custom tickets survive a restart (`data/custom-scenarios.json`, capped at 12).
-4. **Interactive cross-card filtering & PSA closure**: expanded tables carry `All (N) | Drifted / Error (M) | Compliant / Active (K)`
-   chips (0 ms, local), and clicking a UPN or device highlights that identity on every open card with a `Filtered by: … [×]` pill.
-   When a Break-Glass approval reaches `CONVERGED`, the left-pane badge flips from `OPEN` / `ACTIVE DRIFT` to `RESOLVED & VERIFIED ✓`,
-   every plan step is checked, and the collapsible *Customer & PSA Resolution Note* is drafted by `GET /api/tickets/:id/resolution-note`:
-   a plain-English root cause and resolution plus the technical trail (formal invariants proved, canary probe trace, pre-flight verdict,
-   Git branch @ commit / PR, archived `f⁻¹`). `[Copy PSA Resolution Note]` copies the Markdown; `[Mark Ticket Closed in PSA]`
-   (`POST /api/tickets/close`) logs `ticket.closed` to the audit ledger.
-
-## Reproduce the Demo in 60 Seconds
-
-```bash
-bun install
-bun run dev
-```
-
-Open http://localhost:5173 and press the hotkeys in order (no keys needed for everything but `7`):
-
-| Key | What you see |
-|---|---|
-| `Ctrl+K` | The work queue: tickets, anomalies, ERP drops and pasted tickets in one list, newest first; pick INC-4092 (or press its position number) |
-| `1` | INC-4092: summary and resolution plan, provenance pills, three compact cards |
-| `h` | Hover Lynne's UPN: SPE_E3 ≠ SPE_E5, assignment state, groups, AADSTS53003 and the blocking CA policy (Tier 1A) |
-| `7` | Read the customer's screenshot with Muse Vision; the matching sign-in lights up (Tier 2 · Vision) |
-| `d` | The NSG drift as a unified diff |
-| `f` | Stage the fix: plan + PowerShell + Terraform, `-WhatIf` proof, sandbox-verified, staged on a git branch (Tier 3) |
-| `x` | Approve as Emergency Break-Glass (the default for a ticket): the drifted users and the NSG are fixed live, the state is committed to the fix branch, every card turns emerald (Tier 0 push, 0 tokens) |
-| `j` / `k` | Step to the tenant anomalies: orphaned E5 seats, the CA break-glass gap, Intune ASR / firewall drift; `e` runs step 1 of each plan |
-| `g` | 🎲 Drop a random ERP ticket into `input/tickets/`: the watcher ingests `#2026xxx` in ~1 s, the toast offers *Open*, the screenshot card reads from disk |
-| `a` | System & Audit: delegated identity, Modal verification, AST / `-WhatIf` / `terraform validate`, branch, PR |
-| `p` then `2` | Pin the canvas and switch to INC-4099: Tier 0, 0 tokens |
-| `0` | Reset the demo drift for the next take |
-
-Offline (no `.env.local`) every step runs on the deterministic engine and the approval is
-simulated; with `META_API_KEY` and `LIVE_CLOUD_MODE=true` (see [Live cloud mode](#live-cloud-mode)) it is all real.
-Hovers are genuine Muse Glimmer 30B answers either way: the 18 the Modal L40S generated ship in
-`data/hover-cache.seed.json`, which seeds `data/hover-cache.json` on first start, so `1` is served
-in 1–2 ms without a GPU, an endpoint or a key.
-
-## Measured Production Benchmarks (Oct 26, 2026)
-
-Reference machine in Switzerland, Meta Model API, Modal us-east, lab tenant
-`c4a8shili.onmicrosoft.com`, warm orchestrator. Every number below was measured on that day;
-none of them needed the L40S, except the Glimmer row, which comes from the generation of the
-hover cache that now ships in the repo.
-
-| Path | Measured | LLM tokens |
+| Bonus prize | What qualifies | Where in the code |
 |---|---|---|
-| **Tier 0** · View Recipe switch (server time) | 0–1 ms (2–6 ms wall) | 0 |
-| **Tier 1A** · Muse Glimmer 30B on a Modal L40S (open weights, llama.cpp) | 17.7 s cold boot from the Modal Volume → 29–44 tok/s per stream; 567–1,849 completion tokens per hover (reasoning + answer, median 880; the Contoso `AADSTS53003` hover is 1,097 tokens in 24.6 s), pre-computed on ticket ingest → served from the persistent cache in **1–2 ms** | 0 on hover |
-| **MCP gather** · live Microsoft Graph + Azure ARM, in-memory Bearer token cache + Graph `/$batch` | 0.16–0.65 s fresh | 0 |
-| **Tier 1B / 2** · cross-MCP layout correlation (`muse-spark-1.3`), `ptr://` descriptors instead of rows | 0.67–0.86 s SSE `mcp_ready` first paint → 4–8 s full validated layout | ~7.4k (was ~10.5k with rows in the prompt) |
-| **Voice** · `POST /v1/asr/transcribe` (16 kHz mono WAV) + intent routing | 1.6–2.6 s | 0 (deterministic intent) |
-| **Vision** · `muse-spark-1.3` reads the ticket screenshot | 3.4–5.3 s | ~2.9k |
-| **Tier 3B** · Modal pre-flight sandbox (`@modal.cls`, `TF_REATTACH_PROVIDERS`), in the container | 306–338 ms: pwsh AST 7–18 ms (persistent `pwsh`) · `terraform fmt` 38–47 ms · `terraform validate` 304–337 ms (warm `azurerm`), the last two in parallel | 0 |
-| **Tier 3B** · same pre-flight, round trip from Switzerland | 481–871 ms | 0 |
-| **Tier 3** · generate fix (`muse-wonder-1.0` plan + bundle, Modal pre-flight, git stage) | 16.5–18 s | ~13k |
-| **HITL approve** → 3 live Graph writes → zero-token canvas convergence | 1.3–1.75 s end to end | 0 |
-| **Break-Glass approve** (INC-4092) → 3 Graph writes + ARM rule delete and tag update, each polled to completion → reconcile commit | 3.6 s end to end | 0 |
-| **Pure GitOps approve** (ANOM-CA-204) → warm Modal pre-flight re-run, nothing written live | 0.34 s end to end | 0 |
-| **Reset demo drift** (3 live Graph PATCHes; the canvas reverts at once) | 0.56–1.3 s | 0 |
-| **Highlight → Generate Context UI** (`POST /api/explore-selection`: deterministic slice + `muse-spark-1.3` composition, Oct 27) | 2.8–3.0 s (deterministic fallback <20 ms) | ~3.3k |
-| **Unscripted ticket triage** (`POST /api/tickets/triage-custom`: Tier 0 extraction + fresh MCP gather + formal proof, Oct 27) | 0.3–0.7 s (extraction itself <5 ms) | 0 |
+| **Best Build on Meta Open Weights** | `Muse-Glimmer-30B` GGUF (Q4_K_M) served by our own llama.cpp deployment on one Modal L40S. Output is constrained by a strict `json_schema` response format, which llama-server compiles to a GBNF grammar. It answers Tier 1A hover diagnostics; every answer is persisted with its real latency | [`modal-sandbox/glimmer_open_weights.py:139`](modal-sandbox/glimmer_open_weights.py#L139) (schema) · [`apps/orchestrator/src/router/glimmer-payload.ts:93`](apps/orchestrator/src/router/glimmer-payload.ts#L93) · [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](apps/orchestrator/src/tiers/tier1-hover.ts#L52) (chain) · [`data/hover-cache.seed.json`](data/hover-cache.seed.json) |
+| **Best Agentic Use-Case** | A 5-stage sub-agent pipeline (clarifier, MCP telemetry scout, Spark→Wonder UI architect, coder, verifier). Steering is two-way: any scope change re-parameterises the staged script. A write-then-test loop feeds sandbox findings back to the coder for up to 2 repair turns. Approval is human, and the inverse is built from a pre-change snapshot | [`local/subagent-orchestrator.ts:677`](apps/orchestrator/src/local/subagent-orchestrator.ts#L677) · [`local/steering.ts:165`](apps/orchestrator/src/local/steering.ts#L165) · [`tiers/repair-loop.ts:129`](apps/orchestrator/src/tiers/repair-loop.ts#L129) · [`tiers/tier3-rollback.ts:95`](apps/orchestrator/src/tiers/tier3-rollback.ts#L95) |
+| **Best Creative Build** | N+k generative UI. When no catalog card fits a ticket, `muse-spark-1.3` names the missing element and `muse-wonder-1.0` fills it from five schema-checked primitives. The card is persisted as a `.tsx` file plus a catalog entry and rendered by the same React runtime as the hand-built cards | [`local/dynamic-catalog.ts:188`](apps/orchestrator/src/local/dynamic-catalog.ts#L188) (gatekeeper) · [`:285`](apps/orchestrator/src/local/dynamic-catalog.ts#L285) (synthesizer) · [`data/synthesized-elements/`](data/synthesized-elements) |
 
 ---
 
-## Quick start (works with zero API keys)
+## 2. What ContextPane is not
 
-Prerequisites: [Bun](https://bun.sh) ≥ 1.2, PowerShell 7, optionally Terraform
-(`winget install Oven-sh.Bun Hashicorp.Terraform`).
-
-```bash
-bun install
-bun run dev
-```
-
-- Orchestrator: http://127.0.0.1:4000 (`GET /api/health`)
-- Workbench: http://localhost:5173 (Vite proxies `/api` and `/ws` to the orchestrator)
-
-Runtime state lives in `data/` (pinned recipes, remediation bundles) and
-`.contextpane/` (terraform validation workspace, provider cache); both are git-ignored.
-Staged remediations land on one real local branch per scenario, `fix/<scenario>-<tenant>-remediation`
-(`fix/INC-4092-contoso-remediation`, `fix/ANOM-CA-204-contoso-remediation`, …), force-updated by
-every new remediation, so any number of smoke or screenshot runs leaves at most five. Each commit adds
-`demo-iac/remediations/<scenario>/` (script, Graph requests, the Terraform patch where the scenario has
-IaC, REMEDIATION.md); nothing is pushed unless a PR is requested.
-
-With no keys in `.env.local`, every tier falls back to a deterministic local engine that
-hydrates the same catalog components from `demo-iac/demo-lab-manifest.json` and the labelled
-anomaly fixtures in `packages/mcp-msgraph/src/fixtures.ts`. Paste keys
-later and the router starts calling Meta models with no code change.
-
-Smoke-test every endpoint and its Zod schema (`-ScenarioId` picks the scenario, INC-4092 by default;
-`-Mode break-glass|gitops` picks how the approval lands). Both modes cover the live-agency endpoints:
-`POST /api/explore-selection` (+ the selection pointer on the data plane), `POST /api/tickets/triage-custom`
-(+ the custom brief, correlate, formal proof and timeline), and in break-glass mode the resolution note and
-`POST /api/tickets/close`:
-
-```bash
-pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1 -Mode break-glass
-pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1 -Mode gitops
-```
+| Common category | Why ContextPane is different |
+|---|---|
+| **A dashboard** | Dashboards display state. In ContextPane every view ends in an action. Each lens and plan step leads to a staged PowerShell 7 / Graph / Terraform change in the permanent 440 px **Muse Code rail**. The change carries a pre-flight verdict, a blast radius, an undo script and a human approve button |
+| **A chatbot or RAG app** | There is no chat box. Models are called through forced tool schemas (Zod → JSON schema), and their output is validated before anything renders. Prompts carry pseudonyms, not identities. Answers bind to live MCP rows through `ptr://` pointers instead of prose |
+| **An autonomous agent** | The agent proposes, checks and repairs; the operator steers and approves. Scope chips and lens-row clicks travel back into the coder (`PATCH /api/tickets/:id/steer`), and writes happen only from an explicit click |
+| **A static demo** | Cards that do not exist are composed at triage time (see [§4.3](#43-self-expanding-nk-generative-ui)). The registry grew from k=4 to k=5 while these screenshots were being captured |
 
 ---
 
-## Architecture
+## 3. Meta Muse models in execution order
+
+<p align="center"><img src="docs/assets/arch-muse-execution-pipeline.svg" alt="Execution order: Stage 0 Glimmer hover; stages 1-5 sub-agent pipeline; steering; Tier 3 sandbox pre-flight, write-then-test, prover, human approve; provider boundary with the PII vault" width="100%"></p>
 
 ```mermaid
-flowchart TB
-  subgraph WEB["apps/web · React workbench :5173"]
-    direction LR
-    TICKET["Scenario pane<br/>summary & plan · provenance pills · accordions · screenshot"]
-    CANVAS["Catalog-constrained canvas<br/>only Zod-validated components"]
-    HUD["Top bar<br/>mode · scenario · pin · voice · reset · System & Audit"]
-  end
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant Web as Web (React 19)
+    participant Orc as Orchestrator (Bun + Hono)
+    participant MCP as MCP servers
+    participant Gl as muse-glimmer-30b (Modal L40S)
+    participant Meta as Meta Model API
+    participant Box as Modal sandbox
 
-  subgraph ORCH["apps/orchestrator · Hono on Bun :4000 · 4-Tier Compute Router"]
-    direction LR
-    T0["Tier 0 · Local AST<br/>View Recipe hydrate · convergence push<br/>0 tokens"]
-    T1A["Tier 1A · Modal L40S<br/>Muse Glimmer 30B (llama.cpp)<br/>hover cache on disk"]
-    T12["Tier 1B / 2 · Meta Muse Spark 1.3<br/>+ Vision (image input)<br/>+ Voice ASR"]
-    T3["Tier 3 · Meta Muse Wonder + Muse Code<br/>+ Modal pre-flight sandbox<br/>+ git branch / gh PR"]
-    LEDGER[("Audit ledger<br/>data/audit-log.json")]
-  end
-
-  subgraph MCP["3 MCP servers · gathered in parallel (in-process or stdio)"]
-    direction LR
-    ERP["mcp-erp<br/>tickets · contracts"]
-    GRAPH["mcp-msgraph<br/>licenses · CA · sign-ins · Intune"]
-    AZ["mcp-azure-iac<br/>AVD · NSG vs Terraform · Azure Policy"]
-  end
-
-  CATALOG[["packages/catalog<br/>Zod component catalog · forced tool schemas · convergeLayout"]]
-  TENANT[("Entra ID + Intune + Azure<br/>lab tenant")]
-
-  TICKET -- "REST + SSE" --> ORCH
-  ORCH -- "WebSocket /ws: telemetry · audit · notifications/resources/updated" --> HUD
-  ORCH --> CANVAS
-  T0 & T1A & T12 & T3 --> MCP
-  T3 --> LEDGER
-  GRAPH & AZ -- "fetch() with cached Az / Mg token" --> TENANT
-  CATALOG -. "schemas" .-> ORCH
-  CATALOG -. "schemas" .-> CANVAS
+    Note over Orc,Gl: start-up: warmHoverCache answers every pill once and persists it
+    Op->>Web: hover a pill (60 ms dwell → speculative pre-fetch)
+    Web->>Orc: POST /api/hover
+    Orc-->>Web: persisted Glimmer answer (2 ms) or live chain
+    Op->>Web: paste an unscripted ticket
+    Web->>Orc: POST /api/tickets/triage-custom
+    Orc->>MCP: Telemetry Scout probe (stage 2, runs throughout)
+    Orc->>Meta: Goal Clarifier · muse-wonder-1.0 (stage 1)
+    par stages 2-4
+        Orc->>Meta: Gatekeeper · muse-spark-1.3 → Synthesizer · muse-wonder-1.0
+        Orc->>Meta: Coder · muse-code (served as muse-wonder-1.0)
+    end
+    Orc->>Orc: Safety Verifier · static precheck (stage 5)
+    Orc->>Box: pre-flight: pwsh AST + allow-list, terraform fmt/validate
+    Box-->>Orc: findings
+    loop write-then-test, ≤ 2 turns while repairable findings remain
+        Orc->>Meta: coder repair turn
+        Orc->>Box: pre-flight again
+    end
+    Orc-->>Web: SSE: card, script, verdict, proof
+    Op->>Web: flip a scope chip
+    Web->>Orc: PATCH /api/tickets/:id/steer
+    Orc->>Meta: coder re-parameterises the staged script
+    Orc-->>Web: steering v1 + script diff
+    Op->>Web: approve (break-glass or GitOps PR)
+    Orc->>MCP: pre-change snapshot → write → canary
+    Op->>Web: 1-click undo → POST /api/rollback (inverse from snapshot)
 ```
 
-Every model answer is a forced tool call validated against `packages/catalog`; anything
-that fails is repaired by the deterministic hydrator, and every tier falls back to it.
+| Stage | Model id (configured → answering) | Contract | Measured | Why this model here | Code |
+|---|---|---|---|---|---|
+| **0 · Hover (Tier 1A)** | `muse-glimmer-30b` on Modal; chain falls back to `muse-spark-1.3` | entity id → `HoverDiagnosticPopover` JSON (strict schema, GBNF) | 22.8 s to generate once; 2 ms from the persisted cache | Hover is the hottest path and the most repetitive. An open-weight model on our own GPU can answer every pill ahead of time at no per-call cost | [`tier1-hover.ts:218`](apps/orchestrator/src/tiers/tier1-hover.ts#L218) · warm-up [`:412`](apps/orchestrator/src/tiers/tier1-hover.ts#L412) |
+| **1 · Goal Clarifier** | `muse-wonder-1.0` | ticket → clarifying questions → `SteeringParams` v0 | 9.7 s · 2,452 tok | Needs judgment over vague prose; its answers become the typed contract every later stage reads | [`subagent-orchestrator.ts:146`](apps/orchestrator/src/local/subagent-orchestrator.ts#L146) |
+| **2 · Telemetry Scout** | none (MCP probe) | ticket + time → `UpstreamCloudStatusCorrelation` | 852 ms | Facts come from tools, not from a model | [`subagent-orchestrator.ts:677`](apps/orchestrator/src/local/subagent-orchestrator.ts#L677) |
+| **3 · UI Architect** | gatekeeper `muse-spark-1.3` → synthesizer `muse-wonder-1.0` | ticket → `ElementRoutingDecision` → `SynthesizedDynamicCard` | 19.8 s · 2,875 tok | Spark is fast at classifying "which element is missing". Wonder writes the dense, domain-accurate card | [`dynamic-catalog.ts:188`](apps/orchestrator/src/local/dynamic-catalog.ts#L188) · [`:285`](apps/orchestrator/src/local/dynamic-catalog.ts#L285) |
+| **4 · IaC & PS7 Coder** | `muse-wonder-1.0` (custom tickets); `muse-code` → `muse-wonder-1.0` in Tier 3B | ticket + typed steering → PS7 script, Terraform diff, rollback | 16.9 s · 4,657 tok (a steer turn) | The longest structured output; it re-parameterises an existing script rather than rewriting it | [`subagent-orchestrator.ts:354`](apps/orchestrator/src/local/subagent-orchestrator.ts#L354) · [`tier3-remediate.ts:189`](apps/orchestrator/src/tiers/tier3-remediate.ts#L189) |
+| **5 · Safety Verifier** | none | script → repaired script + warnings | ≈1 ms | Deterministic: braces, `ShouldProcess` guard, wildcards | [`subagent-orchestrator.ts:465`](apps/orchestrator/src/local/subagent-orchestrator.ts#L465) |
+| **Sandbox pre-flight** | none (Modal warm container, falls back to local pwsh) | bundle → verdict + findings | warm pre-flight ~0.7 s | Verifies what the coder wrote before an operator sees it | [`preflight/modal.ts:65`](apps/orchestrator/src/preflight/modal.ts#L65) · [`preflight/local.ts:293`](apps/orchestrator/src/preflight/local.ts#L293) |
+| **Correlate (Tier 1B/2)** | `muse-spark-1.3` | 3 MCP sources → forced `hydrate_contextpane_layout` | avg 4.0 s (1B) / 5.8 s (2) | Layout selection over a fixed catalog: a classification task | [`tier2-correlate.ts:120`](apps/orchestrator/src/tiers/tier2-correlate.ts#L120) |
+| **Selection lens** | `muse-wonder-1.0` → `muse-spark-1.3` | highlighted text → mini-dashboard spec | 4.4–4.8 s | Composes a new 4-mode lens from free text | [`explore.ts:115`](apps/orchestrator/src/tiers/explore.ts#L115) |
+| **Voice steer** | `muse-voice-transcribe-1.0`, intent via `muse-spark-1.3` | 16-bit mono WAV → transcript → layout intent | n/a | Hands-free steering; ASR is `POST /asr/transcribe` | [`router/openai.ts:235`](apps/orchestrator/src/router/openai.ts#L235) · [`tiers/voice.ts:54`](apps/orchestrator/src/tiers/voice.ts#L54) |
 
-### The 4-Tier Meta Model Router
+Measured values come from the `CUSTOM-K8ECJ6` run and the router ledger captured on 2026-10-29 (see the [telemetry board](docs/assets/03-kinematic-prewarm-telemetry.png)).
 
-| Tier | Endpoint | What happens | Model / provider chain |
-|---|---|---|---|
-| **0** | `GET /api/recipe/:id/hydrate?scenarioId=` | Binds the 3 MCP outputs straight into a pinned `ViewRecipe` AST. No LLM. Measured: 2–11 ms server time. | — |
-| **1A** | `POST /api/hover` | Translates an entity (UPN, group, policy, setting, `AADSTS53003`, `0x87D1FDE8`) into a `HoverDiagnosticPopover`. Facts, actions and the error translation come from the deterministic diagnostic; the model words the headline. | Open-weight Muse Glimmer 30B (llama-server on Modal, RunPod or local) → Meta API `muse-spark-1.3` (`reasoning_effort: minimal`); every pill of every scenario is pre-generated and persisted to `data/hover-cache.json`, seeded on a fresh clone from the tracked `data/hover-cache.seed.json` |
-| **1B** | `POST /api/correlate` | `Promise.all` over the 3 MCP servers, then one forced tool call (`hydrate_contextpane_layout`) returns the full layout; every component is Zod-validated and any gap is repaired by the deterministic hydrator. | Meta API `muse-spark-1.3` (`minimal`; open-weight Glimmer first only with `CTX_OPEN_WEIGHT_TIERS=hover,catalog`); the SSE stream paints the full deterministic layout from MCP data (`mcp_ready`) before the model answers |
-| **2** | `POST /api/correlate` | Same call, escalated when Tier 1B fails or returns an invalid layout. | Meta API `muse-spark-1.3` (`low`) |
-| **3A / 3B** | `POST /api/remediate` | `muse-wonder-1.0` plans and emits the bundle: PowerShell, plus the Terraform diff where the scenario has IaC and the Graph request JSON otherwise (the brief's `muse-code` is not served by the Meta API: the startup model check swaps the configured `muse-code` for `muse-wonder-1.0` and `GET /api/config` reports it under `metaModelResolution`). The pre-flight verifies it in the Modal sandbox (falling back to the local PowerShell AST parse + cmdlet allow-list, `terraform fmt` + `validate`) and statically proves every mutating cmdlet sits inside `$PSCmdlet.ShouldProcess`, so `-WhatIf` changes nothing; a git worktree force-updates the scenario's canonical `fix/<scenario>-<tenant>-remediation` branch, and `ActionApprovalDrawer` comes back for Human-in-the-Loop approval via `POST /api/remediate/approve`. | Meta API `muse-wonder-1.0`, Modal `validate_remediation` |
-| **Voice** | `POST /api/voice-steer` | Audio (base64) or text → intent → filter / pin / switch scenario / generate fix. | `muse-voice-transcribe-1.0` + `muse-spark-1.3` |
-| **Vision** | `POST /api/vision-extract` | The ticket's screenshot (base64 data URI) → `{ errorCode, appId, correlationId, timestamp, deviceState, recommendedComponent }`, Zod-validated, then matched to the sign-in it shows (same AADSTS code and app id, nearest time), which the timeline highlights. No model, no extraction: pixels have no deterministic fallback. | Meta API `muse-spark-1.3` with an `image_url` part (`CTX_MODEL_META_VISION`) |
+#### Model stand-ins
 
-**Primary stack: Meta Model API + Modal.** A `META_API_KEY` alone (plus the optional Modal
-sandbox URL) is a complete, first-class configuration: providers without a key are left out
-of the chain entirely, so Meta answering Tier 1A/1B is not reported as a fallback. Open
-weights are opt-in: `scripts/Start-GlimmerOpenWeights.ps1` serves Meta's
-`Muse-Glimmer-30B-GGUF` (Q4_K_M, 16.8 GB) with llama-server on a Modal L40S
-(`modal-sandbox/glimmer_open_weights.py`, scale to zero) or locally, and wires the URL in;
-`modal-sandbox/open_weights_vllm.py` and `scripts/Start-RunPodGlimmer.ps1` serve the
-full-precision weights on vLLM instead. Telemetry names where Glimmer ran:
-`modal-open-weights`, `runpod` or `local-glimmer-30b`. Any such URL goes into
-`CTX_OPEN_WEIGHT_BASE_URL` (or `MODAL_INFERENCE_BASE_URL` / `RUNPOD_VLLM_BASE_URL`). Baseten (`muse-spark-open-1026`) and Fireworks keys remain optional
-drop-in overrides ahead of Meta; neither is configured for the demo, so neither appears in any chain.
-
-Every provider in a chain is bounded by a timeout and falls through on error, timeout,
-missing key or invalid schema. When no provider answers, the deterministic engine produces
-the same catalog components from the same MCP context and the telemetry reports
-`provider: local`, so the UI never blocks on a model. Every tier records telemetry (tier,
-provider, model, latency, tokens, fallback chain) and broadcasts it over `/ws`, which
-drives the *router savings* tab of the System & Audit drawer.
-
-**Why forced tool calling?** One payload has to work on every provider the router may
-use: the Meta Model API answers `tools` with `tool_choice: "auto"`, and the optional
-Baseten `muse-spark-open-1026` supports `tools` / `tool_choice` but not
-`response_format: { type: "json_schema" }`.
-`packages/catalog` exports `getHydrateLayoutToolDefinition()`, which wraps the entire
-layout schema as a function tool and forces it with
-`tool_choice: { type: "function", function: { name: "hydrate_contextpane_layout" } }`.
-The identical payload works on Fireworks and the Meta Model API.
-
-### Catalog-constrained GenUI
-
-The model never emits markup or prose. It emits a JSON layout whose components must be
-one of six allow-listed primitives, each with a strict Zod schema:
-
-`LicenseDriftCard` · `EntraSignInTimeline` · `IntuneDriftCard` · `IaCDriftBanner` ·
-`HoverDiagnosticPopover` · `ActionApprovalDrawer`
-
-Every canvas card carries `triggeredBy`, the left-pane entity ids that spawned it, which drives the
-accent, the *Triggered by* badge and the pill-to-card linking. The license card shows the SKU pool
-counters and a per-user table; the sign-in / CA card has *Sign-ins* and *Policies* tabs; the Intune
-card *Settings* and *Devices*; the Azure card *Host pool*, *NSG* and *Azure Policy*.
-
-Anything that fails validation is dropped and the deterministic hydrator fills the gap,
-so the canvas is always complete and always typed.
-
-### The `ptr://` data-plane bypass
-
-No customer row ever travels through a model. When a scenario is gathered, the orchestrator
-publishes every row set its cards show under a deterministic pointer
-(`apps/orchestrator/src/local/dataplane.ts`):
-
-```
-ptr://inc-4092/entra/users        5 rows   assignmentState Drifted:3, Active:2 · currentSku SPE_E3:3, SPE_E5:2
-ptr://inc-4092/entra/signins      6 rows   status failure:3, success:3 · appDisplayName Azure Virtual Desktop:5, …
-ptr://inc-4092/iac/drift-diff     42 lines files 1 · hunks 2 · added 5 · removed 19
-ptr://anom-int-309/intune/devices 11 rows  complianceState Conflict:11
-```
-
-Tier 1B / 2 get the ticket text, one scalar fact sheet per source and these **schema-and-aggregate
-descriptors** (row count, columns, value counts of the low-cardinality columns; UPNs, names, IPs and
-timestamps are never aggregated). The forced tool schema (`HydrateLayoutModelArgsSchema`) types
-every row-set prop as `{ "dataPtr": "ptr://…" }`, so `muse-spark-1.3` answers with the pointer and
-the headline. Before the layout is streamed, `bindDataPlane()` binds each prop from the rows behind
-the card's own pointer and records them in the component's `dataPtrs`; a wrong pointer or inline
-rows are replaced and counted as `rejected`. Measured on INC-4092: 11 datasets, 66 rows and 10 KB
-kept out of the prompt, all 11 pointers bound with 0 rejected, the tool schema down from 30.3 KB to
-11.4 KB, and a full correlate from ~10.4k to ~7.4k tokens. `GET /api/dataplane/:scenarioId` lists
-the descriptors and `GET /api/dataplane?ptr=…` returns one pointer's rows. Tier 3 still sees the
-full context, because its PowerShell has to name the users and policies it changes.
-
-### Git line provenance
-
-Every drift card cites the lines in this repository that declare what the tenant should look like,
-as a monospaced CodeLens in its header that opens the exact diff:
-
-- **AVD Host Pool / NSG:** the `azurerm_network_security_group` block, located by the HCL reader
-  (`demo-iac/main.tf:L43-L84`); the badge opens the live-vs-Terraform HCL diff.
-- **Conditional Access (ANOM-CA-204):** each drifted field of CA-001 / CA-004 in
-  [`golden-tenant/entra/conditional-access/`](./golden-tenant), located by a position-tracking JSON
-  parser (`CA-001.json:L9-L11` for `excludeGroups`).
-- **Intune (ANOM-INT-309, INC-4099):** the drifted setting in `golden-tenant/intune/…`, and the
-  profile assignments the baseline pins.
-
-For the policy cards the badge opens a unified diff of the live Graph object, rendered the same way
-as the golden file, against that file, so the hunk headers carry the real line numbers. The same
-references appear in the PR body under *Declared in*, linked to `#L43-L84` on GitHub.
-
-### Approval, zero-token convergence and the audit ledger
-
-`POST /api/remediate/approve` (alias `/api/approve`) is the only path that changes a tenant. A
-segmented switch above the drawer's footer picks how the approval lands (`mode` in the request):
-
-| Mode | Live tenant | Git | Canvas |
-|---|---|---|---|
-| ⚡ **Emergency Break-Glass** (Direct API + Auto-Reconcile PR), default for a ticket | The scenario's lab write below, now | A reconcile commit on top of the staged one, on the same `fix/*` branch: `demo-iac/remediations/<id>/reconciled-state.json` with every live write, the Graph request bodies, the ARM operations and the *Declared in* line refs | Converges to emerald |
-| 🔀 **Pure GitOps** (Stage PR & Modal Plan Only), default for an anomaly | Nothing | The staged patch; the warm Modal pre-flight (pwsh AST, `terraform validate` when there is IaC) re-runs against the state of that moment, and a failure stops the approval | Stays drifted until the pipeline deploys; approval state `staged` |
-
-Either way the GitHub PR is opened or updated only when **Open GitHub PR on approval** is ticked;
-otherwise the branch stays local. In `LIVE_CLOUD_MODE` a break-glass approval applies the scenario's
-lab write:
-
-- **INC-4092 / ANOM-LIC-101:** PATCH the users' `com.contextpane.licenseState` open extension
-  (SPE_E5 for the drifted users, reclaimed seats for the leavers), the lab's stand-in for the
-  license itself. SKU pools are read live from `subscribedSkus`. For INC-4092 the live NSG is put
-  back to the Terraform baseline over ARM with the Az token at the same time (rogue rules deleted,
-  tags restored, each long-running operation followed to completion); Reset Drift re-creates the
-  seeded drift from the manifest.
-- **ANOM-CA-204:** PATCH CA-001 to exclude `SG-BreakGlass-Accounts` and switch CA-004 to enabled.
-- **ANOM-INT-309:** flip the ASR LSASS rule from Audit to Block (Settings Catalog GET + PUT) and
-  unassign the duplicate `Win11-Firewall-MDM` profile.
-- **INC-4099:** unassign `Fabrikam-Legacy-BitLocker-DeviceConfig` from the device group.
-
-The Az-derived token (Azure PowerShell client `1950a258-…`) never carries
-`Policy.ReadWrite.ConditionalAccess` or `DeviceManagementConfiguration.ReadWrite.All`, so the
-Conditional Access and Intune writes use the delegated sign-in that `scripts/Connect-ContextPaneGraph.ps1`
-persists to `~/.mg`. Without it, or before the seed script created the objects, the write becomes a
-clearly labelled simulated write with the reason. `CTX_ALLOW_EXECUTE=true` additionally runs the
-approved PowerShell. With **Open GitHub PR on approval** ticked it force-pushes the approved commit
-to the scenario's branch and, when `gh pr view` finds that branch's PR already open, refreshes its
-description and returns its URL; otherwise it runs `gh pr create`. Repeated demo runs therefore update
-one PR per scenario instead of opening duplicates
-([dudhasch/contextpane#1](https://github.com/dudhasch/contextpane/pull/1) is the INC-4092 one).
-
-The drawer offers two paths. **Path A** copies the PowerShell, the Terraform or the Graph JSON for an
-engineer to run by hand; its `[Dry-Run (-WhatIf) Verified]` badge means the pre-flight proved every
-mutating cmdlet is guarded by `ShouldProcess`. **Path B** approves in the selected mode, with the PR
-checkbox.
-
-After a break-glass approval the orchestrator pushes `notifications/resources/updated` over `/ws`. The workbench
-overlays `convergeLayout()` from `packages/catalog` on the mounted canvas, so every card of the
-scenario turns emerald with 0 LLM tokens (license pools adjust, CA policies take their fixed state,
-Intune settings fall in sync and devices turn Compliant, the NSG and Azure Policy go Compliant),
-and a toast shows the execution latency and the PR link. `POST /api/lab/reset-drift` (Reset Drift,
-hotkey `0`) clears that state at once and writes the drifted configuration back for one scenario or
-all of them, so video takes run back to back without the seed script.
-
-Hover popovers on a user show the assigned vs expected SKU, the license assignment state, the Entra
-group memberships and the last blocking sign-in (AADSTS53003 and the policy that blocked it). Facts,
-actions and the error translation always come from the deterministic diagnostic; the model only
-words the headline. `[Inspect Blocking CA Policy]` expands the sign-in card on its policy tab with the
-live policy JSON. `[Stage License Fix]` (`[Stage Intune Fix]` on devices and settings) opens the
-approval drawer, because a change only ever runs through the HITL path.
-
-Every pre-flight verification, approval or rejection and reset is appended to
-`data/audit-log.json` as `{ id, timestamp, tenantId, ticketId, actionType, delegatedIdentity,
-modalSandboxVerified, astPass, tfValidatePass, gitBranch, prUrl, latencyMs, execution, executionMode }` (never a secret or
-token) and listed in the **System & Audit** drawer next to the router savings and the provider
-status (`GET /api/audit`).
-
-### View Recipes (0 tokens)
-
-Pinning the current layout saves a `ViewRecipe` (pinned components + MCP bindings) to
-`data/recipes.json`. Switching to another scenario re-hydrates the same recipe through Tier 0 in
-under 150 ms with zero LLM tokens. The recipe pins the card order; a card the next scenario needs
-that the recipe does not know is appended, so no scenario is shown incomplete.
+At start-up [`router/meta-models.ts:11`](apps/orchestrator/src/router/meta-models.ts#L11) checks `GET /v1/models`. Any configured id the Meta Model API does not serve is swapped for its stand-in: `muse-glimmer-30b → muse-spark-1.3` on the Meta API, and `muse-code → muse-wonder-1.0`. The startup log and `GET /api/config` (`metaModelResolution`) report each swap. Glimmer therefore only ever runs as our Modal open-weight deployment, and every "Muse Code" label in the UI is served by `muse-wonder-1.0`.
 
 ---
 
-## Repository layout
+## 4. Five systems deep dives
 
+### 4.1 `ptr://` data plane and the PII pseudonym vault
+
+<p align="center"><img src="docs/assets/arch-pii-pointer-vault.svg" alt="MCP rows stay in the orchestrator data plane; layouts carry fenced ptr:// pointers; prompts pass the session PII vault; replies are rehydrated in the orchestrator; the browser resolves pointers with a fence check" width="100%"></p>
+
+**Pointers.** Correlated rows never travel inside a model prompt or a layout. Cards reference them by pointer ([`packages/catalog/src/dataplane.ts`](packages/catalog/src/dataplane.ts)):
+
+| Version | Shape | Purpose |
+|---|---|---|
+| v1 | `ptr://inc-4092/entra/users` | dataset address (plane + dataset) |
+| v2 | `…/entra/users?where=state:Drifted&select=upn` | relational filter. Equality only; anything else fails closed ([`parsePtrQuery`, :392](packages/catalog/src/dataplane.ts#L392)) |
+| v3 | `…#tenant-contoso-01:<epoch>:<generation>` | fence ([`fencedDataPtr`, :264](packages/catalog/src/dataplane.ts#L264)). [`verifyPointerFence` (:285)](packages/catalog/src/dataplane.ts#L285) returns `valid · stale-epoch · cross-tenant · aba-generation-mismatch · unregistered-or-invalid`, and `GET /api/dataplane` answers 409 on any failure |
+
+**Vault.** Every prompt to every provider goes through one function, [`chatWithForcedTool` (router/openai.ts:142)](apps/orchestrator/src/router/openai.ts#L142). It first runs [`vaultMessages` (:116)](apps/orchestrator/src/router/openai.ts#L116), which replaces UPNs, display names, public IPs, user ids and device names with session tokens (`upn_tok_03`, `displayName_tok_01`, …) from the process-wide [`PiiVault` (dataplane.ts:745)](packages/catalog/src/dataplane.ts#L745). `recordPrompt` counts any raw PII left, and the drawer shows the count. In the capture: **19 fields vaulted, 0 of 76 prompts with raw PII**. Model replies are rehydrated **in the orchestrator** ([:207](apps/orchestrator/src/router/openai.ts#L207)), so the browser shows real names and the provider never sees them.
+
+**The 3-step MCP vault boundary** ([full trace on INC-4092](docs/traces/mcp-vault-boundary.md)):
+
+| Step | Where | What crosses |
+|---|---|---|
+| 1 · Gather | [`gatherContext`](apps/orchestrator/src/mcp/context.ts#L118) → msgraph · azure-iac · erp | The orchestrator calls MCP itself, with real UPNs and GUIDs; no model picks the calls. Rows are published under fenced `ptr://` pointers |
+| 2 · Outbound | [`contextForCorrelation`](apps/orchestrator/src/mcp/context.ts#L495) + [`vaultMessages`](apps/orchestrator/src/router/openai.ts#L116) | Descriptors without rows; identities as `upn_tok_NN`. In the trace: "Ticket from upn_tok_01", 8,155 characters, 0 raw PII hits |
+| 3 · Inbound | [`depseudonymizeJsonText`](apps/orchestrator/src/router/openai.ts#L207) + [`resolveDataPtr`](apps/orchestrator/src/local/dataplane.ts#L318) | Tool args `{"targetEntityId":"upn_tok_01","dataPtr":"ptr://inc-4092/entra/users"}` become the real UPN in memory; the pointer resolves only through the fence (a cross-tenant check fails); rows sent back to a model are pseudonymised again ([explore.ts:170](apps/orchestrator/src/tiers/explore.ts#L170)) |
+
+Models never issue MCP tool calls, and there is no service-principal or Activity Log hop: the `RequestDisallowedByPolicy` rows are fixtures (§5).
+
+<p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Glimmer hover popover with model badge, pseudonym vault token map and the 0-raw-PII metric" width="100%"></p>
+
+### 4.2 Hover-intent speculative pre-fetch
+
+<p align="center"><img src="docs/assets/arch-kinematic-prewarm.svg" alt="Timeline: click-then-fetch versus hover-intent pre-fetch with a 60 ms dwell and a 4-slot epoch-fenced buffer" width="100%"></p>
+
+The store calls this the "kinematic speculative pre-warm". The mechanism is hover intent, not cursor physics: there is no velocity or deceleration model.
+
+- **Trigger.** `mouseenter` on an entity pill ([`EntityPill.tsx:134`](apps/web/src/components/ticket/EntityPill.tsx#L134)), a work-queue row or a plan/fleet pill arms a 60 ms timer.
+- **Speculative request.** If the pointer is still there when the timer fires, the request goes out into a **4-slot speculative buffer** whose slot kinds are `queue-brief`, `entity-hover` and `remediation`. Each slot is tagged with [`speculativeEpoch`](apps/web/src/store.ts#L383).
+- **Click.** The click awaits the in-flight slot or promotes a resolved one instead of asking again.
+- **Invalidation.** Any scope or tenant change bumps the epoch and drops every slot.
+- **Selection pre-warm.** Selecting a literal UPN/GUID pre-warms the selection lens on `selectionchange`, before Enter.
+
+The System & audit drawer reports hits, misses and milliseconds saved; one selection hit in the capture saved **4,384 ms**. Next to those counters is the per-tier routing ledger:
+
+<p align="center"><img src="docs/assets/03-kinematic-prewarm-telemetry.png" alt="Router savings per tier, 5-stage pipeline records with model, tokens and latency, and the speculative pre-fetch counters" width="100%"></p>
+
+### 4.3 Self-expanding N+k generative UI
+
+The catalog starts with hand-built cards (N). It grows by k whenever a ticket needs a view that does not exist:
+
+1. **Gatekeeper.** `muse-spark-1.3` ([`assessTicketElementNeeds`, dynamic-catalog.ts:188](apps/orchestrator/src/local/dynamic-catalog.ts#L188)) names the missing element (`FinanceBlobAbacConditionFix`), its domain, the extracted entities and the reason.
+2. **Synthesizer.** `muse-wonder-1.0` ([`:285`](apps/orchestrator/src/local/dynamic-catalog.ts#L285)) writes no code. It emits a **JSON view specification** composed of **five layout primitives**: `quota-gauges` · `policy-chain` · `data-table` · `config-diff` · `event-stream`.
+3. **Gate.** The spec must parse as [`SynthesizedDynamicCardSchema`](packages/catalog/src/schemas/components.ts#L550) (Zod). A failing reply never reaches the catalog; the operator sees a labelled template card instead.
+4. **Mount.** The web app's local interpreter, [`SynthesizedDynamicCard`](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L285), maps each block to a React primitive ([`renderBlock`, :116](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L116)). It runs no model-written code. The spec is stored with the triaged ticket (`synthesizedElements` in `data/custom-scenarios.json`). Drawing the card from a stored spec is client-side rendering and makes no model call.
+5. **Persistence.** A passing spec is also exported as `data/synthesized-elements/<ElementId>.tsx`, a typed module that re-exports the schema and the spec so the card can be reviewed as source, and is added to [`data/dynamic-catalog.json`](data/dynamic-catalog.json). The System & audit drawer lists the registry.
+
+Every data-table row in a synthesized card is steerable: clicking a row narrows the fix to that resource (§4.4).
+
+<p align="center"><img src="docs/assets/04-nk-wonder-synthesis-and-reuse.png" alt="The net-new FinanceBlobAbacConditionFix card next to the k=5 synthesized element registry" width="100%"></p>
+
+<p align="center"><img src="docs/assets/nk-ui-synthesis-loop.webp" alt="Loop: an unscripted ABAC ticket is triaged and Muse Wonder composes a card that did not exist" width="85%"></p>
+
+> **Scope note.** `reuseCount` goes up when the gatekeeper names an element that already exists and Wonder re-synthesizes it ([`upsertCatalogEntry`, :273](apps/orchestrator/src/local/dynamic-catalog.ts#L273)). A *new* ticket gets no pre-synthesis lookup that serves a stored card; for custom tickets the gatekeeper always asks for a fresh element. Drawing from a stored spec without a model call applies only to a ticket that has already been triaged. No mount time has been measured.
+
+### 4.4 Two-way steering and the write-then-test loop
+
+<p align="center"><img src="docs/assets/05-coderail-modal-sandbox-finverse.png" alt="Scope chips in zone 1; the Muse Code rail with the steering diff v0 → v1, prover strip, 1-click undo script and approve footer" width="100%"></p>
+
+**Steering contract.** [`SteeringParams`](packages/catalog/src/steering.ts#L37) is a typed object with fields `remediationStrategy`, `scope`, `governance`, `targetResource`, `targetIds`, `region`, `dryRun` and `answers`. Each value records its source (`clarifier · row-click · operator`). The object carries a version and an FNV-1a digest. A scope chip, a typed answer or a lens-row click sends a delta to `PATCH /api/tickets/:id/steer` ([app.ts:514](apps/orchestrator/src/app.ts#L514)):
+
+1. [`applySteeringDelta`](apps/orchestrator/src/local/steering.ts#L165) bumps the version when the digest changes.
+2. [`steerCustomTicket`](apps/orchestrator/src/local/custom-ticket.ts#L696) asks the coder to **re-parameterise** the staged script: keep its structure and change only the lines the steering requires.
+3. The rail shows the diff ("What changed · steering v0 → v1").
+4. [`restageRemediationForSteering`](apps/orchestrator/src/tiers/tier3-remediate.ts#L1029) re-runs the pre-flight.
+5. A staged script older than the current steering shows a stale banner with a one-click Regenerate.
+
+<p align="center"><img src="docs/assets/coderail-steering-loop.webp" alt="Loop: a scope chip flips, the rail shimmers while the coder re-parameterises, then the steering diff lands" width="85%"></p>
+
+**Write-then-test.** Every bundle runs a pre-flight before the rail offers approval:
+
+| Check | Modal warm container ([`contextpane_sandbox.py:283`](modal-sandbox/contextpane_sandbox.py#L283)) | Local fallback ([`preflight/local.ts`](apps/orchestrator/src/preflight/local.ts)) |
+|---|---|---|
+| PowerShell 7 AST parse + cmdlet allow-list / forbidden set | ✓ (persistent pwsh AST server) | ✓ `Parser::ParseFile` |
+| `terraform fmt -check` · `terraform validate` (1.9.8, azurerm ~> 4.0) | ✓ | ✓ when the ticket has an HCL baseline |
+| Mutating cmdlets inside `$PSCmdlet.ShouldProcess` | static check after either ([`checkWhatIfSafety`, :132](apps/orchestrator/src/preflight/local.ts#L132)) | same |
+
+**The sandbox is offline and holds no tenant credentials.** Its only secret is the bearer token the orchestrator presents. It holds no Azure, Graph or Terraform state credentials. The Terraform working directory is set up at image build with `terraform init -backend=false`, and each bundle gets `fmt -check` and `validate`. It is Terraform 1.9.8, not OpenTofu, and nothing runs `plan` or `-WhatIf`.
+
+**Live runs happen after Approve, as the engineer.** The live write runs on the orchestrator host, as the engineer's own delegated identity, and only with `LIVE_CLOUD_MODE=true`. The approved script itself runs only with `CTX_ALLOW_EXECUTE=true` ([`runScriptText`, tier3-remediate.ts:1130](apps/orchestrator/src/tiers/tier3-remediate.ts#L1130)). Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
+
+[`runRepairLoop`](apps/orchestrator/src/tiers/repair-loop.ts#L129) feeds the repairable findings back to the coder, for at most [`MAX_REPAIR_ITERATIONS = 2`](apps/orchestrator/src/tiers/repair-loop.ts#L34) turns. Infrastructure findings (sandbox unavailable, Terraform missing, …) are not sent back. The loop stops early if the coder returns an unchanged script, and it never forces a verdict. The verdict badge then reads "· N iter" and the proof panel lists every round. The run in the screenshot passed on the first attempt, so no repair timeline is drawn; the loop is covered by [`repair-loop.test.ts`](apps/orchestrator/src/tiers/repair-loop.test.ts).
+
+**Prover and f⁻¹.**
+- [`formal-verifier.ts`](apps/orchestrator/src/local/formal-verifier.ts) checks seven invariants as a PCC bitmask ([`0x7f`, :84](apps/orchestrator/src/local/formal-verifier.ts#L84)): `break-glass-non-lockout`, `target-remediation`, `nsg-reachability`, `shadow-admin-zero-transitive`, `proactive-remediation-detect-read-only`, `idempotency-fork-isolated` and `bijective-inverse-rollback`. It also checks idempotency, f(f(S)) = f(S), on a forked state ([`:754`](apps/orchestrator/src/local/formal-verifier.ts#L754)). An ad-hoc ticket has no symbolic model, so the strip says "not provable" rather than claiming a proof.
+- **Snapshot.** On a break-glass approve, [`captureEntitySnapshot`](apps/orchestrator/src/local/snapshot.ts#L107) records the touched users, groups, CA policies, NSG rules, Intune objects and workload identities.
+- **Inverse.** [`buildInverseFromSnapshot`](apps/orchestrator/src/local/inverse-rollback.ts#L205) derives the inverse for only the sections the bundle changed.
+- **Rollback.** [`rollbackRemediation`](apps/orchestrator/src/tiers/tier3-rollback.ts#L95) executes the inverse through the lab write path, reads the state back and compares it with the snapshot. "Restored" comes only from that read-back. Out-of-band changes are not checked *before* restoring: there is no ETag or hash precondition. An out-of-band edit to a snapshotted entity is written back to its pre-change value without a warning.
+
+### 4.5 Zero-context correlation and universal selection lenses
+
+<p align="center"><img src="docs/assets/06-universal-selection-lenses.png" alt="A highlighted ticket phrase becomes Selection #1; Muse Wonder composes a Triage lens and the same selection in Blast radius mode" width="100%"></p>
+
+**Correlation from a ticket alone.** A pasted ticket names a user and an error and nothing else, yet the orchestrator assembles the same context a senior engineer would:
+- **Gather.** It probes three MCP servers in parallel:
+  - **Graph** (`mcp-msgraph`): users, group licensing, Conditional Access, Intune.
+  - **Azure** (`mcp-azure-iac`): NSG drift against the Terraform baseline, AVD estate, policy, regional quota.
+  - **PSA** (`mcp-erp`): ticket, contract, billed seats.
+- **Lay out.** It asks `muse-spark-1.3` for a layout over the fixed catalog, or builds a new card per §4.3.
+- **Ground.** Entity pills in the ticket body become provenance-coloured hover targets.
+
+**Selection lenses.** Highlighting 3–120 characters anywhere opens the selection trigger. Enter sends `POST /api/explore-selection` ([app.ts:341](apps/orchestrator/src/app.ts#L341)), and `muse-wonder-1.0` composes a lens with four modes: **Triage lens · Inspector · State diff · Blast radius**. The lens rows live under `ptr://<scenario>/selection/<hash>`, and the phrase stays marked in the ticket as `Selection #n`.
+
+---
+
+## 5. What is live, what is simulated
+
+ContextPane labels its sources in the UI. The same rule applies here:
+
+| Area | Live | Simulated or fixture |
+|---|---|---|
+| Graph (users, licensing extension, CA, Intune) | Live reads and approved writes against the seeded lab tenant `c4a8shili.onmicrosoft.com` with `LIVE_CLOUD_MODE=true` (Az token cache → Graph `$batch`) | Fabrikam Legal is manifest-only; the 15/15 CountViolation pool and devices are labelled fixtures |
+| Azure ARM | NSG read/write + Terraform drift diff; regional quota (`westeurope` usages) in strict real-tenant mode | Policy compliance rows (including the `RequestDisallowedByPolicy` detail) are fixture rows; no Activity Log query exists |
+| PSA / CSP | File-drop ERP inbox (`input/tickets/`), SLA clock | `mcp-erp` data, contracts and the "Billed (Pax8)" seat column are fixtures; there is no Pax8 integration |
+| Models | Meta Model API calls and the Modal Glimmer deployment, with telemetry for every call | With no key every tier falls back to a labelled deterministic engine (`CTX_FORCE_LOCAL=true` forces it) |
+| Verification | Credential-free Modal / local pwsh AST, `terraform fmt`/`validate` (`init -backend=false`); after Approve, live writes as the engineer's delegated identity | `-WhatIf` is a static ShouldProcess check in the sandbox and is never run by Approve; rollback has no ETag/hash precondition; canary probes and the blast-radius replay evaluate the symbolic model |
+| Screenshots in this README | Real stack, real Meta and Modal calls | Data mode was `simulated-lab` (seeded fixtures plus live model calls); nothing was approved against the tenant during capture |
+
+---
+
+## 6. Quickstart and verification
+
+**Prerequisites:** [Bun](https://bun.sh) ≥ 1.2, PowerShell 7; Terraform is optional (`winget install Oven-sh.Bun Hashicorp.Terraform`).
+
+```bash
+bun install
+bun run dev
 ```
+
+The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the workbench on http://localhost:5173. Vite proxies `/api` and `/ws`.
+
+| Mode | How | What you get |
+|---|---|---|
+| **Lab fixtures (no keys)** | nothing to configure | Every tier answers from the deterministic engine over `demo-iac/demo-lab-manifest.json` and the labelled fixtures |
+| **Meta models** | `pwsh -NoProfile -File ./scripts/Set-ContextPaneRouterConfig.ps1` (writes git-ignored `.env.local`) or copy `.env.example` | `META_API_KEY`, optional `MODAL_INFERENCE_BASE_URL` (Glimmer) and `CTX_MODAL_SANDBOX_URL` (pre-flight) |
+| **Live Entra / Azure tenant** | `Install-ContextPaneModules.ps1`, `Connect-AzAccount`, `Connect-ContextPaneGraph.ps1` (delegated CA/Intune write scopes), review and run `Invoke-SeedContextPaneLab.ps1`, then `LIVE_CLOUD_MODE=true` | Live reads; writes only from an approve click; `Remove-ContextPaneLab.ps1` tears it down |
+
+```bash
+bun run typecheck   # 6 workspaces, tsc --noEmit
+bun test            # 278 tests across 44 files, 0 failures (2026-10-29)
+bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema
+```
+
+**Hotkeys** (press `?` in the app): `Ctrl+K` work queue · `h` hover hero entity · `e` run step 1 · `d` diff · `f` open remediation · `x` approve · `u` explore selection · `c` clarifier · `t` router savings · `a` audit · `0` reset drift. The full list is in [`apps/web/README.md`](apps/web/README.md#hotkeys).
+
+---
+
+## 7. Monorepo map
+
+```text
 contextpane/
-├── README.md · HACKATHON_ATTRIBUTION.md · DESIGN.md · LICENSE
-├── package.json                  Bun workspaces ["packages/*", "apps/*"]
-├── tsconfig.base.json · .env.example · mcp-servers.json
-├── demo-iac/
-│   ├── main.tf                   Expected clean Terraform baseline (Contoso Finance AVD)
-│   └── demo-lab-manifest.json    Deterministic offline telemetry, rewritten by the seed script
-├── golden-tenant/                Golden CA and Intune baseline (JSON) the drift cards cite by line
-├── scripts/                      PowerShell 7 only
-│   ├── Install-ContextPaneModules.ps1   Az + Microsoft.Graph submodules via ModuleFast (Justin Grote)
-│   ├── Set-ContextPaneRouterConfig.ps1
-│   ├── Invoke-SeedContextPaneLab.ps1    Tickets + anomaly lab objects (users, groups, CA, Intune, NSG)
-│   ├── Connect-ContextPaneGraph.ps1     Delegated Graph sign-in for the CA and Intune writes, persisted to ~/.mg
-│   ├── Remove-ContextPaneLab.ps1
-│   ├── Publish-ContextPaneRepo.ps1      Hackathon-compliant history audit/normalise + gh repo create
-│   ├── Start-GlimmerOpenWeights.ps1     Open-weight Muse Glimmer 30B GGUF on Modal (L40S) or local llama-server
-│   ├── Start-RunPodGlimmer.ps1          Optional RunPod vLLM pod for open-weight muse-glimmer-30b
-│   ├── New-RandomErpTicketDrop.ps1      Random #2026xxx/ticketbody.json + attachment1.png drop for the ERP inbox
-│   ├── Test-ContextPaneSmoke.ps1
-│   └── capture-readme-screenshots.ts    The nine 1600x900 README shots via headless Edge/Chrome (CDP)
-├── input/tickets/                The live ERP inbox (#2026323 seeded; generated drops are git-ignored)
-├── docs/screenshots/             README screenshots
-├── modal-sandbox/                Modal Tier 3B pre-flight sandbox + optional open-weight Glimmer (Python)
+├── apps/
+│   ├── orchestrator/        Bun + Hono API: router, tiers, sub-agents, steering, prover    → apps/orchestrator/README.md
+│   └── web/                 React 19 + Zustand three-zone flight deck                     → apps/web/README.md
 ├── packages/
-│   ├── catalog/                  Zod schemas, scenario registry, View Recipes, forced tool schema, AADSTS catalog, audit/vision contracts, convergeLayout
-│   ├── mcp-erp/                  MCP server 1: ERP/PSA tickets & contracts
-│   ├── mcp-msgraph/              MCP server 2: Entra licenses, CA posture, sign-ins, Intune (+ license-extension, CA and Intune writes)
-│   └── mcp-azure-iac/            MCP server 3: AVD estate, NSG drift vs. Terraform baseline, Azure Policy
-└── apps/
-    ├── orchestrator/             Bun + Hono, port 4000, 4-tier router, SSE + WS
-    └── web/                      Vite + React 19 + Tailwind v4, port 5173 (public/attachments: the synthetic ticket screenshot)
+│   ├── catalog/             Zod contracts, ptr:// data plane, PII vault, steering schema  → packages/catalog/README.md
+│   ├── mcp-msgraph/         Entra ID + Intune MCP server (live / lab)                     → packages/mcp-msgraph/README.md
+│   ├── mcp-azure-iac/       Azure ARM + Terraform-baseline MCP server                     → packages/mcp-azure-iac/README.md
+│   └── mcp-erp/             PSA tickets, contracts, billed seats MCP server               → packages/mcp-erp/README.md
+├── modal-sandbox/           Modal apps: Glimmer 30B on L40S, pwsh + Terraform pre-flight  → modal-sandbox/README.md
+├── data/                    N+k registry, synthesized .tsx cards, hover seed, skills      → data/README.md
+├── golden-tenant/           declarative CA / Intune / app baselines cited by drift cards  → golden-tenant/README.md
+├── demo-iac/                Terraform baseline (main.tf) + offline lab manifest
+├── input/tickets/           ERP file-drop inbox (one seeded example)
+├── scripts/                 PowerShell 7 lab seeding, config, smoke test, captures        → scripts/README.md
+├── docs/                    visual assets, boundary traces, documentation index           → docs/README.md
+├── DESIGN.md                Graphite & Signal design system
+└── HACKATHON_ATTRIBUTION.md models, endpoints, provenance
 ```
 
-Each MCP package exposes both a **stdio MCP server** (`src/server.ts`, wired in
-`mcp-servers.json` for any MCP client) and a **direct TypeScript service**
-(`src/service.ts`) that the orchestrator calls in-process in <50 ms.
+- [apps/orchestrator](apps/orchestrator/README.md)
+- [apps/web](apps/web/README.md)
+- [packages/catalog](packages/catalog/README.md)
+- [packages/mcp-msgraph](packages/mcp-msgraph/README.md)
+- [packages/mcp-azure-iac](packages/mcp-azure-iac/README.md)
+- [packages/mcp-erp](packages/mcp-erp/README.md)
+- [modal-sandbox](modal-sandbox/README.md)
+- [data](data/README.md)
+- [golden-tenant](golden-tenant/README.md)
+- [scripts](scripts/README.md)
+- [docs](docs/README.md)
 
 ---
 
-## Live cloud mode
-
-Set `LIVE_CLOUD_MODE=true` to have `mcp-msgraph` and `mcp-azure-iac` read the real tenant.
-One cached `Connect-AzAccount` sign-in on the machine is enough: each server runs `pwsh`
-once to mint a bearer token from the Az token cache (`Get-AzAccessToken` for
-`https://graph.microsoft.com` and `https://management.azure.com/`), keeps it in memory for
-up to 45 minutes, and from then on talks to the APIs with plain `fetch()`:
-
-- **Graph:** one `$batch` returns the entitlement group, its members, subscribed SKUs and
-  the Conditional Access policies; a second batch fetches each member's
-  `com.contextpane.licenseState` open extension. 0.16-0.65 s for a fresh gather (Graph + ARM).
-- **Anomalies:** the lab users, `subscribedSkus` pools, the `[ContextPane-Demo]` CA-001 / CA-004
-  policies and the Intune Settings Catalog policies and device configurations are read by name;
-  the 15/15 CountViolation pool and the devices stay labelled fixtures.
-- **Writes:** an approval PATCHes the license extensions (parallel, ~1 s), the CA policies or the
-  Intune objects, with the `Connect-MgGraph` token for CA and Intune (see
-  `scripts/Connect-ContextPaneGraph.ps1`); every write runs only from an explicit click.
-- **ARM:** one `GET .../networkSecurityGroups/nsg-contoso-avd-hostpool-01` (~80-300 ms),
-  diffed against `demo-iac/main.tf`.
-- **Sign-ins:** a UPN-filtered `auditLogs/signIns` query takes 40-60 s on a busy tenant and
-  the lab users never sign in, so it never blocks a request. It runs as a background probe
-  (`CTX_GRAPH_SIGNIN_TIMEOUT_MS`); until it finds events, the timeline is the seeded one
-  re-keyed to the live policy's real id and name (source `live-synthesized`).
-- **Caching:** the assembled context is cached per scenario and queries only the sources that
-  scenario's cards need, fresh for 30 s and then served stale for up to 10 minutes while one
-  background refresh replaces it. `?refresh=true` on any endpoint bypasses it. The orchestrator
-  warms every scenario at startup (~6 s, mostly the two token mints).
-- **Modal pre-flight:** bundles without a Terraform diff (every scenario but INC-4092) need the
-  sandbox from this repository (`modal deploy modal-sandbox/contextpane_sandbox.py`); an older
-  deployment answers 400 and the pre-flight falls back to the local `pwsh` checks with a finding.
-
-If a live read fails or exceeds its budget (`CTX_GRAPH_TIMEOUT_MS`, `CTX_AZ_TIMEOUT_MS`),
-the server transparently falls back to the manifest, so the demo never breaks when Wi-Fi
-drops.
-
-Install the Az and Microsoft.Graph submodules first. The script bootstraps
-[ModuleFast](https://github.com/JustinGrote/ModuleFast) by Justin Grote
-(`Invoke-RestMethod bit.ly/modulefast | Invoke-Expression`), which resolves the dependency
-graph in parallel and installs into the CurrentUser scope in seconds instead of the minutes
-`Install-Module` takes; if the bootstrap is unreachable it falls back to `Install-PSResource`.
-`Invoke-SeedContextPaneLab.ps1 -InstallMissingModules` runs the same installer on demand.
-
-```bash
-pwsh -NoProfile -File ./scripts/Install-ContextPaneModules.ps1
-```
-
-Sign Microsoft Graph PowerShell in once with the delegated write scopes (device code, persisted to
-`~/.mg` so the orchestrator can mint the token silently later):
-
-```bash
-pwsh -NoProfile -File ./scripts/Connect-ContextPaneGraph.ps1
-```
-
-Seed the lab tenant (review first, then run it yourself — it creates users, groups, Conditional
-Access policies scoped to demo groups only, Intune policies and profiles, a resource group and a
-deliberately drifted NSG; `-SkipAnomalies` and `-SkipIntune` leave those parts out, and a re-run
-re-asserts every drift):
-
-```bash
-pwsh -NoProfile -File ./scripts/Invoke-SeedContextPaneLab.ps1
-```
-
-Tear it down:
-
-```bash
-pwsh -NoProfile -File ./scripts/Remove-ContextPaneLab.ps1
-```
-
----
-
-## Configuration
-
-Copy `.env.example` to `.env.local`, or run the interactive configurator:
-
-```bash
-pwsh -NoProfile -File ./scripts/Set-ContextPaneRouterConfig.ps1
-```
-
-All model IDs are overridable via `CTX_MODEL_*` variables. `CTX_FORCE_LOCAL=true` pins
-the router to the deterministic engine even when keys are present (demo safety switch).
-`CTX_PRICE_USD_PER_1M_TOKENS` is the blended price behind the "API credit saved" figure in
-the router savings tab of the System & Audit drawer (`t`).
-
-### Publishing to GitHub (hackathon rules §3/§4)
-
-Every commit must be new work created after the kickoff (2026-10-26 17:00 CET) and solely
-authored. `Publish-ContextPaneRepo.ps1` audits the history, optionally rewrites it, and
-creates the public repository with the GitHub CLI:
-
-```bash
-pwsh -NoProfile -File ./scripts/Publish-ContextPaneRepo.ps1 -NormalizeTimestampsToNow -WhatIf
-```
-
-- `-NormalizeTimestampsToNow` runs `git filter-branch --env-filter/--msg-filter` so every
-  commit is authored and committed by `Timur Dudhasch <155721920+dudhasch@users.noreply.github.com>`,
-  carries no `Co-Authored-By` trailer, and is timestamped >= now (monotonic, 1 s apart).
-  It refuses to run before kickoff unless `-Force`.
-- `-PushNow` (or simply running after kickoff) executes
-  `gh repo create contextpane --public --source . --remote origin --push`.
-- Once `origin` exists, the Tier 3 drawer can open a real pull request: tick
-  **Open GitHub PR on approval** (or set `CTX_GH_PR_ON_APPROVE=true`) and
-  `[Approve]` (either mode) force-pushes the approved commit to the scenario's canonical branch
-  (`fix/INC-4092-contoso-remediation`) and returns the open PR for it, or runs
-  `gh pr create --base $CTX_GH_PR_BASE` when there is none. Without a remote the approval behaves as before.
-
----
-
-## Demo hotkeys
-
-Press `?` in the workbench for the overlay.
-
-| Key | Beat |
-|---|---|
-| `Ctrl+K` / `q` | The unified work queue (search, origin filter pills, newest first) |
-| `1`–`9` | Open the work item at that position in the queue |
-| `j` / `k` | Next / previous work item |
-| `g` | 🎲 Drop a random ERP ticket into `input/tickets/` (ingested by the watcher in ~1 s) |
-| `n` | Triage Unscripted Ticket composer (paste any ticket, or pick a sample) |
-| `u` | Generate Context UI for the hero phrase (same as highlighting it) |
-| `h` | Hover the hero entity → Tier 1A diagnostic popover |
-| `e` | Run step 1 of the resolution plan (its card expands on the right tab) |
-| `d` | The scenario's diff: live NSG vs `demo-iac/main.tf`, or live CA / Intune vs `golden-tenant/` |
-| `f` | Stage the fix → Tier 3 drawer with verification badge and staged branch |
-| `x` | Approve in the drawer's mode: Emergency Break-Glass or Pure GitOps (HITL) |
-| `7` | Extract telemetry from the ticket screenshot with Muse Vision (Tier 2 · Vision) |
-| `p` | Pin / release the canvas as a View Recipe (0 tokens on the next scenario switch) |
-| `v` | Voice Steer panel (record, or type a command) |
-| `t` | System & Audit · router savings |
-| `a` | System & Audit · audit log |
-| `0` | Reset demo drift (every scenario back to its drifted state) |
-| `r` | Re-correlate with a fresh MCP context |
-| `Esc` | Close everything |
-
-## Verified behaviour (offline, no keys)
-
-`pwsh ./scripts/Test-ContextPaneSmoke.ps1` on the reference machine:
-
-```
-Endpoint                                                   Status Latency(ms) Tier    Provider Schema
-GET /api/health                                            OK              63 -       -        PASS
-GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK       4 (srv 2) Tier 0  local    PASS
-POST /api/hover                                            OK       6 (srv 0) Tier 1A local    PASS
-POST /api/correlate                                        OK       2 (srv 0) Tier 1B local    PASS
-POST /api/voice-steer                                      OK       1 (srv 0) Voice   local    PASS
-POST /api/remediate                                        OK     3034 (srv 981) Tier 3B local  PASS   (AST pass · fmt pass · validate pass · Verified Safe)
-POST /api/approve                                          OK              51 -       -        PASS
-```
-
-The first `/api/remediate` on a machine takes ~30 s while `terraform init` downloads the
-azurerm provider into `.contextpane/tf-validate`; every later run validates in ~0.5 s.
-
-## Verified behaviour (live: Meta Model API + Modal + seeded lab tenant)
-
-Measured on 2026-10-26, before the scenario overhaul (INC-4092 only). Same smoke test with `META_API_KEY` and the Modal sandbox set and `LIVE_CLOUD_MODE=true`
-against `c4a8shili.onmicrosoft.com`, after the startup warm-up:
-
-```
-  pre-flight: Verified Safe  ast=True fmt=True validate=True sandbox=modal-cloud-sandbox 667ms
-Endpoint                                                   Status       Latency(ms) Tier    Provider Model                   Tokens Schema
-GET /api/health                                            OK                    57 -       -        -                            0 PASS
-GET /api/recipe/default/hydrate?tenantId=tenant-contoso-01 OK             6 (srv 3) Tier 0  local    deterministic                0 PASS
-POST /api/hover                                            OK             7 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
-POST /api/hover                                            OK             1 (srv 0) Tier 1A meta     muse-spark-1.3 (cached)      0 PASS
-POST /api/correlate                                        OK       4067 (srv 4065) Tier 1B meta     muse-spark-1.3           10409 PASS
-POST /api/voice-steer                                      OK            17 (srv 0) Voice   local    deterministic                0 PASS
-POST /api/remediate                                        OK     18282 (srv 18279) Tier 3B meta     muse-wonder-1.0          13801 PASS
-POST /api/approve                                          OK                  3098 -       -        -                            0 PASS
-GET /api/telemetry/stats                                   OK                     1 -       -        -                            0 PASS
-```
-
-- **Hover:** every pill of the ticket (all 5 users, the entitlement group, the AADSTS code,
-  the host pool and the NSG: 9 on Contoso) is pre-fetched after startup (~10 s, three at a
-  time) and after every correlate, then served from memory in <10 ms with 0 tokens. An uncached hover on the Meta API takes ~2.3-3 s even at
-  `reasoning_effort: minimal` (measured across `muse-spark-1.1`/`1.2`/`1.3`).
-- **Correlate:** ~4-5.5 s for the layout, but the SSE stream sends `mcp_ready` with the
-  deterministic layout built from the MCP data first (~0.7-1 s in the workbench). The model reasons over the context but leaves the verbatim MCP
-  data (license users, sign-in events, HCL diff) for the orchestrator to fill in before Zod
-  validation, which cut the layout output from ~9k to ~3k characters. Since the `ptr://` bypass the
-  prompt carries descriptors instead of those rows too: 7,382-7,443 tokens per INC-4092 correlate
-  instead of 10,409, with all 11 pointers bound and none rejected.
-- **Execution modes** (2026-10-26, `-Mode` on the smoke test): INC-4092 break-glass passed 15/15
-  (approve 3.6 s: 3 Graph writes at HTTP 204, ARM `DELETE Allow-Temp-RDP-Diagnostic-Drift` 202 and
-  the tag update 200, reconcile commit on the fix branch; reset re-created the rule in 3.5 s);
-  ANOM-CA-204 GitOps passed 13/13 (approve 337 ms including the Modal re-run, approval state
-  `staged`, no convergence, nothing written live).
-- **Remediate:** ~15-18 s, almost all of it `muse-wonder-1.0`. The Modal pre-flight takes
-  670-770 ms round trip from Europe to us-east (350-420 ms inside the sandbox: AST ~10 ms,
-  `fmt` ~40 ms, `validate` ~300 ms, run concurrently), down from 5.5-7 s, because the container
-  keeps `pwsh` and the azurerm provider running between requests. The orchestrator pings it
-  at startup and on every correlate, so the ~6.5 s cold boot happens before Generate Fix.
-- **Voice:** `scripts/New-ContextPaneVoiceFixture.ps1 -WebM -Send` synthesizes the command
-  with Windows' speech engine and transcribes it live: WAV in 1.9 s, MediaRecorder-style
-  WebM/Opus in 2.5 s, both "only show license drift and the sign in timeline" → `filter`.
-
-What the live Meta Model API taught the router:
-
-- It only accepts `tool_choice: "auto"`; a named function choice is HTTP 400. The client
-  sends `"auto"` with the single tool and an explicit "call this tool" instruction to Meta,
-  and downgrades any other provider the first time it returns that 400.
-- `muse-spark-1.3` and `muse-wonder-1.0` are reasoning models: reasoning tokens count against
-  `max_tokens` (a 6000-token cap once ended mid-preamble with `finish_reason: length`), so
-  every tier sends `reasoning_effort` (`CTX_META_REASONING_*`) and leaves headroom.
-- `muse-glimmer-30b` and `muse-code` are not served, and the voice model is
-  `muse-voice-transcribe-1.0`; the startup `GET /models` check swaps in the stand-ins.
-- There is no `/audio/transcriptions`. Batch speech-to-text is `POST /v1/asr/transcribe`
-  with a JSON `request` part (`{ "model", "audioEncoding": "WAV" }`) and an `audio` part,
-  and it accepts 16-bit mono PCM WAV at 16 or 24 kHz only. The workbench re-encodes the
-  MediaRecorder recording to 16 kHz WAV in the browser (`apps/web/src/lib/wav.ts`), and the
-  orchestrator transcodes anything else with `ffmpeg` when it is installed.
-
-Open-weight Muse Glimmer 30B, verified live on Modal (2026-10-26): `Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf`
-on llama.cpp b11889, one L40S, weights in the `contextpane-glimmer-weights` Volume. A cold boot from zero is healthy in 17.7 s
-(container up in 3.6 s, the 16.8 GB GGUF loaded from the Volume in ~14 s). All 18 hoverable
-pills of Contoso Finance and Fabrikam Legal were generated by `modal-open-weights` and persisted to
-`data/hover-cache.json`; a restart loads them and generates nothing (both tenants ready 1.9 s after
-start, GPU untouched), and a cached hover is served in 0-2 ms. The same 18 answers are tracked as
-`data/hover-cache.seed.json` (lab UPNs and policy ids only, no secrets): a fresh clone copies it to
-`data/hover-cache.json` on first start, and Glimmer answers are served from it even when no
-open-weight endpoint is configured. The seed predates the scenario overhaul: the INC-4092 answers
-still apply, and the pills of the newer scenarios are answered by Meta and cached on first use. Glimmer always reasons (its template
-cannot switch thinking off, and b11889 did not enforce `--reasoning-budget`), so one uncached hover
-takes ~25 s on a warm L40S (1,097 completion tokens at ~44 tok/s) and 15-42 s three at a time
-during the pre-warm. That is why interactive hovers keep an 8 s budget with Meta `muse-spark-1.3`
-as the fallback, and why a fallback answer never replaces a cached Glimmer one. The GPU only serves
-hovers (`CTX_OPEN_WEIGHT_TIERS=hover`), scales to zero after 2 idle minutes and is capped at one
-container. The open-weight endpoints on RunPod or locally are not exercised.
-
----
-
-## Scripts
-
-```bash
-bun run dev             # orchestrator + web
-bun run typecheck       # tsc --noEmit across every workspace
-bun run smoke           # PowerShell smoke test against :4000
-bun run mcp:erp         # run an MCP server over stdio
-pwsh ./scripts/New-RandomErpTicketDrop.ps1 -Archetype Mixed   # drop a random ERP ticket folder into input/tickets/
-```
-
----
-
-MIT © 2026 Timur Dudhasch
+<sub>MIT © 2026 Timur Dudhasch. Screenshots and loops were captured from the running stack at 1440×900 in dark mode on 2026-10-29 and annotated with VectorCraft; the loops were encoded from CDP frame captures. Muse, Glimmer, Spark and Wonder are Meta model names used as served by the Meta Model API and the published open weights.</sub>

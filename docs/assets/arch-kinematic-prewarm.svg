@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" font-family="Inter, 'Segoe UI', system-ui, sans-serif">
+  <title>ContextPane · hover-intent speculative pre-fetch timeline</title>
+  <defs>
+    <style>
+      .t{fill:#e8eaee;font-size:14px;font-weight:600}
+      .s{fill:#9aa3b1;font-size:12px}
+      .m{fill:#9aa3b1;font-size:11.5px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace}
+      .lbl{fill:#808a9a;font-size:11px;letter-spacing:1.2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace}
+      .tick{stroke:#2a303a;stroke-width:1}
+    </style>
+  </defs>
+  <rect width="1200" height="560" fill="#0e1013"/>
+  <text x="32" y="44" fill="#e8eaee" font-size="21" font-weight="650">Hover-intent speculative pre-fetch</text>
+  <text x="32" y="68" class="s">The gap between pointing at something and clicking it is spent fetching it. Illustrative scale; measured example in the System &amp; audit drawer: 4384 ms saved on one hit.</text>
+
+  <!-- axis -->
+  <g transform="translate(220 0)">
+    <line x1="0" y1="110" x2="920" y2="110" class="tick"/>
+    <g class="m" text-anchor="middle">
+      <text x="0" y="100">0</text><text x="184" y="100">400 ms</text><text x="368" y="100">800 ms</text><text x="552" y="100">1.2 s</text><text x="736" y="100">1.6 s</text><text x="920" y="100">2.0 s</text>
+    </g>
+    <line x1="184" y1="110" x2="184" y2="420" class="tick" stroke-dasharray="2 4"/>
+    <line x1="368" y1="110" x2="368" y2="420" class="tick" stroke-dasharray="2 4"/>
+    <line x1="552" y1="110" x2="552" y2="420" class="tick" stroke-dasharray="2 4"/>
+    <line x1="736" y1="110" x2="736" y2="420" class="tick" stroke-dasharray="2 4"/>
+
+    <!-- row 1: click then fetch -->
+    <rect x="0" y="146" width="276" height="34" rx="6" fill="#1b2027" stroke="#2a303a"/>
+    <text x="12" y="168" class="m">pointer over the row · reading</text>
+    <line x1="276" y1="132" x2="276" y2="196" stroke="#e8eaee" stroke-width="2"/>
+    <text x="282" y="140" class="m" fill="#e8eaee">click</text>
+    <rect x="278" y="146" width="460" height="34" rx="6" fill="#ff6e7e" fill-opacity=".14" stroke="#ff6e7e"/>
+    <text x="290" y="168" class="m" fill="#ff6e7e">request in flight · operator waits</text>
+    <rect x="740" y="146" width="40" height="34" rx="6" fill="#58d39a" fill-opacity=".2" stroke="#58d39a"/>
+    <text x="790" y="168" class="m" fill="#e8eaee">rendered</text>
+
+    <!-- row 2: hover intent -->
+    <rect x="0" y="262" width="28" height="34" rx="6" fill="#6cb4ff" fill-opacity=".25" stroke="#6cb4ff"/>
+    <text x="0" y="318" class="m" fill="#6cb4ff">60 ms dwell</text>
+    <rect x="30" y="262" width="460" height="34" rx="6" fill="#6cb4ff" fill-opacity=".1" stroke="#6cb4ff"/>
+    <text x="42" y="284" class="m" fill="#6cb4ff">speculative request → buffer slot (epoch n)</text>
+    <line x1="276" y1="248" x2="276" y2="312" stroke="#e8eaee" stroke-width="2"/>
+    <text x="282" y="256" class="m" fill="#e8eaee">click: await in-flight slot</text>
+    <rect x="492" y="262" width="40" height="34" rx="6" fill="#58d39a" fill-opacity=".2" stroke="#58d39a"/>
+    <text x="542" y="284" class="m" fill="#e8eaee">rendered</text>
+    <path d="M532 340 L740 340" stroke="#58d39a" stroke-width="2"/>
+    <path d="M532 332 L532 348 M740 332 L740 348" stroke="#58d39a" stroke-width="2"/>
+    <text x="636" y="364" text-anchor="middle" class="m" fill="#58d39a">saved = time already in flight at the click</text>
+
+    <!-- row 3: resolved before click -->
+    <rect x="0" y="392" width="28" height="30" rx="6" fill="#6cb4ff" fill-opacity=".25" stroke="#6cb4ff"/>
+    <rect x="30" y="392" width="200" height="30" rx="6" fill="#6cb4ff" fill-opacity=".1" stroke="#6cb4ff"/>
+    <text x="42" y="412" class="m" fill="#6cb4ff">resolved early</text>
+    <line x1="276" y1="384" x2="276" y2="430" stroke="#e8eaee" stroke-width="2"/>
+    <rect x="278" y="392" width="20" height="30" rx="5" fill="#58d39a" fill-opacity=".3" stroke="#58d39a"/>
+    <text x="306" y="412" class="m" fill="#e8eaee">promote slot in &lt;1 ms</text>
+  </g>
+
+  <text x="32" y="168" class="t">Click, then fetch</text>
+  <text x="32" y="186" class="s">the usual path</text>
+  <text x="32" y="284" class="t">Hover intent</text>
+  <text x="32" y="302" class="s">slow answer</text>
+  <text x="32" y="410" class="t">Hover intent</text>
+  <text x="32" y="428" class="s">fast answer</text>
+
+  <rect x="32" y="462" width="1136" height="74" rx="10" fill="#15181d" stroke="#2a303a"/>
+  <text x="48" y="486" class="s">Triggers: entity pill (EntityPill.tsx), work-queue row (WorkQueue.tsx), plan/fleet pill (PlanSection.tsx); selected UPN/GUID text on selectionchange.</text>
+  <text x="48" y="506" class="s">Buffer: 4 slots (queue-brief · entity-hover · remediation), each tagged with speculativeEpoch; a context change bumps the epoch and drops the slots.</text>
+  <text x="48" y="526" class="m">apps/web/src/store.ts · prewarmQueueScenario · prewarmEntityHover · prewarmRemediation · prewarmSelectionExplore</text>
+</svg>

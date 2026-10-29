@@ -35,6 +35,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 import modal
 
@@ -52,6 +53,12 @@ SCALEDOWN_SECONDS = 120
 MAX_CONTAINERS = 1
 PORT = 8080
 WEIGHTS_DIR = "/weights"
+# The default Q4_K_M GGUF is 16.8 GB; anything under this is a truncated or partial pull.
+MIN_GGUF_BYTES = int(os.environ.get("CTX_GLIMMER_MIN_GGUF_BYTES", "16000000000"))
+HEALTH_URL = f"http://127.0.0.1:{PORT}/health"
+# Inside the 15 min web_server startup_timeout; loading 16.8 GB onto the L40S takes well under it.
+HEALTH_TIMEOUT_SECONDS = 14 * 60
+HEALTH_POLL_SECONDS = 2.0
 
 # Speculative decoding + KV-cache quantisation (llama-server flags in build_llama_server_cmd).
 # CTX_GLIMMER_DRAFT_MODEL is a draft GGUF filename under /weights or an absolute path; unset disables it.
@@ -207,6 +214,7 @@ image = (
             "CTX_GLIMMER_REASONING_STRENGTH": REASONING_STRENGTH,
             "CTX_GLIMMER_REASONING_BUDGET": str(REASONING_BUDGET),
             "CTX_GLIMMER_DRAFT_MODEL": DRAFT_MODEL,
+            "CTX_GLIMMER_MIN_GGUF_BYTES": str(MIN_GGUF_BYTES),
         }
     )
 )
@@ -224,10 +232,39 @@ def ensure_weights() -> str:
     return path
 
 
+def weights_complete(path: str) -> bool:
+    return os.path.exists(path) and os.path.getsize(path) >= MIN_GGUF_BYTES
+
+
+def require_complete_weights(path: str) -> None:
+    size = os.path.getsize(path) if os.path.exists(path) else 0
+    if size < MIN_GGUF_BYTES:
+        raise RuntimeError(f"{path} is {size:,} bytes, below the {MIN_GGUF_BYTES:,} expected for {GGUF_FILE}; re-run ::download")
+
+
+def wait_for_health(proc: subprocess.Popen, url: str = HEALTH_URL, timeout_s: float = HEALTH_TIMEOUT_SECONDS) -> float:
+    """Polls llama-server's /health until it reports {"status": "ok"}; it answers 503 while the GGUF loads."""
+    import requests  # installed with huggingface_hub
+
+    started = time.monotonic()
+    while time.monotonic() - started < timeout_s:
+        if proc.poll() is not None:
+            raise RuntimeError(f"llama-server exited with code {proc.returncode} before /health reported ok")
+        try:
+            if requests.get(url, timeout=5).json().get("status") == "ok":
+                return time.monotonic() - started
+        except (requests.RequestException, ValueError):
+            pass  # port not open yet, or a non-JSON reply during start-up
+        time.sleep(HEALTH_POLL_SECONDS)
+    proc.kill()
+    raise RuntimeError(f"llama-server /health did not report ok within {timeout_s:.0f} s")
+
+
 @app.function(volumes={WEIGHTS_DIR: weights}, timeout=60 * 60)
 def download() -> str:
     """`modal run modal-sandbox/glimmer_open_weights.py::download` — pulls the 16.8 GB GGUF once."""
     path = ensure_weights()
+    require_complete_weights(path)
     print(f"{path}: {os.path.getsize(path) / 1e9:.1f} GB")
     return path
 
@@ -257,8 +294,12 @@ class Glimmer:
         if build < MIN_LLAMA_BUILD:
             raise RuntimeError(f"llama.cpp build b{build} predates Muse Glimmer support (needs b{MIN_LLAMA_BUILD}+)")
         model_path = os.path.join(WEIGHTS_DIR, GGUF_FILE)
-        if not os.path.exists(model_path):
+        if not weights_complete(model_path):
             model_path = ensure_weights()
+        require_complete_weights(model_path)
         cmd = build_llama_server_cmd(model_path, draft_model=DRAFT_MODEL, api_key=os.environ.get("CTX_OPEN_WEIGHT_API_KEY", ""))
         print(f"llama.cpp b{build}: loading {model_path} inference={json.dumps(INFERENCE_CONFIG)}")
-        subprocess.Popen(cmd)
+        proc = subprocess.Popen(cmd)
+        # Modal routes traffic once the port opens, but llama-server opens it before the model is loaded.
+        # Returning only after /health is ok keeps requests off the container until it can answer them.
+        print(f"llama-server ready: /health ok after {wait_for_health(proc):.1f} s")
