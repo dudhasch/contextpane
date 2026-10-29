@@ -1,0 +1,58 @@
+[
+  {
+    "method": "POST",
+    "url": "/users/lynne.robins.contoso@c4a8shili.onmicrosoft.com/assignLicense",
+    "body": {
+      "addLicenses": [
+        {
+          "skuId": "<SPE_E5 skuId>"
+        }
+      ],
+      "removeLicenses": [
+        "<SPE_E3 skuId>"
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "url": "/users/diego.siciliani.contoso@c4a8shili.onmicrosoft.com/assignLicense",
+    "body": {
+      "addLicenses": [
+        {
+          "skuId": "<SPE_E5 skuId>"
+        }
+      ],
+      "removeLicenses": [
+        "<SPE_E3 skuId>"
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "url": "/users/patti.fernandez.contoso@c4a8shili.onmicrosoft.com/assignLicense",
+    "body": {
+      "addLicenses": [
+        {
+          "skuId": "<SPE_E5 skuId>"
+        }
+      ],
+      "removeLicenses": [
+        "<SPE_E3 skuId>"
+      ]
+    }
+  },
+  {
+    "method": "PATCH",
+    "url": "/identity/conditionalAccess/policies/d09ae604-4c06-4769-ad01-20ec8efa18ad",
+    "body": {
+      "state": "enabledForReportingButNotEnforced",
+      "conditions": {
+        "users": {
+          "excludeGroups": [
+            "<SG-Contoso-Finance-AVD id>"
+          ]
+        }
+      }
+    }
+  }
+]

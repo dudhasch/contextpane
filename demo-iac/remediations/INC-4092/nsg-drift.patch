@@ -1,0 +1,41 @@
+===================================================================
+--- azure-live/nsg-contoso-avd-hostpool-01.tf	live state (Azure)
++++ demo-iac/main.tf	expected state (Terraform)
+@@ -4,12 +4,11 @@
+   resource_group_name = "rg-contoso-avd-prod"
+ 
+   tags = {
+-    ChangeTicket = "manual-hotfix-2026-10-24"
+-    CostCenter   = "FIN-4092"
+-    Environment  = "Prod-Hotfix-Manual"
+-    ManagedBy    = "Terraform"
+-    Owner        = "ContextPane"
+-    Workload     = "AVD-HostPool"
++    CostCenter  = "FIN-4092"
++    Environment = "Production"
++    ManagedBy   = "Terraform"
++    Owner       = "ContextPane"
++    Workload    = "AVD-HostPool"
+   }
+ 
+   security_rule {
+@@ -25,19 +24,6 @@
+   }
+ 
+   security_rule {
+-    name                       = "Allow-Temp-RDP-Diagnostic-Drift"
+-    priority                   = 150
+-    direction                  = "Inbound"
+-    access                     = "Allow"
+-    protocol                   = "Tcp"
+-    source_port_range          = "*"
+-    destination_port_range     = "3389"
+-    source_address_prefix      = "*"
+-    destination_address_prefix = "*"
+-    description                = "TEMP: diagnostic RDP opened manually during E5 cutover - REMOVE"
+-  }
+-
+-  security_rule {
+     name                       = "Allow-Internal-RDP-Shortpath"
+     priority                   = 200
+     direction                  = "Inbound"
