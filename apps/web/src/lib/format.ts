@@ -150,6 +150,8 @@ export const SOURCE_LABEL: Record<string, string> = {
   llm: "Model call",
   "mcp-probe": "MCP probe",
   "symbolic-verifier": "Symbolic verifier",
+  "syntax-heuristic": "Syntax pre-check (regex)",
+  "sandbox-preflight": "Sandbox pre-flight",
   "fallback-on-error": "Fallback (model error)",
   "not-attempted": "Not attempted",
   "deterministic-template": "Deterministic template",

@@ -13,14 +13,17 @@ export function LiveConsole() {
   const streaming = useWorkbench((s) => s.liveConsoleStreaming);
   const reverted = useWorkbench((s) => s.liveConsoleReverted);
   const copy = useCopy();
-  const stepTone = reverted ? "text-warning" : streaming ? "text-signal" : "text-healthy";
+  // U-5: the step header is the orchestrator's verdict (inverse executed / simulated / staged); a run
+  // that wrote nothing live is not painted as a success.
+  const wroteNothing = !reverted && !streaming && /\bstaged\b|nothing (?:was )?(?:written|executed)/i.test(step ?? "");
+  const stepTone = reverted ? "text-warning" : streaming ? "text-signal" : wroteNothing ? "text-muted" : "text-healthy";
 
   return (
     <div className="flex flex-col pb-3" data-testid="live-execution-console">
       <div className="flex h-9 shrink-0 items-center gap-2 px-3">
         <span
           aria-hidden
-          className={`size-2 shrink-0 rounded-full ${streaming ? "animate-pulse-dot bg-signal" : reverted ? "bg-warning" : "bg-healthy"}`}
+          className={`size-2 shrink-0 rounded-full ${streaming ? "animate-pulse-dot bg-signal" : reverted ? "bg-warning" : wroteNothing ? "bg-faint" : "bg-healthy"}`}
         />
         <span className="font-mono text-11 font-medium text-text">&gt;_ Live execution output</span>
         <Button size="xs" variant="ghost" icon={<ClipboardCopy />} className="ml-auto" onClick={() => void copy(lines.join("\n"), "Live execution console output")}>

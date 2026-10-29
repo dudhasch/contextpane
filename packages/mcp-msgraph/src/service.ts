@@ -243,6 +243,24 @@ export interface IntuneDrift {
   baselineDiff: string;
 }
 
+/** A Conditional Access policy as captured before a change, for the snapshot-driven restore (U-5). */
+export interface CaPolicyRestore {
+  id: string;
+  displayName: string;
+  state: string;
+  includeGroupIds: string[];
+  excludeGroupIds: string[];
+  includeGroups: string[];
+  excludeGroups: string[];
+  includeUsers: string[];
+}
+
+/** Intune state as captured before a change, for the snapshot-driven restore (U-5). */
+export interface IntuneRestore {
+  policies: Array<{ name: string; kind: string; assignedTo: string[] }>;
+  settings: Array<{ policyName: string; settingId?: string; live: string }>;
+}
+
 /** Outcome of a Conditional Access or Intune write: one row per policy. */
 export interface LabWriteResult {
   source: "live-graph" | "simulated";
@@ -1255,6 +1273,118 @@ export const msgraphService = {
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results: [{ id: target.id, ok: true, status: 204 }] };
     } catch (error) {
       return simulatedWrite([policyId], error instanceof Error ? error.message : String(error), started);
+    }
+  },
+
+  /**
+   * Snapshot-driven restore (U-5): writes each user's captured lab licence fields back to the open
+   * extension, through the same PATCH the forward write uses. Simulated outside live mode.
+   */
+  async restoreLicenseExtensions(tenantId: string, users: Array<{ upn: string; fields: Record<string, string> }>): Promise<LicenseWriteResult> {
+    const byUpn = new Map(users.map((u) => [u.upn, u.fields]));
+    return writeExtensions(tenantId, users.map((u) => u.upn), (upn) => byUpn.get(upn) ?? {});
+  },
+
+  /**
+   * Snapshot-driven restore (U-5): PATCHes each captured Conditional Access policy back to its
+   * captured state with the full conditions.users object (H-19). Group ids missing from the
+   * snapshot are resolved by display name in the live tenant. Outside live mode the in-memory
+   * lab override follows the snapshot, so the simulated reads revert too.
+   */
+  async restoreConditionalAccessPolicies(tenantId: string, policies: CaPolicyRestore[]): Promise<LabWriteResult> {
+    const started = performance.now();
+    const ids = policies.map((p) => p.id);
+    const tenant = getManifestTenant(tenantId);
+    const avd = primaryGroup(tenant);
+    const blocking = policies.find((p) => p.displayName.includes("Block AVD"));
+    if (blocking) {
+      // The lab override mirrors the captured policy: enabled without the AVD exclusion is the drifted state.
+      const excluded = blocking.excludeGroups.includes(avd.displayName) || blocking.excludeGroupIds.includes(avd.objectId);
+      inMemoryTenantCaState.set(tenantId, blocking.state === "enabled" && !excluded ? "drifted" : "remediated");
+    }
+    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulatedWrite(ids, `${tenantId} is manifest-only`, started);
+    try {
+      const names = [...new Set(policies.flatMap((p) => [...p.includeGroups, ...p.excludeGroups]))];
+      const posture = await fetchCaPostureLive(names, LIVE_TIMEOUT_MS);
+      const isGuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+      const resolve = (groupIds: string[], groupNames: string[]) =>
+        groupIds.length && groupIds.every(isGuid)
+          ? groupIds
+          : groupNames.map((n) => {
+              const id = posture.groupIds.get(n);
+              if (!id) throw new Error(`group ${n} not found in the live tenant`);
+              return id;
+            });
+      const results: LabWriteResult["results"] = [];
+      for (const p of policies) {
+        const live = posture.policies.find((x) => (isGuid(p.id) ? x.id === p.id : x.displayName === p.displayName));
+        if (!live) {
+          results.push({ id: p.id, ok: false, status: 404, error: `'${p.displayName}' not found in the live tenant` });
+          continue;
+        }
+        try {
+          await patchCaPolicyLive(
+            live.id,
+            {
+              state: p.state,
+              conditions: {
+                users: { includeGroups: resolve(p.includeGroupIds, p.includeGroups), includeUsers: p.includeUsers.length ? p.includeUsers : live.includeUsers, excludeGroups: resolve(p.excludeGroupIds, p.excludeGroups) },
+                applications: { includeApplications: live.includeApplications },
+                clientAppTypes: live.clientAppTypes,
+              },
+            },
+            LIVE_TIMEOUT_MS,
+          );
+          results.push({ id: live.id, ok: true, status: 204 });
+        } catch (error) {
+          results.push({ id: live.id, ok: false, status: error instanceof GraphHttpError ? error.status : 0, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
+    } catch (error) {
+      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
+    }
+  },
+
+  /**
+   * Snapshot-driven restore (U-5): re-applies the captured assignment of the scenario's Device
+   * Configuration profile and the captured value of its ASR rule, through the same live helpers
+   * the forward write uses. Simulated outside live mode.
+   */
+  async restoreIntuneAssignments(key: IntuneScenarioKey, pre: IntuneRestore): Promise<LabWriteResult> {
+    const started = performance.now();
+    const probe = INTUNE_SCENARIOS[key].live;
+    const ids = [...(probe.asrPolicy ? [probe.asrPolicy] : []), probe.conflictingProfile];
+    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    try {
+      const live = await fetchIntuneStateLive(probe, LIVE_TIMEOUT_MS);
+      const results: LabWriteResult["results"] = [];
+      const attempt = async (id: string, fn: () => Promise<void>) => {
+        try {
+          await fn();
+          results.push({ id, ok: true, status: 204 });
+        } catch (error) {
+          results.push({ id, ok: false, status: error instanceof GraphHttpError ? error.status : 0, error: error instanceof Error ? error.message : String(error) });
+        }
+      };
+      const asrSetting = probe.asrRuleSetting ? pre.settings.find((s) => s.settingId === probe.asrRuleSetting) : undefined;
+      if (probe.asrPolicy && probe.asrRuleSetting && asrSetting && live.asrPolicyId) {
+        const value = asrSetting.live.trim().toLowerCase() === "block" ? "block" : "audit";
+        const policyId = live.asrPolicyId;
+        const rule = probe.asrRuleSetting;
+        await attempt(probe.asrPolicy, () => setAsrRuleLive(policyId, rule, value, LIVE_TIMEOUT_MS));
+      }
+      const profile = pre.policies.find((p) => p.name === probe.conflictingProfile || probe.conflictingProfile.endsWith(p.name));
+      if (live.conflictingProfileId && profile) {
+        const profileId = live.conflictingProfileId;
+        const wantsGroup = profile.assignedTo.includes(probe.assignmentGroup);
+        if (wantsGroup && !live.assignmentGroupId) results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: `group ${probe.assignmentGroup} not found` });
+        else await attempt(probe.conflictingProfile, () => assignDeviceConfigurationLive(profileId, wantsGroup ? live.assignmentGroupId : null, LIVE_TIMEOUT_MS));
+      }
+      return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
+    } catch (error) {
+      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
     }
   },
 

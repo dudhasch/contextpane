@@ -13,7 +13,7 @@ const CANARY_STAGE_LABEL: Record<string, string> = {
   AUTO_ROLLED_BACK: "Auto-rolled back",
 };
 import { RAIL_FRAME, RAIL_INSET_X, ScriptCode } from "./ScriptCode";
-import { VERDICT_SHORT, VERDICT_TONE, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, type Drawer } from "./shared";
+import { VERDICT_SHORT, VERDICT_TONE, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, useRevertLabel, type Drawer } from "./shared";
 
 /**
  * Always-visible prover strip under the rail tabs, framed as its own module: verdict, proof, blast
@@ -37,7 +37,11 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
   const notProvable = formal?.formal.passed === null;
   const invariants = formal?.formal.invariants ?? [];
   const proven = invariants.filter((i) => i.passed).length;
-  const proofOk = formal?.formal.passed === true && formal.idempotency.passed;
+  // Idempotency is null when no symbolic model checked a fixture transform (ad-hoc tickets, Free-Roam).
+  const proofOk = formal?.formal.passed === true && formal.idempotency?.passed === true;
+  // U-2: how many write-then-test turns the sandbox findings cost before this verdict.
+  const repair = drawer.verificationStatus.repair;
+  const iterations = repair?.iterations ?? 0;
   const targets = formal?.blastRadius.rows.find((r) => r.cohort === "target")?.entities.length;
 
   return (
@@ -55,8 +59,24 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
         data-testid="rollback-tab"
         className="flex min-h-[30px] w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-2.5 py-1 text-left transition-colors duration-120 hover:bg-raised focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal"
       >
-        <Pill variant="status" tone={VERDICT_TONE[verdict]} mono={false} className="shrink-0" title={`Pre-flight: ${verdict}`}>
+        <Pill
+          variant="status"
+          tone={VERDICT_TONE[verdict]}
+          mono={false}
+          className="shrink-0"
+          title={
+            iterations
+              ? `Pre-flight: ${verdict} · ${iterations} repair iteration${iterations === 1 ? "" : "s"} (${drawer.verificationStatus.sandboxProvider})${repair?.exhausted ? " · budget exhausted" : ""}`
+              : `Pre-flight: ${verdict}`
+          }
+        >
           {VERDICT_SHORT[verdict]}
+          {iterations > 0 && (
+            <span className="font-mono opacity-80" data-testid="verification-iterations">
+              {" "}
+              · {iterations} iter{repair?.exhausted ? " · exhausted" : ""}
+            </span>
+          )}
         </Pill>
         <Pill
           variant="status"
@@ -112,11 +132,19 @@ function CanaryTrace() {
   const canary = useWorkbench((s) => s.canary);
   const reverted = useWorkbench((s) => s.liveConsoleReverted || s.drawer?.approval.state === "rolled-back");
   if (!canary) return null;
+  // Wording keyed on what executed: only a landed inverse restored anything in the tenant (HARD_CASES 6).
+  const rolledBack = canary.rollbackExecuted
+    ? "ROLLED_BACK · tenant restored from the pre-change snapshot"
+    : canary.execution === "live-graph"
+      ? "ROLLED_BACK · inverse staged, the live change is still in the tenant"
+      : "ROLLED_BACK · drill, nothing was written live";
   return (
     <div className="flex min-w-0 items-center gap-1.5 overflow-hidden px-2.5 pb-1.5 font-mono text-11 whitespace-nowrap" data-testid="canary-trace">
       <span className="shrink-0 font-sans text-faint">Health check</span>
       {reverted ? (
-        <span className="truncate font-semibold text-warning">ROLLED_BACK · previous state restored</span>
+        <span className="truncate font-semibold text-warning" title={rolledBack} data-testid="canary-rolled-back">
+          {rolledBack}
+        </span>
       ) : (
         canary.stages.map((s, i) => (
           <span key={s.stage} className="inline-flex min-w-0 items-center gap-1.5">
@@ -205,6 +233,7 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
   const formal = useWorkbench((s) => s.formal);
   const compileSkill = useWorkbench((s) => s.compileSkill);
   const rollbackNow = useWorkbench((s) => s.rollbackNow);
+  const revert = useRevertLabel();
   const copy = useCopy();
 
   if (!formal) {
@@ -235,7 +264,7 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
               <span className="text-text">{humanizeInvariant(i.id, drawer.ticketId, i.statement)}</span>
             </li>
           ))}
-          {!notProvable && (
+          {!notProvable && formal.idempotency && (
             <li className="flex items-start gap-2">
               <span className={`shrink-0 font-semibold ${formal.idempotency.passed ? "text-healthy" : "text-critical"}`}>{formal.idempotency.passed ? "✓" : "✗"}</span>
               <span className="text-text">Safe to re-run: running it twice produces the same state</span>
@@ -275,19 +304,66 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
         )}
       </section>
 
+      <RepairLoopTimeline drawer={drawer} />
+
       <section className="border-t border-hairline-2 pt-2 pb-3">
         <div className="flex h-6 items-center gap-1 px-3">
           <span className="section-label text-faint">1-click undo</span>
           <Button size="xs" variant="ghost" icon={<ClipboardCopy />} className="ml-auto" onClick={() => void copy(formal.rollback.powershellScript, "1-Click Undo script")}>
             Copy
           </Button>
-          <Button size="xs" variant="ghost" icon={<Undo2 />} onClick={() => void rollbackNow()} title="Restore the previous state now">
-            Undo change
+          <Button size="xs" variant="ghost" icon={<Undo2 />} onClick={() => void rollbackNow()} title={revert.title}>
+            {revert.label}
           </Button>
         </div>
         <p className="px-3 pb-1.5 text-12 text-muted">If anything goes wrong after applying, this script restores the exact previous state.</p>
+        {/* R-7: the previous state is the drifted one; name the exposure the undo brings back. */}
+        {formal.rollback.restores.some((r) => /rules\/tags->pre-state|Allow-Temp-RDP|3389/.test(r)) && (
+          <p className="px-3 pb-1.5 text-12 text-warning" data-testid="undo-exposure-note">
+            Undo re-opens TCP/3389 from any source on the host-pool NSG until the drift is fixed again.
+          </p>
+        )}
         <ScriptCode code={formal.rollback.powershellScript} name="rollback.ps1" maxHeight="max-h-64" inset="mx-3" />
       </section>
     </div>
+  );
+}
+
+/** U-2: the write-then-test loop as a per-iteration timeline (sandbox findings → coder → sandbox again). */
+function RepairLoopTimeline({ drawer }: { drawer: Drawer }) {
+  const repair = drawer.verificationStatus.repair;
+  if (!repair || repair.iterations === 0) return null;
+  return (
+    <section className="border-t border-hairline-2 px-3 pt-2 pb-2.5" data-testid="repair-loop-timeline">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="section-label text-faint">
+          Write-then-test · {repair.iterations}/{repair.maxIterations} repair iteration{repair.iterations === 1 ? "" : "s"}
+        </span>
+        <span className={`ml-auto font-mono text-11 ${repair.exhausted ? "text-warning" : "text-healthy"}`}>
+          {repair.exhausted ? "budget exhausted · findings left, verdict not forced" : `sandbox verdict: ${drawer.verificationStatus.verdict}`}
+        </span>
+      </div>
+      <ol className="mt-1 text-12">
+        {repair.rounds.map((r) => (
+          <li key={r.iteration} className="border-t border-hairline-2 py-1 first:border-t-0">
+            <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 font-mono text-11">
+              <span className="font-medium text-text">
+                #{r.iteration} · {r.verdictBefore} → {r.verdictAfter}
+              </span>
+              <span className="text-faint">
+                {r.source === "llm" ? `${r.modelId} · ${r.tokensUsed} tok · ${r.latencyMs} ms` : "coder offline"} · sandbox {r.preflightLatencyMs} ms{r.scriptChanged ? "" : " · script unchanged"}
+              </span>
+            </div>
+            <ul className="mt-0.5 text-11 text-muted">
+              {r.findingsBefore.slice(0, 3).map((finding, i) => (
+                <li key={i} className="break-words">
+                  ↳ {finding}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }

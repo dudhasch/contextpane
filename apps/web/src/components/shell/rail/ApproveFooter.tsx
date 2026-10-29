@@ -4,7 +4,7 @@ import { humanizeStatus } from "@/lib/format";
 import { useWorkbench } from "@/store";
 import { Button } from "../../ui/Button";
 import { OtherTenantsPopover } from "./OtherTenantsPopover";
-import { isReadOnlyBundle, usePreflight } from "./shared";
+import { isReadOnlyBundle, usePreflight, useRevertLabel } from "./shared";
 
 /* One 32px action row under a 20px control row: the footer stays at 70px. */
 const ACTION = "!h-8 !text-12";
@@ -29,6 +29,7 @@ export function ApproveFooter() {
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const preflight = usePreflight();
+  const revert = useRevertLabel();
   // WP6: while a refine or a fix generation streams, the drawer on screen is about to be replaced.
   const regenerating = useWorkbench((s) => s.refiningGoal) || status === "loading";
 
@@ -58,8 +59,8 @@ export function ApproveFooter() {
   } else if (liveConsoleOpen) {
     actions = (
       <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="live-console-actions">
-        <Button variant="danger" size="md" icon={<Undo2 />} disabled={streaming} onClick={() => void revertFromConsole()} data-testid="console-revert-button" className={ACTION}>
-          Stage revert
+        <Button variant="danger" size="md" icon={<Undo2 />} disabled={streaming} onClick={() => void revertFromConsole()} data-testid="console-revert-button" className={ACTION} title={revert.title}>
+          {revert.label}
         </Button>
         <Button variant="healthy" size="md" icon={<Check />} disabled={streaming} onClick={() => confirmAndCloseConsole()} data-testid="console-confirm-ok-button" className={`flex-1 ${ACTION}`}>
           Confirm and close
@@ -113,8 +114,8 @@ export function ApproveFooter() {
           <Check className={`size-3.5 shrink-0 ${resolved ? "text-healthy" : "text-faint"}`} aria-hidden />
           {summary}
         </span>
-        <Button variant="ghost" size="sm" icon={<Undo2 />} onClick={() => void revertFromConsole()} title="Stage the inverse script (f⁻¹) for this change">
-          Stage revert
+        <Button variant="ghost" size="sm" icon={<Undo2 />} onClick={() => void revertFromConsole()} title={revert.title}>
+          {revert.label}
         </Button>
       </div>
     );

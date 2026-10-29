@@ -6,7 +6,8 @@
     "P2-7 of docs/fable-research/FABLE_5_1_DEEP_AUDIT.md. Supersedes docs/ui-ux-loop/iter-3/geometry-audit.json, which was measured at 1600x900 with pre-warmed contexts.",
     "P1-2 (ticket body above the clarifier, collapsed clarifier, title truncation and tab-strip overflow) had not landed when this was measured, so the ERP case still needs ~500 px of scroll and the canvas still overflows by 118 px. Re-run after P1 merges; P1-2's done-criterion is ticketCard.fullyAboveFold === true and canvas.horizontalOverflowPx === 0 for ERP-2026323.",
     "statusBar.visibleAtScrollTop0 means the unified triage/cloud strip lies fully between the 48 px top bar and the 900 px fold.",
-    "freeRoamLensCards is 0 on the P2 build because the posture lens is no longer spawned at boot (P2-1); the landing shows an 'Open Tenant Posture Overview' button instead."
+    "freeRoamLensCards is 0 on the P2 build because the posture lens is no longer spawned at boot (P2-1); the landing shows an 'Open Tenant Posture Overview' button instead.",
+    "p1p3Build_5180: re-measured after P1 (P1-2 ticket body above the clarifier) and the U-1/U-2/U-5 branch claude/hungry-montalcini-6e4ba5 on that worktree's own servers (web :5180 against orchestrator :4010, LIVE_CLOUD_MODE=false, simulated-lab), not the user's :5173/:4000 pre-merge build. ERP-2026323 meets the P1-2 done-criterion: ticketCard.fullyAboveFold true and canvas.horizontalOverflowPx 0. The two inner strips that still scroll horizontally (the canvas tab strip, overflow-x-auto by design, and the 15 px breadcrumb) are intentional scroll containers, not pane overflow."
   ],
   "before": {
     "source": "FABLE_5_1_DEEP_AUDIT.md section 3.2, measured on ERP-2026323 before any fix pass",
@@ -71,5 +72,27 @@
       "canvas": { "clientWidth": 848, "scrollWidth": 966, "horizontalOverflowPx": 118 }
     },
     "deltaVsRecordingServer": "+1 to +2 px from the 10.5 -> 11 px type floor; the strip stays one 32 px line (an earlier P2 draft wrapped it to 58 px and was fixed in 0e52992)."
+  },
+  "p1p3Build_5180": {
+    "build": "claude/hungry-montalcini-6e4ba5 @ e0fece2 (main a1b24ef + P1 + U-1/U-2/U-5), web :5180 against the same worktree's orchestrator :4010 (simulated-lab, no model keys)",
+    "INC-4092": {
+      "leftPane": { "clientHeight": 852, "scrollHeight": 919, "needsScrollPx": 67 },
+      "statusBar": { "top": 176, "height": 20, "visibleAtScrollTop0": true, "text": "Cloud Status: not probed", "note": "triage not run for the seeded ticket; the cloud-status banner is the only strip" },
+      "clarifier": null,
+      "ticketCard": { "top": 210, "bottom": 444, "fullyAboveFold": true },
+      "canvas": { "clientWidth": 858, "scrollWidth": 858, "horizontalOverflowPx": 0 }
+    },
+    "ERP-2026323": {
+      "leftPane": { "clientHeight": 852, "scrollHeight": 1013, "needsScrollPx": 161 },
+      "statusBar": { "top": 170, "height": 32, "visibleAtScrollTop0": true, "text": "⚠ 1/5 Triage Checks (5 ms)" },
+      "ticketCard": { "top": 210, "bottom": 630, "fullyAboveFold": true },
+      "clarifier": { "top": 638, "bottom": 680, "height": 42, "collapsedByDefault": true },
+      "canvas": { "clientWidth": 858, "scrollWidth": 858, "horizontalOverflowPx": 0 },
+      "innerScrollStrips": [
+        { "what": "canvas tab strip (overflow-x-auto)", "clientWidth": 277, "scrollWidth": 739 },
+        { "what": "canvas breadcrumb", "clientWidth": 666, "scrollWidth": 681 }
+      ]
+    },
+    "deltaVsP2Build": "ERP needsScrollPx 499 -> 161, ticketCard top 902 -> 210 (body first, clarifier collapsed to one 42 px row), canvas overflow 118 -> 0 at the default 40/60 split."
   }
 }

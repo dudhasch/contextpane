@@ -1,9 +1,10 @@
-import { ExternalLink, GitPullRequest, Lightbulb, RotateCcw, Zap } from "lucide-react";
-import type { ReactNode } from "react";
-import type { ExecutionMode } from "@contextpane/catalog";
+import { ExternalLink, GitPullRequest, Lightbulb, RotateCcw, Sparkles, Zap } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { isSteeringStale, type ExecutionMode } from "@contextpane/catalog";
 import { useWorkbench, type CodeRailTab } from "@/store";
 import { SmartTechPath } from "../../canvas/Section";
 import { DiffView } from "../../canvas/DiffView";
+import { Button } from "../../ui/Button";
 import { Pill } from "../../ui/Pill";
 import { RAIL_FRAME, RAIL_INSET, ScriptCode } from "./ScriptCode";
 import { cleanDrawerTitle, useHasIntune, type Drawer } from "./shared";
@@ -75,8 +76,10 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
         <ExecutionModeSwitch drawer={drawer} />
       </div>
 
+      <SteeringStaleBanner drawer={drawer} />
+
       <div data-testid="path-a">
-        {tab === "powershell" && <ScriptCode code={drawer.powershellScript} name={`${drawer.ticketId.toLowerCase()}-fix.ps1 · PowerShell 7`} />}
+        {tab === "powershell" && <SteeredPowerShell drawer={drawer} />}
         {tab === "graph" && <ScriptCode code={drawer.graphPatch || "[]"} name="graph-patch.json · Microsoft Graph" />}
         {tab === "opentofu" &&
           (drawer.terraformDiff ? (
@@ -103,6 +106,93 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * U-1: a staged script that predates the ticket's current steering says so and offers one coder call
+ * to catch up; while a steer is in flight the same module says which version is being built.
+ */
+function SteeringStaleBanner({ drawer }: { drawer: Drawer }) {
+  const currentSteering = useWorkbench((s) => (s.brief && s.brief.scenarioId === drawer.ticketId ? s.brief.steering : null));
+  const steerPending = useWorkbench((s) => s.steerStatus === "pending");
+  const steer = useWorkbench((s) => s.steer);
+  const stale = Boolean(currentSteering && isSteeringStale(drawer.steering ?? null, currentSteering));
+  if ((!stale && !steerPending) || drawer.approval.state !== "pending") return null;
+  return (
+    <div
+      className={`${RAIL_INSET} flex min-h-8 min-w-0 items-center gap-2 ${RAIL_FRAME} px-3 py-1 text-11 ${steerPending ? "!border-signal/40" : "!border-warning/40"}`}
+      data-rail-frame="steering"
+      data-testid="steering-stale-banner"
+    >
+      {steerPending ? (
+        <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-signal">
+          <span aria-hidden className="animate-pulse-dot">
+            ●
+          </span>
+          <span className="truncate">re-parameterising the script for steering v{(currentSteering?.version ?? 0) + (stale ? 0 : 1)}…</span>
+        </span>
+      ) : (
+        <>
+          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-warning">
+            <Sparkles className="size-3 shrink-0" aria-hidden />
+            <span className="truncate" title={`Script built for steering v${drawer.steering?.version ?? 0}; the ticket is at v${currentSteering?.version ?? 0}`}>
+              stale steering · built for v{drawer.steering?.version ?? 0} · current v{currentSteering?.version ?? 0}
+            </span>
+          </span>
+          <Button size="xs" variant="outline" icon={<RotateCcw />} className="ml-auto shrink-0" onClick={() => void steer({ source: "operator" })} data-testid="steering-regenerate-button">
+            Regenerate
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The PowerShell tab: what the last steer changed in the script (steering vN → vM, the coder's
+ * model, tokens and latency), then the script itself, shimmering while a steer re-parameterises it.
+ */
+function SteeredPowerShell({ drawer }: { drawer: Drawer }) {
+  const steerPending = useWorkbench((s) => s.steerStatus === "pending");
+  const lastSteer = useWorkbench((s) => (s.lastSteer?.scenarioId === drawer.ticketId ? s.lastSteer : null));
+  const [showDiff, setShowDiff] = useState(true);
+  return (
+    <div className="flex flex-col gap-2">
+      {lastSteer && lastSteer.diff && !steerPending && (
+        <div className={`${RAIL_INSET} min-w-0 overflow-hidden ${RAIL_FRAME} bg-ground`} data-rail-frame="steer-diff" data-testid="steering-script-diff">
+          <button
+            type="button"
+            onClick={() => setShowDiff((v) => !v)}
+            aria-expanded={showDiff}
+            className={`flex h-9 w-full min-w-0 items-center gap-2 bg-surface px-3 text-left font-mono text-11 ${showDiff ? "border-b border-hairline" : ""}`}
+          >
+            <span className="shrink-0 font-medium text-signal">
+              What changed · steering v{lastSteer.fromVersion} → v{lastSteer.toVersion}
+            </span>
+            <span className="ml-auto min-w-0 truncate text-faint">
+              {lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tok · ${lastSteer.coder.latencyMs} ms` : "deterministic coder"} {showDiff ? "▴" : "▾"}
+            </span>
+          </button>
+          {showDiff && <DiffView diff={lastSteer.diff} maxHeight="max-h-56" edges="none" />}
+        </div>
+      )}
+      <div className="relative" aria-busy={steerPending || undefined}>
+        <div className={`transition-opacity duration-150 ${steerPending ? "opacity-60" : ""}`}>
+          <ScriptCode code={drawer.powershellScript} name={`${drawer.ticketId.toLowerCase()}-fix.ps1 · PowerShell 7`} />
+        </div>
+        {steerPending && (
+          <div className="pointer-events-none absolute inset-y-0 right-0 left-2.5 flex items-start justify-center rounded-md animate-shimmer" data-testid="steering-shimmer">
+            <span className="mt-12 inline-flex items-center gap-1.5 rounded-md border border-signal/40 bg-surface px-2 py-0.5 font-mono text-11 text-signal shadow-popover">
+              <span aria-hidden className="animate-pulse-dot">
+                ●
+              </span>
+              re-parameterising…
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

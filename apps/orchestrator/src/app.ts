@@ -11,12 +11,14 @@ import {
   SCENARIO_REGISTRY,
   SELECTION_MAX_CHARS,
   SELECTION_MIN_CHARS,
+  SteeringDeltaSchema,
   TENANT_REGISTRY,
   ViewRecipeSchema,
   baseScenarioOf,
   displayScenarioId,
   getScenarioEntry,
   isAnyScenarioId,
+  isFreeRoamActionId,
   isScenarioId,
   isTenantId,
   type ComponentType,
@@ -51,7 +53,7 @@ import { compileSkill, listCompiledSkills, lookupTier0Skill } from "./local/skil
 import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
-import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, triageCustomTicketAsync, withQuestionStepIds } from "./local/custom-ticket.ts";
+import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, steerCustomTicket, triageCustomTicketAsync, withQuestionStepIds } from "./local/custom-ticket.ts";
 import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import {
@@ -70,7 +72,9 @@ import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
 import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
-import { approve, autofixRemediation, overrideRemediation, remediate } from "./tiers/tier3-remediate.ts";
+import { approve, autofixRemediation, overrideRemediation, remediate, restageRemediationForSteering } from "./tiers/tier3-remediate.ts";
+import { executeInverse, rollbackRemediation } from "./tiers/tier3-rollback.ts";
+import { buildInverseFromSnapshot } from "./local/inverse-rollback.ts";
 import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
@@ -399,7 +403,7 @@ app.post("/api/tickets/triage-custom", async (c) => {
       dataPlane: { datasets: snapshot.descriptors.length, bytes: snapshot.bytes, piiMetrics: snapshot.piiMetrics },
       verification: {
         formal: { passed: formal.passed, invariants: formal.invariants.length, ids: formal.invariants.map((i) => i.id), latencyMs: formal.latencyMs },
-        idempotency: { passed: idempotency.passed },
+        idempotency: { passed: idempotency?.passed ?? null },
         baseScenarioId: entry.baseScenarioId,
       },
       timelineSlices: timeline?.slices.length ?? 0,
@@ -499,13 +503,75 @@ app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
   });
 });
 
+const SteerBodySchema = SteeringDeltaSchema.extend({ rerun: z.enum(["coder", "coder+ui"]).optional() });
+
+/**
+ * Steering that moves code (U-1): a clarifier pill, a lens row click or a typed parameter becomes a
+ * new steering version; one coder call re-parameterises the script (the previous script is its diff
+ * base), the pending drawer is re-staged through the real pre-flight, and the card's config-diff
+ * block shows the diff. The System & Audit drawer sees the call with its real tokens.
+ */
+app.patch("/api/tickets/:scenarioId/steer", async (c) => {
+  const started = performance.now();
+  const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
+  const body = SteerBodySchema.parse(await c.req.json().catch(() => ({})));
+  const { rerun, ...delta } = body;
+  // The newest pending drawer of this ticket is the diff base and gets re-staged; approved ones stay as they were.
+  const pendingDrawer = remediationStore.list().filter((d) => d.ticketId === scenarioId && d.approval.state === "pending").at(-1) ?? null;
+  const outcome = await steerCustomTicket(scenarioId, delta, { ...(rerun ? { rerun } : {}), ...(pendingDrawer ? { previousScript: pendingDrawer.powershellScript } : {}) });
+  if (!outcome) return c.json({ error: `${scenarioId} is not a custom ticket/project` }, 404);
+  invalidateContext(scenarioId);
+  const drawer = pendingDrawer ? await restageRemediationForSteering(pendingDrawer.remediationId) : null;
+  const ctx = await gatherContext(scenarioId, { fresh: true });
+  const brief = buildScenarioBrief(ctx);
+  const latencyMs = Math.round(performance.now() - started);
+  const usedLlm = outcome.coder.source === "llm";
+  const event = telemetry.record({
+    requestId: telemetry.nextRequestId("t3"),
+    endpoint: "/api/tickets/steer",
+    tier: "Tier 3B",
+    provider: usedLlm ? "meta" : "local",
+    modelId: usedLlm ? outcome.coder.modelUsed : "deterministic-template",
+    latencyMs,
+    tokensUsed: outcome.coder.usage ?? { ...ZERO_USAGE, total: outcome.coder.tokensUsed },
+    fallbackChain: [{ provider: usedLlm ? "meta" : "local", modelId: outcome.coder.modelUsed, outcome: usedLlm ? "ok" : outcome.coder.source === "fallback-on-error" ? "skipped" : "error", latencyMs: outcome.coder.latencyMs }],
+    tenantId: outcome.entry.tenantId,
+  });
+  return c.json({
+    ok: true,
+    scenario: customScenarioListItem(outcome.entry, Boolean(convergenceStore.get(scenarioId))),
+    brief,
+    steering: outcome.steering,
+    previousVersion: outcome.previousSteering.version,
+    clarifiedAnswers: outcome.entry.clarifiedAnswers ?? {},
+    clarifyingQuestions: outcome.entry.clarifyingQuestions ?? [],
+    subAgentTasks: outcome.entry.subAgentTasks ?? [],
+    synthesizedElements: outcome.entry.synthesizedElements ?? [],
+    customRemediation: outcome.entry.customRemediation ?? null,
+    scriptDiff: outcome.scriptDiff,
+    cardResynthesized: outcome.cardResynthesized,
+    drawer,
+    coder: { modelId: outcome.coder.modelUsed, source: outcome.coder.source, latencyMs: outcome.coder.latencyMs, tokensUsed: outcome.coder.tokensUsed, ...(outcome.coder.usage ? { usage: outcome.coder.usage } : {}) },
+    latencyMs,
+    telemetry: event,
+  });
+});
+
 app.get("/api/dynamic-catalog", (c) => {
   const catalog = loadDynamicCatalog();
   const auditLog = loadSynthesizedElementsLog();
+  // Template cards live only in memory (HARD_CASES 1): the HUD lists them from the custom-ticket registry, labelled as templates.
+  const templateCards = listCustomScenarios().flatMap((entry) =>
+    (entry.synthesizedElements ?? [])
+      .filter((card) => card.synthesisMeta.source !== "llm")
+      .map((card) => ({ ticketId: entry.scenarioId, elementId: card.elementId, title: card.title, synthesizerModel: card.synthesisMeta.synthesizerModel, synthesizedAt: card.synthesisMeta.synthesizedAt })),
+  );
   return c.json({
     catalog,
     dynamicCount: catalog.dynamicElements.length,
     builtInCount: catalog.builtInElements.length,
+    templateCards,
+    templateCount: templateCards.length,
     auditLog,
   });
 });
@@ -689,28 +755,18 @@ app.get("/api/formal/:scenarioId", (c) => {
   return c.json({ scenarioId: requested, baseScenarioId: base, formal, blastRadius: counterfactualReplay(targetId), rollback: buildInverseRollback(requested), idempotency: verifyIdempotency(targetId), asrBlast: base === "ANOM-INT-309" ? asrBlastRadius() : null, telemetry: { tier: "Tier 3C", tokensUsed: { total: 0 }, latencyMs: formal.latencyMs } });
 });
 
+/**
+ * Revert (U-5): the inverse is derived from the pre-change snapshot the approval captured and
+ * executed through the same write path approve used; the console prints the server's log and
+ * the read-back against the snapshot. Nothing is claimed that did not happen (L-09).
+ */
 app.post("/api/rollback", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
-  const requested = scenarioOf(body);
-  const targetId = baseScenarioOf(requested) ?? requested;
-  const started = performance.now();
-  const rollback = buildInverseRollback(requested);
-  const check = verifyIdempotency(targetId);
-  if (!check.passed) return c.json({ ok: false, error: "inverse rollback idempotency check failed", rollback }, 422);
-  // No inverse is executed yet (U-5 derives it from a pre-change snapshot): the script is staged and nothing is claimed (L-09).
-  const reason = "Revert is staged, not executed: no inverse write is wired to the tenant yet";
-  return c.json({
-    ok: true,
-    executed: false,
-    reason,
-    latencyMs: Math.round((performance.now() - started) * 10) / 10,
-    rollback,
-    idempotency: check,
-    executionLog: [
-      `Revert script staged for ${requested}: ${rollback.restores.length} restore step${rollback.restores.length === 1 ? "" : "s"}, ${rollback.powershellScript.split("\n").length} lines PowerShell${rollback.terraformDiff ? " + Terraform" : ""}`,
-      `${reason}. Review it, run it with -WhatIf, then run it as the delegated admin.`,
-    ],
-  });
+  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string; approvedBy?: string };
+  // A staged Free-Roam action is not a registered scenario, but it may be reverted (to "nothing to revert").
+  const requested = isFreeRoamActionId(body.scenarioId) ? body.scenarioId : scenarioOf(body);
+  const result = await rollbackRemediation(requested, body.approvedBy ? { approvedBy: body.approvedBy } : {});
+  if (result.idempotency && !result.idempotency.passed) return c.json({ ...result, ok: false, error: "inverse rollback idempotency check failed" }, 422);
+  return c.json(result);
 });
 
 app.get("/api/intune/health-script/:scenarioId", (c) => {
@@ -964,41 +1020,51 @@ const approveHandler = async (c: Context) => {
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
   const scenarioId = drawer.ticketId;
   const liveWriteApplied = drawer.approval.state === "executed";
+  const drill = body.simulateCanaryFailure === true;
+  // No canary for an approval that wrote nothing: there is no change in the tenant to probe (HARD_CASES 4).
+  // A rollback drill still runs so the operator can see the dead-man's switch, labelled as a drill.
+  if (!liveWriteApplied && !drill) return c.json({ drawer, convergence, canary: null });
   const canaryTarget = baseScenarioOf(scenarioId) ?? scenarioId;
-  // Only an "executed" approval wrote to the live tenant; when simulateCanaryFailure triggers AUTO_ROLLED_BACK, execute f^-1 immediately.
+  // A drill after a live write reverts first through the snapshot inverse (U-5), so the canary reports what happened, not the request flag (M-15).
+  const preSnapshot = convergenceStore.snapshot(scenarioId);
+  const revertRun =
+    drill && liveWriteApplied && preSnapshot
+      ? await executeInverse({ scenarioId, snapshot: preSnapshot, drawer: remediationStore.get(drawer.remediationId), inverse: buildInverseFromSnapshot(preSnapshot, drawer) })
+      : null;
+  const revertWrite = revertRun?.write ?? null;
+  const revertLanded = Boolean(revertRun?.landed);
   const canary = {
     ...runCanaryConvergence(canaryTarget, {
       mode: body.mode ?? "break-glass",
-      simulateCanaryFailure: body.simulateCanaryFailure ?? false,
+      simulateCanaryFailure: drill,
       liveWriteApplied,
-      rollbackExecuted: Boolean(body.simulateCanaryFailure),
+      rollbackExecuted: revertLanded,
     }),
     scenarioId: scenarioId as ScenarioId,
   };
   closureStore.setCanary(scenarioId, canary);
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
-    const baseForRevert = baseScenarioOf(scenarioId);
-    const revertWrite = liveWriteApplied && baseForRevert ? await applyScenarioState(baseForRevert, "drifted") : null;
     invalidateContext(scenarioId);
+    // Wording keyed on what executed: a drill without a live write reverted nothing (HARD_CASES 6).
+    const failedWrites = revertWrite?.results.filter((r) => !r.ok).map((r) => `${r.id}: HTTP ${r.status}`).join(", ");
     const rollbackLog = revertWrite
-      ? `Inverse rollback f⁻¹ executed (${revertWrite.source}, ${revertWrite.latencyMs} ms): ${revertWrite.summary}`
-      : "Inverse rollback f⁻¹ executed: in-memory state reverted to pre-change baseline";
+      ? revertLanded
+        ? `Inverse rollback f⁻¹ executed (${revertWrite.source}, ${revertWrite.latencyMs} ms): ${revertWrite.summary}`
+        : `Inverse rollback f⁻¹ attempted but did not land (${revertWrite.fallbackReason ?? failedWrites}); the live change is still in the tenant`
+      : "Drill: nothing was written live, so nothing was reverted; the canvas returns to its drifted state";
     const rolledBackDrawer = {
       ...drawer,
       approval: { ...drawer.approval, state: "rolled-back" as const },
       executionLog: [
         ...drawer.executionLog,
-        "Synthetic probe failed in Canary Ring 0: AADSTS53003 spike detected — dead-man's switch triggered",
+        "Synthetic probe failed in Canary Ring 0 (drill): AADSTS53003 spike simulated — dead-man's switch triggered",
         rollbackLog,
       ],
     };
     const { executionLog: _log, ...toSave } = rolledBackDrawer;
     remediationStore.save(toSave);
     const rolledBack = canary.stages.find((s) => s.stage === "AUTO_ROLLED_BACK");
-    const rollbackExecution =
-      revertWrite?.source === "live-graph" ? "live-graph-and-arm-reverted" : "in-memory-state-reverted";
-    const rollbackLatencyMs = revertWrite ? Math.max(1, Math.round(revertWrite.latencyMs)) : 12;
     auditLedger.append({
       tenantId: drawer.tenantId,
       ticketId: drawer.ticketId,
@@ -1009,9 +1075,9 @@ const approveHandler = async (c: Context) => {
       tfValidatePass: null,
       gitBranch: drawer.staging?.branchName ?? null,
       prUrl: null,
-      latencyMs: rollbackLatencyMs,
-      execution: rollbackExecution,
-      detail: `Simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}`,
+      latencyMs: revertWrite ? Math.max(0, Math.round(revertWrite.latencyMs)) : 0,
+      execution: revertLanded ? "live-graph-and-arm-reverted" : revertWrite ? "simulated" : "none",
+      detail: `Drill: simulated AADSTS53003 spike in Canary Ring 0 · ${rolledBack?.detail ?? "dead-man's switch fired"}`,
     });
     return c.json({ drawer: rolledBackDrawer, convergence: null, canary });
   }

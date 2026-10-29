@@ -270,6 +270,12 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                           {isBusy ? "●" : ran ? "✓" : "⚠"}
                         </span>
                         <span className="shrink-0 font-medium">{stageMeta?.name ?? t.agentName}</span>
+                        {t.stepIndex === 4 && t.iterations !== undefined && t.iterations > 0 && (
+                          <span className="shrink-0 font-mono text-healthy" data-testid="coder-iterations" title="Write-then-test repair turns: sandbox findings fed back to the coder">
+                            · {t.iterations} iteration{t.iterations === 1 ? "" : "s"}
+                          </span>
+                        )}
+                        {t.stepIndex === 5 && t.source === "sandbox-preflight" && <span className="shrink-0 font-mono text-healthy">· sandbox-verified</span>}
                         <span className="min-w-0 truncate text-faint">{stageMeta?.role ?? t.role}</span>
                         {!isBusy && <span className="ml-auto shrink-0 font-mono text-faint">{t.startOffsetMs !== undefined ? `+${t.startOffsetMs}·` : ""}{t.latencyMs} ms</span>}
                       </button>
@@ -286,6 +292,8 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                   </span>
                   <span className="font-mono text-faint">
                     {activeTask.modelId} · {activeTask.latencyMs} ms · {SOURCE_LABEL[activeTask.source ?? "not-attempted"] ?? activeTask.source}
+                    {activeTask.iterations ? ` · ${activeTask.iterations} iter` : ""}
+                    {activeTask.tokensUsed ? ` · ${activeTask.tokensUsed} tok` : ""}
                   </span>
                 </div>
                 <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
@@ -384,12 +392,34 @@ function useScopeDraft(scenarioId: string, questions: ClarifyingQuestion[], clar
   };
 }
 
-/** In the plan header row: when the scope was last applied and the free-text toggle (hotkey c). */
+/**
+ * In the plan header row: the steering the script was last re-parameterised for (or the steer in
+ * flight), when the scope was last applied, and the free-text toggle (hotkey c).
+ */
 function ScopeControls({ scope }: { scope: ScopeDraft }) {
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
   const lastRefinedAt = useWorkbench((s) => s.lastRefinedAt);
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const steeringVersion = useWorkbench((s) => s.brief?.steering?.version ?? 0);
+  const lastSteer = useWorkbench((s) => (s.lastSteer?.scenarioId === s.scenarioId ? s.lastSteer : null));
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-11">
+      {steerStatus === "pending" ? (
+        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-signal" data-testid="steering-pending-badge">
+          <span aria-hidden className="animate-pulse-dot">
+            ●
+          </span>
+          re-parameterising script…
+        </span>
+      ) : steeringVersion > 0 ? (
+        <span
+          className="shrink-0 font-mono text-faint"
+          title={lastSteer ? `Last steer ${lastSteer.at}: ${lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tokens` : "deterministic coder"}` : "Steering version"}
+          data-testid="steering-version-badge"
+        >
+          steering v{steeringVersion}
+        </span>
+      ) : null}
       {lastRefinedAt && !refiningGoal && (
         <span className="inline-flex shrink-0 items-center gap-1 font-mono text-healthy" data-testid="clarifier-refreshed-badge" title={`Plan updated ${lastRefinedAt}`}>
           <Check className="size-3" />
@@ -418,7 +448,11 @@ function ScopeControls({ scope }: { scope: ScopeDraft }) {
 function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: ClarifyingQuestion[] }) {
   const refineGoal = useWorkbench((s) => s.refineGoal);
   const refiningGoal = useWorkbench((s) => s.refiningGoal);
-  const active = scope.dirty || scope.editing || refiningGoal;
+  const steerStatus = useWorkbench((s) => s.steerStatus);
+  const steeringVersion = useWorkbench((s) => s.brief?.steering?.version ?? 0);
+  const lastSteer = useWorkbench((s) => (s.lastSteer?.scenarioId === s.scenarioId ? s.lastSteer : null));
+  const steering = steerStatus === "pending";
+  const active = scope.dirty || scope.editing || refiningGoal || steering;
   if (!active && unmapped.length === 0) return null;
   const scopedSummary = Object.values(scope.draft).filter(Boolean).join(" · ");
   return (
@@ -426,11 +460,33 @@ function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: Clarifying
       {active && (
         <div className="flex min-h-6 items-center gap-2 text-11">
           <span className="shrink-0 text-muted">
-            <span className={`text-signal ${refiningGoal ? "animate-pulse-dot" : ""}`}>✦</span> Scope
+            <span className={`text-signal ${refiningGoal || steering ? "animate-pulse-dot" : ""}`}>✦</span> Scope
           </span>
-          <span className="min-w-0 flex-1 truncate text-faint" title={scopedSummary}>
-            {refiningGoal ? "Updating diagnostic view & remediation scripts…" : scope.dirty ? "Changed: update the plan to regenerate" : "Type a custom answer, then update the plan"}
-          </span>
+          {refiningGoal ? (
+            <span className="min-w-0 flex-1 truncate text-faint" title={scopedSummary}>
+              Updating diagnostic view &amp; remediation scripts…
+            </span>
+          ) : steering ? (
+            <span className="min-w-0 flex-1 truncate font-mono text-signal" data-testid="steering-pending-line">
+              Re-parameterising the PowerShell for steering v{steeringVersion + 1}…
+            </span>
+          ) : scope.dirty ? (
+            <span className="min-w-0 flex-1 truncate text-faint" title={scopedSummary}>
+              Changed: update the plan to regenerate
+            </span>
+          ) : lastSteer ? (
+            <span
+              className="min-w-0 flex-1 truncate font-mono text-healthy"
+              title={`Steering v${lastSteer.toVersion}: script re-parameterised at ${lastSteer.at}`}
+              data-testid="steering-last-line"
+            >
+              ✓ Steering v{lastSteer.toVersion} · {lastSteer.coder.source === "llm" ? `${lastSteer.coder.modelId} · ${lastSteer.coder.tokensUsed} tok` : "deterministic coder"}
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-faint" title="Click an option: the script re-parameterises at once. Update plan re-runs the whole pipeline.">
+              Click an option to re-parameterise; Update plan re-runs the pipeline
+            </span>
+          )}
           <Button
             size="xs"
             variant="primary"
@@ -456,6 +512,10 @@ function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: Clarifying
 function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; scope: ScopeDraft; first?: boolean }) {
   // While a refine streams the chips keep their look but take no input (the cursor says why).
   const locked = useWorkbench((s) => s.refiningGoal);
+  // U-1: a chip toggle steers the script at once (one coder call); Update plan stays the full re-triage.
+  const steer = useWorkbench((s) => s.steer);
+  const steerPending = useWorkbench((s) => s.steerStatus === "pending");
+  const savedAnswer = useWorkbench((s) => s.brief?.clarifiedAnswers?.[q.id] ?? "");
   const rawVal = scope.draft[q.id] ?? q.selectedValue ?? q.options[0]?.label ?? q.options[0]?.value ?? "";
   const currentVal = humanizeClarifierSlug(rawVal, q);
   const isPresetOption = q.options.some(
@@ -481,8 +541,12 @@ function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; sco
               type="button"
               data-testid={`clarifier-opt-${q.id}-${opt.id}`}
               aria-pressed={active}
-              disabled={locked}
-              onClick={() => scope.setAnswer(q.id, cleanLabel)}
+              disabled={locked || (steerPending && !active)}
+              onClick={() => {
+                scope.setAnswer(q.id, cleanLabel);
+                // The chip flips now; the PowerShell in the rail re-parameterises within one coder call.
+                if (!active) void steer({ clarifier: { [q.id]: cleanLabel }, source: "clarifier" });
+              }}
               title={opt.description ? `${cleanLabel} — ${opt.description}` : cleanLabel}
               className={`inline-flex min-h-5 max-w-full shrink-0 items-center rounded-sm border px-1.5 text-left text-11 transition-colors disabled:cursor-progress ${
                 active ? "border-signal/40 bg-signal/12 text-signal-strong" : "border-hairline text-muted hover:border-signal/40 hover:text-text"
@@ -504,6 +568,11 @@ function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; sco
             type="text"
             value={isPresetOption ? "" : currentVal}
             onChange={(e) => scope.setAnswer(q.id, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              const typed = e.currentTarget.value.trim();
+              if (typed && typed !== savedAnswer) void steer({ clarifier: { [q.id]: typed }, source: "operator" });
+            }}
             disabled={locked}
             placeholder={q.customHint ?? "Or type a custom parameter…"}
             data-testid={`clarifier-input-${q.id}`}

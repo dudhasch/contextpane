@@ -136,6 +136,20 @@
 @utility animate-pulse-dot {
   animation: cp-pulse-dot 1.2s ease-in-out infinite;
 }
+/* re-parameterising shimmer over a code block while a steer is in flight (U-1) */
+@keyframes cp-shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+@utility animate-shimmer {
+  background-image: linear-gradient(100deg, transparent 20%, color-mix(in oklab, var(--color-primary) 18%, transparent) 50%, transparent 80%);
+  background-size: 200% 100%;
+  animation: cp-shimmer 1.4s linear infinite;
+}
 
 /* unified diff colouring: text is the status hue pulled 60% toward --text so it
    stays readable on the 14% tint in both themes (>= 8.5:1 on ground). */

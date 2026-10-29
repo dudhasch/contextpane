@@ -123,6 +123,17 @@ export function useCopy(): (text: string, what: string) => Promise<void> {
   );
 }
 
+/**
+ * U-5: the revert buttons say what a click will do. "Revert change now" only when the server can
+ * execute an inverse derived from the pre-change snapshot; otherwise the inverse script is staged.
+ */
+export function useRevertLabel(): { label: string; title: string } {
+  const executable = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]?.inverseExecutable));
+  return executable
+    ? { label: "Revert change now", title: "Execute the inverse (f⁻¹) derived from the pre-change snapshot, then read the entities back" }
+    : { label: "Stage revert", title: "Stage the inverse script (f⁻¹) for this change; nothing is executed against the tenant" };
+}
+
 /** The staged fix touches Intune: the rail shows the Device health tab. */
 export function useHasIntune(): boolean {
   return useWorkbench((s) =>
