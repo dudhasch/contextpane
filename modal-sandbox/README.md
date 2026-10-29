@@ -1,12 +1,40 @@
-# modal-sandbox: Tier 3B pre-flight and optional open-weight hosting on Modal
+# modal-sandbox: Muse Glimmer 30B on an L40S, and the pwsh + Terraform pre-flight sandbox
 
-Three independent Modal apps:
+ContextPane's Modal infrastructure. Two deployments carry the demo:
+- **Open-weight hover tier.** Meta's **Muse Glimmer 30B** runs on our own GPU, with output constrained by a grammar.
+- **Write-then-test sandbox.** A **warm verification container** checks every remediation script before an operator can approve it.
 
-| File | App | What it does |
-|---|---|---|
-| `contextpane_sandbox.py` | `contextpane-sandbox` | Tier 3B verifiable pre-flight: `validate_remediation` web endpoint |
-| `glimmer_open_weights.py` | `contextpane-glimmer` | Optional open-weight Muse Glimmer 30B (GGUF Q4_K_M) on llama-server, one L40S (Tier 1A / 1B) |
-| `open_weights_vllm.py` | `contextpane-open-weights` | Alternative: full-precision `meta-models/Muse-Glimmer-30B` on vLLM, one H100 |
+```text
+ orchestrator (Bun)                          Modal
+ ─────────────────────                       ────────────────────────────────────────────────
+ tiers/tier1-hover.ts  ── POST /v1/chat ──▶  contextpane-glimmer   1× L40S · llama-server
+   json_schema response_format                Muse-Glimmer-30B Q4_K_M · GBNF from the schema
+   (router/glimmer-payload.ts)                Volume contextpane-glimmer-weights · 120 s scale-down
+ preflight/modal.ts    ── POST (bearer) ──▶  contextpane-sandbox   4 vCPU · warm class
+   runModalPreflight                          persistent pwsh AST server · Terraform 1.9.8 + azurerm
+   warmModalSandbox ({warmup:true})           validate_remediation → verdict, findings, checkLatencyMs
+```
+
+| File | App | What it does | Key lines |
+|---|---|---|---|
+| `glimmer_open_weights.py` | `contextpane-glimmer` | Muse Glimmer 30B (GGUF Q4_K_M, 16.8 GB) on llama.cpp `llama-server`, one L40S, strict `HoverDiagnostic` JSON schema (Tier 1A) | GPU `:45`, schema `:133`, flags `:169-192`, Volume `:214` |
+| `contextpane_sandbox.py` | `contextpane-sandbox` | Tier 3B pre-flight for the write-then-test loop: PowerShell AST + cmdlet allow-list, `terraform fmt -check`, `terraform validate` | warm class `:283`, endpoint `:354` |
+| `open_weights_vllm.py` | `contextpane-open-weights` | Alternative: full-precision `meta-models/Muse-Glimmer-30B` on vLLM 0.10.1.1, one H100 | |
+| `app.py` | (not a Modal app) | Pure-stdlib Python mirror of `apps/orchestrator/src/local/formal-verifier.ts`: symbolic invariants, inverse sketch, idempotency, blast-radius replay | |
+
+How the orchestrator uses them:
+
+| Concern | Where |
+|---|---|
+| Glimmer in the hover chain (open weights first, then Meta) | [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](../apps/orchestrator/src/tiers/tier1-hover.ts#L52) |
+| Background warm-up of every pill, persisted | [`tier1-hover.ts:412`](../apps/orchestrator/src/tiers/tier1-hover.ts#L412) → `data/hover-cache.json` (seed: `data/hover-cache.seed.json`) |
+| Strict response format for open-weight hovers | [`router/glimmer-payload.ts:93`](../apps/orchestrator/src/router/glimmer-payload.ts#L93), attached in `router/openai.ts` |
+| Sandbox call, local fallback on error | [`preflight/modal.ts:65`](../apps/orchestrator/src/preflight/modal.ts#L65), [`tier3-remediate.ts`](../apps/orchestrator/src/tiers/tier3-remediate.ts) |
+| Repair turns driven by sandbox findings (≤ 2) | [`tiers/repair-loop.ts:34`](../apps/orchestrator/src/tiers/repair-loop.ts#L34) |
+
+Measured on the deployed apps: a Glimmer hover takes ~22–25 s warm and the cold boot is 17.7 s. That is why every answer is generated ahead of time and persisted, and the operator reads hovers from the cache in milliseconds. A warm sandbox pre-flight takes ~0.7 s.
+
+What the sandbox does not do: it runs no `terraform plan`, and no OpenTofu binary. The rail's "OpenTofu" tab shows HCL that Terraform 1.9.8 validates. `-WhatIf` safety is a static check that every mutating cmdlet sits inside `$PSCmdlet.ShouldProcess`; it is not an execution.
 
 ## Tier 3B pre-flight sandbox
 

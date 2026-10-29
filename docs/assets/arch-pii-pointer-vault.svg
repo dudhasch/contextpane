@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" font-family="Inter, 'Segoe UI', system-ui, sans-serif">
+  <title>ContextPane · ptr:// data plane and PII pseudonym vault</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9aa3b1"/></marker>
+    <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b69cff"/></marker>
+    <style>
+      .t{fill:#e8eaee;font-size:14px;font-weight:600}
+      .s{fill:#9aa3b1;font-size:12px}
+      .m{fill:#9aa3b1;font-size:11.5px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace}
+      .lbl{fill:#808a9a;font-size:11px;letter-spacing:1.2px;font-family:'JetBrains Mono','Cascadia Mono',Consolas,monospace}
+      .box{fill:#15181d;stroke:#2a303a;stroke-width:1.5}
+    </style>
+  </defs>
+  <rect width="1200" height="720" fill="#0e1013"/>
+  <text x="32" y="44" fill="#e8eaee" font-size="21" font-weight="650">ptr:// data plane and the session PII vault</text>
+  <text x="32" y="68" class="s">Layouts carry pointers, not rows. Prompts carry pseudonyms, not identities. The browser resolves pointers against a fenced generation.</text>
+
+  <!-- left: sources -->
+  <text x="32" y="112" class="lbl">MCP SOURCES (RAW)</text>
+  <rect x="32" y="122" width="250" height="196" rx="10" class="box"/>
+  <text x="48" y="148" class="t">mcp-msgraph</text><text x="48" y="166" class="m">users · groups · CA · Intune</text>
+  <text x="48" y="196" class="t">mcp-azure-iac</text><text x="48" y="214" class="m">NSG · AVD · policy · quota</text>
+  <text x="48" y="244" class="t">mcp-erp</text><text x="48" y="262" class="m">tickets · contracts · seats</text>
+  <text x="48" y="296" class="m" fill="#ff6e7e">lynne.robins.contoso@…</text>
+
+  <path d="M282 220 L338 220" stroke="#9aa3b1" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- data plane -->
+  <text x="342" y="112" class="lbl">ORCHESTRATOR · DATA PLANE</text>
+  <rect x="342" y="122" width="470" height="196" rx="10" class="box" stroke="#6cb4ff"/>
+  <text x="358" y="148" class="t">bindDataPlane: rows stay server-side, cards get pointers</text>
+  <text x="358" y="176" class="m"><tspan fill="#808a9a">v1</tspan> ptr://inc-4092/entra/users</text>
+  <text x="358" y="198" class="m"><tspan fill="#808a9a">v2</tspan> …/entra/users?where=state:Drifted&amp;select=upn</text>
+  <text x="358" y="220" class="m"><tspan fill="#808a9a">v3</tspan> …#tenant-contoso-01:<tspan fill="#6cb4ff">epoch</tspan>:<tspan fill="#6cb4ff">generation</tspan></text>
+  <text x="358" y="250" class="s">v2 accepts only eq filters and fails closed on anything else.</text>
+  <text x="358" y="270" class="s">v3 fences a pointer to a tenant, a context epoch and a generation.</text>
+  <text x="358" y="300" class="m">packages/catalog/src/dataplane.ts · fencedDataPtr</text>
+
+  <!-- vault -->
+  <text x="842" y="112" class="lbl">SESSION PII VAULT</text>
+  <rect x="842" y="122" width="326" height="196" rx="10" class="box" stroke="#b69cff"/>
+  <text x="858" y="148" class="t">PiiVault (process singleton)</text>
+  <text x="858" y="176" class="m">upn_tok_03 ↔ lynne.robins…</text>
+  <text x="858" y="196" class="m">displayName_tok_01 ↔ Alex W…</text>
+  <text x="858" y="216" class="m">ipAddress · userId · deviceName</text>
+  <text x="858" y="246" class="s">Tokens assigned in case-folded sorted</text>
+  <text x="858" y="264" class="s">order; names come from MCP context.</text>
+  <text x="858" y="300" class="m">PiiVault · pseudonymizeText</text>
+  <path d="M812 220 L838 220" stroke="#9aa3b1" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- boundary -->
+  <line x1="32" y1="372" x2="1168" y2="372" stroke="#b69cff" stroke-width="2" stroke-dasharray="8 6"/>
+  <rect x="440" y="358" width="320" height="28" rx="14" fill="#0e1013" stroke="#b69cff"/>
+  <text x="600" y="377" text-anchor="middle" fill="#b69cff" font-size="12.5" font-weight="600">provider boundary · chatWithForcedTool</text>
+
+  <path d="M1005 318 L1005 430" stroke="#b69cff" stroke-width="1.6" marker-end="url(#am)"/>
+  <text x="1016" y="402" class="m" fill="#b69cff">vaultMessages</text>
+
+  <!-- providers -->
+  <rect x="842" y="434" width="326" height="120" rx="10" class="box"/>
+  <text x="858" y="460" class="t">Meta Model API · Modal Glimmer</text>
+  <text x="858" y="486" class="m">"upn_tok_03 is blocked by"</text>
+  <text x="858" y="506" class="m">"[ContextPane-Demo] Block AVD…"</text>
+  <text x="858" y="536" class="s">recordPrompt: 0 raw PII in 76 prompts</text>
+
+  <path d="M842 494 L700 494" stroke="#9aa3b1" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="452" y="434" width="244" height="120" rx="10" class="box" stroke="#58d39a"/>
+  <text x="468" y="460" class="t">depseudonymizeJsonText</text>
+  <text x="468" y="484" class="s">Reply rehydrated in the</text>
+  <text x="468" y="502" class="s">orchestrator; layout keeps</text>
+  <text x="468" y="520" class="s">its ptr:// references.</text>
+  <text x="468" y="542" class="m">router/openai.ts</text>
+
+  <path d="M452 494 L290 494" stroke="#9aa3b1" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="32" y="434" width="254" height="120" rx="10" class="box" stroke="#6cb4ff"/>
+  <text x="48" y="460" class="t">Browser (React)</text>
+  <text x="48" y="484" class="m">GET /api/dataplane?ptr=…</text>
+  <text x="48" y="506" class="s">Cards resolve their pointers</text>
+  <text x="48" y="524" class="s">to rows for the operator.</text>
+
+  <!-- fence outcomes -->
+  <text x="32" y="604" class="lbl">verifyPointerFence OUTCOMES</text>
+  <rect x="32" y="616" width="140" height="30" rx="15" fill="#58d39a" fill-opacity=".12" stroke="#58d39a"/><text x="102" y="636" text-anchor="middle" class="m" fill="#58d39a">valid → rows</text>
+  <rect x="184" y="616" width="140" height="30" rx="15" fill="#ff6e7e" fill-opacity=".1" stroke="#ff6e7e"/><text x="254" y="636" text-anchor="middle" class="m" fill="#ff6e7e">stale-epoch</text>
+  <rect x="336" y="616" width="140" height="30" rx="15" fill="#ff6e7e" fill-opacity=".1" stroke="#ff6e7e"/><text x="406" y="636" text-anchor="middle" class="m" fill="#ff6e7e">cross-tenant</text>
+  <rect x="488" y="616" width="226" height="30" rx="15" fill="#ff6e7e" fill-opacity=".1" stroke="#ff6e7e"/><text x="601" y="636" text-anchor="middle" class="m" fill="#ff6e7e">aba-generation-mismatch</text>
+  <rect x="726" y="616" width="226" height="30" rx="15" fill="#ff6e7e" fill-opacity=".1" stroke="#ff6e7e"/><text x="839" y="636" text-anchor="middle" class="m" fill="#ff6e7e">unregistered-or-invalid</text>
+  <text x="966" y="636" class="m">→ HTTP 409</text>
+  <text x="32" y="680" class="s">A drift reset or tenant switch bumps the epoch, so a card rendered against the old state cannot read the new rows by accident (ABA guard).</text>
+</svg>
