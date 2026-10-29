@@ -39,7 +39,7 @@ raw PII hits      0
 
 ## Step 3: the reply is de-referenced in the orchestrator, and re-redacted on the way back
 
-The model answers through a forced tool call. Its arguments can name only tokens and pointers. The orchestrator rehydrates the tokens server-side ([`depseudonymizeJsonText`, openai.ts:207](../../apps/orchestrator/src/router/openai.ts#L207)). It resolves a pointer only through [`resolveDataPtr`](../../apps/orchestrator/src/local/dataplane.ts#L318), and only after the v3 fence passes; `GET /api/dataplane` answers 409 on a fence failure ([app.ts:806](../../apps/orchestrator/src/app.ts#L806)).
+The model answers through a forced tool call. Its arguments can name only tokens and pointers. The orchestrator rehydrates the tokens server-side ([`depseudonymizeJsonText`, openai.ts:207](../../apps/orchestrator/src/router/openai.ts#L207)). It resolves a pointer only through [`resolveDataPtr`](../../apps/orchestrator/src/local/dataplane.ts#L318), and only after the v3 fence passes; `GET /api/dataplane` answers 409 on a fence failure ([app.ts:810](../../apps/orchestrator/src/app.ts#L810)).
 
 ```text
 model tool args   {"targetEntityId":"upn_tok_01","dataPtr":"ptr://inc-4092/entra/users"}
@@ -51,12 +51,12 @@ resolve (fence ok)          found · 5 rows
 resolve (tenant-fabrikam-02) not found · pointer fence failed: cross-tenant
 ```
 
-Rows that go back to a model are pseudonymised again first. The selection lens, for example, sends Muse Wonder at most five vaulted sample rows ([explore.ts:170](../../apps/orchestrator/src/tiers/explore.ts#L170)). Each data-plane snapshot keeps its own vault. That is why the same person is `upn_tok_01` in the session vault and `upn_tok_03` in this snapshot's vault.
+Rows that go back to a model are pseudonymised again first. The selection lens, for example, sends Muse Wonder at most five vaulted sample rows ([explore.ts:173](../../apps/orchestrator/src/tiers/explore.ts#L173)). Each data-plane snapshot keeps its own vault. That is why the same person is `upn_tok_01` in the session vault and `upn_tok_03` in this snapshot's vault.
 
 ## What this trace does not show
 
 - **MCP calls are not driven by the model.** The model never emits an MCP tool call carrying a `ptr://` argument for the orchestrator to execute. The orchestrator gathers deterministically before any model runs, and model output is applied to layouts and remediation bundles.
 - **Two kinds of token.** `ptr://` addresses datasets. Individual people and objects are vaulted as `upn_tok_NN`, `displayName_tok_NN` and so on.
-- **No workload-identity or Activity Log hop.** The repository has no trace from a ticket sender to an owned service principal to an Activity Log policy deny. The `RequestDisallowedByPolicy` detail on policy rows is fixture data, and no Activity Log query exists (see [README §5](../../README.md#5-what-is-live-what-is-simulated)).
+- **No workload-identity or Activity Log hop on this ticket.** The repository has no trace from a ticket sender to an owned service principal to an Activity Log policy deny, and the `RequestDisallowedByPolicy` detail on INC-4092's policy rows is fixture data. The only Activity Log query belongs to the ABAC lab tickets, whose payroll identity is a fixed lab constant rather than one discovered from the sender (see [README §4.1 and §5](../../README.md#5-what-is-live-what-is-simulated)).
 - **Pseudonymisation, not encryption.** The tokens are session-scoped, epoch-salted aliases.
 - **Tier 3 gets the full context.** Its PowerShell must name the users it changes, so Tier 3 receives the full context instead of descriptors. That context still goes through `chatWithForcedTool`, so the coder writes tokens and the orchestrator rehydrates the script.

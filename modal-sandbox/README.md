@@ -41,7 +41,7 @@ Measured on the deployed apps: a Glimmer hover takes ~22–25 s warm and the col
 
 It runs no `terraform plan` and has no OpenTofu binary; the rail's "OpenTofu" tab shows HCL that Terraform 1.9.8 validates. `-WhatIf` is never executed here.
 
-**Live runs happen outside the sandbox, after Approve.** The live write runs on the orchestrator host, as the engineer's own delegated identity (the Graph sign-in from `Connect-ContextPaneGraph.ps1` and the Az token cache), and only with `LIVE_CLOUD_MODE=true`. The approved PowerShell itself runs only with `CTX_ALLOW_EXECUTE=true` ([`runScriptText`, tier3-remediate.ts:1130](../apps/orchestrator/src/tiers/tier3-remediate.ts#L1130)). Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
+**Live runs happen outside the sandbox, after Approve.** The live write runs on the orchestrator host, as the engineer's own delegated identity (the Graph sign-in from `Connect-ContextPaneGraph.ps1` and the Az token cache), and only with `LIVE_CLOUD_MODE=true`. The approved PowerShell itself runs only with `CTX_ALLOW_EXECUTE=true` ([`runScriptText`, tier3-remediate.ts:1202](../apps/orchestrator/src/tiers/tier3-remediate.ts#L1202)). Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
 
 ## Tier 3B pre-flight sandbox
 

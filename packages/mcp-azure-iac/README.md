@@ -46,6 +46,7 @@ In strict real-tenant mode there is no fallback. In non-strict live mode a faile
 | `setNsgState` (`service.ts:416`) | PUT / DELETE security rules, PATCH tags | the opposite state (`remediated` ↔ `drifted`) |
 | `restoreNsgState` (`service.ts:427`) | restore from a captured snapshot | used by the f⁻¹ inverse |
 | `reconcileNsgTo` (`service.ts:433`) | converge to a given rule set | n/a |
+| [`putAbacRoleAssignmentLive`](src/abac.ts#L346) | PUT one Storage Blob Data Contributor assignment with a container condition (`conditionVersion 2.0`), then a GET read-back | [`deleteAbacRoleAssignmentsLive`](src/abac.ts#L380) |
 
 Without live mode these are simulated in memory (`service.ts:444`).
 
@@ -56,8 +57,8 @@ Without live mode these are simulated in memory (`service.ts:444`).
 | NSG rules + tags, drift vs Terraform | live in real-tenant mode |
 | Regional quota (`Microsoft.Compute/locations/westeurope/usages`) | live in strict real-tenant mode, seeded otherwise |
 | Policy assignments | listed live in strict mode, but every assignment is mapped to Compliant; fallback rows (including the `RequestDisallowedByPolicy` detail text) are hard-coded |
-| Activity Log | **not queried** |
-| RBAC / ABAC role-assignment conditions | not in this server; ABAC appears only in Muse-synthesized cards |
+| Activity Log | queried only for the ABAC lab ([`readActivityLog`, abac.ts:239](src/abac.ts#L239)): failed `roleAssignments/write` events with `RequestDisallowedByPolicy`, last 24 h, 2.5 s budget |
+| RBAC / ABAC role-assignment conditions | [`abac.ts`](src/abac.ts), an exported module the orchestrator calls in-process (not an MCP tool): live read of the lab storage account, policy assignment and role assignments, and the conditioned grant above. Every call is refused outside the lab subscription ([`arm`, :69](src/abac.ts#L69)); in `simulated-lab` mode the orchestrator uses a labelled fixture instead |
 | OpenTofu / state files | no `tofu` binary and no state-file diff; drift compares the parsed `.tf` with live or manifest state, and validation uses Terraform 1.9.8 |
 
 ## Tests

@@ -35,8 +35,8 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 | 0 · recipe | none: zero-token hydration of a pinned view | [`tiers/tier0-recipe.ts`](src/tiers/tier0-recipe.ts) |
 | 1A · hover | `muse-glimmer-30b` (Modal open weights) → Fireworks / Baseten (optional) → `muse-spark-1.3`, then the deterministic diagnostic | [`tiers/tier1-hover.ts:52`](src/tiers/tier1-hover.ts#L52), `hover()` [`:218`](src/tiers/tier1-hover.ts#L218), warm-up [`:412`](src/tiers/tier1-hover.ts#L412) |
 | 1B / 2 · correlate | open-weight catalog (opt-in) → Baseten Spark (optional) → `muse-spark-1.3` → deterministic AST hydration | [`tiers/tier2-correlate.ts:120`](src/tiers/tier2-correlate.ts#L120) |
-| 1B · selection lens | `muse-wonder-1.0` → `muse-spark-1.3` | [`tiers/explore.ts:115`](src/tiers/explore.ts#L115) |
-| 3A · plan / 3B · code | `muse-wonder-1.0` plan, then `muse-code` → **served as `muse-wonder-1.0`** | [`tiers/tier3-remediate.ts:162`](src/tiers/tier3-remediate.ts#L162), [`:191`](src/tiers/tier3-remediate.ts#L191) |
+| 1B · selection lens | `muse-wonder-1.0` → `muse-spark-1.3` | [`tiers/explore.ts:116`](src/tiers/explore.ts#L116) |
+| 3A · plan / 3B · code | `muse-wonder-1.0` plan, then `muse-code` → **served as `muse-wonder-1.0`** | [`tiers/tier3-remediate.ts:164`](src/tiers/tier3-remediate.ts#L164), [`:193`](src/tiers/tier3-remediate.ts#L193) |
 | Voice | `muse-voice-transcribe-1.0` (`POST /asr/transcribe`), intent via `muse-spark-1.3` | [`tiers/voice.ts:54`](src/tiers/voice.ts#L54), [`router/openai.ts:235`](src/router/openai.ts#L235) |
 | Vision | `muse-spark-1.3` with an image part | [`tiers/vision.ts`](src/tiers/vision.ts) |
 
@@ -52,7 +52,7 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 
 ## The five-stage sub-agent pipeline
 
-[`runSubAgentPipeline` (local/subagent-orchestrator.ts:677)](src/local/subagent-orchestrator.ts#L677) runs for custom tickets and ERP drops:
+[`runSubAgentPipeline` (local/subagent-orchestrator.ts:710)](src/local/subagent-orchestrator.ts#L710) runs for custom tickets and ERP drops:
 
 ```text
  Telemetry Scout (MCP probe) ───────────────────────────────┐ starts first, runs throughout
@@ -63,13 +63,13 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 
 | # | Agent | Model | Output | Line |
 |---|---|---|---|---|
-| 1 | Goal Clarifier | `muse-wonder-1.0` | clarifying questions → answers → `SteeringParams` | [`:146`](src/local/subagent-orchestrator.ts#L146) |
-| 2 | Telemetry Scout | none (mcp-msgraph + cloud status) | `UpstreamCloudStatusCorrelation` | [`:677`](src/local/subagent-orchestrator.ts#L677) |
-| 3 | UI Architect | gatekeeper `muse-spark-1.3` → synthesizer `muse-wonder-1.0` | `ElementRoutingDecision` + `SynthesizedDynamicCard[]` | [`dynamic-catalog.ts:188`](src/local/dynamic-catalog.ts#L188), [`:285`](src/local/dynamic-catalog.ts#L285) |
-| 4 | IaC & PS7 Coder | `muse-wonder-1.0` | PS7 script, Terraform diff, rollback | [`:354`](src/local/subagent-orchestrator.ts#L354) |
-| 5 | Safety Verifier | none | brace / `ShouldProcess` / wildcard repairs | [`:465`](src/local/subagent-orchestrator.ts#L465) |
+| 1 | Goal Clarifier | `muse-wonder-1.0` | clarifying questions → answers → `SteeringParams` | [`:161`](src/local/subagent-orchestrator.ts#L161) |
+| 2 | Telemetry Scout | none (mcp-msgraph + cloud status) | `UpstreamCloudStatusCorrelation` | [`:710`](src/local/subagent-orchestrator.ts#L710) |
+| 3 | UI Architect | gatekeeper `muse-spark-1.3` → synthesizer `muse-wonder-1.0` | `ElementRoutingDecision` + `SynthesizedDynamicCard[]` | [`dynamic-catalog.ts:188`](src/local/dynamic-catalog.ts#L188), [`:301`](src/local/dynamic-catalog.ts#L301) |
+| 4 | IaC & PS7 Coder | `muse-wonder-1.0` | PS7 script, Terraform diff, rollback | [`:374`](src/local/subagent-orchestrator.ts#L374) |
+| 5 | Safety Verifier | none | brace / `ShouldProcess` / wildcard repairs | [`:498`](src/local/subagent-orchestrator.ts#L498) |
 
-Stages 2–4 are joined at [`:772`](src/local/subagent-orchestrator.ts#L772). The real sandbox pre-flight runs when the fix is staged (below). Each stage writes a `SubAgentTaskRecord` with its model, tokens and latency, and the System & audit drawer shows those records.
+Stages 2–4 are joined at [`:839`](src/local/subagent-orchestrator.ts#L839). The real sandbox pre-flight runs when the fix is staged (below). Each stage writes a `SubAgentTaskRecord` with its model, tokens and latency, and the System & audit drawer shows those records.
 
 ## Two-way steering
 
@@ -78,9 +78,9 @@ Stages 2–4 are joined at [`:772`](src/local/subagent-orchestrator.ts#L772). Th
 | Schema (`SteeringParams`, `SteeringDelta`, digest, `isSteeringStale`) | [`packages/catalog/src/steering.ts`](../../packages/catalog/src/steering.ts) |
 | Answers → steering (continues the version) | [`local/steering.ts:115`](src/local/steering.ts#L115) `deriveSteeringFromAnswers` |
 | The only writer (version++ on digest change; audit-first ⇒ dryRun) | [`local/steering.ts:165`](src/local/steering.ts#L165) `applySteeringDelta` |
-| Route | `PATCH /api/tickets/:scenarioId/steer`, body `SteeringDelta & { rerun?: "coder" \| "coder+ui" }` ([`app.ts:514`](src/app.ts#L514)) |
-| Coder re-parameterisation + script diff | [`local/custom-ticket.ts:696`](src/local/custom-ticket.ts#L696) `steerCustomTicket` |
-| Re-run the pre-flight on the steered bundle | [`tiers/tier3-remediate.ts:1029`](src/tiers/tier3-remediate.ts#L1029) `restageRemediationForSteering` |
+| Route | `PATCH /api/tickets/:scenarioId/steer`, body `SteeringDelta & { rerun?: "coder" \| "coder+ui" }` ([`app.ts:517`](src/app.ts#L517)) |
+| Coder re-parameterisation + script diff | [`local/custom-ticket.ts:701`](src/local/custom-ticket.ts#L701) `steerCustomTicket` |
+| Re-run the pre-flight on the steered bundle | [`tiers/tier3-remediate.ts:1092`](src/tiers/tier3-remediate.ts#L1092) `restageRemediationForSteering` |
 
 ## Tier 3: stage, verify, approve, revert
 
@@ -92,7 +92,7 @@ Stages 2–4 are joined at [`:772`](src/local/subagent-orchestrator.ts#L772). Th
    - pwsh `Parser::ParseFile` plus a cmdlet allow-list.
    - `terraform fmt -check` and `terraform validate` when the drift has an HCL baseline.
    - After either runner, [`checkWhatIfSafety`](src/preflight/local.ts#L132) statically requires every mutating cmdlet to sit inside `ShouldProcess`.
-3. **Write-then-test.** [`runRepairLoop`](src/tiers/repair-loop.ts#L129) is called at [`tier3-remediate.ts:249`](src/tiers/tier3-remediate.ts#L249):
+3. **Write-then-test.** [`runRepairLoop`](src/tiers/repair-loop.ts#L129) is called at [`tier3-remediate.ts:251`](src/tiers/tier3-remediate.ts#L251):
    - Repairable findings go back to the coder for up to [`MAX_REPAIR_ITERATIONS = 2`](src/tiers/repair-loop.ts#L34) turns.
    - Infrastructure findings are not repairable.
    - The loop stops on an unchanged script and never forces a verdict.
@@ -106,9 +106,9 @@ Stages 2–4 are joined at [`:772`](src/local/subagent-orchestrator.ts#L772). Th
 6. **Approve.** `POST /api/remediate/approve`:
    - Break-glass mode first captures [`captureEntitySnapshot`](src/local/snapshot.ts#L107), then writes through the lab write path, then runs the canary ([`local/canary-convergence.ts:142`](src/local/canary-convergence.ts#L142); the probes evaluate the symbolic model).
    - GitOps mode stages a PR.
-7. **Revert.** `POST /api/rollback` ([`app.ts:763`](src/app.ts#L763)):
+7. **Revert.** `POST /api/rollback` ([`app.ts:767`](src/app.ts#L767)):
    - [`buildInverseFromSnapshot`](src/local/inverse-rollback.ts#L205) derives the inverse for the sections that were touched.
-   - [`rollbackRemediation`](src/tiers/tier3-rollback.ts#L95) executes it, then reads the state back and compares it with the snapshot.
+   - [`rollbackRemediation`](src/tiers/tier3-rollback.ts#L98) executes it, then reads the state back and compares it with the snapshot.
    - With no snapshot, it returns a static reference inverse, labelled `inverseSource: "static-reference"`.
 
 ## N+k catalog persistence
@@ -119,24 +119,24 @@ Stages 2–4 are joined at [`:772`](src/local/subagent-orchestrator.ts#L772). Th
 
 | Method · path | Purpose | Line |
 |---|---|---|
-| `GET /api/health` · `/api/config` | health, open-weight info, model stand-ins | [`136`](src/app.ts#L136), [`155`](src/app.ts#L155) |
-| `GET /api/scenarios` · `/api/scenarios/:id/brief` | work queue, left-pane brief | [`195`](src/app.ts#L195), [`293`](src/app.ts#L293) |
-| `POST /api/hover` | Tier 1A | [`888`](src/app.ts#L888) |
-| `POST /api/correlate` | Tier 1B/2 (SSE optional) | [`908`](src/app.ts#L908) |
-| `POST /api/explore-selection` | selection → Context Lens | [`341`](src/app.ts#L341) |
-| `POST /api/tickets/triage-custom` | unscripted ticket → sub-agent pipeline | [`366`](src/app.ts#L366) |
-| `POST /api/tickets/:id/refine-goal` | full re-run with new answers (SSE optional) | [`464`](src/app.ts#L464) |
-| `PATCH /api/tickets/:id/steer` | steering → coder re-parameterise → re-stage | [`514`](src/app.ts#L514) |
-| `GET /api/dynamic-catalog` · `POST …/clear` | N+k registry | [`560`](src/app.ts#L560), [`579`](src/app.ts#L579) |
-| `POST /api/remediate` | Tier 3 (SSE optional) | [`949`](src/app.ts#L949) |
-| `POST /api/remediate/:rid/autofix` · `/override` | guard repair · audited override | [`967`](src/app.ts#L967), [`976`](src/app.ts#L976) |
-| `POST /api/remediate/approve` | HITL approval | [`1122`](src/app.ts#L1122) |
-| `GET /api/formal/:id` | invariants, blast radius, rollback, idempotency | [`750`](src/app.ts#L750) |
-| `POST /api/rollback` | f⁻¹ | [`763`](src/app.ts#L763) |
-| `GET /api/dataplane?ptr=` | resolve a `ptr://` pointer (409 on fence failure) | [`806`](src/app.ts#L806) |
-| `POST /api/voice-steer` · `/api/vision-extract` | voice / vision tiers | [`1215`](src/app.ts#L1215), [`1194`](src/app.ts#L1194) |
-| `POST /api/lab/reset-drift` | re-assert the seeded drift | [`1139`](src/app.ts#L1139) |
-| `GET /api/telemetry/stream` · `GET /ws` | SSE mirror · WebSocket telemetry | [`1227`](src/app.ts#L1227) |
+| `GET /api/health` · `/api/config` | health, open-weight info, model stand-ins | [`139`](src/app.ts#L139), [`158`](src/app.ts#L158) |
+| `GET /api/scenarios` · `/api/scenarios/:id/brief` | work queue, left-pane brief | [`198`](src/app.ts#L198), [`296`](src/app.ts#L296) |
+| `POST /api/hover` | Tier 1A | [`892`](src/app.ts#L892) |
+| `POST /api/correlate` | Tier 1B/2 (SSE optional) | [`912`](src/app.ts#L912) |
+| `POST /api/explore-selection` | selection → Context Lens | [`344`](src/app.ts#L344) |
+| `POST /api/tickets/triage-custom` | unscripted ticket → sub-agent pipeline | [`369`](src/app.ts#L369) |
+| `POST /api/tickets/:id/refine-goal` | full re-run with new answers (SSE optional) | [`467`](src/app.ts#L467) |
+| `PATCH /api/tickets/:id/steer` | steering → coder re-parameterise → re-stage | [`517`](src/app.ts#L517) |
+| `GET /api/dynamic-catalog` · `POST …/clear` | N+k registry | [`564`](src/app.ts#L564), [`583`](src/app.ts#L583) |
+| `POST /api/remediate` | Tier 3 (SSE optional) | [`953`](src/app.ts#L953) |
+| `POST /api/remediate/:rid/autofix` · `/override` | guard repair · audited override | [`971`](src/app.ts#L971), [`980`](src/app.ts#L980) |
+| `POST /api/remediate/approve` | HITL approval | [`1126`](src/app.ts#L1126) |
+| `GET /api/formal/:id` | invariants, blast radius, rollback, idempotency | [`754`](src/app.ts#L754) |
+| `POST /api/rollback` | f⁻¹ | [`767`](src/app.ts#L767) |
+| `GET /api/dataplane?ptr=` | resolve a `ptr://` pointer (409 on fence failure) | [`810`](src/app.ts#L810) |
+| `POST /api/voice-steer` · `/api/vision-extract` | voice / vision tiers | [`1254`](src/app.ts#L1254), [`1233`](src/app.ts#L1233) |
+| `POST /api/lab/reset-drift` | re-assert the seeded drift | [`1178`](src/app.ts#L1178) |
+| `GET /api/telemetry/stream` · `GET /ws` | SSE mirror · WebSocket telemetry | [`1266`](src/app.ts#L1266) |
 
 `GET /` lists every endpoint.
 

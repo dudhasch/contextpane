@@ -60,11 +60,11 @@ Zustand (`useWorkbench`). Key actions:
 | Action | What it does |
 |---|---|
 | `correlate` · `remediate` · `approve` | Tier 1B/2, Tier 3 (SSE), HITL approval |
-| `steer(delta)` ([`:2507`](src/store.ts#L2507)) | optimistic scope change → `PATCH /api/tickets/:id/steer` → `lastSteer` (diff, coder model/tokens/latency), `steerStatus` |
+| `steer(delta)` ([`:2542`](src/store.ts#L2542)) | optimistic scope change → `PATCH /api/tickets/:id/steer` → `lastSteer` (diff, coder model/tokens/latency), `steerStatus` |
 | `revertFromConsole` · `rollbackNow` | `POST /api/rollback`; the console reports only what the server did (executed / simulated / staged) |
-| `prewarmEntityHover` · `prewarmQueueScenario` ([`:2123`](src/store.ts#L2123)) · `prewarmRemediation` · `prewarmSelectionExplore` | hover-intent speculative pre-fetch |
+| `prewarmEntityHover` · `prewarmQueueScenario` ([`:2156`](src/store.ts#L2156)) · `prewarmRemediation` · `prewarmSelectionExplore` | hover-intent speculative pre-fetch |
 
-**Speculative buffer.** At most 4 slots (`queue-brief`, `entity-hover`, `remediation`), each tagged with `speculativeEpoch` ([`:383`](src/store.ts#L383)). A context change bumps the epoch and clears the buffer. The selection cache holds at most 8 entries. The System & audit drawer reports hits, misses and milliseconds saved.
+**Speculative buffer.** At most 4 slots (`queue-brief`, `entity-hover`, `remediation`), each tagged with `speculativeEpoch` ([`:409`](src/store.ts#L409)). A context change bumps the epoch and clears the buffer. The selection cache holds at most 8 entries. The System & audit drawer reports hits, misses and milliseconds saved.
 
 `src/lib/api.ts` is the typed fetch layer for about 30 endpoints (`?stream=1` for SSE). `src/lib/ws.ts` subscribes to `/ws` telemetry.
 
