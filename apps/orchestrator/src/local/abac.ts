@@ -234,6 +234,11 @@ export function rebindAbacEvents(card: SynthesizedDynamicCard, activity: AbacAct
 const RG_SCOPE = `/subscriptions/${ABAC_LAB.subscriptionId}/resourceGroups/${ABAC_LAB.resourceGroup}`;
 
 /** The coder must produce a script that carries these exact tokens for the chosen steering. */
+/** The mutating cmdlets the chosen strategy needs: the pre-flight contract for an ABAC bundle, whatever else the coder lists. */
+export function abacRequiredCommands(choice: AbacChoice): string[] {
+  return choice.strategy === "exemption" ? ["new-azpolicyexemption", "new-azroleassignment"] : ["new-azroleassignment"];
+}
+
 export function abacScriptExpectations(choice: AbacChoice): string[] {
   if (choice.strategy === "exemption") return ["New-AzPolicyExemption", ABAC_LAB.policyName];
   const tokens = ["New-AzRoleAssignment", ABAC_LAB.storageAccount, ABAC_LAB.identityName];

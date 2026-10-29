@@ -24,6 +24,7 @@ import {
   abacClarifyingQuestions,
   abacFacts,
   abacMissingElement,
+  abacRequiredCommands,
   abacRoutingDecision,
   abacScriptExpectations,
   buildAbacRemediationSync,
@@ -435,7 +436,8 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
         graphPatch: typeof raw.graphPatch === "string" ? raw.graphPatch : JSON.stringify(raw.graphPatch ?? {}, null, 2),
         rollbackScript: raw.rollbackScript ?? fallback.rollbackScript,
         affectedEntities: Array.isArray(raw.affectedEntities) && raw.affectedEntities.length > 0 ? raw.affectedEntities : fallback.affectedEntities,
-        requiredCommands: Array.isArray(raw.requiredCommands) && raw.requiredCommands.length > 0 ? raw.requiredCommands.map((c) => c.toLowerCase()) : [],
+        // ABAC: the contract is the steered strategy's cmdlets, not the coder's own list (it tends to add the rollback's).
+        requiredCommands: abacChoice ? abacRequiredCommands(abacChoice) : Array.isArray(raw.requiredCommands) && raw.requiredCommands.length > 0 ? raw.requiredCommands.map((c) => c.toLowerCase()) : [],
         riskNotes: Array.isArray(raw.riskNotes) && raw.riskNotes.length > 0 ? raw.riskNotes : fallback.riskNotes,
         executionSteps: Array.isArray(raw.executionSteps) && raw.executionSteps.length > 0 ? raw.executionSteps : fallback.executionSteps,
         _meta: {
