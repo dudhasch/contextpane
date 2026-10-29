@@ -39,6 +39,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 
 ## Other documentation
 
+- [`traces/`](traces/README.md): boundary traces captured from the orchestrator's own code (the 3-step MCP vault boundary)
 - [`../README.md`](../README.md): overview, model execution order, deep dives, quickstart
 - [`../HACKATHON_ATTRIBUTION.md`](../HACKATHON_ATTRIBUTION.md): models, endpoints, provenance
 - [`../DESIGN.md`](../DESIGN.md): the Graphite & Signal design system

@@ -51,7 +51,7 @@
 
 | Bonus prize | What qualifies | Where in the code |
 |---|---|---|
-| **Best Build on Meta Open Weights** | `Muse-Glimmer-30B` GGUF (Q4_K_M) served by our own llama.cpp deployment on one Modal L40S. Output is constrained by a strict `json_schema` response format, which llama-server compiles to a GBNF grammar. It answers Tier 1A hover diagnostics; every answer is persisted with its real latency | [`modal-sandbox/glimmer_open_weights.py:133`](modal-sandbox/glimmer_open_weights.py#L133) (schema) · [`apps/orchestrator/src/router/glimmer-payload.ts:93`](apps/orchestrator/src/router/glimmer-payload.ts#L93) · [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](apps/orchestrator/src/tiers/tier1-hover.ts#L52) (chain) · [`data/hover-cache.seed.json`](data/hover-cache.seed.json) |
+| **Best Build on Meta Open Weights** | `Muse-Glimmer-30B` GGUF (Q4_K_M) served by our own llama.cpp deployment on one Modal L40S. Output is constrained by a strict `json_schema` response format, which llama-server compiles to a GBNF grammar. It answers Tier 1A hover diagnostics; every answer is persisted with its real latency | [`modal-sandbox/glimmer_open_weights.py:139`](modal-sandbox/glimmer_open_weights.py#L139) (schema) · [`apps/orchestrator/src/router/glimmer-payload.ts:93`](apps/orchestrator/src/router/glimmer-payload.ts#L93) · [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](apps/orchestrator/src/tiers/tier1-hover.ts#L52) (chain) · [`data/hover-cache.seed.json`](data/hover-cache.seed.json) |
 | **Best Agentic Use-Case** | A 5-stage sub-agent pipeline (clarifier, MCP telemetry scout, Spark→Wonder UI architect, coder, verifier). Steering is two-way: any scope change re-parameterises the staged script. A write-then-test loop feeds sandbox findings back to the coder for up to 2 repair turns. Approval is human, and the inverse is built from a pre-change snapshot | [`local/subagent-orchestrator.ts:677`](apps/orchestrator/src/local/subagent-orchestrator.ts#L677) · [`local/steering.ts:165`](apps/orchestrator/src/local/steering.ts#L165) · [`tiers/repair-loop.ts:129`](apps/orchestrator/src/tiers/repair-loop.ts#L129) · [`tiers/tier3-rollback.ts:95`](apps/orchestrator/src/tiers/tier3-rollback.ts#L95) |
 | **Best Creative Build** | N+k generative UI. When no catalog card fits a ticket, `muse-spark-1.3` names the missing element and `muse-wonder-1.0` fills it from five schema-checked primitives. The card is persisted as a `.tsx` file plus a catalog entry and rendered by the same React runtime as the hand-built cards | [`local/dynamic-catalog.ts:188`](apps/orchestrator/src/local/dynamic-catalog.ts#L188) (gatekeeper) · [`:285`](apps/orchestrator/src/local/dynamic-catalog.ts#L285) (synthesizer) · [`data/synthesized-elements/`](data/synthesized-elements) |
 
@@ -149,6 +149,16 @@ At start-up [`router/meta-models.ts:11`](apps/orchestrator/src/router/meta-model
 
 **Vault.** Every prompt to every provider goes through one function, [`chatWithForcedTool` (router/openai.ts:142)](apps/orchestrator/src/router/openai.ts#L142). It first runs [`vaultMessages` (:116)](apps/orchestrator/src/router/openai.ts#L116), which replaces UPNs, display names, public IPs, user ids and device names with session tokens (`upn_tok_03`, `displayName_tok_01`, …) from the process-wide [`PiiVault` (dataplane.ts:745)](packages/catalog/src/dataplane.ts#L745). `recordPrompt` counts any raw PII left, and the drawer shows the count. In the capture: **19 fields vaulted, 0 of 76 prompts with raw PII**. Model replies are rehydrated **in the orchestrator** ([:207](apps/orchestrator/src/router/openai.ts#L207)), so the browser shows real names and the provider never sees them.
 
+**The 3-step MCP vault boundary** ([full trace on INC-4092](docs/traces/mcp-vault-boundary.md)):
+
+| Step | Where | What crosses |
+|---|---|---|
+| 1 · Gather | [`gatherContext`](apps/orchestrator/src/mcp/context.ts#L118) → msgraph · azure-iac · erp | The orchestrator calls MCP itself, with real UPNs and GUIDs; no model picks the calls. Rows are published under fenced `ptr://` pointers |
+| 2 · Outbound | [`contextForCorrelation`](apps/orchestrator/src/mcp/context.ts#L495) + [`vaultMessages`](apps/orchestrator/src/router/openai.ts#L116) | Descriptors without rows; identities as `upn_tok_NN`. In the trace: "Ticket from upn_tok_01", 8,155 characters, 0 raw PII hits |
+| 3 · Inbound | [`depseudonymizeJsonText`](apps/orchestrator/src/router/openai.ts#L207) + [`resolveDataPtr`](apps/orchestrator/src/local/dataplane.ts#L318) | Tool args `{"targetEntityId":"upn_tok_01","dataPtr":"ptr://inc-4092/entra/users"}` become the real UPN in memory; the pointer resolves only through the fence (a cross-tenant check fails); rows sent back to a model are pseudonymised again ([explore.ts:170](apps/orchestrator/src/tiers/explore.ts#L170)) |
+
+Models never issue MCP tool calls, and there is no service-principal or Activity Log hop: the `RequestDisallowedByPolicy` rows are fixtures (§5).
+
 <p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Glimmer hover popover with model badge, pseudonym vault token map and the 0-raw-PII metric" width="100%"></p>
 
 ### 4.2 Hover-intent speculative pre-fetch
@@ -172,9 +182,10 @@ The System & audit drawer reports hits, misses and milliseconds saved; one selec
 The catalog starts with hand-built cards (N). It grows by k whenever a ticket needs a view that does not exist:
 
 1. **Gatekeeper.** `muse-spark-1.3` ([`assessTicketElementNeeds`, dynamic-catalog.ts:188](apps/orchestrator/src/local/dynamic-catalog.ts#L188)) names the missing element (`FinanceBlobAbacConditionFix`), its domain, the extracted entities and the reason.
-2. **Synthesizer.** `muse-wonder-1.0` ([`:285`](apps/orchestrator/src/local/dynamic-catalog.ts#L285)) fills it from **five primitives**: `quota-gauges` · `policy-chain` · `data-table` · `config-diff` · `event-stream` ([`schemas/components.ts`](packages/catalog/src/schemas/components.ts)).
-3. **Gate.** The reply must parse as `SynthesizedDynamicCardSchema` (Zod). A failing reply never reaches the catalog; the operator sees a labelled template card instead.
-4. **Persistence.** A passing card is written to `data/synthesized-elements/<ElementId>.tsx` (a typed module exporting the schema and the spec) and to [`data/dynamic-catalog.json`](data/dynamic-catalog.json). The System & audit drawer lists the registry.
+2. **Synthesizer.** `muse-wonder-1.0` ([`:285`](apps/orchestrator/src/local/dynamic-catalog.ts#L285)) writes no code. It emits a **JSON view specification** composed of **five layout primitives**: `quota-gauges` · `policy-chain` · `data-table` · `config-diff` · `event-stream`.
+3. **Gate.** The spec must parse as [`SynthesizedDynamicCardSchema`](packages/catalog/src/schemas/components.ts#L550) (Zod). A failing reply never reaches the catalog; the operator sees a labelled template card instead.
+4. **Mount.** The web app's local interpreter, [`SynthesizedDynamicCard`](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L285), maps each block to a React primitive ([`renderBlock`, :116](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L116)). It runs no model-written code. The spec is stored with the triaged ticket (`synthesizedElements` in `data/custom-scenarios.json`). Drawing the card from a stored spec is client-side rendering and makes no model call.
+5. **Persistence.** A passing spec is also exported as `data/synthesized-elements/<ElementId>.tsx`, a typed module that re-exports the schema and the spec so the card can be reviewed as source, and is added to [`data/dynamic-catalog.json`](data/dynamic-catalog.json). The System & audit drawer lists the registry.
 
 Every data-table row in a synthesized card is steerable: clicking a row narrows the fix to that resource (§4.4).
 
@@ -182,7 +193,7 @@ Every data-table row in a synthesized card is steerable: clicking a row narrows 
 
 <p align="center"><img src="docs/assets/nk-ui-synthesis-loop.webp" alt="Loop: an unscripted ABAC ticket is triaged and Muse Wonder composes a card that did not exist" width="85%"></p>
 
-> **Scope note.** `reuseCount` goes up when the gatekeeper names an element that already exists and Wonder re-synthesizes it ([`upsertCatalogEntry`, :273](apps/orchestrator/src/local/dynamic-catalog.ts#L273)). There is no pre-synthesis lookup that serves a stored card in 0 ms; for custom tickets the gatekeeper always asks for a fresh element.
+> **Scope note.** `reuseCount` goes up when the gatekeeper names an element that already exists and Wonder re-synthesizes it ([`upsertCatalogEntry`, :273](apps/orchestrator/src/local/dynamic-catalog.ts#L273)). A *new* ticket gets no pre-synthesis lookup that serves a stored card; for custom tickets the gatekeeper always asks for a fresh element. Drawing from a stored spec without a model call applies only to a ticket that has already been triaged. No mount time has been measured.
 
 ### 4.4 Two-way steering and the write-then-test loop
 
@@ -206,13 +217,17 @@ Every data-table row in a synthesized card is steerable: clicking a row narrows 
 | `terraform fmt -check` · `terraform validate` (1.9.8, azurerm ~> 4.0) | ✓ | ✓ when the ticket has an HCL baseline |
 | Mutating cmdlets inside `$PSCmdlet.ShouldProcess` | static check after either ([`checkWhatIfSafety`, :132](apps/orchestrator/src/preflight/local.ts#L132)) | same |
 
+**The sandbox is offline and holds no tenant credentials.** Its only secret is the bearer token the orchestrator presents. It holds no Azure, Graph or Terraform state credentials. The Terraform working directory is set up at image build with `terraform init -backend=false`, and each bundle gets `fmt -check` and `validate`. It is Terraform 1.9.8, not OpenTofu, and nothing runs `plan` or `-WhatIf`.
+
+**Live runs happen after Approve, as the engineer.** The live write runs on the orchestrator host, as the engineer's own delegated identity, and only with `LIVE_CLOUD_MODE=true`. The approved script itself runs only with `CTX_ALLOW_EXECUTE=true` ([`runScriptText`, tier3-remediate.ts:1130](apps/orchestrator/src/tiers/tier3-remediate.ts#L1130)). Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
+
 [`runRepairLoop`](apps/orchestrator/src/tiers/repair-loop.ts#L129) feeds the repairable findings back to the coder, for at most [`MAX_REPAIR_ITERATIONS = 2`](apps/orchestrator/src/tiers/repair-loop.ts#L34) turns. Infrastructure findings (sandbox unavailable, Terraform missing, …) are not sent back. The loop stops early if the coder returns an unchanged script, and it never forces a verdict. The verdict badge then reads "· N iter" and the proof panel lists every round. The run in the screenshot passed on the first attempt, so no repair timeline is drawn; the loop is covered by [`repair-loop.test.ts`](apps/orchestrator/src/tiers/repair-loop.test.ts).
 
 **Prover and f⁻¹.**
 - [`formal-verifier.ts`](apps/orchestrator/src/local/formal-verifier.ts) checks seven invariants as a PCC bitmask ([`0x7f`, :84](apps/orchestrator/src/local/formal-verifier.ts#L84)): `break-glass-non-lockout`, `target-remediation`, `nsg-reachability`, `shadow-admin-zero-transitive`, `proactive-remediation-detect-read-only`, `idempotency-fork-isolated` and `bijective-inverse-rollback`. It also checks idempotency, f(f(S)) = f(S), on a forked state ([`:754`](apps/orchestrator/src/local/formal-verifier.ts#L754)). An ad-hoc ticket has no symbolic model, so the strip says "not provable" rather than claiming a proof.
 - **Snapshot.** On a break-glass approve, [`captureEntitySnapshot`](apps/orchestrator/src/local/snapshot.ts#L107) records the touched users, groups, CA policies, NSG rules, Intune objects and workload identities.
 - **Inverse.** [`buildInverseFromSnapshot`](apps/orchestrator/src/local/inverse-rollback.ts#L205) derives the inverse for only the sections the bundle changed.
-- **Rollback.** [`rollbackRemediation`](apps/orchestrator/src/tiers/tier3-rollback.ts#L95) executes the inverse through the lab write path, reads the state back and compares it with the snapshot.
+- **Rollback.** [`rollbackRemediation`](apps/orchestrator/src/tiers/tier3-rollback.ts#L95) executes the inverse through the lab write path, reads the state back and compares it with the snapshot. "Restored" comes only from that read-back. Out-of-band changes are not checked *before* restoring: there is no ETag or hash precondition. An out-of-band edit to a snapshotted entity is written back to its pre-change value without a warning.
 
 ### 4.5 Zero-context correlation and universal selection lenses
 
@@ -240,7 +255,7 @@ ContextPane labels its sources in the UI. The same rule applies here:
 | Azure ARM | NSG read/write + Terraform drift diff; regional quota (`westeurope` usages) in strict real-tenant mode | Policy compliance rows (including the `RequestDisallowedByPolicy` detail) are fixture rows; no Activity Log query exists |
 | PSA / CSP | File-drop ERP inbox (`input/tickets/`), SLA clock | `mcp-erp` data, contracts and the "Billed (Pax8)" seat column are fixtures; there is no Pax8 integration |
 | Models | Meta Model API calls and the Modal Glimmer deployment, with telemetry for every call | With no key every tier falls back to a labelled deterministic engine (`CTX_FORCE_LOCAL=true` forces it) |
-| Verification | Modal / local pwsh AST, `terraform fmt`/`validate` | `-WhatIf` is a static ShouldProcess check, never an execution; canary probes and the blast-radius replay evaluate the symbolic model |
+| Verification | Credential-free Modal / local pwsh AST, `terraform fmt`/`validate` (`init -backend=false`); after Approve, live writes as the engineer's delegated identity | `-WhatIf` is a static ShouldProcess check in the sandbox and is never run by Approve; rollback has no ETag/hash precondition; canary probes and the blast-radius replay evaluate the symbolic model |
 | Screenshots in this README | Real stack, real Meta and Modal calls | Data mode was `simulated-lab` (seeded fixtures plus live model calls); nothing was approved against the tenant during capture |
 
 ---
@@ -290,7 +305,7 @@ contextpane/
 ├── demo-iac/                Terraform baseline (main.tf) + offline lab manifest
 ├── input/tickets/           ERP file-drop inbox (one seeded example)
 ├── scripts/                 PowerShell 7 lab seeding, config, smoke test, captures        → scripts/README.md
-├── docs/                    visual assets and documentation index                         → docs/README.md
+├── docs/                    visual assets, boundary traces, documentation index           → docs/README.md
 ├── DESIGN.md                Graphite & Signal design system
 └── HACKATHON_ATTRIBUTION.md models, endpoints, provenance
 ```

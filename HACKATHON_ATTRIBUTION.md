@@ -27,7 +27,7 @@ No code was carried over from a prior project. Third-party dependencies are decl
 
 | Stage / tier | Purpose | Model id as configured | What answers | Provider | Code |
 |---|---|---|---|---|---|
-| 0 · Tier 1A hover | Inline hover diagnostic (`AADSTS…` translation, grounded fields) | `muse-glimmer-30b` | `Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf` on llama.cpp `llama-server`, strict `json_schema` → GBNF | Modal, 1× L40S, scale to zero | [`modal-sandbox/glimmer_open_weights.py:133`](modal-sandbox/glimmer_open_weights.py#L133), [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](apps/orchestrator/src/tiers/tier1-hover.ts#L52) |
+| 0 · Tier 1A hover | Inline hover diagnostic (`AADSTS…` translation, grounded fields) | `muse-glimmer-30b` | `Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf` on llama.cpp `llama-server`, strict `json_schema` → GBNF | Modal, 1× L40S, scale to zero | [`modal-sandbox/glimmer_open_weights.py:139`](modal-sandbox/glimmer_open_weights.py#L139), [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](apps/orchestrator/src/tiers/tier1-hover.ts#L52) |
 | 0 · Tier 1A fallback | Same, when the open-weight endpoint is not used | `muse-spark-1.3` | `muse-spark-1.3` | Meta Model API | [`apps/orchestrator/src/config.ts:164`](apps/orchestrator/src/config.ts#L164) |
 | 1 · Goal Clarifier | Scoping questions → typed steering v0 | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/local/subagent-orchestrator.ts:146`](apps/orchestrator/src/local/subagent-orchestrator.ts#L146) |
 | 3 · UI Architect gatekeeper | Names the missing catalog element | `muse-spark-1.3` | `muse-spark-1.3` | Meta Model API | [`apps/orchestrator/src/local/dynamic-catalog.ts:188`](apps/orchestrator/src/local/dynamic-catalog.ts#L188) |
@@ -50,7 +50,7 @@ No code was carried over from a prior project. Third-party dependencies are decl
 |---|---|---|
 | Meta Model API (`/v1/chat/completions`, `/v1/models`, `/v1/asr/transcribe`) | Hosted Muse models | `META_API_BASE_URL`, `META_API_KEY` |
 | Modal app `contextpane-glimmer` | Muse Glimmer 30B on 1× L40S, `max_containers=1`, 120 s scale-down, weights in Volume `contextpane-glimmer-weights` | `MODAL_INFERENCE_BASE_URL` (or `CTX_OPEN_WEIGHT_BASE_URL`), `CTX_OPEN_WEIGHT_TIERS=hover` |
-| Modal app `contextpane-sandbox` | Warm CPU class (4 vCPU, 2 GiB, 300 s scale-down): persistent pwsh AST server, Terraform 1.9.8 + azurerm ~> 4.0; `validate_remediation` web endpoint | `CTX_MODAL_SANDBOX_URL`, `CTX_MODAL_SANDBOX_TOKEN`, `CTX_MODAL_SANDBOX_ENABLED` |
+| Modal app `contextpane-sandbox` | Warm CPU class (4 vCPU, 2 GiB, 300 s scale-down): persistent pwsh AST server, Terraform 1.9.8 + azurerm ~> 4.0 (`init -backend=false`), offline and credential-free (bearer token only); `validate_remediation` web endpoint | `CTX_MODAL_SANDBOX_URL`, `CTX_MODAL_SANDBOX_TOKEN`, `CTX_MODAL_SANDBOX_ENABLED` |
 
 ## MCP servers
 
