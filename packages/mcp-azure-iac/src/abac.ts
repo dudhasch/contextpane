@@ -17,6 +17,8 @@ export const ABAC_LAB = {
   tenantDomain: "c4a8shili.onmicrosoft.com",
   subscriptionId: "20505597-043c-4742-a884-42dc3f621aef",
   subscriptionName: "MSDN - Timur - 1",
+  /** The management group the lab subscription sits under. */
+  managementGroup: "mg-msdn-prd",
   resourceGroup: "rg-contoso-payroll-prod",
   storageAccount: "stcontosolzprod01",
   containers: ["payroll-drop", "payroll-archive", "payroll-exports"],
