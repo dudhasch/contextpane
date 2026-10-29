@@ -81,7 +81,8 @@ Write-Step "Selecting the lab subscription for this process"
 if (-not (Get-AzContext)) { throw "No Az sign-in. Run: Connect-AzAccount -Tenant $LabTenantId" }
 $labCtx = Get-AzContext -ListAvailable | Where-Object { $_.Subscription -and $_.Subscription.Id -eq $LabSubscriptionId -and $_.Tenant.Id -eq $LabTenantId } | Select-Object -First 1
 if (-not $labCtx) { throw "The lab subscription $LabSubscriptionId is not in your Az contexts. Run: Connect-AzAccount -Tenant $LabTenantId -Subscription $LabSubscriptionId" }
-$null = Set-AzContext -Context $labCtx -Scope Process
+# Process scope only, so it also runs under -WhatIf; otherwise a dry run would keep whatever context is the default.
+$null = Set-AzContext -Context $labCtx -Scope Process -WhatIf:$false
 Assert-LabContext
 $ctx = Get-AzContext
 Write-Ok "$($ctx.Subscription.Name) ($($ctx.Subscription.Id)) as $($ctx.Account.Id)"
@@ -92,6 +93,18 @@ $roleDefinitionFullId = "/subscriptions/$LabSubscriptionId/providers/Microsoft.A
 
 function Get-PayrollIdentity {
     Get-AzUserAssignedIdentity -ResourceGroupName $ResourceGroup -Name $IdentityName -ErrorAction SilentlyContinue
+}
+
+# Az.Resources 7+ (AutoRest policy cmdlets) throws PolicyDefinitionNotFound even with -ErrorAction SilentlyContinue.
+function Find-PolicyDefinition {
+    param([hashtable]$Scope)
+    try { Get-AzPolicyDefinition -Name $PolicyName @Scope -ErrorAction Stop }
+    catch { if ("$_" -match 'PolicyDefinitionNotFound|could not be found|is not found') { return } else { throw } }
+}
+
+function Find-PolicyAssignment {
+    try { Get-AzPolicyAssignment -Name $PolicyName -Scope $rgScope -ErrorAction Stop }
+    catch { if ("$_" -match 'PolicyAssignmentNotFound|could not be found|is not found') { return } else { throw } }
 }
 
 function Remove-PayrollAssignments {
@@ -115,11 +128,17 @@ function Invoke-PolicyProbe {
     param($Identity)
     Write-Step "Policy probe: an unconditioned Storage Blob Data Contributor assignment must be denied"
     if (-not $Identity) { Write-Warn2 "identity missing; probe skipped"; return }
+    $policyAssignment = Find-PolicyAssignment
+    if (-not $policyAssignment) {
+        Write-Warn2 "no policy assignment $PolicyName on $ResourceGroup, so there is nothing to deny yet; probe skipped."
+        Write-Warn2 "run the full seed first: pwsh ./scripts/seed-abac-lab.ps1 -DefinitionManagementGroupId mg-msdn-prd"
+        return
+    }
     if (-not $PSCmdlet.ShouldProcess("$StorageAccount → $IdentityName", "Probe: unconditioned Storage Blob Data Contributor assignment (expected to be denied)")) { return }
     Assert-LabContext
     try {
         $probe = New-AzRoleAssignment -Scope $storageScope -ObjectId $Identity.PrincipalId -ObjectType ServicePrincipal -RoleDefinitionId $RoleDefinitionId -Description 'ContextPane policy probe (removed immediately)'
-        Write-Warn2 "the assignment was NOT denied: the policy is not effective yet. Removing the probe assignment."
+        Write-Warn2 "the assignment was NOT denied: policy $PolicyName is assigned but not enforced yet (a new assignment can take 5-30 min). Removing the probe assignment."
         Assert-LabContext
         Remove-AzRoleAssignment -InputObject $probe | Out-Null
         Write-Warn2 "re-run in a few minutes: pwsh ./scripts/seed-abac-lab.ps1 -ResetOnly -ProbePolicy"
@@ -137,13 +156,13 @@ if ($Teardown) {
     Write-Step "Teardown"
     if ($PSCmdlet.ShouldProcess($rgScope, "Remove policy assignment $PolicyName")) {
         Assert-LabContext
-        Get-AzPolicyAssignment -Name $PolicyName -Scope $rgScope -ErrorAction SilentlyContinue | Remove-AzPolicyAssignment | Out-Null
+        Find-PolicyAssignment | Remove-AzPolicyAssignment | Out-Null
         Write-Ok "policy assignment removed"
     }
     $defParams = if ($DefinitionManagementGroupId) { @{ ManagementGroupId = $DefinitionManagementGroupId } } else { @{ SubscriptionId = $LabSubscriptionId } }
     if ($PSCmdlet.ShouldProcess($PolicyName, 'Remove policy definition')) {
         Assert-LabContext
-        Get-AzPolicyDefinition -Name $PolicyName @defParams -ErrorAction SilentlyContinue | ForEach-Object { Remove-AzPolicyDefinition -Id $_.Id -Force | Out-Null }
+        Find-PolicyDefinition -Scope $defParams | ForEach-Object { Remove-AzPolicyDefinition -Id $_.Id -Force | Out-Null }
         Write-Ok "policy definition removed"
     }
     if ($PSCmdlet.ShouldProcess($ResourceGroup, 'Remove resource group (storage account, containers, identity)')) {
@@ -229,7 +248,7 @@ $policyParameters = @{
     }
 } | ConvertTo-Json -Depth 10
 $defScope = if ($DefinitionManagementGroupId) { @{ ManagementGroupId = $DefinitionManagementGroupId } } else { @{ SubscriptionId = $LabSubscriptionId } }
-$definition = Get-AzPolicyDefinition -Name $PolicyName @defScope -ErrorAction SilentlyContinue
+$definition = Find-PolicyDefinition -Scope $defScope
 $defCommon = @{
     Name        = $PolicyName
     DisplayName = 'Require ABAC condition for Storage Blob Data Contributor'
@@ -245,7 +264,7 @@ if ($PSCmdlet.ShouldProcess($PolicyName, $(if ($definition) { 'Update policy def
 }
 if ($definition) { Write-Ok "definition $($definition.Id)" }
 
-$assignment = Get-AzPolicyAssignment -Name $PolicyName -Scope $rgScope -ErrorAction SilentlyContinue
+$assignment = Find-PolicyAssignment
 if (-not $assignment -and $definition -and $PSCmdlet.ShouldProcess($rgScope, "Assign $PolicyName (Deny)")) {
     Assert-LabContext
     $assignment = New-AzPolicyAssignment -Name $PolicyName -DisplayName 'Require ABAC condition for Storage Blob Data Contributor' `
