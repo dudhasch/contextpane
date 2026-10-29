@@ -190,6 +190,7 @@ export async function assessTicketElementNeeds(input: {
   body: string;
   matchedSeededComponents: string[];
   clarifiedAnswers?: Record<string, string>;
+  timeoutMs?: number;
 }): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error" }> {
   const started = performance.now();
   const fallback = buildDeterministicRoutingDecision(input);
@@ -209,7 +210,7 @@ export async function assessTicketElementNeeds(input: {
           { role: "user", content: JSON.stringify({ ticketTitle: input.title, ticketBody: input.body, clarifiedAnswers: input.clarifiedAnswers ?? {} }) },
         ],
         ASSESS_ELEMENT_NEEDS_TOOL,
-        { timeoutMs: 10000, temperature: 0.1, maxTokens: 2000, reasoningEffort: "low" },
+        { timeoutMs: input.timeoutMs ?? 10000, temperature: 0.1, maxTokens: 2000, reasoningEffort: "low" },
       );
       const parsed = ElementRoutingDecisionSchema.safeParse(parseToolArguments(res.argumentsRaw));
       if (parsed.success && parsed.data.missingElements.length > 0) {
@@ -282,12 +283,31 @@ function upsertCatalogEntry(store: DynamicCatalogStore, entry: DynamicCatalogEnt
   return merged;
 }
 
+/** Drops one element and its .tsx stub, so the next ticket that needs it synthesizes it again. */
+export function removeCatalogEntry(elementId: string): boolean {
+  const store = loadDynamicCatalog();
+  const entry = store.dynamicElements.find((e) => e.elementId === elementId);
+  if (!entry) return false;
+  saveDynamicCatalog({ ...store, dynamicElements: store.dynamicElements.filter((e) => e.elementId !== elementId) });
+  if (PERSIST_CATALOG) rmSync(join(SYNTHESIZED_TSX_DIR, `${elementId.replace(/[^A-Za-z0-9_-]/g, "")}.tsx`), { force: true });
+  return true;
+}
+
+/** A persisted, model-synthesized element by id, or null. */
+export function findCatalogEntry(elementId: string): DynamicCatalogEntry | null {
+  return loadDynamicCatalog().dynamicElements.find((e) => e.elementId === elementId) ?? null;
+}
+
 export async function synthesizeAndPersistMissingElements(input: {
   ticketId: string;
   ticketPrompt: string;
   decision: ElementRoutingDecision;
   gatekeeperModel: string;
   clarifiedAnswers?: Record<string, string>;
+  /** Facts the synthesizer must build from (live lab objects); passed to Wonder verbatim. */
+  facts?: Record<string, unknown>;
+  /** N+1: an element already in the catalog is served from it, with no model call. */
+  reuseFromCatalog?: boolean;
 }): Promise<SynthesizedDynamicCard[]> {
   if (input.decision.missingElements.length === 0) return [];
   const store = loadDynamicCatalog();
@@ -296,6 +316,17 @@ export async function synthesizeAndPersistMissingElements(input: {
 
   for (const missing of input.decision.missingElements) {
     const started = performance.now();
+    const known = input.reuseFromCatalog ? store.dynamicElements.find((e) => e.elementId === missing.elementId) : undefined;
+    if (known) {
+      const nowIso = new Date().toISOString();
+      known.reuseCount += 1;
+      known.lastUsedAt = nowIso;
+      const latencyMs = Math.round(performance.now() - started);
+      saveDynamicCatalog(store);
+      appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: known.elementId, title: known.title, domain: known.domain, gatekeeperModel: "dynamic-catalog", modelUsed: "dynamic-catalog", latencyMs, tokens: { prompt: 0, completion: 0, total: 0 }, reusedFromCatalog: true, reuseCount: known.reuseCount, tsxStubPath: known.tsxStubPath, schemaSpec: { requiredPrimitives: known.requiredPrimitives, blockKinds: known.cardTemplate.blocks.map((b) => b.kind) } });
+      results.push({ ...known.cardTemplate, synthesisMeta: { ...known.cardTemplate.synthesisMeta, reusedFromCatalog: true, reuseCount: known.reuseCount, latencyMs } });
+      continue;
+    }
     let card: SynthesizedDynamicCard | null = null;
     let tokens = { prompt: 0, completion: 0, total: 0 };
     if (metaCallsEnabled()) {
@@ -311,7 +342,16 @@ export async function synthesizeAndPersistMissingElements(input: {
                 "Synthesize a schema-valid SynthesizedDynamicCard JSON specification from scratch for the operator's ticket and clarifiedAnswers. " +
                 "Include domain-accurate blocks (3 gauges, 3-4 policyHops, 3 table rows, a concise 12-line PowerShell/CLI/IaC diff, 3 events, and 2 recommendedActions) with real PowerShell 7 / Azure CLI / Graph commands matching the chosen resolution strategy.",
             },
-            { role: "user", content: JSON.stringify({ ticketPrompt: input.ticketPrompt, clarifiedAnswers: input.clarifiedAnswers ?? {}, missingElement: missing, customBrief: input.decision.customBrief }) },
+            {
+              role: "user",
+              content: JSON.stringify({
+                ticketPrompt: input.ticketPrompt,
+                clarifiedAnswers: input.clarifiedAnswers ?? {},
+                missingElement: missing,
+                customBrief: input.decision.customBrief,
+                ...(input.facts ? { facts: input.facts, factsRule: "Build every block from `facts` only: the scope chain as policyHops, the role assignments and containers as table rows, `facts.activity` as events, `facts.condition` in the diff. Never invent resource names." } : {}),
+              }),
+            },
           ],
           SYNTHESIZE_DYNAMIC_CARD_TOOL,
           { timeoutMs: 35000, temperature: 0.1, maxTokens: 4096, reasoningEffort: "low" },

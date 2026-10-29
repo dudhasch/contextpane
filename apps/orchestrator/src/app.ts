@@ -54,7 +54,10 @@ import { getTimeline } from "./local/timeline.ts";
 import { RecipeNotFoundError, hydrateRecipe } from "./tiers/tier0-recipe.ts";
 import { exploreSelection } from "./tiers/explore.ts";
 import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, getCustomScenario, listCustomScenarios, loadCustomScenarios, refineCustomTicketGoal, registerCustomTicket, steerCustomTicket, triageCustomTicketAsync, withQuestionStepIds } from "./local/custom-ticket.ts";
-import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog } from "./local/dynamic-catalog.ts";
+import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog, removeCatalogEntry } from "./local/dynamic-catalog.ts";
+import { ABAC_ELEMENT_ID, ABAC_TICKET_FOLDERS, invalidateAbacLabState } from "./local/abac.ts";
+import { ABAC_LAB, deleteAbacRoleAssignmentsLive } from "@contextpane/mcp-azure-iac";
+import { erpScenarioId } from "@contextpane/catalog";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import {
   getFreeRoamInventory,
@@ -1136,6 +1139,41 @@ const ResetDriftBodySchema = z.object({ scenarioId: z.string().optional(), tenan
  * and Intune objects back to their drifted configuration, and the in-memory convergence
  * is cleared. No seed script, no model call. Without a scenario every scenario is reset.
  */
+/**
+ * Act II retake: removes the payroll identity's Storage Blob Data Contributor assignments (live ARM DELETE
+ * in Real-Tenant mode), drops the ABAC view from the catalog and re-drops both ABAC tickets, so the first
+ * one synthesizes its view again and the second one hits the catalog.
+ */
+app.post("/api/lab/abac/reset", async (c) => {
+  const started = performance.now();
+  const log: string[] = [];
+  if (isLiveCloudMode()) {
+    try {
+      const res = await deleteAbacRoleAssignmentsLive();
+      log.push(`ARM: removed ${res.removed.length} ${ABAC_LAB.roleName} assignment(s) on ${ABAC_LAB.storageAccount}${res.failed.length ? `, ${res.failed.length} failed` : ""}`);
+    } catch (error) {
+      log.push(`ARM reset refused: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else {
+    log.push("Simulated-Lab mode: no ARM call");
+  }
+  invalidateAbacLabState();
+  log.push(removeCatalogEntry(ABAC_ELEMENT_ID) ? `Catalog: ${ABAC_ELEMENT_ID} removed` : "Catalog: no ABAC view to remove");
+  const tickets: string[] = [];
+  // The queue shows the newest drop first: drop the follow-up first, so the first ticket sits on top and the follow-up is next.
+  for (const folder of [...ABAC_TICKET_FOLDERS].reverse()) {
+    const scenarioId = erpScenarioId(folder);
+    convergenceStore.clear(scenarioId, "tenant-contoso-01");
+    closureStore.clear(scenarioId);
+    remediationStore.clear(scenarioId);
+    const drop = simulateDrop({ ticketId: folder });
+    invalidateContext(drop.scenarioId);
+    tickets.push(drop.scenarioId);
+  }
+  log.push(`Re-dropped ${tickets.join(", ")} (pipeline pending until inspected)`);
+  return c.json({ ok: true, tickets, log, latencyMs: Math.round(performance.now() - started) });
+});
+
 app.post("/api/lab/reset-drift", async (c) => {
   const started = performance.now();
   const body = ResetDriftBodySchema.parse(await c.req.json().catch(() => ({})));

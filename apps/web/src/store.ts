@@ -274,6 +274,27 @@ function withRailScript(stream: RailStream | null, script: string, source: RailS
   return { seq: (stream?.seq ?? 0) + 1, source, script, previous: stream?.previous ?? null, ...(stream?.freeRoam ? { freeRoam: true } : {}) };
 }
 
+/** Pill clicks that land within this window of each other are sent as one steer. */
+const STEER_COALESCE_MS = 1500;
+let steerWindow: { scenarioId: string; delta: SteerBody; timer: number } | null = null;
+
+function mergeSteerDeltas(a: SteerBody, b: SteerBody): SteerBody {
+  return {
+    ...a,
+    ...b,
+    ...(a.clarifier || b.clarifier ? { clarifier: { ...(a.clarifier ?? {}), ...(b.clarifier ?? {}) } } : {}),
+    ...(a.params || b.params ? { params: { ...(a.params ?? {}), ...(b.params ?? {}) } } : {}),
+  };
+}
+
+/**
+ * An ABAC ticket whose sub-agents have not run yet: the orchestrator holds its pipeline back at intake
+ * (only the deterministic router has touched it), so the Spark → Wonder synthesis happens in front of the operator.
+ */
+function abacPipelinePending(brief: ScenarioBrief | null): boolean {
+  return Boolean(brief?.clarifyingQuestions?.some((q) => q.id === "abac-strategy") && brief.subAgentTasks?.find((t) => t.stepIndex === 3)?.modelId.startsWith("deterministic-router"));
+}
+
 /** Swaps the synthesized section's props in place: the component id (its React key) never changes mid-refine. */
 function patchSynthesizedLayout(layout: Layout | null, card: SynthesizedDynamicCard | undefined): Layout | null {
   if (!layout || !card) return layout;
@@ -1224,6 +1245,12 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     }));
     const { activeRecipeId } = get();
     await Promise.all([get().loadBrief(scenarioId), activeRecipeId ? get().hydrateRecipe(activeRecipeId, scenarioId) : get().correlate()]);
+    if (abacPipelinePending(get().brief)) {
+      // N+1: the view already came from the catalog, so the sub-agents run now; otherwise they wait for the first inspect.
+      const card = get().layout?.components.find((c) => c.type === "SynthesizedDynamicCard");
+      if ((card?.props as SynthesizedDynamicCard | undefined)?.synthesisMeta?.reusedFromCatalog && get().scenarioId === scenarioId) void get().refineGoal({});
+      return;
+    }
     // WP10-B: brief and canvas landed (a pasted ticket was triaged before this call): stage the fix.
     get().autoStage(scenarioId);
   },
@@ -2379,6 +2406,8 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         title: `Context UI${modeSuffix} for "${text.length > 34 ? `${text.slice(0, 33)}…` : text}"${refSuffix}`,
         detail: `${rowCount} rows · ${result.slice?.matchedBy === "none" ? (rowCount ? "model-synthesized, not tenant data" : "no tenant rows matched") : (result.slice?.dataSource ?? "tenant data")} · ${elapsedSec}s`,
       });
+      // An ABAC ticket's sub-agents wait for the first inspect: the gatekeeper and Wonder run now, streamed.
+      if (abacPipelinePending(get().brief) && !get().refiningGoal) void get().refineGoal({});
     } catch (error) {
       set({ exploreStatus: "error", activeExploreText: null, exploreError: error instanceof Error ? error.message : String(error) });
       get().toast({ tone: "critical", title: "Generate Context UI failed", detail: error instanceof Error ? error.message : String(error) });
@@ -2515,7 +2544,20 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     if (get().steerStatus === "pending") return;
     // Optimistic: the pill shows the new answer now; the script follows when the coder returns.
     const optimisticAnswers = { ...(before.clarifiedAnswers ?? {}), ...(delta.clarifier ?? {}) };
-    set({ steerStatus: "pending", brief: { ...before, clarifiedAnswers: optimisticAnswers } });
+    set({ brief: { ...before, clarifiedAnswers: optimisticAnswers } });
+    // Pill clicks within the window become one steer: two answers, one coder call.
+    const merged = steerWindow && steerWindow.scenarioId === scenarioId ? mergeSteerDeltas(steerWindow.delta, delta) : delta;
+    if (steerWindow) window.clearTimeout(steerWindow.timer);
+    const flush = new Promise<void>((resolve) => {
+      steerWindow = { scenarioId, delta: merged, timer: window.setTimeout(resolve, STEER_COALESCE_MS) };
+    });
+    const mine = steerWindow!;
+    await flush;
+    if (steerWindow !== mine) return;
+    steerWindow = null;
+    delta = merged;
+    if (get().scenarioId !== scenarioId) return;
+    set({ steerStatus: "pending" });
     const started = performance.now();
     try {
       const result = await api.steer(scenarioId, delta);

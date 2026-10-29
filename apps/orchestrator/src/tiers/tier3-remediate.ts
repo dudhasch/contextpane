@@ -44,6 +44,8 @@ import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { coerceAffectedEntityType } from "../local/entity-type.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
+import { ABAC_LAB, putAbacRoleAssignmentLive } from "@contextpane/mcp-azure-iac";
+import { abacChoiceFromAnswers, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
 
 export interface RemediateInput {
   /** Scenario id (INC-4092, ANOM-CA-204, ...); a tenant id selects its ticket scenario. */
@@ -841,6 +843,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let verification = drawer.verificationStatus;
   // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
   const preSnapshot = mode === "break-glass" && before ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
+  const abacTicket = before?.custom ? isAbacTicketText(`${before.custom.ticket.title}\n${before.custom.ticket.body}`) : false;
 
   if (mode === "break-glass") {
     log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
@@ -848,7 +851,51 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       const captured = [preSnapshot.users.length ? `${preSnapshot.users.length} user${preSnapshot.users.length === 1 ? "" : "s"}` : null, preSnapshot.caPolicies.length ? `${preSnapshot.caPolicies.length} CA polic${preSnapshot.caPolicies.length === 1 ? "y" : "ies"}` : null, preSnapshot.nsg ? `NSG ${preSnapshot.nsg.name} (${preSnapshot.nsg.rules.length} rules)` : null, preSnapshot.intune ? "Intune assignments" : null, preSnapshot.workloadIdentity ? "workload identity" : null].filter(Boolean);
       log.push(`Pre-change snapshot captured (${captured.join(", ") || "no entity"}) for f⁻¹ and the read-back probe`);
     }
-    if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
+    if (abacTicket && before?.custom) {
+      // ABAC: the approved New-AzRoleAssignment is applied as one typed ARM PUT (same role, scope and condition), never by running model-written PowerShell.
+      const choice = abacChoiceFromAnswers(before.custom.clarifiedAnswers);
+      const approvedBy = input.approvedBy ?? drawer.approval.requiredIdentity;
+      if (choice.strategy !== "condition" || !choice.container) {
+        const fallbackReason = `the typed ARM executor only applies an ABAC-conditioned grant; this bundle (${choice.strategy}${choice.container ? ` · ${choice.container}` : " · all containers"}) stays staged`;
+        writeSummary = `${drawer.title} · staged, not executed`;
+        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
+        state = "simulated";
+        log.push(`No ARM write: ${fallbackReason}.`);
+      } else if (isLiveCloudMode() && config.allowExecute) {
+        log.push(`LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → ARM PUT roleAssignments on ${ABAC_LAB.storageAccount} (${ABAC_LAB.subscriptionName}) as ${approvedBy}`);
+        const res = await putAbacRoleAssignmentLive({ container: choice.container, description: `ContextPane ${drawer.ticketId} · ${ABAC_LAB.roleName} limited to ${choice.container} · approved by ${approvedBy}` }).catch((error: unknown) => ({
+          ok: false as const,
+          status: 0,
+          latencyMs: 0,
+          assignmentId: null,
+          principalId: null,
+          condition: "",
+          error: error instanceof Error ? error.message : String(error),
+          readBack: null,
+        }));
+        invalidateAbacLabState();
+        if (res.ok) {
+          const readBackOk = Boolean(res.readBack?.condition?.includes(`'${choice.container}'`) && res.readBack.conditionVersion === "2.0");
+          log.push(`ARM PUT ${res.assignmentId} → HTTP ${res.status} in ${res.latencyMs} ms`);
+          log.push(`Read-back: ${ABAC_LAB.roleName} for ${ABAC_LAB.identityName}, conditionVersion ${res.readBack?.conditionVersion ?? "?"}, container = ${choice.container} ${readBackOk ? "✓" : "(condition not confirmed)"}`);
+          writeSummary = `${ABAC_LAB.roleName} granted to ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}, condition: container = ${choice.container}`;
+          write = { source: "live-graph", latencyMs: res.latencyMs, summary: writeSummary, results: [{ id: res.assignmentId ?? "roleAssignment", ok: true, status: res.status }] };
+          state = "executed";
+          execution = "live-graph";
+        } else {
+          writeSummary = `${drawer.title} · ARM write refused`;
+          write = { source: "simulated", latencyMs: res.latencyMs, summary: writeSummary, results: [], fallbackReason: res.error ?? `HTTP ${res.status}` };
+          state = "simulated";
+          log.push(`ARM PUT refused: ${res.error ?? `HTTP ${res.status}`}. Nothing was granted; the ticket stays open.`);
+        }
+      } else {
+        const fallbackReason = !isLiveCloudMode() ? "Simulated-Lab mode" : "CTX_ALLOW_EXECUTE=false";
+        writeSummary = `${drawer.title} · staged, not executed`;
+        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
+        state = "simulated";
+        log.push(`No ARM write (${fallbackReason}): the role assignment is staged for ${ABAC_LAB.storageAccount}.`);
+      }
+    } else if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
       // A custom bundle has no lab write behind it: it is only executed when the approved script really runs.
       const plannedSteps = before.custom.customRemediation.executionSteps ?? [];
       log.push(...plannedSteps.map((s) => `Planned: ${s}`));
@@ -897,8 +944,9 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
     } else if (labScenarioId) {
       // The lab write runs in every mode; outside live mode the services simulate it and the in-process lab state
       // follows, so the read-back probe and the inverse have something real to compare against (U-5).
-      if (isLiveCloudMode() && config.allowExecute) {
-        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
+      // The typed lab write below is the executor for a built-in scenario; running its script on top would write twice.
+      if (isLiveCloudMode() && config.allowExecute && config.allowExecuteBuiltinScripts) {
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS → running the approved script via the delegated identity");
         const script = await runApprovedScript(drawer);
         log.push(...script.log);
       }
@@ -990,8 +1038,14 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
           reclaimedUpns,
           preSnapshotAt: preSnapshot?.capturedAt ?? null,
           // Revert can execute only what approve could: a live write path (lab scenario) or, under CTX_ALLOW_EXECUTE, the inverse script.
-          inverseExecutable: Boolean(preSnapshot) && execution === "live-graph" && isLiveCloudMode() && (labScenarioId !== null || config.allowExecute),
-          inverseReason: !preSnapshot ? "no pre-change snapshot" : execution !== "live-graph" ? "nothing was written live" : !isLiveCloudMode() ? "LIVE_CLOUD_MODE=false" : labScenarioId === null && !config.allowExecute ? "custom ticket without CTX_ALLOW_EXECUTE" : "inverse derived from the pre-change snapshot",
+          inverseExecutable: abacTicket
+            ? execution === "live-graph" && isLiveCloudMode() && config.allowExecute
+            : Boolean(preSnapshot) && execution === "live-graph" && isLiveCloudMode() && (labScenarioId !== null || config.allowExecute),
+          inverseReason: abacTicket
+            ? execution === "live-graph"
+              ? "inverse: ARM DELETE of the role assignment it created"
+              : "nothing was written live"
+            : !preSnapshot ? "no pre-change snapshot" : execution !== "live-graph" ? "nothing was written live" : !isLiveCloudMode() ? "LIVE_CLOUD_MODE=false" : labScenarioId === null && !config.allowExecute ? "custom ticket without CTX_ALLOW_EXECUTE" : "inverse derived from the pre-change snapshot",
         }
       : null;
   if (convergence) {
@@ -1131,7 +1185,26 @@ async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: bo
 export async function runScriptText(script: string, name: string): Promise<{ ok: boolean; log: string[] }> {
   const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
   const file = join(dir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.ps1`);
-  writeFileSync(file, script, "utf8");
+  // Every executed script is pinned to the lab: it selects the lab subscription for its own process and stops on anything else,
+  // whatever the saved Az context points at. A leading param() block stays the first statement.
+  const guard = [
+    `$__ctxLab = Get-AzContext -ListAvailable | Where-Object { $_.Subscription -and $_.Subscription.Id -eq '${ABAC_LAB.subscriptionId}' -and $_.Tenant.Id -eq '${ABAC_LAB.tenantId}' } | Select-Object -First 1`,
+    `if (-not $__ctxLab) { throw 'Refusing to execute: the lab subscription ${ABAC_LAB.subscriptionId} is not signed in' }`,
+    "$null = Set-AzContext -Context $__ctxLab -Scope Process",
+    `if ((Get-AzContext).Subscription.Id -ne '${ABAC_LAB.subscriptionId}') { throw 'Refusing to execute outside the lab subscription' }`,
+  ].join("\n");
+  const lines = script.split("\n");
+  const paramAt = lines.findIndex((l) => /^\s*param\s*\(/i.test(l));
+  let paramEnd = -1;
+  if (paramAt >= 0) {
+    let depth = 0;
+    for (let i = paramAt; i < lines.length && paramEnd < 0; i++) {
+      for (const ch of lines[i]!) depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+      if (depth <= 0) paramEnd = i;
+    }
+  }
+  const guarded = paramEnd >= 0 ? [...lines.slice(0, paramEnd + 1), guard, ...lines.slice(paramEnd + 1)].join("\n") : `${guard}\n${script}`;
+  writeFileSync(file, guarded, "utf8");
   try {
     const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
     const log = result.stdout.split("\n").filter(Boolean).slice(-20);

@@ -12,6 +12,7 @@ import { customScenarioListItem, registerCustomTicket, removeCustomTicket, triag
 import { telemetryFromSubAgentTasks } from "./subagent-orchestrator.ts";
 import { generateDrop, type DropArchetype } from "./erp-drop-generator.ts";
 import { readPngInfo } from "./png.ts";
+import { isAbacTicketText } from "./abac.ts";
 
 /**
  * The live ERP inbox: `<root>/input/tickets/#<id>/ticketbody.json` plus any image next to it.
@@ -216,7 +217,8 @@ export function ingestFolder(folder: string, options: { announce?: boolean } = {
       tenantId: entry.tenantId,
     });
     workbenchEvents.publish({ type: "inbox/ingested", item, folder, attachments: attachments.map((a) => a.fileName) });
-    if (providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test") {
+    // ABAC tickets wait for the operator: their pipeline (and the Wonder synthesis) runs when the ticket is inspected.
+    if (providers.meta.hasKey && !config.forceLocal && process.env.NODE_ENV !== "test" && !isAbacTicketText(`${parsed.title}\n${parsed.body}`)) {
       void triageCustomTicketAsync(
         {
           title: parsed.title,

@@ -64,6 +64,10 @@ const MIRIAM: Persona = {
   device: "CONTOSO-LT-0288",
 };
 
+/** The Act II ABAC tickets' senders: the payroll developers, not admins. */
+const MARCUS: Persona = { displayName: "Marcus Vance", upn: `marcus.vance@${DOMAIN}`, role: "Payroll Platform Developer", device: "CONTOSO-DEV-0112" };
+const PRIYA: Persona = { displayName: "Priya Raman", upn: `priya.raman@${DOMAIN}`, role: "Payroll Integration Developer", device: "CONTOSO-DEV-0127" };
+
 export interface LabIncidentSpec {
   /** Folder & ERP display id, e.g. `#202688412` (maps to `ERP-202688412`). */
   id: string;
@@ -861,6 +865,80 @@ export const LAB_INCIDENT_TICKETS: readonly LabIncidentSpec[] = [
       `TENANT: ${DOMAIN.toUpperCase()}`,
     ],
     app: "Microsoft Cost Management",
+  },
+  {
+    id: "#202688564",
+    incidentId: "INC-2026-88564",
+    category: "Category 3: Azure Infrastructure, RBAC & Policy",
+    severity: "Sev 2 (High)",
+    priority: "P2",
+    archetype: "Mixed",
+    subject: "INC-2026-88564 · Release failed on 'some ABAC policy' on Blob Storage",
+    description: [
+      "Trigger: Nightly release of the payroll ingest service failed at the step that grants the app access to Blob Storage.",
+      "",
+      "Client IT Escalation Note:",
+      `"Our release pipeline failed last night at the 'grant storage access' step. The error mentions some ABAC policy and an ABAC RBAC condition on Blob Storage. I don't know which storage account or subscription the pipeline targets; the platform team set that up and they are out this week. Can you just turn the policy off for our app or give it access some other way? The payroll files have to land before Friday's payroll run."`,
+      "",
+      "Telemetry / Error Payload:",
+      "Status: Failed · Code: RequestDisallowedByPolicy",
+      "Message: The role assignment was disallowed by policy (ABAC RBAC condition required).",
+      "Operation: Microsoft.Authorization/roleAssignments/write",
+      `Caller: ${MARCUS.upn}`,
+      `Tenant: ${DOMAIN}`,
+      "CorrelationId: 88564001-7a1e-4c3b-9b64-c4a8abac0001",
+    ].join("\n"),
+    requester: MARCUS,
+    createdAt: "2026-10-29T06:40:00Z",
+    errorCode: "RequestDisallowedByPolicy",
+    correlationId: "88564001-7a1e-4c3b-9b64-c4a8abac0001",
+    dialogTitle: "AZURE DEVOPS - RELEASE FAILED",
+    dialogLines: [
+      "ERROR: REQUESTDISALLOWEDBYPOLICY",
+      "ABAC RBAC CONDITION REQUIRED",
+      "",
+      "STAGE: GRANT STORAGE ACCESS",
+      "OPERATION: ROLEASSIGNMENTS/WRITE",
+      `USER: ${MARCUS.upn.toUpperCase()}`,
+    ],
+    app: "Azure DevOps Release",
+  },
+  {
+    id: "#202688571",
+    incidentId: "INC-2026-88571",
+    category: "Category 3: Azure Infrastructure, RBAC & Policy",
+    severity: "Sev 3 (Moderate)",
+    priority: "P3",
+    archetype: "Mixed",
+    subject: "INC-2026-88571 · Month-end archive job blocked by an ABAC condition on Blob Storage",
+    description: [
+      "Trigger: The month-end archive step of the payroll ingest app cannot get write access to Blob Storage.",
+      "",
+      "Client IT Escalation Note:",
+      `"Looks like the same thing Marcus reported this morning: our month-end archive step needs to write to Blob Storage and the access step fails with an ABAC policy error asking for a role assignment condition. We only need the archive container, nothing else."`,
+      "",
+      "Telemetry / Error Payload:",
+      "Status: Failed · Code: RequestDisallowedByPolicy",
+      "Message: The role assignment was disallowed by policy (ABAC RBAC condition required).",
+      "Operation: Microsoft.Authorization/roleAssignments/write",
+      `Caller: ${PRIYA.upn}`,
+      `Tenant: ${DOMAIN}`,
+      "CorrelationId: 88571002-3c9d-4e21-8a71-c4a8abac0002",
+    ].join("\n"),
+    requester: PRIYA,
+    createdAt: "2026-10-29T07:55:00Z",
+    errorCode: "RequestDisallowedByPolicy",
+    correlationId: "88571002-3c9d-4e21-8a71-c4a8abac0002",
+    dialogTitle: "AZURE DEVOPS - JOB FAILED",
+    dialogLines: [
+      "ERROR: REQUESTDISALLOWEDBYPOLICY",
+      "ABAC RBAC CONDITION REQUIRED",
+      "",
+      "JOB: MONTH-END ARCHIVE",
+      "OPERATION: ROLEASSIGNMENTS/WRITE",
+      `USER: ${PRIYA.upn.toUpperCase()}`,
+    ],
+    app: "Azure DevOps Pipelines",
   },
 ];
 

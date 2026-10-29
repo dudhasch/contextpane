@@ -16,6 +16,8 @@ import {
 import { workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
 import { sources } from "../mcp/clients.ts";
 import type { CorrelationContext } from "../mcp/context.ts";
+import { ABAC_LAB } from "@contextpane/mcp-azure-iac";
+import { abacTraceRows, isAbacTicketText, peekAbacLabState } from "./abac.ts";
 
 /**
  * Deterministic selection slicer. Given the phrase an engineer highlighted, it searches every
@@ -1137,6 +1139,37 @@ export function buildSelectionSlice(ctx: CorrelationContext, selectedText: strin
   const combined = refinement ? `${selection} ${refinement}` : selection;
   const sets = datasets(ctx, steps);
   const searched: SelectionSlice["searched"] = [];
+
+  // ABAC ticket: a highlighted ABAC / RBAC / condition / policy phrase traces the sender's denied write to the estate behind it.
+  if (ctx.custom && isAbacTicketText(`${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}`) && /abac|rbac|condition|policy|blob|storage|disallowed/i.test(combined)) {
+    const state = peekAbacLabState();
+    const rows: Row[] = abacTraceRows(state, { createdAt: ctx.custom.createdAt, ...(ctx.custom.ticket.requester?.upn ? { requesterUpn: ctx.custom.ticket.requester.upn } : {}) });
+    for (const ds of sets) searched.push({ kind: ds.kind, rows: ds.rows.length, matched: 0 });
+    const errorCodeReference = lookupErrorCodeReference("RequestDisallowedByPolicy");
+    return {
+      kind: "azure-policies",
+      score: 260,
+      matchedBy: "rows",
+      title: `ABAC denial trace · ${ABAC_LAB.identityName} → ${state.storage.name}`.slice(0, 90),
+      subtitle: `${state.source === "live" ? `Live ARM read in ${state.latencyMs} ms` : "Fixture"} · sender ${ctx.custom.ticket.requester?.upn ?? ABAC_LAB.requesterUpn} · policy ${ABAC_LAB.policyName}`.slice(0, 160),
+      sourceQuery: `GET /subscriptions/${ABAC_LAB.subscriptionId}/providers/Microsoft.Insights/eventtypes/management/values?$filter=resourceGroupName eq '${ABAC_LAB.resourceGroup}' · GET ${state.storage.id} · GET policyAssignments/${ABAC_LAB.policyName}`.slice(0, 300),
+      columns: [col("step", "Trace step"), col("object", "Object", { mono: true }), col("detail", "Detail"), col("state", "State", { isBadge: true }), col("source", "Source")],
+      rows,
+      kpis: [
+        { label: "Denied writes", value: String(rows.filter((r) => r.object === "RequestDisallowedByPolicy").length), tone: "critical" },
+        { label: "Policy effect", value: state.policy.effect, tone: "warning" },
+        { label: "Blob roles held", value: String(state.assignments.length), tone: state.assignments.length ? "success" : "warning" },
+      ],
+      breakdown: breakdownBy(rows, "step", (v) => (/Activity/.test(v) ? "critical" : /Policy/.test(v) ? "warning" : "success")),
+      suggestedAction: {
+        label: "Grant with an ABAC condition",
+        scriptPreview: `New-AzRoleAssignment -ObjectId <principalId of ${ABAC_LAB.identityName}> -RoleDefinitionName '${ABAC_LAB.roleName}' -Scope ${state.storage.id} -Condition "<container condition>" -ConditionVersion '2.0'`,
+        ...(stepIndex(steps, "azure") !== undefined ? { targetStepIndex: stepIndex(steps, "azure") } : {}),
+      },
+      ...(errorCodeReference ? { errorCodeReference } : {}),
+      searched,
+    };
+  }
 
   // Relational peer-apps query: e.g. selecting "appId 44b8e1a7-..." or "spn-contoso-erp-sync" or "alex.wilber"
   // and adding "other apps with the same owner" (or switching to comparison mode on an app/owner).

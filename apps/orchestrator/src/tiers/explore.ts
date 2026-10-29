@@ -16,6 +16,7 @@ import { config, models, providerFor, providers } from "../config.ts";
 import { buildScenarioBrief } from "../local/brief.ts";
 import { publishSelection, type SelectionPublication } from "../local/dataplane.ts";
 import { buildSelectionSlice, sliceToCard, type SelectionSlice } from "../local/selection.ts";
+import { getAbacLabState, isAbacTicketText } from "../local/abac.ts";
 import { sources } from "../mcp/clients.ts";
 import { gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
@@ -119,6 +120,8 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
   const refinementText = input.refinementText?.replace(/\s+/g, " ").trim().slice(0, SELECTION_MAX_CHARS) || undefined;
   const viewMode = input.viewMode;
   const ctx: CorrelationContext = await gatherContext(input.scenarioId);
+  // ABAC: read the payroll estate live before the slice is built (the slice reads the cached state).
+  if (ctx.custom && isAbacTicketText(`${ctx.custom.ticket.title} ${ctx.custom.ticket.body}`)) await getAbacLabState();
   const brief = buildScenarioBrief(ctx);
   const sliceOptions = { ...(refinementText ? { refinementText } : {}), ...(viewMode ? { viewMode } : {}) };
   const slice = buildSelectionSlice(ctx, selectedText, brief.steps, sliceOptions);

@@ -26,7 +26,8 @@ import type { CaPolicySummary, SignInSummary } from "@contextpane/mcp-msgraph";
 import { WORKLOAD_IDENTITY, workloadIdentitySignIns } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { triggeredBy } from "./brief.ts";
-import { buildDeterministicRoutingDecision, buildTemplateCards } from "./dynamic-catalog.ts";
+import { buildDeterministicRoutingDecision, buildTemplateCards, findCatalogEntry } from "./dynamic-catalog.ts";
+import { ABAC_ELEMENT_ID, isAbacTicketText } from "./abac.ts";
 
 /**
  * Deterministic AST hydration. This is both the Tier 0 engine (recipes) and the
@@ -404,7 +405,12 @@ export function buildComponent(type: ComponentType, ctx: CorrelationContext): La
       return props ? { type, id, triggeredBy: trigger, dataPtrs, props } : null;
     }
     case "SynthesizedDynamicCard": {
-      const existing = ctx.custom?.synthesizedElements?.[0];
+      let existing = ctx.custom?.synthesizedElements?.[0];
+      // N+1: an ABAC ticket that has only the first-paint template opens with the catalog's view, no model call.
+      if (ctx.custom && (!existing || existing.synthesisMeta.source === "fallback") && isAbacTicketText(`${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}`)) {
+        const known = findCatalogEntry(ABAC_ELEMENT_ID);
+        if (known) existing = { ...known.cardTemplate, synthesisMeta: { ...known.cardTemplate.synthesisMeta, reusedFromCatalog: true, reuseCount: known.reuseCount, latencyMs: 0 } };
+      }
       if (existing) {
         return {
           type: "SynthesizedDynamicCard",

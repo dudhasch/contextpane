@@ -171,10 +171,10 @@ describe("inbox watcher pipeline", () => {
     expect(ingestFolder(folder, quiet)).toBeNull();
   });
 
-  test("all 20 c4a8shili lab escalation tickets (INC-2026-88412..88560) ingest cleanly without resolution spoilers", () => {
-    expect(LAB_INCIDENT_TICKETS).toHaveLength(20);
+  test("all 22 c4a8shili lab escalation tickets (INC-2026-88412..88571) ingest cleanly without resolution spoilers", () => {
+    expect(LAB_INCIDENT_TICKETS).toHaveLength(22);
     const drops = generateAllLabTicketDrops();
-    expect(drops).toHaveLength(20);
+    expect(drops).toHaveLength(22);
 
     const forbiddenSpoilers = [
       "MSP L3 Root Cause",

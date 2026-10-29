@@ -16,8 +16,21 @@ import { models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
 import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
-import { assessTicketElementNeeds, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
+import { assessTicketElementNeeds, findCatalogEntry, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
 import { deriveSteeringFromAnswers, steeringForCoder } from "./steering.ts";
+import {
+  ABAC_ELEMENT_ID,
+  abacChoiceFromAnswers,
+  abacClarifyingQuestions,
+  abacFacts,
+  abacMissingElement,
+  abacRoutingDecision,
+  abacScriptExpectations,
+  buildAbacRemediationSync,
+  getAbacLabState,
+  isAbacTicketText,
+  rebindAbacEvents,
+} from "./abac.ts";
 
 function humanizeSlug(raw: string): string {
   const trimmed = raw.trim();
@@ -45,6 +58,7 @@ export function normalizeQuestionsHumanReadable(questions: ClarifyingQuestion[],
 
 export function generateClarifyingQuestionsSync(input: { title: string; body: string; clarifiedAnswers?: Record<string, string> }): ClarifyingQuestion[] {
   const answers = input.clarifiedAnswers ?? {};
+  if (isAbacTicketText(`${input.title}\n${input.body}`)) return abacClarifyingQuestions(answers);
   const rawQuestions: ClarifyingQuestion[] = [
     {
       id: "target-scope",
@@ -133,7 +147,7 @@ export interface ClarifierSubAgentResult {
   /** Prompt / completion split when the provider reported one. */
   usage?: TokenUsage;
   status: "completed" | "fallback";
-  source: "llm" | "fallback-on-error";
+  source: "llm" | "fallback-on-error" | "not-attempted";
 }
 
 export async function generateClarifyingQuestions(input: {
@@ -144,6 +158,10 @@ export async function generateClarifyingQuestions(input: {
   const started = performance.now();
   const fallback = generateClarifyingQuestionsSync(input);
   const modelId = models.metaWonder;
+  // ABAC tickets get the policy's two steering questions: no model call, and the pills stay stable across takes.
+  if (isAbacTicketText(`${input.title}\n${input.body}`)) {
+    return { questions: fallback, modelUsed: "abac-policy-contract", latencyMs: Math.max(1, Math.round(performance.now() - started)), tokensUsed: 0, status: "completed", source: "not-attempted" };
+  }
   if (!metaCallsEnabled()) {
     return {
       questions: fallback,
@@ -253,6 +271,7 @@ export function buildCustomTicketRemediationSync(input: {
   clarifiedAnswers?: Record<string, string>;
   steering?: SteeringParams;
 }): CustomRemediationTemplate {
+  if (isAbacTicketText(`${input.ticketTitle}\n${input.ticketBody}`)) return buildAbacRemediationSync(input);
   const scopeText = Object.values(input.clarifiedAnswers ?? {}).join(" · ") || "Default Scope";
   const cleanTitle = input.ticketTitle.trim() || "Cloud Remediation";
   const strategy = input.steering?.remediationStrategy?.value;
@@ -364,6 +383,8 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
       },
     };
   }
+  const abacChoice = isAbacTicketText(`${input.ticketTitle}\n${input.ticketBody}`) ? abacChoiceFromAnswers(input.clarifiedAnswers) : null;
+  const abacContext = abacChoice ? abacFacts(await getAbacLabState(), { createdAt: new Date().toISOString() }, abacChoice) : null;
   try {
     const res = await chatWithForcedTool(
       providers.meta,
@@ -373,6 +394,13 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
           role: "system",
           content:
             "You are Sub-Agent 4 (IaC & PowerShell 7 Coder · muse-wonder-1.0) in ContextPane. " +
+            (abacChoice
+              ? `This is an Azure ABAC ticket: use only the names in abacFacts and never invent resources. Steering: strategy=${abacChoice.strategy}, container=${abacChoice.container ?? "all"}. ` +
+                (abacChoice.strategy === "exemption"
+                  ? "Write New-AzPolicyExemption on the storage account for the named policy assignment, then New-AzRoleAssignment. "
+                  : `Write New-AzRoleAssignment for the identity on the storage account scope${abacChoice.container ? " with -Condition set to exactly abacFacts.condition and -ConditionVersion '2.0'" : " without a condition"}; terraformDiff is an OpenTofu azurerm_role_assignment${abacChoice.container ? " with condition_version and condition" : ""}. `) +
+                "Start the script with a guard that throws unless (Get-AzContext).Subscription.Id equals the lab subscription id. "
+              : "") +
             "Synthesize a concise, domain-accurate 15-line PowerShell 7 script (using [CmdletBinding(SupportsShouldProcess = $true)] and $PSCmdlet.ShouldProcess), unified Terraform diff, rollback script, and 3 executionSteps directly matching the operator's ticket AND the typed `steering` contract (remediationStrategy, scope, governance, targetResource, targetIds, region, dryRun) derived from their clarifier answers and in-card selections. " +
             "CRITICAL: The PowerShell cmdlets MUST reflect `steering.remediationStrategy` exactly (recover => in-place recovery cmdlets such as Undo-AzKeyVaultRemoval, never a purge; purge-recreate => Remove-… -InRemovedState then New-…; gitops-bundle => declarative Terraform plus a thin runbook). " +
             (input.previousScript ? "A `previousScript` is supplied: re-parameterise it — keep its structure, parameter names and guards, change only the lines the new steering requires, and keep every unrelated line byte-identical. " : "") +
@@ -388,6 +416,7 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
             ...(input.steering ? { steering: steeringForCoder(input.steering) } : {}),
             ...(input.previousScript ? { previousScript: input.previousScript } : {}),
             ...(input.repairFindings?.length ? { repairFindings: input.repairFindings } : {}),
+            ...(abacContext ? { abacFacts: abacContext } : {}),
           }),
         },
       ],
@@ -395,7 +424,9 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
       { timeoutMs: 32000, temperature: 0.1, maxTokens: 4000, reasoningEffort: "low" },
     );
     const raw = parseToolArguments(res.argumentsRaw) as Partial<CustomRemediationTemplate>;
-    if (raw && typeof raw.title === "string" && typeof raw.powershellScript === "string" && raw.powershellScript.length > 30) {
+    // An ABAC script that lost the steered cmdlet, a lab name or the condition is not shipped: the template is.
+    const abacOk = !abacChoice || (typeof raw?.powershellScript === "string" && abacScriptExpectations(abacChoice).every((t) => raw.powershellScript!.includes(t)));
+    if (raw && abacOk && typeof raw.title === "string" && typeof raw.powershellScript === "string" && raw.powershellScript.length > 30) {
       return {
         title: raw.title.slice(0, 120),
         summary: (raw.summary ?? fallback.summary).slice(0, 500),
@@ -685,6 +716,8 @@ export async function runSubAgentPipeline(
     clarifiedAnswers?: Record<string, string>;
     /** The steering the entry already carries; its version continues from here. */
     steering?: SteeringParams;
+    /** The ticket's sender; the ABAC scout starts from this identity. */
+    requesterUpn?: string;
   },
   onProgress?: ProgressSink,
 ): Promise<{
@@ -703,14 +736,26 @@ export async function runSubAgentPipeline(
   const report = progressReporter(onProgress);
   // S2 needs nothing from the other sub-agents, so it probes telemetry for the whole run.
   const t2Start = performance.now();
-  report("agent:2:start", "Telemetry Scout probing live tenant & upstream cloud status");
-  const statusPromise = correlateUpstreamCloudStatus({
-    ticketText: `${input.title}\n${input.body}`,
-    createdAt: input.createdAt,
-  }).then((res) => {
+  const abac = isAbacTicketText(`${input.title}\n${input.body}`);
+  // ABAC: the scout reads the payroll estate live (storage, identity, deny policy, denied writes) next to the cloud feeds.
+  const abacStatePromise = abac ? getAbacLabState({ fresh: true }) : null;
+  report("agent:2:start", abac ? "Telemetry Scout reading the sender's denied write, storage and policy state" : "Telemetry Scout probing live tenant & upstream cloud status");
+  const statusPromise = Promise.all([
+    correlateUpstreamCloudStatus({
+      ticketText: `${input.title}\n${input.body}`,
+      createdAt: input.createdAt,
+    }),
+    abacStatePromise,
+  ]).then(([res, abacState]) => {
     const wallClockMs = Math.max(1, Math.round(performance.now() - t2Start));
-    report("agent:2:done", `Telemetry Scout correlated ${res.services.length} cloud feeds (${wallClockMs} ms)`, { cloudStatusCorrelation: res });
-    return { data: res, wallClockMs };
+    const abacLine = abacState
+      ? ` · ${abacState.source === "live" ? "live" : "fixture"} ARM read: ${abacState.storage.name}, ${abacState.identity.name}, ${abacState.policy.assignmentName} (${abacState.latencyMs} ms) · RequestDisallowedByPolicy correlated`
+      : "";
+    report("agent:2:done", `Telemetry Scout correlated ${res.services.length} cloud feeds${abacLine} (${wallClockMs} ms)`, {
+      cloudStatusCorrelation: res,
+      ...(abacState ? { abacLab: abacFacts(abacState, { createdAt: input.createdAt, ...(input.requesterUpn ? { requesterUpn: input.requesterUpn } : {}) }) } : {}),
+    });
+    return { data: res, wallClockMs, abac: abacState };
   });
 
   // S1 first: its answers steer the gatekeeper, the UI architect and the coder (L-05, L-07).
@@ -732,26 +777,43 @@ export async function runSubAgentPipeline(
   // S3 is a real Spark → Wonder chain: the synthesizer builds what the gatekeeper decided.
   // The gatekeeper call carries its own 10 s budget and falls back to the deterministic seed.
   const t3Start = performance.now();
-  report("agent:3:start", "UI Architect routing the diagnostic view");
-  const uiPromise = assessTicketElementNeeds({
-    title: input.title,
-    body: input.probeText,
-    matchedSeededComponents: input.matchedSeededComponents,
-    clarifiedAnswers: effectiveAnswers,
-  }).then(async (routing) => {
-    report("agent:3:routed", `Gatekeeper routed ${routing.decision.missingElements.length} view element(s) · ${routing.decision.customBrief.steps.length} plan steps`, {
+  // N+1: an ABAC ticket whose view the catalog already holds skips the gatekeeper and Wonder entirely.
+  const catalogHit = abac && findCatalogEntry(ABAC_ELEMENT_ID) !== null;
+  report("agent:3:start", catalogHit ? "UI Architect: catalog lookup" : "UI Architect routing the diagnostic view");
+  const routingPromise: ReturnType<typeof assessTicketElementNeeds> = catalogHit
+    ? Promise.resolve({ decision: abacRoutingDecision(), modelUsed: "dynamic-catalog", latencyMs: 0, tokensUsed: 0, source: "fallback-on-error" as const })
+    : (async () => {
+        // Spark sees the ticket only (the zero-context ask); Wonder gets the live facts below.
+        const routing = await assessTicketElementNeeds({
+          title: input.title,
+          body: input.probeText,
+          matchedSeededComponents: input.matchedSeededComponents,
+          clarifiedAnswers: effectiveAnswers,
+          ...(abac ? { timeoutMs: 15000 } : {}),
+        });
+        if (!abac) return routing;
+        // Every ABAC ticket names the same element, so the next one finds this one's card in the catalog.
+        return routing.source === "llm" ? { ...routing, decision: { ...routing.decision, missingElements: [abacMissingElement()] } } : { ...routing, decision: abacRoutingDecision() };
+      })();
+  const uiPromise = routingPromise.then(async (routing) => {
+    report("agent:3:routed", catalogHit ? `Catalog hit: ${ABAC_ELEMENT_ID} is already in the catalog · no Wonder call` : `Gatekeeper routed ${routing.decision.missingElements.length} view element(s) · ${routing.decision.customBrief.steps.length} plan steps`, {
       elementRouting: routing.decision,
     });
-    const elements = await synthesizeAndPersistMissingElements({
+    const facts = abacStatePromise ? abacFacts(await abacStatePromise, { createdAt: input.createdAt, ...(input.requesterUpn ? { requesterUpn: input.requesterUpn } : {}) }) : null;
+    let elements = await synthesizeAndPersistMissingElements({
       ticketId: input.scenarioId,
       ticketPrompt: `${input.title}\n${input.body}`,
       decision: routing.decision,
       gatekeeperModel: routing.source === "llm" ? routing.modelUsed : "deterministic-router",
       clarifiedAnswers: effectiveAnswers,
+      ...(facts ? { facts, reuseFromCatalog: true } : {}),
     });
+    // A reused view is rebound to this ticket's denied write; its layout and blocks stay as synthesized.
+    if (catalogHit && facts) elements = elements.map((card) => rebindAbacEvents(card, facts.activity));
     const wallClockMs = Math.max(1, Math.round(performance.now() - t3Start));
-    report("agent:3:done", `UI Architect synthesized ${elements.map((e) => e.elementId).join(", ") || "no element"} (${wallClockMs} ms)`, { synthesizedElements: elements });
-    return { routing, elements, wallClockMs };
+    const hit = elements.some((e) => e.synthesisMeta.reusedFromCatalog);
+    report("agent:3:done", hit ? `UI Architect reused ${elements.map((e) => e.elementId).join(", ")} from the catalog (${elements[0]?.synthesisMeta.latencyMs ?? 0} ms, 0 tokens)` : `UI Architect synthesized ${elements.map((e) => e.elementId).join(", ") || "no element"} (${wallClockMs} ms)`, { synthesizedElements: elements });
+    return { routing, elements, wallClockMs: hit ? elements[0]?.synthesisMeta.latencyMs ?? 0 : wallClockMs, hit };
   });
 
   const t4Start = performance.now();
@@ -809,17 +871,27 @@ export async function runSubAgentPipeline(
         modelId: "mcp-msgraph + cloud-status",
         status: "completed",
         source: "mcp-probe",
-        outputSummary: `Correlated ${statusRes.data.services.length} upstream cloud feeds (${statusRes.data.primaryRegion})`,
+        outputSummary: `Correlated ${statusRes.data.services.length} upstream cloud feeds (${statusRes.data.primaryRegion})${statusRes.abac ? ` · ${statusRes.abac.source === "live" ? "live" : "fixture"} ARM read of ${statusRes.abac.storage.name}, ${statusRes.abac.identity.name} and ${statusRes.abac.policy.assignmentName} (${statusRes.abac.latencyMs} ms) · RequestDisallowedByPolicy from the sender correlated` : ""}`,
       },
-      3: {
-        latencyMs: uiRes.wallClockMs,
-        startOffsetMs: offset(t3Start),
-        modelId: `${gatekeeperModel} -> ${uiUsedLlm ? models.metaWonder : "deterministic-template"}`,
-        tokensUsed: uiRes.routing.tokensUsed ?? 0,
-        ...(uiRes.routing.usage ? { usage: uiRes.routing.usage } : {}),
-        status: uiUsedLlm ? "completed" : "fallback",
-        source: uiUsedLlm ? "llm" : "fallback-on-error",
-      },
+      3: uiRes.hit
+        ? {
+            latencyMs: uiRes.wallClockMs,
+            startOffsetMs: offset(t3Start),
+            modelId: "dynamic-catalog (N+1 hit)",
+            tokensUsed: 0,
+            status: "completed",
+            source: "not-attempted",
+            outputSummary: `Catalog hit: ${synthesizedElements.map((e) => e.elementId).join(", ")} reused ×${synthesizedElements[0]?.synthesisMeta.reuseCount ?? 1} in ${uiRes.wallClockMs} ms, no Wonder call`,
+          }
+        : {
+            latencyMs: uiRes.wallClockMs,
+            startOffsetMs: offset(t3Start),
+            modelId: `${gatekeeperModel} -> ${uiUsedLlm ? models.metaWonder : "deterministic-template"}`,
+            tokensUsed: uiRes.routing.tokensUsed ?? 0,
+            ...(uiRes.routing.usage ? { usage: uiRes.routing.usage } : {}),
+            status: uiUsedLlm ? "completed" : "fallback",
+            source: uiUsedLlm ? "llm" : "fallback-on-error",
+          },
       4: {
         latencyMs: coderRes.wallClockMs,
         startOffsetMs: offset(t4Start),
@@ -935,6 +1007,7 @@ export async function refineEntryWithSubAgentsAsync(
       createdAt: entry.createdAt,
       matchedSeededComponents: [],
       clarifiedAnswers: mergedAnswers,
+      ...(entry.ticket.requester?.upn ? { requesterUpn: entry.ticket.requester.upn } : {}),
       ...(synced.steering ? { steering: synced.steering } : {}),
     },
     pipelineSink,

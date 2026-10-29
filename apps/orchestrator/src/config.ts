@@ -173,6 +173,8 @@ export const config = {
   liveCloudMode: envBool("LIVE_CLOUD_MODE", false),
   forceLocal: envBool("CTX_FORCE_LOCAL", false),
   allowExecute: envBool("CTX_ALLOW_EXECUTE", false),
+  /** Built-in scenarios execute through their typed lab write; this also runs their approved script (writes twice). */
+  allowExecuteBuiltinScripts: envBool("CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS", false),
   mcpTransport: (env("CTX_MCP_TRANSPORT", "in-process") === "stdio" ? "stdio" : "in-process") as "in-process" | "stdio",
   timeouts: {
     hoverMs: envInt("CTX_HOVER_TIMEOUT_MS", 2500),

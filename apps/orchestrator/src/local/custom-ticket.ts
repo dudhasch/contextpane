@@ -37,6 +37,7 @@ import {
   synthesizeAndPersistMissingElements,
 } from "./dynamic-catalog.ts";
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
+import { abacRoutingDecision, isAbacTicketText } from "./abac.ts";
 import { metaCallsEnabled } from "../router/openai.ts";
 import { applySteeringDelta, clarifiedAnswersFromSteering, deriveSteeringFromAnswers, scriptDiff } from "./steering.ts";
 import {
@@ -458,11 +459,14 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
   const t2Ms = Math.max(1, Math.round(performance.now() - t2Start));
 
   const t3Start = performance.now();
-  const routingDecision = buildDeterministicRoutingDecision({
-    title,
-    body: probe,
-    matchedSeededComponents: rawExtraction.components,
-  });
+  // An ABAC ticket gets its canonical element and plan steps up front; the gatekeeper and Wonder run when it is inspected.
+  const routingDecision = isAbacTicketText(`${title}\n${body}`)
+    ? abacRoutingDecision()
+    : buildDeterministicRoutingDecision({
+        title,
+        body: probe,
+        matchedSeededComponents: rawExtraction.components,
+      });
 
   const hasMissingElements = routingDecision.missingElements.length > 0;
   const finalComponents: CanvasComponentType[] = hasMissingElements
@@ -605,6 +609,7 @@ export async function triageCustomTicketAsync(
     createdAt,
     matchedSeededComponents: rawExtraction.components,
     ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    ...(input.requester?.upn ? { requesterUpn: input.requester.upn } : {}),
   });
 
   const hasMissingElements = routingDecision.missingElements.length > 0;

@@ -10,6 +10,9 @@ import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { runScriptText } from "./tier3-remediate.ts";
+import { ABAC_LAB, deleteAbacRoleAssignmentsLive } from "@contextpane/mcp-azure-iac";
+import { getAbacLabState, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
+import { getCustomScenario, type CustomScenarioId } from "@contextpane/catalog";
 
 /**
  * Real f⁻¹ (U-5).
@@ -114,6 +117,58 @@ export async function rollbackRemediation(scenarioId: string, options: { approve
   const snapshot = convergenceStore.snapshot(scenarioId);
   const drawer = convergence ? remediationStore.get(convergence.remediationId) : null;
   const reference = buildInverseRollback(scenarioId);
+
+  // ABAC: the inverse of the ARM PUT is an ARM DELETE of the identity's role assignments on the payroll account, then a read-back.
+  const abacEntry = getCustomScenario(scenarioId as CustomScenarioId);
+  if (abacEntry && isAbacTicketText(`${abacEntry.ticket.title}\n${abacEntry.ticket.body}`)) {
+    const rollback = { ...reference, powershellScript: abacEntry.customRemediation?.rollbackScript ?? reference.powershellScript, restores: [`Remove ${ABAC_LAB.roleName} for ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}`] };
+    const log: string[] = [];
+    let executed = false;
+    if (isLiveCloudMode() && config.allowExecute) {
+      log.push(`ARM DELETE: ${ABAC_LAB.roleName} assignments of ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}`);
+      try {
+        const res = await deleteAbacRoleAssignmentsLive();
+        log.push(res.removed.length ? `Removed ${res.removed.length} assignment${res.removed.length === 1 ? "" : "s"} in ${res.latencyMs} ms` : "No assignment to remove");
+        if (res.failed.length) log.push(`${res.failed.length} delete(s) failed`);
+        invalidateAbacLabState();
+        const after = await getAbacLabState({ fresh: true });
+        executed = res.removed.length > 0 && res.failed.length === 0 && after.source === "live" && after.assignments.length === 0;
+        log.push(`Read-back (live): ${after.assignments.length} ${ABAC_LAB.roleName} assignment(s) left for ${ABAC_LAB.identityName}`);
+      } catch (error) {
+        log.push(`ARM DELETE refused: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      log.push(`Revert staged, not executed (${!isLiveCloudMode() ? "Simulated-Lab mode" : "CTX_ALLOW_EXECUTE=false"})`);
+    }
+    const convergenceCleared = executed && Boolean(convergence);
+    if (convergence && convergenceCleared) convergenceStore.clear(scenarioId, convergence.tenantId);
+    if (drawer && convergenceCleared) remediationStore.save({ ...drawer, approval: { ...drawer.approval, state: "rolled-back" } });
+    auditLedger.append({
+      tenantId: abacEntry.tenantId,
+      ticketId: scenarioId,
+      actionType: "hitl-rollback",
+      delegatedIdentity: options.approvedBy ?? drawer?.approval.approvedBy ?? config.lab.delegatedIdentity,
+      modalSandboxVerified: false,
+      astPass: null,
+      tfValidatePass: null,
+      gitBranch: drawer?.staging?.branchName ?? null,
+      prUrl: null,
+      latencyMs: Math.round(performance.now() - started),
+      execution: executed ? "live-graph-and-arm-reverted" : "none",
+      detail: `${executed ? "ARM DELETE executed" : "revert staged"} · ${ABAC_LAB.roleName} on ${ABAC_LAB.storageAccount}`,
+    });
+    return finish({
+      executed,
+      execution: executed ? "live-graph" : "none",
+      reason: executed ? "role assignment deleted through ARM and the read-back shows none left" : "the ARM DELETE did not run or did not land; the revert script is staged",
+      inverseSource: executed ? "pre-snapshot" : "static-reference",
+      rollback,
+      executionLog: log,
+      canary: null,
+      preSnapshotAt: null,
+      convergenceCleared,
+    });
+  }
 
   if (!convergence || !snapshot) {
     const reason = !convergence ? "nothing was approved for this ticket; the revert script is the static reference for the scenario" : "no pre-change snapshot was captured for this approval; the revert script is the static reference";
