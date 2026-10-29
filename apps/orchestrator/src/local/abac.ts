@@ -153,7 +153,7 @@ export function abacTraceRows(state: AbacLabState, ticket: { createdAt: string; 
     { step: "Function App identity", object: state.identity.name, detail: state.identity.principalId ? `principalId ${state.identity.principalId}` : "not found", state: state.assignments.length ? `${state.assignments.length} blob role(s)` : "no blob access", source: src },
     { step: "Storage account", object: state.storage.name, detail: `${rgName} · ${state.storage.location || "westeurope"} · ${state.containers.filter((c) => c.exists).map((c) => c.name).join(", ")}`, state: state.storage.exists ? "exists" : "missing", source: src },
     { step: "Policy assignment", object: ABAC_LAB.policyName, detail: `Deny ${ABAC_LAB.roleName} without an ABAC condition · assigned at ${rgName}`, state: state.policy.exists ? state.policy.effect : "missing", source: src },
-    { step: "Scope chain", object: "Tenant Root Group", detail: `${ABAC_LAB.subscriptionName} → ${rgName} → ${state.storage.name} (definition at ${state.policy.definitionScope.includes("managementGroups") ? "management group" : "subscription"})`, state: "inherited", source: src },
+    { step: "Scope chain", object: "Tenant Root Group", detail: `${ABAC_LAB.managementGroup} → ${ABAC_LAB.subscriptionName} → ${rgName} → ${state.storage.name} (definition at ${state.policy.definitionScope.includes("managementGroups") ? "management group" : "subscription"})`, state: "inherited", source: src },
   ];
 }
 
@@ -173,6 +173,7 @@ export function abacFacts(state: AbacLabState, ticket: { createdAt: string; requ
     subscription: `${state.subscription.name} (${state.subscription.id})`,
     scopeChain: [
       { level: "Tenant Root Group", id: `/providers/Microsoft.Management/managementGroups/${ABAC_LAB.tenantId}` },
+      { level: "Management group", id: `/providers/Microsoft.Management/managementGroups/${ABAC_LAB.managementGroup}` },
       { level: "Subscription", id: `/subscriptions/${ABAC_LAB.subscriptionId}` },
       { level: "Resource group", id: `/subscriptions/${ABAC_LAB.subscriptionId}/resourceGroups/${ABAC_LAB.resourceGroup}` },
       { level: "Storage account", id: state.storage.id },
