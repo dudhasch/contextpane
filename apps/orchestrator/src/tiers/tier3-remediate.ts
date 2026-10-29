@@ -480,6 +480,13 @@ async function preflight(
       verification.verdict = "Verified With Warnings";
     }
   }
+  // The delegated executor runs pwsh 7 only; without the header the same script would also start under Windows PowerShell 5.1.
+  if (bundle.powershellScript.trim() && !/^\s*#Requires\s+-Version\s+7(\.\d+)?\b/im.test(bundle.powershellScript)) {
+    verification.findings.push("PowerShell 7 header missing: add '#Requires -Version 7.0' (the executor runs pwsh 7 only)");
+    if (verification.verdict === "Verified Safe") {
+      verification.verdict = "Verified With Warnings";
+    }
+  }
 
   report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
   return verification;
@@ -842,8 +849,9 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let write: LabWriteOutcome | null = null;
   let verification = drawer.verificationStatus;
   // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
-  const preSnapshot = mode === "break-glass" && before ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
   const abacTicket = before?.custom ? isAbacTicketText(`${before.custom.ticket.title}\n${before.custom.ticket.body}`) : false;
+  // An ABAC grant's inverse is the ARM DELETE of the assignment it created; the tenant-wide entity snapshot plays no part in it.
+  const preSnapshot = mode === "break-glass" && before && !abacTicket ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
 
   if (mode === "break-glass") {
     log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
@@ -876,7 +884,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         invalidateAbacLabState();
         if (res.ok) {
           const readBackOk = Boolean(res.readBack?.condition?.includes(`'${choice.container}'`) && res.readBack.conditionVersion === "2.0");
-          log.push(`ARM PUT ${res.assignmentId} → HTTP ${res.status} in ${res.latencyMs} ms`);
+          log.push(`ARM PUT ${res.assignmentId} → HTTP ${res.status} in ${res.latencyMs} ms · ${new Date().toISOString().replace(/\.\d+Z$/, "Z")}`);
           log.push(`Read-back: ${ABAC_LAB.roleName} for ${ABAC_LAB.identityName}, conditionVersion ${res.readBack?.conditionVersion ?? "?"}, container = ${choice.container} ${readBackOk ? "✓" : "(condition not confirmed)"}`);
           writeSummary = `${ABAC_LAB.roleName} granted to ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}, condition: container = ${choice.container}`;
           write = { source: "live-graph", latencyMs: res.latencyMs, summary: writeSummary, results: [{ id: res.assignmentId ?? "roleAssignment", ok: true, status: res.status }] };
@@ -1088,8 +1096,17 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   if (drawer.approval.state !== "pending") return drawer;
   const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
   const plan = buildRemediationPlan(ctx);
-  const bundle = plan.bundle;
-  const verification = await preflight(bundle, ctx, plan, () => {});
+  // Same write-then-test as the first staging (U-2): sandbox findings on the steered script go back to the coder.
+  const firstPass = await preflight(plan.bundle, ctx, plan, () => {});
+  const loop = await runRepairLoop({
+    bundle: plan.bundle,
+    verification: firstPass,
+    ctx,
+    requiredCommands: plan.requiredCommands,
+    preflight: (candidate) => preflight(candidate, ctx, plan, () => {}),
+  });
+  const bundle = loop.bundle;
+  const verification = loop.verification;
   const step4 = ctx.custom?.subAgentTasks?.find((t) => t.stepIndex === 4);
   const usedLlm = step4?.source === "llm";
   const steering = ctx.custom?.steering;

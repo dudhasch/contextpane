@@ -525,7 +525,8 @@ app.patch("/api/tickets/:scenarioId/steer", async (c) => {
   if (!outcome) return c.json({ error: `${scenarioId} is not a custom ticket/project` }, 404);
   invalidateContext(scenarioId);
   const drawer = pendingDrawer ? await restageRemediationForSteering(pendingDrawer.remediationId) : null;
-  const ctx = await gatherContext(scenarioId, { fresh: true });
+  // The re-stage just read fresh context; a second live read would only add its latency.
+  const ctx = await gatherContext(scenarioId, { fresh: !drawer });
   const brief = buildScenarioBrief(ctx);
   const latencyMs = Math.round(performance.now() - started);
   const usedLlm = outcome.coder.source === "llm";

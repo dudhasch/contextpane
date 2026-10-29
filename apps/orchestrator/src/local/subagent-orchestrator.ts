@@ -805,8 +805,11 @@ export async function runSubAgentPipeline(
       ticketPrompt: `${input.title}\n${input.body}`,
       decision: routing.decision,
       gatekeeperModel: routing.source === "llm" ? routing.modelUsed : "deterministic-router",
-      clarifiedAnswers: effectiveAnswers,
-      ...(facts ? { facts, reuseFromCatalog: true } : {}),
+      // The ABAC view is diagnostic and reused across tickets: it must not present the clarifier's defaults as the decided fix.
+      clarifiedAnswers: facts ? {} : effectiveAnswers,
+      ...(facts
+        ? { facts: { ...facts, remediation: "not decided yet: the operator chooses a policy exemption, an ABAC condition limited to one container, or a read-only role" }, reuseFromCatalog: true }
+        : {}),
     });
     // A reused view is rebound to this ticket's denied write; its layout and blocks stay as synthesized.
     if (catalogHit && facts) elements = elements.map((card) => rebindAbacEvents(card, facts.activity));

@@ -295,6 +295,11 @@ function abacPipelinePending(brief: ScenarioBrief | null): boolean {
   return Boolean(brief?.clarifyingQuestions?.some((q) => q.id === "abac-strategy") && brief.subAgentTasks?.find((t) => t.stepIndex === 3)?.modelId.startsWith("deterministic-router"));
 }
 
+/** An ABAC ticket nobody has steered yet: no fix is staged on the clarifier's default (a policy exemption) until the operator picks one. */
+function abacAwaitingStrategy(brief: ScenarioBrief | null): boolean {
+  return Boolean(brief?.clarifyingQuestions?.some((q) => q.id === "abac-strategy") && (brief.steering?.version ?? 0) === 0);
+}
+
 /** Swaps the synthesized section's props in place: the component id (its React key) never changes mid-refine. */
 function patchSynthesizedLayout(layout: Layout | null, card: SynthesizedDynamicCard | undefined): Layout | null {
   if (!layout || !card) return layout;
@@ -1251,6 +1256,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       if ((card?.props as SynthesizedDynamicCard | undefined)?.synthesisMeta?.reusedFromCatalog && get().scenarioId === scenarioId) void get().refineGoal({});
       return;
     }
+    if (abacAwaitingStrategy(get().brief)) return;
     // WP10-B: brief and canvas landed (a pasted ticket was triaged before this call): stage the fix.
     get().autoStage(scenarioId);
   },
@@ -2514,7 +2520,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       }));
       // The fix regenerates while the canvas re-correlates; both keep their sections mounted. Staging
       // is the default now (WP10-B), so a refined scope always re-stages unless the ticket is resolved.
-      if (wasDrawerOpen || (get().autoStageRemediation && !get().convergence[scenarioId])) {
+      if ((wasDrawerOpen || (get().autoStageRemediation && !get().convergence[scenarioId])) && !abacAwaitingStrategy(result.brief)) {
         void get().remediate();
       }
       await get().correlate({ fresh: true, keepMounted: true });
@@ -2578,6 +2584,8 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         speculativeBuffer: s.speculativeBuffer.filter((b) => b.scenarioId !== scenarioId),
       }));
       void get().loadDrawerExtras();
+      // Nothing was staged yet (an ABAC ticket waits for its strategy): the steered fix is staged now, through the sandbox and its repair loop.
+      if (!result.drawer) get().autoStage(scenarioId);
       const ms = Math.round(performance.now() - started);
       const changed = result.scriptDiff.split("\n").filter((l) => /^[+-](?![+-]{2})/.test(l)).length;
       get().toast({

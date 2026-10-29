@@ -714,6 +714,9 @@ export async function steerCustomTicket(
   const clarifiedAnswers = { ...(existing.clarifiedAnswers ?? {}), ...clarifiedAnswersFromSteering(steering) };
   const clarifyingQuestions = normalizeQuestionsHumanReadable(baseQuestions, clarifiedAnswers);
   const previousScript = options.previousScript ?? existing.customRemediation?.powershellScript ?? "";
+  // An ABAC steer can swap the whole strategy (exemption → conditioned grant): the coder writes it fresh instead of
+  // re-parameterising a script whose cmdlets no longer apply. The diff below still compares against the previous one.
+  const abac = isAbacTicketText(`${existing.ticket.title}\n${existing.ticket.body}`);
 
   const coded = await synthesizeCustomRemediation({
     scenarioId,
@@ -721,7 +724,7 @@ export async function steerCustomTicket(
     ticketBody: existing.ticket.body,
     clarifiedAnswers,
     steering,
-    ...(previousScript ? { previousScript } : {}),
+    ...(previousScript && !abac ? { previousScript } : {}),
   });
   const { _meta, ...template } = coded;
   const coder: RemediationCoderMeta = _meta ?? { modelUsed: "deterministic-template", latencyMs: 1, tokensUsed: 0, status: "fallback", source: "fallback-on-error" };

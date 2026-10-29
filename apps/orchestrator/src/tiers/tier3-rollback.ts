@@ -128,10 +128,16 @@ export async function rollbackRemediation(scenarioId: string, options: { approve
       log.push(`ARM DELETE: ${ABAC_LAB.roleName} assignments of ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}`);
       try {
         const res = await deleteAbacRoleAssignmentsLive();
-        log.push(res.removed.length ? `Removed ${res.removed.length} assignment${res.removed.length === 1 ? "" : "s"} in ${res.latencyMs} ms` : "No assignment to remove");
+        log.push(res.removed.length ? `Removed ${res.removed.length} assignment${res.removed.length === 1 ? "" : "s"} in ${res.latencyMs} ms · ${new Date().toISOString().replace(/\.\d+Z$/, "Z")}` : "No assignment to remove");
         if (res.failed.length) log.push(`${res.failed.length} delete(s) failed`);
+        // ARM's role-assignment list can trail a DELETE by a few seconds: read back until it agrees, at most ~6 s.
         invalidateAbacLabState();
-        const after = await getAbacLabState({ fresh: true });
+        let after = await getAbacLabState({ fresh: true });
+        for (let attempt = 0; attempt < 4 && res.removed.length && after.source === "live" && after.assignments.length > 0; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          invalidateAbacLabState();
+          after = await getAbacLabState({ fresh: true });
+        }
         executed = res.removed.length > 0 && res.failed.length === 0 && after.source === "live" && after.assignments.length === 0;
         log.push(`Read-back (live): ${after.assignments.length} ${ABAC_LAB.roleName} assignment(s) left for ${ABAC_LAB.identityName}`);
       } catch (error) {
