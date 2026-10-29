@@ -1,3 +1,6 @@
+# internal working files (audits, review loops, journals, demo audio/video staging): local only
+/archive/
+
 # dependencies
 node_modules/
 .bun/
