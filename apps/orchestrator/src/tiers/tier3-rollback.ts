@@ -10,6 +10,7 @@ import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { runScriptText } from "./tier3-remediate.ts";
+import { invalidateHoverCache } from "./tier1-hover.ts";
 import { ABAC_LAB, deleteAbacRoleAssignmentsLive } from "@contextpane/mcp-azure-iac";
 import { getAbacLabState, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
 import { getCustomScenario, type CustomScenarioId } from "@contextpane/catalog";
@@ -99,13 +100,17 @@ export async function rollbackRemediation(scenarioId: string, options: { approve
   const started = performance.now();
   const targetId = baseScenarioOf(scenarioId) ?? scenarioId;
   const idempotency = verifyIdempotency(targetId);
-  const finish = (partial: Omit<RollbackResult, "ok" | "scenarioId" | "latencyMs" | "idempotency">): RollbackResult => ({
-    ok: true,
-    scenarioId,
-    latencyMs: Math.round((performance.now() - started) * 10) / 10,
-    idempotency,
-    ...partial,
-  });
+  const finish = (partial: Omit<RollbackResult, "ok" | "scenarioId" | "latencyMs" | "idempotency">): RollbackResult => {
+    // A revert that ran changed tenant state: the hover answers generated before it are stale (review item 5).
+    if (partial.executed) invalidateHoverCache(scenarioId);
+    return {
+      ok: true,
+      scenarioId,
+      latencyMs: Math.round((performance.now() - started) * 10) / 10,
+      idempotency,
+      ...partial,
+    };
+  };
 
   // A staged Free-Roam action never executed: nothing to revert (HARD_CASES 29).
   if (isFreeRoamActionId(scenarioId)) {

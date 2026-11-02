@@ -30,6 +30,7 @@ import { applyScenarioState, type LabWriteOutcome } from "../local/lab.ts";
 import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { applyWhatIfGate, runLocalPreflight } from "../preflight/local.ts";
+import { invalidateHoverCache } from "./tier1-hover.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
@@ -1021,6 +1022,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   }
 
   remediationStore.save(updated);
+  // The approval may have changed tenant state (live or lab write): drop the scenario's cached hover answers (review item 5).
+  invalidateHoverCache(drawer.ticketId);
   const latencyMs = Math.round(performance.now() - started);
   // Only a live write converges the canvas; a staged GitOps patch leaves the drift visible until the pipeline runs.
   // A custom bundle that was staged but not executed changed nothing, so its ticket stays open (L-02).
