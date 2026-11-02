@@ -209,10 +209,10 @@ mono with muted labels.
 All deep proof lives off-canvas. Cards never gain verification, vault or compiler controls.
 
 - **Formal proof (Tier 3C):** `Formal proof` and `Inverse Rollback (f⁻¹)` are tabs inside
-  the Action Approval drawer only. The formal tab shows the 3 proved invariants, the
+  the Action Approval drawer only. The formal tab shows the 3 checked invariants (evaluated on the scenario's symbolic model, not machine-proved), the
   30-day Blast-Radius Matrix (one mono line per cohort, `0 collateral user lockouts`) and
   the `[Compile to Tier 0 Fleet Skill]` button. Approve stays disabled while a formal
-  invariant fails. The rollback tab shows the pre-verified `f⁻¹` PowerShell/HCL bundle.
+  invariant fails. The rollback tab shows the `f⁻¹` PowerShell/HCL bundle.
 - **Time-Travel Scrubber:** one 28px pill bar above the cards (`T-18m · T-14m · T-06m ·
   NOW · T+Fix`, Tier 0, 0 tokens). Selecting a slice rings only the card that changed
   (`Δ <card>` in the same line). Converged scenarios add one

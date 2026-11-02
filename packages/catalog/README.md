@@ -11,18 +11,20 @@ The shared contract between the models, the orchestrator and the browser. Everyt
 | File | What it defines |
 |---|---|
 | [`src/schemas/primitives.ts`](src/schemas/primitives.ts) | severities, SLA tiers, `RouterTier` (Tier 0, 1A, 1B, 2, 3A, 3B, Voice, Vision), provider ids, provenance categories, `ExecutionMode` |
-| [`src/schemas/components.ts`](src/schemas/components.ts) | every canvas card (`LicenseDriftCard`, `EntraSignInTimeline`, `IntuneDriftCard`, `IaCDriftBanner`, `HoverDiagnosticPopover`, `ActionApprovalDrawer` …), `VerificationStatus` with `RepairLoop` / `RepairRound` (`:318-347`), and the N+k `SynthesizedDynamicCardSchema` (`:550`) |
+| [`src/schemas/components.ts`](src/schemas/components.ts) | every canvas card (`LicenseDriftCard`, `EntraSignInTimeline`, `IntuneDriftCard`, `IaCDriftBanner`, `HoverDiagnosticPopover`, `ActionApprovalDrawer` …), `VerificationStatus` with `RepairLoop` / `RepairRound` (`:319-348`), and the N+k `SynthesizedDynamicCardSchema` (`:574`) |
 | [`src/schemas/layout.ts`](src/schemas/layout.ts) · [`recipe.ts`](src/schemas/recipe.ts) · [`mini-dashboard.ts`](src/schemas/mini-dashboard.ts) | the layout the canvas accepts (`ComponentTypeSchema` allow-list), pinned View Recipes (Tier 0), selection-lens specs |
 | [`src/tools.ts`](src/tools.ts) | forced tool definitions: `hydrate_contextpane_layout`, `emit_hover_diagnostic`, `emit_remediation_bundle`, `steer_contextpane_layout`, `compose_contextual_mini_dashboard` (Zod → JSON schema) |
 | [`src/validate.ts`](src/validate.ts) | `validateComponents`, `parseToolArguments`: every model reply is parsed here before anything renders |
 | [`src/steering.ts`](src/steering.ts) | the two-way steering contract (below) |
 | [`src/dataplane.ts`](src/dataplane.ts) | `ptr://` pointers, fencing, the PII vault (below) |
+| [`src/preflight-rules.json`](src/preflight-rules.json) · [`preflight-rules.ts`](src/preflight-rules.ts) | the one pre-flight rule set both sandboxes enforce (below) |
+| [`src/typed-actions.ts`](src/typed-actions.ts) | the typed action catalog an approval may execute instead of model-written PowerShell (below) |
 | [`src/aadsts.ts`](src/aadsts.ts) · [`permissions-dictionary.ts`](src/permissions-dictionary.ts) | AADSTS error translations (with Learn links); a role / Graph-permission dictionary with risk tiers, used by the role hover popover |
 | [`src/tenants.ts`](src/tenants.ts) · [`scenarios.ts`](src/scenarios.ts) · [`labels.ts`](src/labels.ts) · [`sourceref.ts`](src/sourceref.ts) · [`actions.ts`](src/actions.ts) | tenant registry (Contoso Finance, Fabrikam Legal), scenario metadata, slug → label cleaning, git line provenance, quick actions |
 
 ## N+k card primitives
 
-`SynthesizedDynamicCard.blocks` is a discriminated union over five primitives (`components.ts:430-537`):
+`SynthesizedDynamicCard.blocks` is a discriminated union over five primitives (`components.ts:433-561`):
 
 | `kind` | Shape |
 |---|---|
@@ -32,7 +34,9 @@ The shared contract between the models, the orchestrator and the browser. Everyt
 | `config-diff` | unified diff with file path and language |
 | `event-stream` | timestamped audit / activity events |
 
-A synthesized card also carries `recommendedActions` (optionally with `setsParams` steering) and `synthesisMeta`: gatekeeper model, synthesizer model, latency, `tsxStubPath` and `source`.
+A synthesized card also carries `recommendedActions` (optionally with `setsParams` steering) and `synthesisMeta`: gatekeeper model, synthesizer model, latency, `tsxStubPath`, `source` and, after a fallback, `fallbackReason`.
+
+**Block provenance.** Every block has optional `provenance` (`tenant-data` · `mixed` · `model-estimate`) and `dataPtr` fields, and `data-table` blocks have `ungroundedRows` (indexes of rows that name nothing in the tenant context). The orchestrator sets all three from the ticket's tenant context; their schema descriptions say "Set by the orchestrator; leave unset", and the model's synthesizer tool does not offer them. A block without `provenance` predates grounding and the web app shows it as unverified.
 
 ## Steering contract (`src/steering.ts`)
 
@@ -60,16 +64,44 @@ The orchestrator side (`applySteeringDelta`, `deriveSteeringFromAnswers`) lives 
 
 [`verifyPointerFence` (:285)](src/dataplane.ts#L285) returns `valid · stale-epoch · cross-tenant · unregistered-or-invalid · aba-generation-mismatch`, and the orchestrator maps every failure to HTTP 409. Selection lenses use `ptr://<scenario>/selection/<hash>`.
 
-**Vault.** [`PiiVault` (:745)](src/dataplane.ts#L745), with the process singleton `sessionPiiVault` (`:936`):
-- **Fields.** It covers `upn`, `displayName`, `ipAddress`, `userId` and `deviceName`.
+**Vault.** [`PiiVault` (:769)](src/dataplane.ts#L769), with the process singleton `sessionPiiVault` (`:1019`):
+- **Fields.** It covers `upn`, `displayName`, `ipAddress`, `userId`, `deviceName` and `phone`.
 - **Tokens.** Values become `<field>_tok_NN` (for example `upn_tok_03`), assigned in case-folded sorted order within a batch.
-- **Text.** `pseudonymizeText` (`:869`) handles emails, known person names (registered from MCP context) and public IPv4 addresses.
-- **Metrics.** `recordPrompt` counts detector hits per prompt (`zeroRawPiiInLlmPrompt` is true while the detector found none); it measures what the detector can see, not all PII. Rehydration is limited to the tokens a prompt (or its tenant and ticket scope) carried; refused tokens are counted in `refusedRehydrations`.
+- **Structured data.** `pseudonymize` vaults the PII fields of any object; `depseudonymize` reverses it. `registerPersonsFrom` remembers display names, user object ids and device names from MCP results, so free text naming them can be vaulted too.
+- **Text.** `pseudonymizeText` (`:915`) handles e-mail addresses / UPNs, known person names, known device names, known user object ids (GUIDs), phone numbers and public IPv4 addresses. `scanForRawPii` reports the same kinds.
+- **Scoped rehydration.** `depseudonymizeJsonText(json, allowed?)` turns tokens back into real values; with an `allowed` set, any token outside it stays a token and is counted in `refusedRehydrations`. `tokensIn(text)` lists the tokens a text carries, and `exposeTo(scope, text)` / `exposedTokens(scope)` track the tokens a tenant + ticket scope (`PiiScope`, keyed by `piiScopeKey`) has been shown. The router passes the prompt's own tokens, or the scope's, as `allowed`.
+- **Metrics.** `metrics()` / `getPiiVaultMetrics()` return `piiFieldsVaulted`, `promptsScanned`, `rawPiiPromptHits`, `refusedRehydrations` and the token map. `recordPrompt` counts detector hits per prompt (`zeroRawPiiInLlmPrompt` is true while the detector found none); it measures what the detector can see, not all PII.
+- **Helpers.** `createPiiVault`, `pseudonymizeForLlm`, `depseudonymizeForLlm` and `getPiiVaultMetrics` (all default to `sessionPiiVault`). The old aliases (`tokenize`, `devault`, `lookup`, `unvaultValue`, `getMetrics`, `PseudonymVault`, `createPseudonymVault` and the like) are gone.
 
-Each token also gets an epoch- and field-salted 64-bit FNV-style digest (`computeEpochSaltedDigest`, `:724`). Some fields are named `hmac…`, but it is a fingerprint, not a cryptographic MAC.
+Each token also gets an epoch- and field-salted 64-bit FNV-style digest (`computeEpochSaltedDigest`, `:748`; read it with `digestForToken`). It is a fingerprint, not a cryptographic MAC, and is no longer named `hmac`.
 
-The orchestrator applies the vault to every prompt (`vaultMessages`) and rehydrates replies before they reach the browser.
+The orchestrator applies the vault to every prompt (`vaultMessages`) and rehydrates replies, scoped as above, before they reach the browser.
+
+## Pre-flight rules (`src/preflight-rules.json`)
+
+One rule set for both pre-flight sandboxes: the local pwsh runner reads it through [`preflight-rules.ts`](src/preflight-rules.ts), and `modal-sandbox/contextpane_sandbox.py` reads the same JSON file, which the Modal image copies to `/root/preflight-rules.json`.
+
+| Key | Rule |
+|---|---|
+| `allowedVerbs` · `allowedCommands` | a hyphenated command whose verb is not in `allowedVerbs` and that is not in `allowedCommands` fails ("Verb outside allow-list") |
+| `forbiddenCommands` | any of these fails ("Forbidden command") |
+| `destructivePatterns` | case-insensitive regular expressions, valid in JavaScript and Python; a match fails ("Destructive wildcard") |
+| `deniedExecutionCommands` | commands that run code, open sessions, sign in or rebind the Az context; applied by `apps/orchestrator/src/preflight/execution-surface.ts` ("Execution surface:") |
+
+`evaluatePreflightRules(commands, script, required)` returns the findings for an AST command list; `required` is the steered contract, never the coder's own list. `isHardPreflightFinding` and `PREFLIGHT_HARD_FAIL_PREFIXES` mark which findings fail the bundle: every finding `evaluatePreflightRules` returns (including "Expected command missing") and every "Execution surface:" finding.
+
+## Typed action catalog (`src/typed-actions.ts`)
+
+The writes an approval may execute without running model-written PowerShell. `TypedActionSchema` is a discriminated union on `kind`:
+
+| `kind` | `params` | Forward write | Inverse |
+|---|---|---|---|
+| `abac-conditioned-role-grant` | `container` (Azure container name) | ARM PUT of Storage Blob Data Contributor for the lab Function App identity on the payroll storage account, limited to one container by an ABAC condition (`conditionVersion 2.0`) | ARM DELETE of the identity's Storage Blob Data Contributor assignments on that account |
+| `license-extension-remediate` | `tenantId`, `upns` (1–25 UPNs) | Graph `$batch` PATCH of the lab licence extension to SPE_E5 / Compliant | the same users back to the lab's drifted licence state |
+| `nsg-baseline-restore` | `tenantId` | ARM reconcile of the tenant's lab NSG to its Terraform baseline | the NSG back to the seeded drift from `demo-lab-manifest.json` |
+
+`TYPED_ACTION_DESCRIPTIONS` holds those descriptions for the approval drawer. `TypedActionSelectionSchema` is the forced-tool answer a model gives (`kind` or `"none"`, `params`, `rationale`), and `typedActionFromSelection` parses it into a `TypedAction`, or `null` with the schema issues. `ActionApprovalDrawer.typedAction` carries the chosen action. The validators and executors live in `apps/orchestrator/src/execution/typed-actions.ts`.
 
 ## Tests
 
-`catalog.test.ts`, `dataplane.test.ts`, `actions.test.ts`, `labels.test.ts` and `mini-dashboard.test.ts` run in the root `bun test`.
+`catalog.test.ts`, `dataplane.test.ts`, `actions.test.ts`, `labels.test.ts` and `mini-dashboard.test.ts` run in the root `bun test`. The vault's scoping and the pre-flight rules are also covered from the orchestrator side (`router/pii-vault.test.ts`, `preflight/local.test.ts`).
