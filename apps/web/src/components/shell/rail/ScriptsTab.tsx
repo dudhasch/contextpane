@@ -1,6 +1,6 @@
 import { ExternalLink, GitPullRequest, Lightbulb, RotateCcw, Sparkles, Zap } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { isSteeringStale, type ExecutionMode } from "@contextpane/catalog";
+import { TYPED_ACTION_DESCRIPTIONS, isSteeringStale, type ExecutionMode } from "@contextpane/catalog";
 import { useWorkbench, type CodeRailTab } from "@/store";
 import { SmartTechPath } from "../../canvas/Section";
 import { DiffView } from "../../canvas/DiffView";
@@ -57,6 +57,11 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
           )}
         </div>
         <p className="text-12 text-muted">{drawer.summary}</p>
+        {drawer.typedAction && (
+          <p className="text-12 text-muted" data-testid="typed-action">
+            <span className="text-signal">Approve executes</span> · {TYPED_ACTION_DESCRIPTIONS[drawer.typedAction.kind].forward}. The script below is for review and is not run.
+          </p>
+        )}
         {tab === "powershell" && focusUpn && (
           <p className="text-12 text-muted">
             <span className="text-warning">Targeted user</span> · includes the license &amp; group update for <span className="font-mono text-text">{focusUpn}</span>

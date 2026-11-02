@@ -10,9 +10,10 @@ import { convergenceStore } from "../store/convergence.ts";
 import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { runScriptText } from "./tier3-remediate.ts";
-import { ABAC_LAB, deleteAbacRoleAssignmentsLive } from "@contextpane/mcp-azure-iac";
+import { ABAC_LAB } from "@contextpane/mcp-azure-iac";
+import { invertTypedAction } from "../execution/typed-actions.ts";
 import { getAbacLabState, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
-import { getCustomScenario, type CustomScenarioId } from "@contextpane/catalog";
+import { TYPED_ACTION_DESCRIPTIONS, getCustomScenario, type CustomScenarioId, type TypedAction } from "@contextpane/catalog";
 
 /**
  * Real f⁻¹ (U-5).
@@ -73,7 +74,8 @@ export async function executeInverse(input: { scenarioId: string; snapshot: Enti
   let write: LabWriteOutcome | null = null;
   let script: { ok: boolean; log: string[] } | null = null;
   const live = isLiveCloudMode();
-  const customScript = Boolean(input.drawer && isCustomScenarioId(input.drawer.ticketId) && !baseScenarioOf(input.drawer.ticketId));
+  // A bundle approved through a typed action never ran its script, so its inverse script does not run either.
+  const customScript = Boolean(input.drawer && isCustomScenarioId(input.drawer.ticketId) && !baseScenarioOf(input.drawer.ticketId) && !input.drawer.typedAction);
   if (live && config.allowExecute && customScript && input.inverse?.powershellScript.trim()) {
     log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the inverse script as the executor identity");
     script = await runScriptText(input.inverse.powershellScript, `Invoke-Rollback-${input.scenarioId}`);
@@ -127,9 +129,11 @@ export async function rollbackRemediation(scenarioId: string, options: { approve
     if (isLiveCloudMode() && config.allowExecute) {
       log.push(`ARM DELETE: ${ABAC_LAB.roleName} assignments of ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}`);
       try {
-        const res = await deleteAbacRoleAssignmentsLive();
-        log.push(res.removed.length ? `Removed ${res.removed.length} assignment${res.removed.length === 1 ? "" : "s"} in ${res.latencyMs} ms · ${new Date().toISOString().replace(/\.\d+Z$/, "Z")}` : "No assignment to remove");
-        if (res.failed.length) log.push(`${res.failed.length} delete(s) failed`);
+        // The typed inverse of the catalog's ABAC grant (the drawer's own action, or the catalog entry for older drawers).
+        const action: TypedAction = drawer?.typedAction?.kind === "abac-conditioned-role-grant" ? drawer.typedAction : { kind: "abac-conditioned-role-grant", params: { container: ABAC_LAB.containers[0] } };
+        const inverse = await invertTypedAction(action);
+        log.push(...inverse.log);
+        const res = { removed: inverse.results.filter((r) => r.ok).map((r) => r.id), failed: inverse.results.filter((r) => !r.ok).map((r) => r.id) };
         // ARM's role-assignment list can trail a DELETE by a few seconds: read back until it agrees, at most ~6 s.
         invalidateAbacLabState();
         let after = await getAbacLabState({ fresh: true });
@@ -173,6 +177,43 @@ export async function rollbackRemediation(scenarioId: string, options: { approve
       canary: null,
       preSnapshotAt: null,
       convergenceCleared,
+    });
+  }
+
+  if (convergence && !snapshot && drawer?.typedAction) {
+    // No snapshot, but the approval executed a typed catalog action: its own typed inverse undoes it.
+    const inverse = await invertTypedAction(drawer.typedAction);
+    const executed = inverse.source === "live" && inverse.ok;
+    const log = [`Typed inverse of ${drawer.typedAction.kind}: ${TYPED_ACTION_DESCRIPTIONS[drawer.typedAction.kind].inverse}`, ...inverse.log];
+    invalidateContext(scenarioId);
+    if (executed) {
+      convergenceStore.clear(scenarioId, convergence.tenantId);
+      remediationStore.save({ ...drawer, approval: { ...drawer.approval, state: "rolled-back" } });
+    }
+    auditLedger.append({
+      tenantId: convergence.tenantId,
+      ticketId: scenarioId,
+      actionType: "hitl-rollback",
+      delegatedIdentity: options.approvedBy ?? drawer.approval.approvedBy ?? config.lab.delegatedIdentity,
+      modalSandboxVerified: false,
+      astPass: null,
+      tfValidatePass: null,
+      gitBranch: drawer.staging?.branchName ?? null,
+      prUrl: null,
+      latencyMs: Math.round(performance.now() - started),
+      execution: executed ? "live-graph-and-arm-reverted" : "none",
+      detail: `${executed ? "typed inverse executed" : "typed inverse staged"} · ${drawer.typedAction.kind}`,
+    });
+    return finish({
+      executed,
+      execution: executed ? "live-graph" : "none",
+      reason: executed ? `typed inverse executed: ${inverse.summary}` : `the typed inverse did not run (${inverse.fallbackReason ?? "write refused"})`,
+      inverseSource: "static-reference",
+      rollback: reference,
+      executionLog: log,
+      canary: null,
+      preSnapshotAt: null,
+      convergenceCleared: executed,
     });
   }
 

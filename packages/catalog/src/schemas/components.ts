@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { StagedSteeringSchema } from "../steering.ts";
+import { TypedActionSchema } from "../typed-actions.ts";
 import {
   DriftStatusSchema,
   EntityTypeSchema,
@@ -418,8 +419,10 @@ export const ActionApprovalDrawerSchema = z.object({
     approvedAt: IsoTimestampSchema.nullable().default(null),
   }),
   providerTelemetry: ProviderTelemetrySchema,
-  /** The steering version / digest this script was built for; stale when the ticket's steering moved on (U-1). */
+  /** The steering version / digest this script was built for; stale when the ticket's steering moved on. */
   steering: StagedSteeringSchema.optional(),
+  /** The typed write approve executes instead of the script; absent when no catalog action fits the bundle. */
+  typedAction: TypedActionSchema.optional(),
 });
 export type ActionApprovalDrawer = z.infer<typeof ActionApprovalDrawerSchema>;
 

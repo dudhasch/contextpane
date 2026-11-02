@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   ActionApprovalDrawerSchema,
   RemediationBundleArgsSchema,
+  TYPED_ACTION_DESCRIPTIONS,
   baseScenarioOf,
   formatIssues,
   getScenarioEntry,
@@ -44,9 +45,11 @@ import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { coerceAffectedEntityType } from "../local/entity-type.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
-import { ABAC_LAB, putAbacRoleAssignmentLive } from "@contextpane/mcp-azure-iac";
-import { abacChoiceFromAnswers, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
+import { ABAC_LAB } from "@contextpane/mcp-azure-iac";
+import { abacChoiceFromAnswers, isAbacTicketText } from "../local/abac.ts";
 import { executorPrelude, executorRefusal, resolveExecutorIdentity } from "../execution/executor-identity.ts";
+import { clarifierTypedAction, selectTypedAction } from "../execution/select-action.ts";
+import { describeTypedAction, executeTypedAction, typedActionGate } from "../execution/typed-actions.ts";
 
 export interface RemediateInput {
   /** Scenario id (INC-4092, ANOM-CA-204, ...); a tenant id selects its ticket scenario. */
@@ -326,6 +329,10 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     verification.findings = verification.findings.map((f) => f.slice(0, 300));
     report("stage:done", staging ? `Branch ${staging.branchName} @ ${staging.commitSha?.slice(0, 7)}` : "Staging skipped", { ...(staging ?? {}) });
 
+    // A custom bundle executes through a typed catalog action when one fits; the script stays the reviewable artifact.
+    const typed = ctx.custom ? await selectTypedAction(ctx) : null;
+    if (typed?.action) report("action:selected", `Typed action: ${describeTypedAction(typed.action).summary} (${typed.source})`, { kind: typed.action.kind });
+
     const latencyMs = Math.round(performance.now() - started);
     const tier: RouterTelemetry["tier"] = "Tier 3B";
     const drawer = ActionApprovalDrawerSchema.parse({
@@ -347,6 +354,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
       // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on (U-1).
       ...(ctx.custom?.steering ? { steering: { version: ctx.custom.steering.version, digest: ctx.custom.steering.digest } } : {}),
+      ...(typed?.action ? { typedAction: typed.action } : {}),
     });
     remediationStore.save(drawer);
     auditLedger.append({
@@ -851,6 +859,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let verification = drawer.verificationStatus;
   // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
   const abacTicket = before?.custom ? isAbacTicketText(`${before.custom.ticket.title}\n${before.custom.ticket.body}`) : false;
+  // Drawers staged before typed actions existed still execute their ABAC grant through the catalog.
+  const typedAction = drawer.typedAction ?? (before ? clarifierTypedAction(before) : null);
   // An ABAC grant's inverse is the ARM DELETE of the assignment it created; the tenant-wide entity snapshot plays no part in it.
   const preSnapshot = mode === "break-glass" && before && !abacTicket ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
 
@@ -860,50 +870,34 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       const captured = [preSnapshot.users.length ? `${preSnapshot.users.length} user${preSnapshot.users.length === 1 ? "" : "s"}` : null, preSnapshot.caPolicies.length ? `${preSnapshot.caPolicies.length} CA polic${preSnapshot.caPolicies.length === 1 ? "y" : "ies"}` : null, preSnapshot.nsg ? `NSG ${preSnapshot.nsg.name} (${preSnapshot.nsg.rules.length} rules)` : null, preSnapshot.intune ? "Intune assignments" : null, preSnapshot.workloadIdentity ? "workload identity" : null].filter(Boolean);
       log.push(`Pre-change snapshot captured (${captured.join(", ") || "no entity"}) for f⁻¹ and the read-back probe`);
     }
-    if (abacTicket && before?.custom) {
-      // ABAC: the approved New-AzRoleAssignment is applied as one typed ARM PUT (same role, scope and condition), never by running model-written PowerShell.
-      const choice = abacChoiceFromAnswers(before.custom.clarifiedAnswers);
+    if (typedAction) {
+      // A typed catalog action is the executor: one validated Graph / ARM write, never the model-written PowerShell.
       const approvedBy = input.approvedBy ?? drawer.approval.requiredIdentity;
-      if (choice.strategy !== "condition" || !choice.container) {
-        const fallbackReason = `the typed ARM executor only applies an ABAC-conditioned grant; this bundle (${choice.strategy}${choice.container ? ` · ${choice.container}` : " · all containers"}) stays staged`;
-        writeSummary = `${drawer.title} · staged, not executed`;
-        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
-        state = "simulated";
-        log.push(`No ARM write: ${fallbackReason}.`);
-      } else if (isLiveCloudMode() && config.allowExecute) {
-        log.push(`LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → ARM PUT roleAssignments on ${ABAC_LAB.storageAccount} (${ABAC_LAB.subscriptionName}) as ${approvedBy}`);
-        const res = await putAbacRoleAssignmentLive({ container: choice.container, description: `ContextPane ${drawer.ticketId} · ${ABAC_LAB.roleName} limited to ${choice.container} · approved by ${approvedBy}` }).catch((error: unknown) => ({
-          ok: false as const,
-          status: 0,
-          latencyMs: 0,
-          assignmentId: null,
-          principalId: null,
-          condition: "",
-          error: error instanceof Error ? error.message : String(error),
-          readBack: null,
-        }));
-        invalidateAbacLabState();
-        if (res.ok) {
-          const readBackOk = Boolean(res.readBack?.condition?.includes(`'${choice.container}'`) && res.readBack.conditionVersion === "2.0");
-          log.push(`ARM PUT ${res.assignmentId} → HTTP ${res.status} in ${res.latencyMs} ms · ${new Date().toISOString().replace(/\.\d+Z$/, "Z")}`);
-          log.push(`Read-back: ${ABAC_LAB.roleName} for ${ABAC_LAB.identityName}, conditionVersion ${res.readBack?.conditionVersion ?? "?"}, container = ${choice.container} ${readBackOk ? "✓" : "(condition not confirmed)"}`);
-          writeSummary = `${ABAC_LAB.roleName} granted to ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}, condition: container = ${choice.container}`;
-          write = { source: "live-graph", latencyMs: res.latencyMs, summary: writeSummary, results: [{ id: res.assignmentId ?? "roleAssignment", ok: true, status: res.status }] };
-          state = "executed";
-          execution = "live-graph";
-        } else {
-          writeSummary = `${drawer.title} · ARM write refused`;
-          write = { source: "simulated", latencyMs: res.latencyMs, summary: writeSummary, results: [], fallbackReason: res.error ?? `HTTP ${res.status}` };
-          state = "simulated";
-          log.push(`ARM PUT refused: ${res.error ?? `HTTP ${res.status}`}. Nothing was granted; the ticket stays open.`);
-        }
+      const described = describeTypedAction(typedAction);
+      log.push(`Typed action ${typedAction.kind}: ${described.summary}. The staged script is not executed.`);
+      if (!typedActionGate()) log.push(`LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → ${described.forward} · approved by ${approvedBy}`);
+      const res = await executeTypedAction(typedAction, { ticketId: drawer.ticketId, approvedBy }, before);
+      log.push(...res.log);
+      if (res.source === "live") {
+        const failed = res.results.filter((r) => !r.ok);
+        for (const f of failed) log.push(`  ${f.id}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
+        writeSummary = res.summary;
+        write = { source: "live-graph", latencyMs: res.latencyMs, summary: writeSummary, results: res.results };
+        execution = "live-graph";
+        if (res.ok) state = "executed";
       } else {
-        const fallbackReason = !isLiveCloudMode() ? "Simulated-Lab mode" : "CTX_ALLOW_EXECUTE=false";
         writeSummary = `${drawer.title} · staged, not executed`;
-        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
+        write = { source: "simulated", latencyMs: res.latencyMs, summary: writeSummary, results: [], fallbackReason: res.fallbackReason ?? "the typed write did not land" };
         state = "simulated";
-        log.push(`No ARM write (${fallbackReason}): the role assignment is staged for ${ABAC_LAB.storageAccount}.`);
       }
+    } else if (abacTicket && before?.custom) {
+      // ABAC strategies with no typed executor (exemption, reader role, every container) stay staged.
+      const choice = abacChoiceFromAnswers(before.custom.clarifiedAnswers);
+      const fallbackReason = `the typed ARM executor only applies an ABAC-conditioned grant; this bundle (${choice.strategy}${choice.container ? ` · ${choice.container}` : " · all containers"}) stays staged`;
+      writeSummary = `${drawer.title} · staged, not executed`;
+      write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
+      state = "simulated";
+      log.push(`No ARM write: ${fallbackReason}.`);
     } else if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
       // A custom bundle has no lab write behind it: it is only executed when the approved script really runs.
       const plannedSteps = before.custom.customRemediation.executionSteps ?? [];
@@ -1047,12 +1041,12 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
           reclaimedUpns,
           preSnapshotAt: preSnapshot?.capturedAt ?? null,
           // Revert can execute only what approve could: a live write path (lab scenario) or, under CTX_ALLOW_EXECUTE, the inverse script.
-          inverseExecutable: abacTicket
+          inverseExecutable: abacTicket || (typedAction && !preSnapshot)
             ? execution === "live-graph" && isLiveCloudMode() && config.allowExecute
             : Boolean(preSnapshot) && execution === "live-graph" && isLiveCloudMode() && (labScenarioId !== null || config.allowExecute),
-          inverseReason: abacTicket
+          inverseReason: abacTicket || (typedAction && !preSnapshot)
             ? execution === "live-graph"
-              ? "inverse: ARM DELETE of the role assignment it created"
+              ? `inverse: ${typedAction ? TYPED_ACTION_DESCRIPTIONS[typedAction.kind].inverse : "ARM DELETE of the role assignment it created"}`
               : "nothing was written live"
             : !preSnapshot ? "no pre-change snapshot" : execution !== "live-graph" ? "nothing was written live" : !isLiveCloudMode() ? "LIVE_CLOUD_MODE=false" : labScenarioId === null && !config.allowExecute ? "custom ticket without CTX_ALLOW_EXECUTE" : "inverse derived from the pre-change snapshot",
         }
@@ -1111,8 +1105,12 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   const step4 = ctx.custom?.subAgentTasks?.find((t) => t.stepIndex === 4);
   const usedLlm = step4?.source === "llm";
   const steering = ctx.custom?.steering;
+  // The steering may change the typed action too (an ABAC container, a narrower user set).
+  const typed = ctx.custom ? await selectTypedAction(ctx) : null;
+  const { typedAction: _previousAction, ...rest } = drawer;
   const updated: ActionApprovalDrawer = {
-    ...drawer,
+    ...rest,
+    ...(typed?.action ? { typedAction: typed.action } : {}),
     title: bundle.title.slice(0, 120),
     summary: bundle.summary.slice(0, 600),
     powershellScript: bundle.powershellScript,

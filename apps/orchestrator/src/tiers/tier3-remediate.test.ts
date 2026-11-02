@@ -285,6 +285,66 @@ describe("approve() on a custom ticket (L-02)", () => {
   });
 });
 
+describe("approve() with a typed action", () => {
+  test("the typed executor writes instead of the script, and the script never runs", async () => {
+    const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
+    const { getMcpDataMode, setMcpDataMode } = await import("@contextpane/mcp-azure-iac");
+    const { msgraphService } = await import("@contextpane/mcp-msgraph");
+    const { config } = await import("../config.ts");
+    const contextModule = await import("../mcp/context.ts");
+    const { remediationStore } = await import("../store/remediations.ts");
+    const { convergenceStore } = await import("../store/convergence.ts");
+    const { auditLedger } = await import("../store/audit.ts");
+    const { approve } = await import("./tier3-remediate.ts");
+    const { spyOn } = await import("bun:test");
+    const entry = registerCustomTicket(SAMPLE_UNSCRIPTED_TICKETS[0]!);
+    const upn = "lynne.robins.contoso@c4a8shili.onmicrosoft.com";
+    const mutableConfig = config as { allowExecute: boolean };
+    const previous = { allowExecute: mutableConfig.allowExecute, mode: getMcpDataMode() };
+    setMcpDataMode("real-tenant");
+    mutableConfig.allowExecute = true;
+    // No live context in tests: the approve path reads none and validates against the lab manifest.
+    const gatherSpy = spyOn(contextModule, "gatherContext").mockRejectedValue(new Error("no tenant in tests"));
+    const writeSpy = spyOn(msgraphService, "setLicenseExtensionState").mockResolvedValue({ source: "live-graph", latencyMs: 9, results: [{ upn, ok: true, status: 204 }] } as never);
+    const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: unknown) => input) as never);
+    try {
+      const drawer = ActionApprovalDrawerSchema.parse({
+        remediationId: `rem-test-typed-${Date.now().toString(36)}`,
+        ticketId: entry.scenarioId,
+        tenantId: "tenant-contoso-01",
+        title: "Typed licence fix under test",
+        summary: "Typed action bundle",
+        synthesizedBy: { planner: "deterministic", coder: "deterministic", provider: "local" },
+        powershellScript: "[CmdletBinding(SupportsShouldProcess)]\nparam()\nRemove-MgUser -UserId everyone\n",
+        terraformDiff: "",
+        graphPatch: "{}",
+        affectedEntities: [{ type: "upn", id: upn, change: "Licence state → SPE_E5" }],
+        verificationStatus: { verdict: "Verified Safe", astCheckPassed: true, terraformFmtPassed: null, terraformValidatePassed: null, sandboxProvider: "local-pwsh", validationLatencyMs: 5, whatIfSafe: true, findings: [] },
+        staging: null,
+        approval: { state: "pending", requiredIdentity: "admin@test", approvedBy: null, approvedAt: null },
+        providerTelemetry: { tier: "Tier 3B", provider: "local", modelId: "deterministic", latencyMs: 1, tokensUsed: 0 },
+        typedAction: { kind: "license-extension-remediate", params: { tenantId: "tenant-contoso-01", upns: [upn] } },
+      });
+      remediationStore.save(drawer);
+      const result = await approve({ remediationId: drawer.remediationId, decision: "approve", mode: "break-glass" });
+      const log = result.executionLog.join("\n");
+      expect(writeSpy).toHaveBeenCalledWith("tenant-contoso-01", [upn], "remediated");
+      expect(result.approval.state).toBe("executed");
+      expect(log).toContain("Typed action license-extension-remediate");
+      expect(log).not.toContain("running the approved script");
+      remediationStore.clear(entry.scenarioId);
+      convergenceStore.clear(result.convergence?.scenarioId ?? entry.scenarioId, "tenant-contoso-01");
+    } finally {
+      gatherSpy.mockRestore();
+      writeSpy.mockRestore();
+      auditSpy.mockRestore();
+      mutableConfig.allowExecute = previous.allowExecute;
+      setMcpDataMode(previous.mode);
+      clearCustomTickets("unscripted");
+    }
+  });
+});
+
 describe("Auto-Fix and Override run on the server (L-08)", () => {
   async function failingCustomDrawer(script: string) {
     const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
