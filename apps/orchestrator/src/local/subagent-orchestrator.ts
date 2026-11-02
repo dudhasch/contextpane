@@ -244,7 +244,6 @@ const REMEDIATION_CODER_TOOL: OpenAIFunctionTool = {
             },
           },
         },
-        requiredCommands: { type: "array", items: { type: "string" } },
         riskNotes: { type: "array", items: { type: "string" } },
         executionSteps: { type: "array", items: { type: "string" } },
       },
@@ -257,6 +256,26 @@ function keyVaultNameIn(text: string): string | null {
   const m = /\b(kv-[a-z0-9][a-z0-9-]{1,22}|(?:key ?vault|vault)\s+([a-z0-9][a-z0-9-]{2,23}))\b/i.exec(text);
   if (!m) return null;
   return (m[2] ?? m[1] ?? "").replace(/^(key ?vault|vault)\s+/i, "") || null;
+}
+
+/**
+ * The cmdlets the steered strategy requires (review item 3). This is the pre-flight's
+ * "Expected command missing" contract for a custom ticket, so it comes from the operator's
+ * steering and the ticket's domain, never from the coder's own answer: a coder that could name
+ * its own required commands would be writing its own test. An ABAC ticket gets the policy's
+ * contract; a Key Vault ticket steered to recover or purge-recreate gets that strategy's
+ * cmdlets; anything else has no strategy contract and gets none.
+ */
+export function steeredRequiredCommands(input: { ticketTitle: string; ticketBody: string; clarifiedAnswers?: Record<string, string>; steering?: SteeringParams }): string[] {
+  const text = `${input.ticketTitle}\n${input.ticketBody}`;
+  if (isAbacTicketText(text)) return abacRequiredCommands(abacChoiceFromAnswers(input.clarifiedAnswers));
+  const strategy = input.steering?.remediationStrategy?.value;
+  const vault = input.steering?.targetResource?.value ?? keyVaultNameIn(text);
+  if (vault && /key ?vault|kv-|soft[- ]delete|purge/i.test(text)) {
+    if (strategy === "recover") return ["get-azkeyvault", "undo-azkeyvaultremoval"];
+    if (strategy === "purge-recreate") return ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"];
+  }
+  return [];
 }
 
 /**
@@ -320,7 +339,7 @@ export function buildCustomTicketRemediationSync(input: {
         ? whatIf(vault, `Soft-delete Key Vault ${vault} again (reverses the recovery)`, ["Remove-AzKeyVault -VaultName $Target -Force"])
         : whatIf(vault, `Remove the recreated Key Vault ${vault} (the purged vault cannot be restored)`, ["Remove-AzKeyVault -VaultName $Target -Force"]),
       affectedEntities: [{ type: "resource", id: vault, change: recover ? "soft-deleted -> recovered in place" : "soft-deleted -> purged, recreated empty" }],
-      requiredCommands: recover ? ["get-azkeyvault", "undo-azkeyvaultremoval"] : ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"],
+      requiredCommands: steeredRequiredCommands(input),
       riskNotes: recover
         ? ["Recovery keeps every key, secret and certificate; nothing is lost."]
         : ["Purging is irreversible: every key and secret in the vault is destroyed.", "Azure refuses the purge while purge protection is enabled."],
@@ -436,8 +455,8 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
         graphPatch: typeof raw.graphPatch === "string" ? raw.graphPatch : JSON.stringify(raw.graphPatch ?? {}, null, 2),
         rollbackScript: raw.rollbackScript ?? fallback.rollbackScript,
         affectedEntities: Array.isArray(raw.affectedEntities) && raw.affectedEntities.length > 0 ? raw.affectedEntities : fallback.affectedEntities,
-        // ABAC: the contract is the steered strategy's cmdlets, not the coder's own list (it tends to add the rollback's).
-        requiredCommands: abacChoice ? abacRequiredCommands(abacChoice) : Array.isArray(raw.requiredCommands) && raw.requiredCommands.length > 0 ? raw.requiredCommands.map((c) => c.toLowerCase()) : [],
+        // The contract is the steered strategy's cmdlets, never the coder's own list: a model must not write its own test (review item 3).
+        requiredCommands: steeredRequiredCommands(input),
         riskNotes: Array.isArray(raw.riskNotes) && raw.riskNotes.length > 0 ? raw.riskNotes : fallback.riskNotes,
         executionSteps: Array.isArray(raw.executionSteps) && raw.executionSteps.length > 0 ? raw.executionSteps : fallback.executionSteps,
         _meta: {
