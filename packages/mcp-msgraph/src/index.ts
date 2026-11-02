@@ -5,3 +5,4 @@ export * from "./pwsh.ts";
 export * from "./service.ts";
 export { GraphHttpError, fetchServiceHealthOverviewsLive, type LiveServiceHealthOverview } from "./live.ts";
 export { createMsGraphMcpServer } from "./server.ts";
+export { cachedTokenClaims } from "./token.ts";

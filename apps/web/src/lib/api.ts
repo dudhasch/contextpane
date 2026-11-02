@@ -567,9 +567,9 @@ export const api = {
   remediate: (body: { scenarioId: string }) => request<RemediateResponse>("/api/remediate", { method: "POST", body: JSON.stringify(body) }),
   autofixRemediation: (remediationId: string) =>
     request<{ drawer: ActionApprovalDrawer }>(`/api/remediate/${encodeURIComponent(remediationId)}/autofix`, { method: "POST", body: "{}" }),
-  overrideRemediation: (remediationId: string, body: { justification: string; operator?: string }) =>
+  overrideRemediation: (remediationId: string, body: { justification: string }) =>
     request<{ drawer: ActionApprovalDrawer }>(`/api/remediate/${encodeURIComponent(remediationId)}/override`, { method: "POST", body: JSON.stringify(body) }),
-  approve: (body: { remediationId: string; approvedBy?: string; decision?: "approve" | "reject"; openPullRequest?: boolean; mode?: ExecutionMode; simulateCanaryFailure?: boolean }) =>
+  approve: (body: { remediationId: string; decision?: "approve" | "reject"; openPullRequest?: boolean; mode?: ExecutionMode; simulateCanaryFailure?: boolean }) =>
     request<ApproveResponse>("/api/remediate/approve", { method: "POST", body: JSON.stringify(body) }),
   labState: () => request<{ convergence: Convergence[] }>("/api/lab/state"),
   resetDrift: (scenarioId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(scenarioId ? { scenarioId } : {}) }),
@@ -612,7 +612,8 @@ export const api = {
   simulateDrop: (body: { archetype?: DropArchetype; ticketId?: string } = {}) => request<SimulateDropResponse>("/api/tickets/simulate-drop", { method: "POST", body: JSON.stringify(body) }),
   visionTriage: (body: { scenarioId: string; fileName?: string }) => request<VisionTriageResponse>("/api/vision/triage", { method: "POST", body: JSON.stringify(body) }),
   resolutionNote: (scenarioId: string) => request<{ note: PsaResolutionNote }>(`/api/tickets/${encodeURIComponent(scenarioId)}/resolution-note`),
-  closeTicket: (scenarioId: string, closedBy?: string) => request<{ ok: boolean; note: PsaResolutionNote; audit: AuditEntry }>("/api/tickets/close", { method: "POST", body: JSON.stringify({ scenarioId, ...(closedBy ? { closedBy } : {}) }) }),
+  // The orchestrator records the signed-in operator as the closer; the request names no one.
+  closeTicket: (scenarioId: string) => request<{ ok: boolean; note: PsaResolutionNote; audit: AuditEntry }>("/api/tickets/close", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   reopenTicket: (scenarioId: string) => request<{ ok: boolean; scenarioId: string; audit: AuditEntry }>("/api/tickets/reopen", { method: "POST", body: JSON.stringify({ scenarioId }) }),
   dynamicCatalog: () => request<DynamicCatalogResponse>("/api/dynamic-catalog"),
   clearDynamicCatalog: () => request<{ ok: boolean; removed: number }>("/api/dynamic-catalog/clear", { method: "POST", body: "{}" }),

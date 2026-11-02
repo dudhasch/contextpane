@@ -49,6 +49,13 @@ if ($WebM) {
 }
 
 if ($Send) {
+    # The orchestrator requires its bearer token (apps/orchestrator/src/security.ts): CTX_API_TOKEN, or the file it writes at start-up.
+    $apiTokenFile = if ($env:CTX_API_TOKEN_FILE) { $env:CTX_API_TOKEN_FILE } else { Join-Path (Split-Path -Parent $PSScriptRoot) '.contextpane/api-token' }
+    $apiToken = if ($env:CTX_API_TOKEN) { $env:CTX_API_TOKEN.Trim() } elseif (Test-Path -LiteralPath $apiTokenFile) { (Get-Content -Raw -LiteralPath $apiTokenFile).Trim() } else { '' }
+    if ($apiToken) {
+        $PSDefaultParameterValues['Invoke-RestMethod:Headers'] = @{ Authorization = "Bearer $apiToken" }
+        $PSDefaultParameterValues['Invoke-WebRequest:Headers'] = @{ Authorization = "Bearer $apiToken" }
+    }
     foreach ($f in $files) {
         $body = @{ tenantId = 'tenant-contoso-01'; audioBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($f.Path)); mimeType = $f.MimeType } | ConvertTo-Json -Compress
         $sw = [Diagnostics.Stopwatch]::StartNew()

@@ -29,6 +29,7 @@ import {
   type WorkbenchScenarioId,
 } from "@contextpane/catalog";
 import { config, describeConfig, isLiveCloudMode, providers } from "./config.ts";
+import { localApiGuard, operatorIdentity } from "./security.ts";
 import { buildScenarioBrief } from "./local/brief.ts";
 import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
 import { applyScenarioState } from "./local/lab.ts";
@@ -89,9 +90,13 @@ app.use(
   cors({
     origin: (origin) => (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : config.webOrigin),
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowHeaders: ["content-type", "accept"],
+    allowHeaders: ["content-type", "accept", "authorization"],
   }),
 );
+
+// Host check, bearer token and JSON-only writes (security.ts): before any route, the WebSocket included.
+app.use("/api/*", localApiGuard);
+app.use("/ws", localApiGuard);
 
 // Model ids are swapped for served stand-ins at startup; never route a request on an unresolved id.
 app.use("/api/*", async (_c, next) => {
@@ -686,7 +691,7 @@ app.get("/api/tickets/:scenarioId/resolution-note", async (c) => {
   return c.json({ note: buildResolutionNote({ brief, convergence }) });
 });
 
-const CloseBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional(), closedBy: z.string().max(120).optional() });
+const CloseBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional() });
 
 /** Mark the ticket closed in the PSA: logs ticket.closed to the audit ledger with the note attached. */
 app.post("/api/tickets/close", async (c) => {
@@ -695,7 +700,8 @@ app.post("/api/tickets/close", async (c) => {
   const scenarioId = scenarioOf(body);
   const convergence = convergenceStore.get(scenarioId);
   if (!convergence) return c.json({ ok: false, error: `${scenarioId} has not converged; approve a remediation first` }, 409);
-  const closedBy = body.closedBy ?? config.lab.delegatedIdentity;
+  // Recorded as the signed-in operator, never as a name the request carries.
+  const closedBy = operatorIdentity();
   closureStore.close(scenarioId, closedBy);
   const brief = buildScenarioBrief(await gatherContext(scenarioId));
   const note = buildResolutionNote({ brief, convergence });
@@ -716,7 +722,7 @@ app.post("/api/tickets/close", async (c) => {
   return c.json({ ok: true, note, audit: entry });
 });
 
-const ReopenBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional(), reopenedBy: z.string().max(120).optional() });
+const ReopenBodySchema = z.object({ scenarioId: z.string().optional(), tenantId: z.string().optional() });
 
 /**
  * Reopens a resolved or closed ticket so it can be remediated again: clears the closure and the
@@ -736,7 +742,7 @@ app.post("/api/tickets/reopen", async (c) => {
     tenantId,
     ticketId: scenarioId,
     actionType: "ticket-reopened",
-    delegatedIdentity: body.reopenedBy ?? config.lab.delegatedIdentity,
+    delegatedIdentity: operatorIdentity(),
     modalSandboxVerified: false,
     astPass: null,
     tfValidatePass: null,
@@ -765,10 +771,10 @@ app.get("/api/formal/:scenarioId", (c) => {
  * the read-back against the snapshot. Nothing is claimed that did not happen (L-09).
  */
 app.post("/api/rollback", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string; approvedBy?: string };
+  const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string };
   // A staged Free-Roam action is not a registered scenario, but it may be reverted (to "nothing to revert").
   const requested = isFreeRoamActionId(body.scenarioId) ? body.scenarioId : scenarioOf(body);
-  const result = await rollbackRemediation(requested, body.approvedBy ? { approvedBy: body.approvedBy } : {});
+  const result = await rollbackRemediation(requested, { approvedBy: operatorIdentity() });
   if (result.idempotency && !result.idempotency.passed) return c.json({ ...result, ok: false, error: "inverse rollback idempotency check failed" }, 422);
   return c.json(result);
 });
@@ -974,7 +980,7 @@ app.post("/api/remediate/:remediationId/autofix", async (c) => {
   return c.json({ drawer: await autofixRemediation(remediationId) });
 });
 
-const OverrideBodySchema = z.object({ justification: z.string().min(10).max(500), operator: z.string().max(120).optional() });
+const OverrideBodySchema = z.object({ justification: z.string().min(10).max(500) });
 
 /** Override with an operator justification, recorded in the audit ledger; the verdict becomes "Overridden". */
 app.post("/api/remediate/:remediationId/override", async (c) => {
@@ -982,7 +988,7 @@ app.post("/api/remediate/:remediationId/override", async (c) => {
   if (!remediationStore.get(remediationId)) return c.json({ error: "not found" }, 404);
   const parsed = OverrideBodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: "justification of 10-500 characters required" }, 400);
-  return c.json({ drawer: overrideRemediation(remediationId, parsed.data.justification, parsed.data.operator) });
+  return c.json({ drawer: overrideRemediation(remediationId, parsed.data.justification, operatorIdentity()) });
 });
 
 app.get("/api/remediations", (c) => c.json({ remediations: remediationStore.list(c.req.query("tenantId")) }));
@@ -995,7 +1001,6 @@ app.get("/api/remediations/:remediationId", (c) => {
 
 const ApproveBodySchema = z.object({
   remediationId: z.string().min(1),
-  approvedBy: z.string().optional(),
   decision: z.enum(["approve", "reject"]).optional(),
   openPullRequest: z.boolean().optional(),
   mode: ExecutionModeSchema.optional(),
@@ -1008,7 +1013,8 @@ const ApproveBodySchema = z.object({
  * nothing converges. Either way a PR is opened only when openPullRequest is true.
  */
 const approveHandler = async (c: Context) => {
-  const body = ApproveBodySchema.parse(await c.req.json());
+  // The approver is the signed-in operator (security.ts), not a field of the request.
+  const body = { ...ApproveBodySchema.parse(await c.req.json()), approvedBy: operatorIdentity() };
   const pending = remediationStore.get(body.remediationId);
   const conflict = body.decision !== "reject" && pending ? resolvedConflict(pending.ticketId) : null;
   if (conflict) return c.json({ error: conflict, scenarioId: pending!.ticketId }, 409);
