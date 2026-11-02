@@ -62,7 +62,7 @@
 | Common category | Why ContextPane is different |
 |---|---|
 | **A dashboard** | Dashboards display state. In ContextPane every view ends in an action. Each lens and plan step leads to a staged PowerShell 7 / Graph / Terraform change in the permanent 440 px **Muse Code rail**. The change carries a pre-flight verdict, a blast radius, an undo script and a human approve button |
-| **A chatbot or RAG app** | There is no chat box. Models are called through forced tool schemas (Zod → JSON schema), and their output is validated before anything renders. Prompts carry pseudonyms, not identities. Answers bind to live MCP rows through `ptr://` pointers instead of prose |
+| **A chatbot or RAG app** | There is no chat box. Models are called through forced tool schemas (Zod → JSON schema), and their output is validated before anything renders. Prompts carry pseudonyms for the identities the vault detects (§4.1). Built-in cards bind to live MCP rows through `ptr://` pointers instead of prose; synthesized cards do not yet (§4.3) |
 | **An autonomous agent** | The agent proposes, checks and repairs; the operator steers and approves. Scope chips and lens-row clicks travel back into the coder (`PATCH /api/tickets/:id/steer`), and writes happen only from an explicit click |
 | **A static demo** | Cards that do not exist are composed at triage time (see [§4.3](#43-self-expanding-nk-generative-ui)). The registry grew from k=4 to k=5 while these screenshots were being captured |
 
@@ -147,7 +147,7 @@ At start-up [`router/meta-models.ts:11`](apps/orchestrator/src/router/meta-model
 | v2 | `…/entra/users?where=state:Drifted&select=upn` | relational filter. Equality only; anything else fails closed ([`parsePtrQuery`, :392](packages/catalog/src/dataplane.ts#L392)) |
 | v3 | `…#tenant-contoso-01:<epoch>:<generation>` | fence ([`fencedDataPtr`, :264](packages/catalog/src/dataplane.ts#L264)). [`verifyPointerFence` (:285)](packages/catalog/src/dataplane.ts#L285) returns `valid · stale-epoch · cross-tenant · aba-generation-mismatch · unregistered-or-invalid`, and `GET /api/dataplane` answers 409 on any failure |
 
-**Vault.** Every prompt to every provider goes through one function, [`chatWithForcedTool` (router/openai.ts:142)](apps/orchestrator/src/router/openai.ts#L142). It first runs [`vaultMessages` (:116)](apps/orchestrator/src/router/openai.ts#L116), which replaces UPNs, display names, public IPs, user ids and device names with session tokens (`upn_tok_03`, `displayName_tok_01`, …) from the process-wide [`PiiVault` (dataplane.ts:745)](packages/catalog/src/dataplane.ts#L745). `recordPrompt` counts any raw PII left, and the drawer shows the count. In the capture: **19 fields vaulted, 0 of 76 prompts with raw PII**. Model replies are rehydrated **in the orchestrator** ([:207](apps/orchestrator/src/router/openai.ts#L207)), so the browser shows real names and the provider never sees them.
+**Vault.** Every prompt to every provider goes through one function, [`chatWithForcedTool` (router/openai.ts:142)](apps/orchestrator/src/router/openai.ts#L142). It first runs [`vaultMessages` (:116)](apps/orchestrator/src/router/openai.ts#L116), which replaces e-mail addresses / UPNs, the display names of people it knows from tenant context, and public IPv4 addresses in prompt text with session tokens (`upn_tok_03`, `displayName_tok_01`, …) from the process-wide [`PiiVault` (dataplane.ts:745)](packages/catalog/src/dataplane.ts#L745). Structured rows also vault `userId` and `deviceName` fields; free text does not catch GUIDs, device names, phone numbers, IPv6 or names it has not seen, and image parts (ticket screenshots) are sent unvaulted. `recordPrompt` runs the same detector over each outgoing prompt and counts its **detector hits**, and the drawer shows the count. It measures what the detector can see, not all PII. In the capture: **19 fields vaulted, 0 detector hits in 76 prompts**. Model replies are rehydrated **in the orchestrator** ([:207](apps/orchestrator/src/router/openai.ts#L207)), so the browser shows real names and the provider never sees them.
 
 **The 3-step MCP vault boundary** ([full trace on INC-4092](docs/traces/mcp-vault-boundary.md)):
 
@@ -159,7 +159,7 @@ At start-up [`router/meta-models.ts:11`](apps/orchestrator/src/router/meta-model
 
 Models never issue MCP tool calls, and no service principal is involved. The one Activity Log hop is the orchestrator's own, for the ABAC tickets in real-tenant mode: [`readAbacLabLive`](packages/mcp-azure-iac/src/abac.ts#L282) reads the storage account, its containers, the payroll identity, the policy assignment, the identity's role assignments and the last 24 h of failed `roleAssignments/write` events with `RequestDisallowedByPolicy` ([`readActivityLog`, :239](packages/mcp-azure-iac/src/abac.ts#L239), 2.5 s budget). It uses the engineer's Az token, and its [`arm`](packages/mcp-azure-iac/src/abac.ts#L69) helper refuses any path outside the lab subscription. Activity Log ingestion lags by up to 15 minutes, so the denial the ticket reports is added as a deterministic entry stamped at the ticket's time ([`abacActivity`](apps/orchestrator/src/local/abac.ts#L161)). The policy rows of the built-in scenarios are fixtures (§5).
 
-<p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Glimmer hover popover with model badge, pseudonym vault token map and the 0-raw-PII metric" width="100%"></p>
+<p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Glimmer hover popover with model badge, pseudonym vault token map and the PII detector-hit count" width="100%"></p>
 
 ### 4.2 Hover-intent speculative pre-fetch
 
@@ -187,7 +187,7 @@ The catalog starts with hand-built cards (N). It grows by k whenever a ticket ne
 4. **Mount.** The web app's local interpreter, [`SynthesizedDynamicCard`](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L286), maps each block to a React primitive ([`renderBlock`, :116](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L116)). It runs no model-written code. The spec is stored with the triaged ticket (`synthesizedElements` in `data/custom-scenarios.json`). Drawing the card from a stored spec is client-side rendering and makes no model call.
 5. **Persistence.** A passing spec is also exported as `data/synthesized-elements/<ElementId>.tsx`, a typed module that re-exports the schema and the spec so the card can be reviewed as source, and is added to [`data/dynamic-catalog.json`](data/dynamic-catalog.json). The System & audit drawer lists the registry.
 
-Every data-table row in a synthesized card is steerable: clicking a row narrows the fix to that resource (§4.4).
+Every data-table row in a synthesized card is steerable: clicking a row narrows the fix to that resource (§4.4). Synthesized cards carry no `ptr://` bindings yet: their gauges, rows and events are values Wonder wrote into the spec, built from live lab facts only for the ABAC tickets.
 
 <p align="center"><img src="docs/assets/04-nk-wonder-synthesis-and-reuse.png" alt="The net-new FinanceBlobAbacConditionFix card next to the k=5 synthesized element registry" width="100%"></p>
 
@@ -213,9 +213,9 @@ Every data-table row in a synthesized card is steerable: clicking a row narrows 
 
 | Check | Modal warm container ([`contextpane_sandbox.py:283`](modal-sandbox/contextpane_sandbox.py#L283)) | Local fallback ([`preflight/local.ts`](apps/orchestrator/src/preflight/local.ts)) |
 |---|---|---|
-| PowerShell 7 AST parse + cmdlet allow-list / forbidden set | ✓ (persistent pwsh AST server) | ✓ `Parser::ParseFile` |
+| PowerShell 7 AST parse + one shared rule set ([`preflight-rules.json`](packages/catalog/src/preflight-rules.json)): a command outside the allow-list, a forbidden command, a destructive wildcard or a missing steered command fails the bundle | ✓ (persistent pwsh AST server) | ✓ `Parser::ParseFile` |
 | `terraform fmt -check` · `terraform validate` (1.9.8, azurerm ~> 4.0) | ✓ | ✓ when the ticket has an HCL baseline |
-| Mutating cmdlets inside `$PSCmdlet.ShouldProcess` | static check after either ([`checkWhatIfSafety`, :132](apps/orchestrator/src/preflight/local.ts#L132)) | same |
+| Mutating cmdlets inside `$PSCmdlet.ShouldProcess` | static check after either ([`applyWhatIfGate`](apps/orchestrator/src/preflight/local.ts)): an unguarded mutation fails the bundle; a read-only script without the guard only warns | same |
 | `#Requires -Version 7.0` header (the executor runs pwsh 7 only) | static check after either ([tier3-remediate.ts:485](apps/orchestrator/src/tiers/tier3-remediate.ts#L485)) | same |
 
 **The sandbox is offline and holds no tenant credentials.** Its only secret is the bearer token the orchestrator presents. It holds no Azure, Graph or Terraform state credentials. The Terraform working directory is set up at image build with `terraform init -backend=false`, and each bundle gets `fmt -check` and `validate`. It is Terraform 1.9.8, not OpenTofu, and nothing runs `plan` or `-WhatIf`.
