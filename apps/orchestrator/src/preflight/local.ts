@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { applyPatch } from "diff";
 import type { VerificationStatus } from "@contextpane/catalog";
 import { config } from "../config.ts";
+import { SURFACE_PS, executionSurfaceFindings, scanCommandsText, scanExecutionSurfaceText, surfaceFromReport } from "./execution-surface.ts";
 
 /**
  * Local pre-flight sandbox:
@@ -163,6 +164,18 @@ interface AstReport {
   parseErrors: string[];
   commands: string[];
   supportsShouldProcess: boolean;
+  /** .NET calls, dynamic invocations, aliases and REST targets (preflight/execution-surface.ts). */
+  surface?: unknown;
+}
+
+/**
+ * Execution-surface findings (item 12): .NET calls, runtime script blocks, dot-sourcing, aliases and
+ * REST targets outside the allow-list. Uses the AST report when there is one, the text scan otherwise.
+ */
+export function executionSurfaceCheck(script: string, report?: Pick<AstReport, "commands" | "surface"> | null): string[] {
+  const surface = report ? surfaceFromReport(report.surface, script) : scanExecutionSurfaceText(script);
+  const commands = report ? report.commands : scanCommandsText(script);
+  return executionSurfaceFindings(surface, commands);
 }
 
 export async function checkPowerShellAst(script: string, timeoutMs = 20_000, requiredCommands = DEFAULT_REQUIRED_COMMANDS): Promise<{ passed: boolean | null; findings: string[]; commands: string[] }> {
@@ -177,11 +190,13 @@ try {
   $ast = [System.Management.Automation.Language.Parser]::ParseFile(${psPath}, [ref]$tokens, [ref]$errors)
   $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Select-Object -Unique)
   $attrs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AttributeAst] }, $true) | ForEach-Object { $_.Extent.Text })
+${SURFACE_PS}
   [pscustomobject]@{
     parseErrors = @($errors | ForEach-Object { "$($_.Extent.StartLineNumber):$($_.Extent.StartColumnNumber) $($_.Message)" })
     commands = @($commands)
     supportsShouldProcess = [bool]($attrs | Where-Object { $_ -match 'SupportsShouldProcess' })
-  } | ConvertTo-Json -Depth 4 -Compress
+    surface = $surface
+  } | ConvertTo-Json -Depth 6 -Compress
 } catch {
   [pscustomobject]@{ parseErrors = @("AST runner failed: $($_.Exception.Message)"); commands = @(); supportsShouldProcess = $false } | ConvertTo-Json -Depth 4 -Compress
   exit 1
@@ -192,9 +207,14 @@ try {
     const runner = join(dir, "ast-runner.ps1");
     writeFileSync(runner, ps, "utf8");
     const result = await exec("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-File", runner], { timeoutMs });
-    if (result.timedOut) return { passed: null, findings: ["PowerShell AST check timed out"], commands: [] };
+    // No AST: the text scan still fails a script whose execution surface is visibly outside the rules.
+    if (result.timedOut) {
+      const surfaceOnly = executionSurfaceCheck(script);
+      return { passed: surfaceOnly.length ? false : null, findings: ["PowerShell AST check timed out", ...surfaceOnly], commands: [] };
+    }
     if (result.code !== 0 && !result.stdout.trim()) {
-      return { passed: null, findings: [`pwsh unavailable or failed: ${(result.stderr || "no output").trim().slice(0, 200)}`], commands: [] };
+      const surfaceOnly = executionSurfaceCheck(script);
+      return { passed: surfaceOnly.length ? false : null, findings: [`pwsh unavailable or failed: ${(result.stderr || "no output").trim().slice(0, 200)}`, ...surfaceOnly], commands: [] };
     }
     const start = result.stdout.indexOf("{");
     const report = JSON.parse(result.stdout.slice(start)) as AstReport;
@@ -219,14 +239,17 @@ try {
     if (/\bparam\s*\([^)]*=\s*""\s*\)/i.test(script)) {
       findings.push("Empty target parameter default detected in param() block");
     }
+    const surfaceFindings = executionSurfaceCheck(script, report);
+    findings.push(...surfaceFindings);
     const passed =
       report.parseErrors.length === 0 &&
       openBraces === closeBraces &&
       !DESTRUCTIVE_WILDCARD_RE.test(script) &&
       !findings.some((f) => f.startsWith("Forbidden") || f.startsWith("Expected command missing") || f.startsWith("Destructive wildcard"));
-    return { passed, findings, commands: report.commands };
+    return { passed: surfaceFindings.length ? false : passed, findings, commands: report.commands };
   } catch (error) {
-    return { passed: null, findings: [`AST check could not run: ${error instanceof Error ? error.message : String(error)}`], commands: [] };
+    const surfaceOnly = executionSurfaceCheck(script);
+    return { passed: surfaceOnly.length ? false : null, findings: [`AST check could not run: ${error instanceof Error ? error.message : String(error)}`, ...surfaceOnly], commands: [] };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

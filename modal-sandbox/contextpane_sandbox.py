@@ -82,6 +82,57 @@ SANDBOX_PROVIDER = "modal-cloud-sandbox"
 FORBIDDEN = {"invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod"}
 REQUIRED = {"set-mguserlicense"}
 
+# Execution-surface extraction (.NET calls, dynamic invocations, aliases, REST targets); the orchestrator applies
+# the rules to it (apps/orchestrator/src/preflight/execution-surface.ts). Keep in sync with SURFACE_PS there.
+SURFACE_PS = r"""
+  $surface = [ordered]@{ staticCalls = @(); newObjects = @(); dynamicInvocations = @(); dotSources = @(); scriptBlockInvokes = @(); aliases = @(); restCalls = @() }
+  foreach ($m in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
+    $member = if ($m.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $m.Member.Value } else { '<dynamic>' }
+    if ($m.Static -and $m.Expression -is [System.Management.Automation.Language.TypeExpressionAst]) {
+      $surface.staticCalls += [pscustomobject]@{ type = $m.Expression.TypeName.FullName; member = $member }
+    } elseif ($member -in @('Invoke', 'InvokeReturnAsIs', 'InvokeWithContext', 'AddScript', '<dynamic>')) {
+      $surface.scriptBlockInvokes += $m.Extent.Text
+    }
+  }
+  foreach ($c in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+    $name = $c.GetCommandName()
+    if ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot) { $surface.dotSources += $c.Extent.Text }
+    elseif ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and -not $name -and -not ($c.CommandElements[0] -is [System.Management.Automation.Language.ScriptBlockExpressionAst])) { $surface.dynamicInvocations += $c.Extent.Text }
+    if (-not $name) { continue }
+    $alias = Get-Alias -Name ([WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($alias) { $surface.aliases += [pscustomobject]@{ name = $name; definition = [string]$alias.Definition } }
+    $lower = $name.ToLowerInvariant()
+    if ($lower -eq 'new-object') {
+      $typeName = $null; $com = $false
+      for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
+        $e = $c.CommandElements[$i]
+        if ($e -is [System.Management.Automation.Language.CommandParameterAst]) {
+          if ($e.ParameterName -like 'Com*') { $com = $true }
+          elseif ($e.ParameterName -like 'Type*' -and $i + 1 -lt $c.CommandElements.Count) { $typeName = $c.CommandElements[$i + 1].Extent.Text.Trim([char[]]@([char]39, [char]34)) }
+        } elseif (-not $typeName -and $i -eq 1) { $typeName = $e.Extent.Text.Trim([char[]]@([char]39, [char]34)) }
+      }
+      $surface.newObjects += [pscustomobject]@{ typeName = $typeName; comObject = $com }
+    }
+    if ($lower -in @('invoke-mggraphrequest', 'invoke-azrestmethod')) {
+      $method = $null; $uri = $null; $dynamic = $false
+      for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
+        $e = $c.CommandElements[$i]
+        if (-not ($e -is [System.Management.Automation.Language.CommandParameterAst])) { continue }
+        $arg = if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $c.CommandElements.Count) { $c.CommandElements[$i + 1] } else { $null }
+        if (-not $arg) { continue }
+        if ($e.ParameterName -eq 'Method') {
+          $method = if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $arg.Value } else { '<dynamic>' }
+        } elseif ($e.ParameterName -in @('Uri', 'Path')) {
+          if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $uri = $arg.Value }
+          elseif ($arg -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) { $uri = $arg.Value; $dynamic = $true }
+          else { $uri = $arg.Extent.Text; $dynamic = $true }
+        }
+      }
+      $surface.restCalls += [pscustomobject]@{ command = $lower; method = $method; uri = $uri; uriDynamic = $dynamic }
+    }
+  }
+"""
+
 # One request per stdin line (the script as base64), one compressed JSON report per stdout line.
 # A -File loop rather than `pwsh -Command -`: -Command - executes stdin line by line and splits multi-line blocks.
 AST_SERVER = r"""
@@ -94,18 +145,22 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Select-Object -Unique)
     $attrs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AttributeAst] }, $true) | ForEach-Object { $_.Extent.Text })
+__SURFACE_PS__
     $report = [pscustomobject]@{
       parseErrors = @($errors | ForEach-Object { "$($_.Extent.StartLineNumber):$($_.Extent.StartColumnNumber) $($_.Message)" })
       commands = @($commands)
       supportsShouldProcess = [bool]($attrs | Where-Object { $_ -match 'SupportsShouldProcess' })
+      surface = $surface
     }
   } catch {
     $report = [pscustomobject]@{ parseErrors = @("AST runner failed: $($_.Exception.Message)"); commands = @(); supportsShouldProcess = $false }
   }
-  [Console]::Out.WriteLine(($report | ConvertTo-Json -Depth 4 -Compress))
+  [Console]::Out.WriteLine(($report | ConvertTo-Json -Depth 6 -Compress))
   [Console]::Out.Flush()
 }
 """
+
+AST_SERVER = AST_SERVER.replace("__SURFACE_PS__", SURFACE_PS)
 
 SAMPLE_SCRIPT = "[CmdletBinding(SupportsShouldProcess)]\nparam()\nif ($PSCmdlet.ShouldProcess('x')) { Set-MgUserLicense -UserId x -AddLicenses @() -RemoveLicenses @() }\n"
 SAMPLE_HCL = 'resource "azurerm_resource_group" "warm" {\n  name     = "rg-warm"\n  location = "westeurope"\n}\n'
@@ -168,10 +223,11 @@ def timed(fn, *args):
     return result, int((time.time() - started) * 1000)
 
 
-def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None) -> tuple[bool | None, list[str]]:
+def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None) -> tuple[bool | None, list[str], dict | None]:
+    """Parse verdict, findings and the raw AST report (its commands and surface go back to the orchestrator)."""
     report = ast_server.parse(script)
     if report is None:
-        return None, ["PowerShell AST check timed out"]
+        return None, ["PowerShell AST check timed out"], None
     findings: list[str] = []
     for err in report.get("parseErrors", []):
         findings.append(f"AST parse error: {err}")
@@ -185,7 +241,7 @@ def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] 
     if not report.get("supportsShouldProcess"):
         findings.append("Script does not declare SupportsShouldProcess (-WhatIf unsupported)")
     passed = not report.get("parseErrors") and not any(f.startswith(("Forbidden", "Expected command missing")) for f in findings)
-    return passed, findings
+    return passed, findings, report
 
 
 def apply_unified_diff(original: str, diff: str) -> str | None:
@@ -337,7 +393,7 @@ class Sandbox:
             if not validate_passed:
                 findings.append(f"terraform validate: {validate_output[:300]}")
 
-        (ast_passed, ast_findings), timings["powershellAst"] = ast_future.result()
+        (ast_passed, ast_findings, ast_report), timings["powershellAst"] = ast_future.result()
         return {
             "VerifiedSafe": ast_passed is True and (not has_iac or (fmt_passed is True and validate_passed is True)),
             "astCheckPassed": ast_passed,
@@ -346,6 +402,8 @@ class Sandbox:
             "sandboxProvider": SANDBOX_PROVIDER,
             "validationLatencyMs": int((time.time() - started) * 1000),
             "findings": ast_findings + findings,
+            # The orchestrator applies the execution-surface rules to these (preflight/modal.ts).
+            **({"commands": ast_report.get("commands", []), "surface": ast_report.get("surface")} if ast_report else {}),
             "checkLatencyMs": timings,
             "terraformVersion": TERRAFORM_VERSION,
         }
