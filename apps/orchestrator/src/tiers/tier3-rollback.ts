@@ -75,7 +75,7 @@ export async function executeInverse(input: { scenarioId: string; snapshot: Enti
   const live = isLiveCloudMode();
   const customScript = Boolean(input.drawer && isCustomScenarioId(input.drawer.ticketId) && !baseScenarioOf(input.drawer.ticketId));
   if (live && config.allowExecute && customScript && input.inverse?.powershellScript.trim()) {
-    log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the inverse script via the delegated identity");
+    log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the inverse script as the executor identity");
     script = await runScriptText(input.inverse.powershellScript, `Invoke-Rollback-${input.scenarioId}`);
     log.push(...script.log);
   }

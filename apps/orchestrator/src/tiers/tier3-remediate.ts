@@ -46,6 +46,7 @@ import { coerceAffectedEntityType } from "../local/entity-type.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
 import { ABAC_LAB, putAbacRoleAssignmentLive } from "@contextpane/mcp-azure-iac";
 import { abacChoiceFromAnswers, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
+import { executorPrelude, executorRefusal, resolveExecutorIdentity } from "../execution/executor-identity.ts";
 
 export interface RemediateInput {
   /** Scenario id (INC-4092, ANOM-CA-204, ...); a tenant id selects its ticket scenario. */
@@ -909,7 +910,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       log.push(...plannedSteps.map((s) => `Planned: ${s}`));
       let scriptRan: { ok: boolean; log: string[]; latencyMs: number } | null = null;
       if (isLiveCloudMode() && config.allowExecute) {
-        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script as the executor identity");
         const scriptStarted = performance.now();
         const script = await runApprovedScript(drawer);
         scriptRan = { ...script, latencyMs: Math.round(performance.now() - scriptStarted) };
@@ -954,7 +955,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       // follows, so the read-back probe and the inverse have something real to compare against (U-5).
       // The typed lab write below is the executor for a built-in scenario; running its script on top would write twice.
       if (isLiveCloudMode() && config.allowExecute && config.allowExecuteBuiltinScripts) {
-        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS → running the approved script via the delegated identity");
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS → running the approved script as the executor identity");
         const script = await runApprovedScript(drawer);
         log.push(...script.log);
       }
@@ -1133,7 +1134,7 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   return updated;
 }
 
-/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the signed-in delegated identity. */
+/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the executor identity. */
 /**
  * Auto-Fix (L-08): repairs the ShouldProcess guard on the server, re-runs the real pre-flight
  * against fresh context and stores whatever verdict it returns. Nothing is marked passed
@@ -1198,18 +1199,20 @@ async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: bo
   return runScriptText(drawer.powershellScript, `Invoke-Remediate-${drawer.ticketId}`);
 }
 
-/** CTX_ALLOW_EXECUTE only: runs a script as the signed-in delegated identity; the inverse rollback uses the same runner (U-5). */
+/**
+ * CTX_ALLOW_EXECUTE only: runs a script as the configured executor identity (a least-privilege service
+ * principal or managed identity; the engineer's own sign-in only with CTX_EXECUTOR_ALLOW_DELEGATED).
+ * The inverse rollback uses the same runner. With no executor identity the script does not run.
+ */
 export async function runScriptText(script: string, name: string): Promise<{ ok: boolean; log: string[] }> {
+  const identity = resolveExecutorIdentity();
+  const refusal = executorRefusal(identity);
+  if (refusal) return { ok: false, log: [refusal] };
   const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
   const file = join(dir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.ps1`);
-  // Every executed script is pinned to the lab: it selects the lab subscription for its own process and stops on anything else,
+  // Every executed script connects as the executor identity and is pinned to the lab subscription for its own process,
   // whatever the saved Az context points at. A leading param() block stays the first statement.
-  const guard = [
-    `$__ctxLab = Get-AzContext -ListAvailable | Where-Object { $_.Subscription -and $_.Subscription.Id -eq '${ABAC_LAB.subscriptionId}' -and $_.Tenant.Id -eq '${ABAC_LAB.tenantId}' } | Select-Object -First 1`,
-    `if (-not $__ctxLab) { throw 'Refusing to execute: the lab subscription ${ABAC_LAB.subscriptionId} is not signed in' }`,
-    "$null = Set-AzContext -Context $__ctxLab -Scope Process",
-    `if ((Get-AzContext).Subscription.Id -ne '${ABAC_LAB.subscriptionId}') { throw 'Refusing to execute outside the lab subscription' }`,
-  ].join("\n");
+  const guard = executorPrelude(identity, { subscriptionId: ABAC_LAB.subscriptionId, tenantId: ABAC_LAB.tenantId });
   const lines = script.split("\n");
   const paramAt = lines.findIndex((l) => /^\s*param\s*\(/i.test(l));
   let paramEnd = -1;
@@ -1224,7 +1227,7 @@ export async function runScriptText(script: string, name: string): Promise<{ ok:
   writeFileSync(file, guarded, "utf8");
   try {
     const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
-    const log = result.stdout.split("\n").filter(Boolean).slice(-20);
+    const log = [`Executor identity: ${identity.label}`, ...result.stdout.split("\n").filter(Boolean).slice(-20)];
     if (result.code !== 0) log.push(`pwsh exited ${result.code}: ${result.stderr.split("\n").slice(-3).join(" | ")}`);
     return { ok: result.code === 0, log };
   } finally {

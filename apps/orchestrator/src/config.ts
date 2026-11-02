@@ -175,6 +175,19 @@ export const config = {
   allowExecute: envBool("CTX_ALLOW_EXECUTE", false),
   /** Built-in scenarios execute through their typed lab write; this also runs their approved script (writes twice). */
   allowExecuteBuiltinScripts: envBool("CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS", false),
+  /**
+   * The identity approved scripts run as (CTX_ALLOW_EXECUTE only). A service principal with a certificate
+   * in the local store, or the host's managed identity; grant it only the lab roles the fixes need.
+   * Without one, free-form execution is refused unless CTX_EXECUTOR_ALLOW_DELEGATED keeps the legacy
+   * behaviour of running as the engineer's own signed-in Az / Graph context.
+   */
+  executor: {
+    clientId: env("CTX_EXECUTOR_CLIENT_ID"),
+    tenantId: env("CTX_EXECUTOR_TENANT_ID"),
+    certificateThumbprint: env("CTX_EXECUTOR_CERT_THUMBPRINT"),
+    managedIdentity: envBool("CTX_EXECUTOR_MANAGED_IDENTITY", false),
+    allowDelegated: envBool("CTX_EXECUTOR_ALLOW_DELEGATED", false),
+  },
   mcpTransport: (env("CTX_MCP_TRANSPORT", "in-process") === "stdio" ? "stdio" : "in-process") as "in-process" | "stdio",
   timeouts: {
     hoverMs: envInt("CTX_HOVER_TIMEOUT_MS", 2500),
