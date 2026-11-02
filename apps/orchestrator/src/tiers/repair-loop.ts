@@ -112,7 +112,7 @@ async function repairTurn(input: RepairLoopInput, findings: string[]): Promise<R
       { role: "user", content: JSON.stringify({ repairFindings: findings, requiredCommands: input.requiredCommands, previousBundle: input.bundle }) },
     ],
     getRemediationBundleToolDefinition(),
-    { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
+    { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: input.ctx.tenantId, ticketId: input.ctx.ticketId } },
   );
   const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
   if (!parsed.success) throw new Error(`repair turn returned an invalid bundle: ${parsed.error.issues.map((i) => i.message).join("; ")}`);

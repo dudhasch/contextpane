@@ -64,3 +64,56 @@ describe("PII vault on outgoing prompts", () => {
     expect(vault.metrics()).toMatchObject({ zeroRawPiiInLlmPrompt: false, promptsScanned: 2, rawPiiPromptHits: 1 });
   });
 });
+
+describe("PII vault scoping and free-text coverage", () => {
+  test("a reply may rehydrate only tokens its own prompt carried: another tenant's token stays a token", async () => {
+    // Mint a token for a tenant B user first, in a prompt sent for tenant B.
+    const otherTenant = sessionPiiVault.pseudonymizeText("isaiah.langer@fabrikam-legal.com");
+    sessionPiiVault.exposeTo({ tenantId: "tenant-fabrikam-02", ticketId: "CUSTOM-B" }, otherTenant);
+    const foreign = otherTenant.match(/upn_tok_\d+/)![0];
+    const reply = sessionPiiVault.depseudonymizeJsonText(JSON.stringify({ script: `Remove-MgUser -UserId '${foreign}'` }), new Set());
+    expect(reply).toContain(foreign);
+    expect(reply).not.toContain("isaiah.langer@fabrikam-legal.com");
+    expect(sessionPiiVault.metrics().refusedRehydrations).toBeGreaterThan(0);
+  });
+
+  test("scoped calls rehydrate tokens earlier prompts of the same ticket carried", async () => {
+    const scope = { tenantId: "tenant-contoso-01", ticketId: "CUSTOM-SCOPE" };
+    const first = sessionPiiVault.pseudonymizeText("alex.wilber@contoso.com");
+    const allowed = sessionPiiVault.exposeTo(scope, first);
+    const token = first.match(/upn_tok_\d+/)![0];
+    expect(allowed.has(token)).toBe(true);
+    expect(sessionPiiVault.exposedTokens(scope).has(token)).toBe(true);
+    expect(sessionPiiVault.exposedTokens({ tenantId: "tenant-fabrikam-02", ticketId: "CUSTOM-SCOPE" }).has(token)).toBe(false);
+    expect(sessionPiiVault.depseudonymizeJsonText(`"${token}"`, sessionPiiVault.exposedTokens(scope))).toBe('"alex.wilber@contoso.com"');
+  });
+
+  test("known user object ids, device names and phone numbers in free text are vaulted and scanned", () => {
+    const vault = new PiiVault(2);
+    vault.registerPersonsFrom({ users: [{ upn: "lee.gu@contoso.com", displayName: "Lee Gu", id: "6e7b768e-07e2-4810-8459-485f84f8f204" }], devices: [{ deviceName: "CONTOSO-LT-0417", upn: "lee.gu@contoso.com" }] });
+    const text = "User 6e7b768e-07e2-4810-8459-485f84f8f204 on CONTOSO-LT-0417 called from +49 30 1234 5678 or (425) 555-0100; tenant 4cc41c20-8b01-40a3-93c6-b4f1e846f6ea, build 10.0.22631.";
+    expect(vault.scanForRawPii(text).sort()).toEqual(["(425) 555-0100", "+49 30 1234 5678", "6e7b768e-07e2-4810-8459-485f84f8f204", "CONTOSO-LT-0417"].sort());
+    const out = vault.pseudonymizeText(text);
+    expect(out).not.toContain("6e7b768e-07e2-4810-8459-485f84f8f204");
+    expect(out).not.toContain("CONTOSO-LT-0417");
+    expect(out).not.toContain("1234 5678");
+    expect(out).not.toContain("555-0100");
+    expect(out).toMatch(/userId_tok_\d+/);
+    expect(out).toMatch(/device_tok_\d+/);
+    expect(out).toMatch(/phone_tok_\d+/);
+    // A GUID that is not a known user (tenant id) and a version string stay readable.
+    expect(out).toContain("4cc41c20-8b01-40a3-93c6-b4f1e846f6ea");
+    expect(out).toContain("10.0.22631");
+    expect(vault.scanForRawPii(out)).toEqual([]);
+    expect(vault.depseudonymize(out)).toBe(text);
+  });
+
+  test("image parts are refused unless the caller opts in", async () => {
+    captured.length = 0;
+    const messages = [{ role: "user" as const, content: [{ type: "image_url" as const, image_url: { url: "data:image/png;base64,AAAA" } }] }];
+    await expect(chatWithForcedTool(provider, "m", messages, tool, { timeoutMs: 5000 })).rejects.toThrow(/CTX_VISION_SEND_IMAGES/);
+    expect(captured).toHaveLength(0);
+    await chatWithForcedTool(provider, "m", messages, tool, { timeoutMs: 5000, allowImages: true });
+    expect(captured).toHaveLength(1);
+  });
+});

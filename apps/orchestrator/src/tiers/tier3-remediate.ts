@@ -170,7 +170,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
             { role: "user", content: JSON.stringify({ context: model, referenceSummary: reference.summary }) },
           ],
           PLAN_TOOL,
-          { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate },
+          { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId } },
         );
         const parsed = PlanArgsSchema.safeParse(clipPlanText(parseToolArguments(result.argumentsRaw)));
         if (!parsed.success) throw new InvalidSchemaError("plan failed validation", formatIssues(parsed.error));
@@ -207,7 +207,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
             },
           ],
           tool,
-          { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
+          { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId } },
         );
         const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
         if (!parsed.success) throw new InvalidSchemaError("bundle failed validation", formatIssues(parsed.error));

@@ -106,7 +106,13 @@ const latest = new Map<string, DataPlaneSnapshot>();
 /** Row-vault counts for this snapshot plus the session's computed prompt scan (`router/openai.ts`). */
 function withPromptScan(rowsVaulted: PiiVaultMetrics): PiiVaultMetrics {
   const live = sessionPiiVault.metrics();
-  return { ...rowsVaulted, zeroRawPiiInLlmPrompt: live.zeroRawPiiInLlmPrompt, promptsScanned: live.promptsScanned, rawPiiPromptHits: live.rawPiiPromptHits };
+  return {
+    ...rowsVaulted,
+    zeroRawPiiInLlmPrompt: live.zeroRawPiiInLlmPrompt,
+    promptsScanned: live.promptsScanned,
+    rawPiiPromptHits: live.rawPiiPromptHits,
+    refusedRehydrations: live.refusedRehydrations,
+  };
 }
 
 /** Publishes (once per gathered context) every dataset the scenario's cards are bound from. */

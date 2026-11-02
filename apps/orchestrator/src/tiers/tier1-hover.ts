@@ -281,6 +281,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
           temperature: 0,
           maxTokens: step.provider === providers.openWeight.id ? config.openWeightHoverMaxTokens : 1500,
           reasoningEffort: config.reasoning.hover,
+          piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId },
         },
       );
       const raw = parseToolArguments(result.argumentsRaw);

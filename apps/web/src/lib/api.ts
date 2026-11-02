@@ -211,7 +211,7 @@ export interface SkillDef {
   schemaSignature?: string;
   badge: string;
 }
-export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; promptsScanned?: number; rawPiiPromptHits?: number; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
+export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; promptsScanned?: number; rawPiiPromptHits?: number; refusedRehydrations?: number; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
 export interface DataPlaneDetailResponse {
   scenarioId?: string;
   tenantId?: string;

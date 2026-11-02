@@ -199,6 +199,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
             temperature: 0,
             maxTokens: 12000,
             reasoningEffort: step.tier === "Tier 2" ? config.reasoning.correlate : config.reasoning.catalog,
+            piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId },
           },
         );
         const { raw, binding: stepBinding } = bindDataPlane(parseToolArguments(result.argumentsRaw), ctx, snapshot);

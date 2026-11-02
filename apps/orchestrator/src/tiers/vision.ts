@@ -46,6 +46,8 @@ const VISION_TOOL: OpenAIFunctionTool = {
   },
 };
 
+export const VISION_BLOCKED = "Screenshot not sent: images bypass the PII vault. Set CTX_VISION_SEND_IMAGES=true to send ticket screenshots to the vision model.";
+
 const SYSTEM_PROMPT = `You read screenshots customers attach to managed-service tickets (Windows App / Azure Virtual Desktop / Entra sign-in errors).
 Transcribe identifiers exactly as shown: error code, application (client) id, correlation id, timestamp, device name, join type and compliance.
 Never guess a value that is not visible; use an empty string instead. Respond only through extract_ticket_telemetry.`;
@@ -73,6 +75,21 @@ export async function matchSignIn(tenantId: string, extraction: VisionExtraction
 export async function visionExtract(input: VisionInput): Promise<VisionResult> {
   const started = performance.now();
   const requestId = telemetry.nextRequestId("vision");
+  // The text vault cannot pseudonymise pixels: an error screenshot often shows the user's UPN. Off unless opted in.
+  if (!config.visionSendImages) {
+    const event = telemetry.record({
+      requestId,
+      endpoint: "/api/vision-extract",
+      tier: "Vision",
+      provider: "local",
+      modelId: "none",
+      latencyMs: Math.round(performance.now() - started),
+      tokensUsed: { ...ZERO_USAGE },
+      fallbackChain: [{ provider: "meta", modelId: models.metaVision, outcome: "skipped", latencyMs: 0, error: VISION_BLOCKED }],
+      tenantId: input.tenantId,
+    });
+    return { extraction: null, match: null, error: VISION_BLOCKED, telemetry: event };
+  }
   let usage: TokenUsage = { ...ZERO_USAGE };
   const outcome = await runChain([{ provider: "meta", modelId: models.metaVision, hasKey: providers.meta.hasKey && !config.forceLocal, tier: "Vision" }], async (step) => {
     const result = await chatWithForcedTool(
@@ -89,7 +106,7 @@ export async function visionExtract(input: VisionInput): Promise<VisionResult> {
         },
       ],
       VISION_TOOL,
-      { timeoutMs: config.timeouts.visionMs, temperature: 0, maxTokens: 3000, reasoningEffort: "low" },
+      { timeoutMs: config.timeouts.visionMs, temperature: 0, maxTokens: 3000, reasoningEffort: "low", allowImages: true, piiScope: { tenantId: input.tenantId, ticketId: input.ticketId } },
     );
     const parsed = VisionExtractionSchema.safeParse(parseToolArguments(result.argumentsRaw));
     if (!parsed.success) throw new InvalidSchemaError("vision extraction failed validation", formatIssues(parsed.error));
