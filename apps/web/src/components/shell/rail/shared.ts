@@ -124,7 +124,7 @@ export function useCopy(): (text: string, what: string) => Promise<void> {
 }
 
 /**
- * U-5: the revert buttons say what a click will do. "Revert change now" only when the server can
+ * the revert buttons say what a click will do. "Revert change now" only when the server can
  * execute an inverse derived from the pre-change snapshot; otherwise the inverse script is staged.
  */
 export function useRevertLabel(): { label: string; title: string } {

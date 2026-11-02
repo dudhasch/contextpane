@@ -647,7 +647,7 @@ export interface PiiVaultMetrics {
   sampleMappings: Record<string, string>;
   tokenMappings: Record<string, string>;
   orderPreservingCohortSorted?: boolean;
-  hmacEpoch?: number;
+  digestEpoch?: number;
 }
 
 const GITHUB_RUNNER_IPS = new Set(["185.199.108.40", "185.199.109.40", "185.199.110.40", "185.199.111.40", "140.82.112.10"]);
@@ -769,7 +769,7 @@ function caseFoldCompare(a: string, b: string): number {
 export class PiiVault {
   private tokenByReal = new Map<string, string>();
   private realByToken = new Map<string, string>();
-  private hmacByToken = new Map<string, string>();
+  private digestByToken = new Map<string, string>();
   private counters = new Map<string, number>();
   /** Person display names known to belong to a UPN (registered from tenant context or derived from UPNs). */
   private knownPersonNames = new Set<string>();
@@ -798,14 +798,11 @@ export class PiiVault {
     const token = `${prefix}_tok_${String(n).padStart(2, "0")}`;
     this.tokenByReal.set(key, token);
     this.realByToken.set(token, value);
-    this.hmacByToken.set(token, computeEpochSaltedDigest(this.epoch, String(field), value));
+    this.digestByToken.set(token, computeEpochSaltedDigest(this.epoch, String(field), value));
     return token;
   }
-  tokenize = this.vault.bind(this);
   unvault(token: string): string | null { return this.realByToken.get(token) ?? null; }
-  devault = this.unvault.bind(this);
-  lookup = this.unvault.bind(this);
-  hmacForToken(token: string): string | null { return this.hmacByToken.get(token) ?? null; }
+  digestForToken(token: string): string | null { return this.digestByToken.get(token) ?? null; }
 
   /**
    * Pre-sorts all unique `@pii(EU-GDPR-Personal)` strings in case-folded lexicographical order
@@ -862,8 +859,6 @@ export class PiiVault {
     }
     return value;
   }
-
-  pseudonymizeForLlm(value: unknown): unknown { return this.pseudonymize(value); }
 
   /** Remember `displayName ↔ upn` pairs from any MCP result so free text naming those people can be vaulted. */
   registerPersonsFrom(value: unknown): void {
@@ -1004,7 +999,6 @@ export class PiiVault {
   exposedTokens(scope: PiiScope): Set<string> {
     return new Set(this.exposedByScope.get(piiScopeKey(scope)) ?? []);
   }
-  unvaultValue(value: unknown): unknown { return this.depseudonymize(value); }
   metrics(): PiiVaultMetrics {
     const tokenMappings = Object.fromEntries(this.realByToken);
     return {
@@ -1016,27 +1010,19 @@ export class PiiVault {
       sampleMappings: { ...tokenMappings },
       tokenMappings,
       orderPreservingCohortSorted: true,
-      hmacEpoch: this.epoch,
+      digestEpoch: this.epoch,
     };
   }
-  getMetrics(): PiiVaultMetrics { return this.metrics(); }
 }
-export const PseudonymVault = PiiVault;
 export function createPiiVault(epoch?: number): PiiVault { return new PiiVault(epoch); }
-export const createPseudonymVault = createPiiVault;
 /** Per-session default vault (deterministic within the process/session). */
 export const sessionPiiVault = new PiiVault();
-export const defaultPiiVault = sessionPiiVault;
 
-export function vaultPii(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.pseudonymize(value); }
-export function unvaultPii(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.depseudonymize(value); }
-export const unvaultValue = unvaultPii;
 export function pseudonymizeForLlm(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.pseudonymize(value); }
-export const pseudonymiseForLlm = pseudonymizeForLlm;
 export function depseudonymizeForLlm(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.depseudonymize(value); }
 export function getPiiVaultMetrics(vault: PiiVault = sessionPiiVault): PiiVaultMetrics { return vault.metrics(); }
 
-/* ---------------- Honest Blind Structural Sketches (B1.3) ---------------- */
+/* ---------------- Honest Blind Structural Sketches ---------------- */
 
 /**
  * Computes Goh-Barabási burstiness parameter B = (σ - μ) / (σ + μ) ∈ [-1, 1]

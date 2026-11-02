@@ -393,11 +393,11 @@ export interface CoderInput {
   ticketTitle: string;
   ticketBody: string;
   clarifiedAnswers?: Record<string, string>;
-  /** Typed operator steering; the prompt receives it as the contract the script must honour (U-1). */
+  /** Typed operator steering; the prompt receives it as the contract the script must honour. */
   steering?: SteeringParams;
   /** The script a re-parameterisation starts from: the model changes only what the steering requires. */
   previousScript?: string;
-  /** Sandbox findings from the last pre-flight; a repair turn fixes exactly these (U-2). */
+  /** Sandbox findings from the last pre-flight; a repair turn fixes exactly these. */
   repairFindings?: string[];
   /** Tenant context the script must stay inside (local/grounding.ts); its facts go to the coder pseudonymised. */
   grounding?: GroundingIndex | null;
@@ -542,7 +542,7 @@ export interface SyntaxPrecheckResult {
 /**
  * The cheap pre-check that runs before any sandbox: brace counting, a destructive-wildcard
  * regex, an empty-default-parameter regex and the SupportsShouldProcess guard. It is a
- * heuristic, not an AST parse and not a verdict (M-01, U-2): the real verification is the
+ * heuristic, not an AST parse and not a verdict: the real verification is the
  * pre-flight in `preflight/*` (pwsh AST + cmdlet allow-list + terraform validate, in the
  * Modal sandbox when configured). When the guard is the only thing missing it wraps the
  * script in one, keeping a leading param() block as the first statement; Auto-Fix and the
@@ -618,7 +618,7 @@ export interface SubAgentStepMeasurement {
   startOffsetMs?: number;
   modelId?: string;
   tokensUsed?: number;
-  /** Prompt / completion split, stored on the record so the Router Savings HUD can show it (HARD_CASES 10). */
+  /** Prompt / completion split, stored on the record so the Router Savings HUD can show it. */
   usage?: TokenUsage;
   status?: "completed" | "running" | "fallback";
   source?: SubAgentTaskRecord["source"];
@@ -630,7 +630,7 @@ export interface SubAgentStepMeasurement {
 
 /**
  * Router telemetry derived from what the sub-agents actually did: provider "meta" and real
- * token counts only when at least one step called a model (L-04, L-06).
+ * token counts only when at least one step called a model.
  */
 export function telemetryFromSubAgentTasks(tasks: SubAgentTaskRecord[]): {
   provider: "meta" | "local";
@@ -835,7 +835,7 @@ export async function runSubAgentPipeline(
     return { data: res, wallClockMs, abac: abacState };
   });
 
-  // Grounding (item 8): the tenant context the coder and the UI architect must stay inside, gathered next to S1/S2.
+  // Grounding: the tenant context the coder and the UI architect must stay inside, gathered next to S1/S2.
   const groundingPromise: Promise<GroundingIndex | null> = input.contextKey
     ? gatherContext(input.contextKey)
         .then((ctx) => buildGroundingIndex(ctx, { ticketText: `${input.title}\n${input.body}` }))
@@ -843,7 +843,7 @@ export async function runSubAgentPipeline(
     : Promise.resolve(null);
   const piiScope = { tenantId: input.tenantId ?? "unscoped", ticketId: input.scenarioId };
 
-  // S1 first: its answers steer the gatekeeper, the UI architect and the coder (L-05, L-07).
+  // S1 first: its answers steer the gatekeeper, the UI architect and the coder.
   const t1Start = performance.now();
   report("agent:1:start", "Goal Clarifier scoping target & parameters");
   const clarifierRes = await generateClarifyingQuestions({
@@ -853,7 +853,7 @@ export async function runSubAgentPipeline(
     piiScope,
   }).then((res) => ({ ...res, wallClockMs: Math.max(1, Math.round(performance.now() - t1Start)) }));
   const effectiveAnswers = effectiveClarifiedAnswers(clarifierRes.questions, input.clarifiedAnswers);
-  // The typed steering both S3 and S4 read; the coder gets it as its contract, not a label string (U-1).
+  // The typed steering both S3 and S4 read; the coder gets it as its contract, not a label string.
   const steering = deriveSteeringFromAnswers(clarifierRes.questions, effectiveAnswers, { previous: input.steering });
   report("agent:1:done", `Goal Clarifier scoped ${clarifierRes.questions.length} parameters (${clarifierRes.wallClockMs} ms)`, {
     clarifyingQuestions: clarifierRes.questions,

@@ -168,7 +168,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
 
   const hasSynthesizedCard = wanted.includes("SynthesizedDynamicCard");
   if (hasSynthesizedCard) {
-    // Correlate reuses the card built at triage and calls no model; the chain is what triage recorded (L-04).
+    // Correlate reuses the card built at triage and calls no model; the chain is what triage recorded.
     provider = "local";
     modelId = "deterministic (reused triage synthesis)";
     tier = "Tier 0";

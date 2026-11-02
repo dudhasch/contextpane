@@ -10,7 +10,7 @@ const { hoverScope, hoverCacheDecision, hoverContextDigest, invalidateHoverCache
 const { gatherContext } = await import("../mcp/context.ts");
 const { describeMetaModelResolution, STAND_INS } = await import("../router/meta-models.ts");
 
-describe("Tier 1A hover cache scope (audit M-05)", () => {
+describe("Tier 1A hover cache scope", () => {
   test("every Muse Glimmer seed answer is reachable from a scenario scope", () => {
     const seed = JSON.parse(readFileSync(join(config.dataDir, "hover-cache.seed.json"), "utf8")) as { entries: Record<string, { provider: string }> };
     const scopes = new Set(SCENARIO_IDS.map((id) => hoverScope(id)));

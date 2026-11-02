@@ -250,10 +250,10 @@ export const SubAgentTaskRecordSchema = z.object({
   /** When the step started, in ms after the pipeline started; absent for steps that never ran on a clock. */
   startOffsetMs: z.number().int().nonnegative().optional(),
   tokensUsed: z.number().int().nonnegative().optional(),
-  /** Prompt / completion split of tokensUsed, when the provider reported one (HARD_CASES 10). */
+  /** Prompt / completion split of tokensUsed, when the provider reported one. */
   tokensPrompt: z.number().int().nonnegative().optional(),
   tokensCompletion: z.number().int().nonnegative().optional(),
-  /** Write-then-test repair turns this step ran (the coder, U-2); absent when the loop did not run. */
+  /** Write-then-test repair turns this step ran (the coder); absent when the loop did not run. */
   iterations: z.number().int().nonnegative().optional(),
   /** Why the step fell back to its deterministic template (a provider error, a rejected reply, model calls off). */
   fallbackReason: z.string().max(300).optional(),
@@ -301,7 +301,7 @@ export interface CustomScenarioEntry extends Omit<ScenarioRegistryEntry, "scenar
   clarifiedAnswers?: Record<string, string>;
   /** Per-task sub-agent execution pipeline telemetry for this ticket/project. */
   subAgentTasks?: SubAgentTaskRecord[];
-  /** Typed operator steering (clarifier pills, row clicks, card actions) the coder was last fed (U-1). */
+  /** Typed operator steering (clarifier pills, row clicks, card actions) the coder was last fed. */
   steering?: SteeringParams;
 }
 
@@ -580,7 +580,7 @@ export const ScenarioBriefSchema = z.object({
   clarifiedAnswers: z.record(z.string(), z.string()).default({}),
   /** Per-task sub-agent execution pipeline telemetry for this ticket/project. */
   subAgentTasks: z.array(SubAgentTaskRecordSchema).default([]),
-  /** Typed operator steering with provenance; null for built-in scenarios (U-1). */
+  /** Typed operator steering with provenance; null for built-in scenarios. */
   steering: SteeringParamsSchema.nullable().default(null),
   /** The origin badge: psa | anomaly | erp-drop | unscripted. */
   originKind: WorkItemOriginSchema.default("psa"),

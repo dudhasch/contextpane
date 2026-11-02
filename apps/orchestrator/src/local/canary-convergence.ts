@@ -26,7 +26,7 @@ import {
  * Every probe here evaluates the symbolic model (`probeSource: "symbolic"`), never
  * the tenant; an id without a symbolic model gets `probeSource: "none"` and no probe
  * is reported as passed. The caller runs it only for an executed approval or an
- * explicit rollback drill (HARD_CASES 4, 6).
+ * explicit rollback drill.
  */
 
 export const CANARY_COHORT = "SG-Canary-Ring0" as const;
@@ -101,7 +101,7 @@ export interface CanaryConvergenceResult {
 
 function buildProbes(scenarioId: ScenarioId | string, simulateCanaryFailure: boolean, probeSource: CanaryProbeSource): CanaryProbes {
   if (probeSource === "none") {
-    // No symbolic model: nothing is evaluated and nothing is reported as passed (HARD_CASES 4).
+    // No symbolic model: nothing is evaluated and nothing is reported as passed.
     const identity: IdentityProbes = { passed: false, breakGlassPassed: false, breakGlassNonLockout: false, targetsPassed: false, targetRemediation: false, checked: 0, evidence: [] };
     const network: NetworkProbes = { tcp3389Closed: false, tcp443Open: false, intuneConflicts: 0 };
     const synthetic: SyntheticProbes = simulateCanaryFailure

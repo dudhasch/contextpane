@@ -51,7 +51,7 @@ describe("auto-drafted Customer & PSA Resolution Note", () => {
     expect(note.customerSummary).toContain("Emergency Break-Glass");
     expect(note.customerSummary).toContain("2 accounts");
     const trail = note.technicalAuditTrail.join("\n");
-    expect(trail).toMatch(/Formal invariants: 3\/3 proved/);
+    expect(trail).toMatch(/Symbolic invariant checks: 3\/3 passed/);
     expect(trail).toContain("break-glass-non-lockout");
     expect(trail).toMatch(/Canary probes: APPLIED → CANARY_RING_0 → SYNTHETIC_PROBED → CONVERGED/);
     expect(trail).toContain("identity probe passed");

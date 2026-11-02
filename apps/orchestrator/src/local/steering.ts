@@ -18,7 +18,7 @@ import {
 import { createTwoFilesPatch } from "diff";
 
 /**
- * Steering that moves code (U-1).
+ * Steering that moves code.
  *
  * Design: the clarifier's answers and the in-card interactions are folded into one
  * `SteeringParams` object with provenance, and that object (not a label string) is what
@@ -35,7 +35,7 @@ import { createTwoFilesPatch } from "diff";
  * parallel at triage (both read the same params); after a steer only the coder re-runs and
  * the card's config-diff block is rewritten from the real script diff, so the ~15 s card
  * synthesis never lands on the critical path unless the caller asks for `coder+ui`
- * (HARD_CASES 3).
+ *.
  */
 
 /* ------------------------------- classification ------------------------------ */

@@ -586,7 +586,7 @@ export function DataTable({
   colWidths?: string[];
   cellPy?: string;
   bleed?: boolean;
-  /** Rows become buttons: a lens row click steers the fix (U-1). */
+  /** Rows become buttons: a lens row click steers the fix. */
   onRowClick?: (index: number) => void;
 }) {
   const edge = bleed ? "first:pl-4 last:pr-4" : "first:pl-0 last:pr-0";

@@ -3,7 +3,7 @@ import type { InverseRollbackBundle } from "./formal-verifier.ts";
 import type { EntitySnapshot, SnapshotCaPolicy, SnapshotUser } from "./snapshot.ts";
 
 /**
- * f⁻¹ from the pre-change snapshot (U-5).
+ * f⁻¹ from the pre-change snapshot.
  *
  * The inverse bundle is derived from what the tenant looked like before the approved bundle
  * ran, restricted to the entity sections that bundle touched (its PowerShell, Graph requests

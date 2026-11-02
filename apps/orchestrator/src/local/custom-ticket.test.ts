@@ -135,7 +135,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const formal = verifyFormalInvariants(entry.scenarioId);
     expect(formal.passed).toBeNull();
     expect(formal.invariants).toEqual([]);
-    // No fixture transform is run for an ad-hoc ticket either (HARD_CASES 5).
+    // No fixture transform is run for an ad-hoc ticket either.
     expect(verifyIdempotency(entry.scenarioId)).toBeNull();
     expect(getTimeline(entry.scenarioId)?.slices.length).toBeGreaterThanOrEqual(4);
 
@@ -211,7 +211,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     const elementId = entry.elementRouting?.missingElements[0]?.elementId ?? "";
     expect(elementId.length).toBeGreaterThan(3);
 
-    // The offline card is the deterministic template, labelled as such; tests never write the tracked catalog (L-03).
+    // The offline card is the deterministic template, labelled as such; tests never write the tracked catalog.
     const card = entry.synthesizedElements?.[0];
     expect(card?.elementId).toBe(elementId);
     expect(card?.synthesisMeta.synthesizerModel).toBe("deterministic-template");
@@ -317,7 +317,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
     }
 
     // Verify remediation bundle and pre-flight verification pass with zero westeurope or alex.wilber contamination.
-    // No Modal warm-up and no fix/* worktree from the tests (HARD_CASES 11): the sandbox and git staging are spied away.
+    // No Modal warm-up and no fix/* worktree from the tests: the sandbox and git staging are spied away.
     const { spyOn } = await import("bun:test");
     const modal = await import("../preflight/modal.ts");
     const staging = await import("../preflight/staging.ts");
@@ -396,7 +396,7 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
   });
 });
 
-describe("sub-agent pipeline sequencing (L-05, L-07)", () => {
+describe("sub-agent pipeline sequencing", () => {
   test("Key Vault ticket: clarifier answers reach the coder and the gatekeeper's decision reaches the synthesizer", async () => {
     const { spyOn } = await import("bun:test");
     const openai = await import("../router/openai.ts");
@@ -502,7 +502,7 @@ describe("sub-agent pipeline sequencing (L-05, L-07)", () => {
   });
 });
 
-describe("dynamic catalog honesty (L-03)", () => {
+describe("dynamic catalog honesty", () => {
   test("the deterministic path labels its card a template and never persists it", async () => {
     const { buildDeterministicRoutingDecision, synthesizeAndPersistMissingElements, TEMPLATE_SYNTHESIZER } = await import("./dynamic-catalog.ts");
     const before = loadDynamicCatalog().dynamicElements.length;

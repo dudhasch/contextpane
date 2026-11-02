@@ -243,7 +243,7 @@ export interface IntuneDrift {
   baselineDiff: string;
 }
 
-/** A Conditional Access policy as captured before a change, for the snapshot-driven restore (U-5). */
+/** A Conditional Access policy as captured before a change, for the snapshot-driven restore. */
 export interface CaPolicyRestore {
   id: string;
   displayName: string;
@@ -255,7 +255,7 @@ export interface CaPolicyRestore {
   includeUsers: string[];
 }
 
-/** Intune state as captured before a change, for the snapshot-driven restore (U-5). */
+/** Intune state as captured before a change, for the snapshot-driven restore. */
 export interface IntuneRestore {
   policies: Array<{ name: string; kind: string; assignedTo: string[] }>;
   settings: Array<{ policyName: string; settingId?: string; live: string }>;
@@ -1277,7 +1277,7 @@ export const msgraphService = {
   },
 
   /**
-   * Snapshot-driven restore (U-5): writes each user's captured lab licence fields back to the open
+   * Snapshot-driven restore: writes each user's captured lab licence fields back to the open
    * extension, through the same PATCH the forward write uses. Simulated outside live mode.
    */
   async restoreLicenseExtensions(tenantId: string, users: Array<{ upn: string; fields: Record<string, string> }>): Promise<LicenseWriteResult> {
@@ -1286,7 +1286,7 @@ export const msgraphService = {
   },
 
   /**
-   * Snapshot-driven restore (U-5): PATCHes each captured Conditional Access policy back to its
+   * Snapshot-driven restore: PATCHes each captured Conditional Access policy back to its
    * captured state with the full conditions.users object (H-19). Group ids missing from the
    * snapshot are resolved by display name in the live tenant. Outside live mode the in-memory
    * lab override follows the snapshot, so the simulated reads revert too.
@@ -1348,7 +1348,7 @@ export const msgraphService = {
   },
 
   /**
-   * Snapshot-driven restore (U-5): re-applies the captured assignment of the scenario's Device
+   * Snapshot-driven restore: re-applies the captured assignment of the scenario's Device
    * Configuration profile and the captured value of its ASR rule, through the same live helpers
    * the forward write uses. Simulated outside live mode.
    */

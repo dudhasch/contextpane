@@ -26,7 +26,7 @@ const scopeQ = questions.find((q) => q.id === "target-scope")!;
 const PURGE = strategyQ.options.find((o) => /purge/i.test(o.label))!.label;
 const RECOVER = strategyQ.options.find((o) => /recover/i.test(o.label))!.label;
 
-describe("SteeringParams: clarifier answers, row clicks and typed values become one typed contract (U-1)", () => {
+describe("SteeringParams: clarifier answers, row clicks and typed values become one typed contract", () => {
   test("the three clarifier questions classify onto strategy / scope / governance", () => {
     expect(classifyStrategy(RECOVER)).toBe("recover");
     expect(classifyStrategy(PURGE)).toBe("purge-recreate");
@@ -102,8 +102,8 @@ describe("SteeringParams: clarifier answers, row clicks and typed values become 
   });
 });
 
-describe("PATCH /api/tickets/:id/steer re-parameterises the script within one coder call (U-1 done criterion)", () => {
-  /** The remediation tier never touches git or Modal from the tests (HARD_CASES 11). */
+describe("PATCH /api/tickets/:id/steer re-parameterises the script within one coder call", () => {
+  /** The remediation tier never touches git or Modal from the tests. */
   async function quiet<T>(run: () => Promise<T>): Promise<T> {
     const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: unknown) => input) as never);
     const modalSpy = spyOn(modal, "modalConfigured").mockReturnValue(false);

@@ -4,7 +4,7 @@ import { azureIacService, type NsgRule } from "@contextpane/mcp-azure-iac";
 import type { CorrelationContext } from "../mcp/context.ts";
 
 /**
- * Pre-change entity snapshot (U-5).
+ * Pre-change entity snapshot.
  *
  * At approve time, before any write, the affected entities are read through the same MCP
  * services the forward path reads from (`gatherContext` for licences, Conditional Access,
