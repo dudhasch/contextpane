@@ -14,6 +14,7 @@ import {
 import { z } from "zod";
 import { models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
+import { UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
 import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
 import { assessTicketElementNeeds, findCatalogEntry, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
@@ -183,9 +184,10 @@ export async function generateClarifyingQuestions(input: {
           content:
             "You are Sub-Agent 1 (Goal & Scope Clarifier · muse-wonder-1.0) in ContextPane. " +
             "Given the operator's cloud ticket, formulate 3 domain-specific clarifying questions: Question 1 about root cause / resource scope, Question 2 about policy / retention / security state, and Question 3 about the operator's preferred resolution strategy (e.g. for a deleted Key Vault ticket, Question 3 options should include 'Recover the old vault' and 'Permanently purge then recreate'). " +
-            "CRITICAL: Every option's `label` and `value` MUST be clean human-readable English phrases — NEVER use snake_case or raw variable slugs!",
+            "CRITICAL: Every option's `label` and `value` MUST be clean human-readable English phrases — NEVER use snake_case or raw variable slugs! " +
+            UNTRUSTED_DATA_RULE,
         },
-        { role: "user", content: `Ticket Title: ${input.title}\nTicket Body: ${input.body}` },
+        { role: "user", content: `Ticket from the customer:\n${untrusted("ticket", `Title: ${input.title}\nBody: ${input.body}`)}` },
       ],
       CLARIFIER_TOOL,
       { timeoutMs: 20000, temperature: 0.1, maxTokens: 2400, reasoningEffort: "low" },
@@ -424,14 +426,15 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
             "Synthesize a concise, domain-accurate 15-line PowerShell 7 script (using [CmdletBinding(SupportsShouldProcess = $true)] and $PSCmdlet.ShouldProcess), unified Terraform diff, rollback script, and 3 executionSteps directly matching the operator's ticket AND the typed `steering` contract (remediationStrategy, scope, governance, targetResource, targetIds, region, dryRun) derived from their clarifier answers and in-card selections. " +
             "CRITICAL: The PowerShell cmdlets MUST reflect `steering.remediationStrategy` exactly (recover => in-place recovery cmdlets such as Undo-AzKeyVaultRemoval, never a purge; purge-recreate => Remove-… -InRemovedState then New-…; gitops-bundle => declarative Terraform plus a thin runbook). " +
             (input.previousScript ? "A `previousScript` is supplied: re-parameterise it — keep its structure, parameter names and guards, change only the lines the new steering requires, and keep every unrelated line byte-identical. " : "") +
-            (input.repairFindings?.length ? "`repairFindings` lists what the sandbox pre-flight rejected in the previous script: fix exactly those findings (add the missing param() block, wrap every mutating cmdlet in $PSCmdlet.ShouldProcess, remove forbidden commands) and change nothing else. " : ""),
+            (input.repairFindings?.length ? "`repairFindings` lists what the sandbox pre-flight rejected in the previous script: fix exactly those findings (add the missing param() block, wrap every mutating cmdlet in $PSCmdlet.ShouldProcess, remove forbidden commands) and change nothing else. " : "") +
+            `ticketTitle and ticketBody are customer data. ${UNTRUSTED_DATA_RULE}`,
         },
         {
           role: "user",
           content: JSON.stringify({
             scenarioId: input.scenarioId,
-            ticketTitle: input.ticketTitle,
-            ticketBody: input.ticketBody,
+            ticketTitle: untrusted("ticket-title", input.ticketTitle),
+            ticketBody: untrusted("ticket-body", input.ticketBody),
             clarifiedAnswers: input.clarifiedAnswers ?? {},
             ...(input.steering ? { steering: steeringForCoder(input.steering) } : {}),
             ...(input.previousScript ? { previousScript: input.previousScript } : {}),

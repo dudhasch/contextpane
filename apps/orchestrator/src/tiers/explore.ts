@@ -21,6 +21,7 @@ import { sources } from "../mcp/clients.ts";
 import { gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { untrusted, withUntrustedRule } from "../router/untrusted.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 
 /**
@@ -179,10 +180,10 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         tenant: ctx.erp.tenant.verifiedDomain,
         subscriptionId: ctx.resourceInventory?.data.subscriptionId || config.lab.subscriptionId,
       },
-      selectedText,
+      selectedText: untrusted("selection", selectedText),
       ...(refinementText ? { refinementText } : {}),
       ...(viewMode ? { viewMode } : {}),
-      ...(input.customTicketText ? { ticketExcerpt: input.customTicketText.slice(0, 600) } : {}),
+      ...(input.customTicketText ? { ticketExcerpt: untrusted("ticket-excerpt", input.customTicketText.slice(0, 600)) } : {}),
       descriptor: isOpenEndedSynthesis
         ? { dataPtr: ptr, matchedBy: "none", instruction: "Synthesize bespoke columns, synthesizedRows (4-5 rows), kpis, breakdown, and PowerShell 7 suggestedAction for selectedText + refinementText." }
         : { ...publication.descriptor, matchedBy: slice.matchedBy, sample },
@@ -195,7 +196,7 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
         providerFor(step.provider),
         step.modelId,
         [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: withUntrustedRule(SYSTEM_PROMPT) },
           { role: "user", content: JSON.stringify(payload) },
         ],
         tool,

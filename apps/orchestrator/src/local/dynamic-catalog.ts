@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInlineSlugs, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled } from "../router/openai.ts";
+import { UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
 
 export interface DynamicCatalogEntry {
   elementId: string; title: string; domain: SynthesizedDynamicCard["domain"]; reason: string;
@@ -205,9 +206,10 @@ export async function assessTicketElementNeeds(input: {
             role: "system",
             content:
               "You are ContextPane's Stage-1 Catalog Gatekeeper (muse-spark-1.3). " +
-              "For any custom or unscripted ticket, set matchedExistingElements to [] and emit 1 missingElements entry with status='element_not_existent', a descriptive PascalCase elementId, extractedEntities from the ticket text, and a specific customBrief (summary + 3 actionable resolution steps with exact PowerShell/CLI cmdlets matching the user's ticket and clarifiedAnswers).",
+              "For any custom or unscripted ticket, set matchedExistingElements to [] and emit 1 missingElements entry with status='element_not_existent', a descriptive PascalCase elementId, extractedEntities from the ticket text, and a specific customBrief (summary + 3 actionable resolution steps with exact PowerShell/CLI cmdlets matching the user's ticket and clarifiedAnswers). " +
+              UNTRUSTED_DATA_RULE,
           },
-          { role: "user", content: JSON.stringify({ ticketTitle: input.title, ticketBody: input.body, clarifiedAnswers: input.clarifiedAnswers ?? {} }) },
+          { role: "user", content: JSON.stringify({ ticketTitle: untrusted("ticket-title", input.title), ticketBody: untrusted("ticket-body", input.body), clarifiedAnswers: input.clarifiedAnswers ?? {} }) },
         ],
         ASSESS_ELEMENT_NEEDS_TOOL,
         { timeoutMs: input.timeoutMs ?? 10000, temperature: 0.1, maxTokens: 2000, reasoningEffort: "low" },
@@ -340,12 +342,13 @@ export async function synthesizeAndPersistMissingElements(input: {
               content:
                 "You are Sub-Agent 3 (UI Architect · muse-wonder-1.0) in ContextPane. " +
                 "Synthesize a schema-valid SynthesizedDynamicCard JSON specification from scratch for the operator's ticket and clarifiedAnswers. " +
-                "Include domain-accurate blocks (3 gauges, 3-4 policyHops, 3 table rows, a concise 12-line PowerShell/CLI/IaC diff, 3 events, and 2 recommendedActions) with real PowerShell 7 / Azure CLI / Graph commands matching the chosen resolution strategy.",
+                "Include domain-accurate blocks (3 gauges, 3-4 policyHops, 3 table rows, a concise 12-line PowerShell/CLI/IaC diff, 3 events, and 2 recommendedActions) with real PowerShell 7 / Azure CLI / Graph commands matching the chosen resolution strategy. " +
+                UNTRUSTED_DATA_RULE,
             },
             {
               role: "user",
               content: JSON.stringify({
-                ticketPrompt: input.ticketPrompt,
+                ticketPrompt: untrusted("ticket", input.ticketPrompt),
                 clarifiedAnswers: input.clarifiedAnswers ?? {},
                 missingElement: missing,
                 customBrief: input.decision.customBrief,

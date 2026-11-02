@@ -19,6 +19,7 @@ import { buildHoverDiagnostic, inferEntityType } from "../local/hover.ts";
 import { gatherContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { untrusted, withUntrustedRule } from "../router/untrusted.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 
 export interface HoverInput {
@@ -196,7 +197,8 @@ function hoverContext(ctx: CorrelationContext, entityId: string, entityType: Ent
   const id = entityId.toLowerCase();
   const signIns = (ctx.signIns?.data ?? []).filter((e) => e.upn.toLowerCase() === id || e.errorCodeLabel?.toLowerCase() === id || e.blockingPolicyId === entityId);
   return {
-    scenario: { scenarioId: ctx.scenarioId ?? ctx.ticketId, title: ctx.erp.ticket?.title ?? ctx.custom?.title ?? ctx.scenarioId ?? ctx.ticketId },
+    // Ticket titles are customer-written: delimited as data (review item 4).
+    scenario: { scenarioId: ctx.scenarioId ?? ctx.ticketId, title: ctx.erp.ticket?.title || ctx.custom?.title ? untrusted("ticket-title", ctx.erp.ticket?.title ?? ctx.custom?.title) : (ctx.scenarioId ?? ctx.ticketId) },
     user: entityType === "upn" ? (ctx.license?.data.users.find((u) => u.upn.toLowerCase() === id) ?? null) : undefined,
     groups: entityType === "upn" ? (ctx.groupsByUpn.get(id) ?? []) : undefined,
     skuPools: ctx.license?.data.skuPools,
@@ -267,7 +269,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
         providerFor(step.provider),
         step.modelId,
         [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: withUntrustedRule(SYSTEM_PROMPT) },
           { role: "user", content: JSON.stringify(userPayload) },
         ],
         tool,

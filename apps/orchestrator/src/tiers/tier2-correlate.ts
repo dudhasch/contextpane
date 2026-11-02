@@ -22,6 +22,7 @@ import { buildComponent, buildLayout, scenarioComponents } from "../local/hydrat
 import { contextForCorrelation, gatherContext, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { withUntrustedRule } from "../router/untrusted.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { telemetryFromSubAgentTasks } from "../local/subagent-orchestrator.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
@@ -190,7 +191,7 @@ export async function correlate(input: CorrelateInput, sink?: ProgressSink): Pro
           providerFor(step.provider),
           step.modelId,
           [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: withUntrustedRule(SYSTEM_PROMPT) },
             { role: "user", content: JSON.stringify(payload) },
           ],
           tool,

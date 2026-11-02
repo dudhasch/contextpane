@@ -34,6 +34,7 @@ import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from 
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { withUntrustedRule } from "../router/untrusted.ts";
 import { syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
 import { patchCustomTicketPipeline } from "../local/custom-ticket.ts";
 import { runRepairLoop } from "./repair-loop.ts";
@@ -166,7 +167,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           providers.meta,
           step.modelId,
           [
-            { role: "system", content: PLANNER_PROMPT },
+            { role: "system", content: withUntrustedRule(PLANNER_PROMPT) },
             { role: "user", content: JSON.stringify({ context: model, referenceSummary: reference.summary }) },
           ],
           PLAN_TOOL,
@@ -195,7 +196,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           providers.meta,
           step.modelId,
           [
-            { role: "system", content: CODER_PROMPT },
+            { role: "system", content: withUntrustedRule(CODER_PROMPT) },
             {
               role: "user",
               content: JSON.stringify({

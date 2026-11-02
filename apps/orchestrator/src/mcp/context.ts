@@ -30,6 +30,7 @@ import { CA_POSTURE, LICENSE_ANOMALY, WORKLOAD_IDENTITY, getManifestTenant } fro
 import type { DatasetDescriptor } from "@contextpane/catalog";
 import { dropDataPlaneSnapshot } from "../local/dataplane.ts";
 import { sources, type McpDataSources, type ResourceInventory } from "./clients.ts";
+import { untrusted } from "../router/untrusted.ts";
 
 /**
  * Everything the tiers need about one scenario (a ticket or a tenant anomaly),
@@ -370,18 +371,18 @@ export function contextForModel(ctx: CorrelationContext) {
     scenario: {
       scenarioId: ctx.ticketId,
       kind: ctx.kind,
-      title: ctx.custom?.title ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId),
+      title: ctx.custom?.title ? untrusted("ticket-title", ctx.custom.title) : ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId,
       cards: ctx.components,
-      ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}),
+      ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: untrusted("ticket-title", ctx.custom.ticket.title), body: untrusted("ticket-body", ctx.custom.ticket.body.slice(0, 1200)) } } : {}),
     },
     tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, entraTenantId: tenant.entraTenantId, verifiedDomain: tenant.verifiedDomain },
     ...(ticket
       ? {
           ticket: {
             ticketId: ticket.ticketId,
-            title: ticket.title,
+            title: untrusted("ticket-title", ticket.title),
             status: ticket.status,
-            description: ticket.description,
+            description: untrusted("ticket-description", ticket.description),
             affectedUpns: ticket.affectedUpns,
             affectedGroups: ticket.affectedGroups,
           },
@@ -498,14 +499,14 @@ export function contextForCorrelation(ctx: CorrelationContext, datasets: Dataset
     scenario: {
       scenarioId: ctx.ticketId,
       kind: ctx.kind,
-      title: ctx.custom?.title ?? (ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId),
+      title: ctx.custom?.title ? untrusted("ticket-title", ctx.custom.title) : ctx.scenarioId ? SCENARIO_REGISTRY[ctx.scenarioId].title : ctx.ticketId,
       cards: ctx.components,
-      ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: ctx.custom.ticket.title, body: ctx.custom.ticket.body.slice(0, 1200) } } : {}),
+      ...(ctx.custom ? { basePattern: ctx.scenarioId, unscriptedTicket: { title: untrusted("ticket-title", ctx.custom.ticket.title), body: untrusted("ticket-body", ctx.custom.ticket.body.slice(0, 1200)) } } : {}),
     },
     tenant: { tenantId: ctx.tenantId, displayName: tenant.displayName, verifiedDomain: tenant.verifiedDomain },
     ...(ticket
       ? {
-          ticket: { ticketId: ticket.ticketId, title: ticket.title, status: ticket.status, description: ticket.description, requesterUpn: ticket.requester.upn },
+          ticket: { ticketId: ticket.ticketId, title: untrusted("ticket-title", ticket.title), status: ticket.status, description: untrusted("ticket-description", ticket.description), requesterUpn: ticket.requester.upn },
           contract: {
             contractId: contract.contractId,
             entitlements: contract.lines.map((l) => `${l.quantity} × ${l.skuPartNumber}${l.entitlementGroup ? ` via ${l.entitlementGroup}` : ""}`).join("; "),
