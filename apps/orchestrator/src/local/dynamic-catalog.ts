@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInlineSlugs, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled } from "../router/openai.ts";
+import { bindCardToGrounding, extendGrounding, groundingFromFacts, type GroundingIndex } from "./grounding.ts";
 
 export interface DynamicCatalogEntry {
   elementId: string; title: string; domain: SynthesizedDynamicCard["domain"]; reason: string;
@@ -101,6 +102,11 @@ const ASSESS_ELEMENT_NEEDS_TOOL: OpenAIFunctionTool = {
     parameters: zodToToolParameters(ElementRoutingDecisionSchema),
   },
 };
+
+/** Grounding rule for every card that has no scenario-specific facts (review item 8). */
+const TENANT_FACTS_RULE =
+  "`tenantFacts` is what the tenant actually holds. Table rows, policy hops and event callers must name only resources, users, groups and policies that appear in `tenantFacts` or the ticket; never invent a resource name. " +
+  "Gauge numbers you cannot read from `tenantFacts` are estimates; keep them few and say so in their detail.";
 
 const SYNTHESIZE_DYNAMIC_CARD_TOOL: OpenAIFunctionTool = {
   type: "function",
@@ -308,8 +314,20 @@ export async function synthesizeAndPersistMissingElements(input: {
   facts?: Record<string, unknown>;
   /** N+1: an element already in the catalog is served from it, with no model call. */
   reuseFromCatalog?: boolean;
+  /** Tenant context the card is built from and checked against (local/grounding.ts); null when none could be gathered. */
+  grounding?: GroundingIndex | null;
 }): Promise<SynthesizedDynamicCard[]> {
   if (input.decision.missingElements.length === 0) return [];
+  // Every card leaves here with orchestrator-set provenance: grounded rows bind to ptr://, the rest are estimates.
+  const index = input.grounding
+    ? input.facts
+      ? extendGrounding(input.grounding, input.facts)
+      : input.grounding
+    : input.facts
+      ? groundingFromFacts("unscoped", input.ticketId, input.facts, input.ticketPrompt)
+      : null;
+  const bind = (card: SynthesizedDynamicCard) => bindCardToGrounding(card, index);
+  const promptFacts = input.facts ?? input.grounding?.facts;
   const store = loadDynamicCatalog();
   const results: SynthesizedDynamicCard[] = [];
   const synthesizerModel = models.metaWonder;
@@ -324,7 +342,7 @@ export async function synthesizeAndPersistMissingElements(input: {
       const latencyMs = Math.round(performance.now() - started);
       saveDynamicCatalog(store);
       appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: known.elementId, title: known.title, domain: known.domain, gatekeeperModel: "dynamic-catalog", modelUsed: "dynamic-catalog", latencyMs, tokens: { prompt: 0, completion: 0, total: 0 }, reusedFromCatalog: true, reuseCount: known.reuseCount, tsxStubPath: known.tsxStubPath, schemaSpec: { requiredPrimitives: known.requiredPrimitives, blockKinds: known.cardTemplate.blocks.map((b) => b.kind) } });
-      results.push({ ...known.cardTemplate, synthesisMeta: { ...known.cardTemplate.synthesisMeta, reusedFromCatalog: true, reuseCount: known.reuseCount, latencyMs } });
+      results.push(bind({ ...known.cardTemplate, synthesisMeta: { ...known.cardTemplate.synthesisMeta, reusedFromCatalog: true, reuseCount: known.reuseCount, latencyMs } }));
       continue;
     }
     let card: SynthesizedDynamicCard | null = null;
@@ -349,12 +367,16 @@ export async function synthesizeAndPersistMissingElements(input: {
                 clarifiedAnswers: input.clarifiedAnswers ?? {},
                 missingElement: missing,
                 customBrief: input.decision.customBrief,
-                ...(input.facts ? { facts: input.facts, factsRule: "Build every block from `facts` only: the scope chain as policyHops, the role assignments and containers as table rows, `facts.activity` as events, `facts.condition` in the diff. Never invent resource names." } : {}),
+                ...(input.facts
+                  ? { facts: input.facts, factsRule: "Build every block from `facts` only: the scope chain as policyHops, the role assignments and containers as table rows, `facts.activity` as events, `facts.condition` in the diff. Never invent resource names." }
+                  : promptFacts
+                    ? { tenantFacts: promptFacts, factsRule: TENANT_FACTS_RULE }
+                    : {}),
               }),
             },
           ],
           SYNTHESIZE_DYNAMIC_CARD_TOOL,
-          { timeoutMs: 35000, temperature: 0.1, maxTokens: 4096, reasoningEffort: "low" },
+          { timeoutMs: 35000, temperature: 0.1, maxTokens: 4096, reasoningEffort: "low", piiScope: { tenantId: index?.tenantId ?? "unscoped", ticketId: input.ticketId } },
         );
         tokens = res.usage;
         const raw = parseToolArguments(res.argumentsRaw) as Record<string, any>;
@@ -390,7 +412,7 @@ export async function synthesizeAndPersistMissingElements(input: {
     const latencyMs = Math.max(1, Math.round(performance.now() - started));
     if (!card) {
       // No synthesis happened: the template is shown, and the catalog is left alone.
-      results.push(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs));
+      results.push(bind(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs)));
       continue;
     }
     // Card copy is slug-cleaned once here, before it is persisted and served (WP8).
@@ -402,7 +424,7 @@ export async function synthesizeAndPersistMissingElements(input: {
     const entry = upsertCatalogEntry(store, { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: nowIso, lastUsedAt: nowIso, reuseCount: 1, gatekeeperModel: input.gatekeeperModel, synthesizerModel, tsxStubPath: tsxPath, cardTemplate: card });
     saveDynamicCatalog(store);
     appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: card.elementId, title: card.title, domain: card.domain, gatekeeperModel: input.gatekeeperModel, modelUsed: synthesizerModel, latencyMs, tokens, reusedFromCatalog: false, reuseCount: entry.reuseCount, tsxStubPath: tsxPath, schemaSpec: { requiredPrimitives: card.requiredPrimitives, blockKinds: card.blocks.map((b) => b.kind) } });
-    results.push(card);
+    results.push(bind(card));
   }
   return results;
 }

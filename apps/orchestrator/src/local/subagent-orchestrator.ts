@@ -18,6 +18,8 @@ import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
 import { assessTicketElementNeeds, findCatalogEntry, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
 import { deriveSteeringFromAnswers, steeringForCoder } from "./steering.ts";
+import { gatherContext } from "../mcp/context.ts";
+import { buildGroundingIndex, groundingFindings, type GroundingIndex } from "./grounding.ts";
 import {
   ABAC_ELEMENT_ID,
   abacChoiceFromAnswers,
@@ -155,6 +157,7 @@ export async function generateClarifyingQuestions(input: {
   title: string;
   body: string;
   clarifiedAnswers?: Record<string, string>;
+  piiScope?: { tenantId: string; ticketId?: string };
 }): Promise<ClarifierSubAgentResult> {
   const started = performance.now();
   const fallback = generateClarifyingQuestionsSync(input);
@@ -188,7 +191,7 @@ export async function generateClarifyingQuestions(input: {
         { role: "user", content: `Ticket Title: ${input.title}\nTicket Body: ${input.body}` },
       ],
       CLARIFIER_TOOL,
-      { timeoutMs: 20000, temperature: 0.1, maxTokens: 2400, reasoningEffort: "low" },
+      { timeoutMs: 20000, temperature: 0.1, maxTokens: 2400, reasoningEffort: "low", ...(input.piiScope ? { piiScope: input.piiScope } : {}) },
     );
     const parsed = z.object({ questions: z.array(ClarifyingQuestionSchema).length(3) }).safeParse(parseToolArguments(res.argumentsRaw));
     if (parsed.success) {
@@ -366,6 +369,24 @@ export interface CoderInput {
   previousScript?: string;
   /** Sandbox findings from the last pre-flight; a repair turn fixes exactly these (U-2). */
   repairFindings?: string[];
+  /** Tenant context the script must stay inside (local/grounding.ts); its facts go to the coder pseudonymised. */
+  grounding?: GroundingIndex | null;
+  /** Tenant the ticket belongs to, for the PII vault scope. */
+  tenantId?: string;
+}
+
+/** Grounding rule for the coder (review item 8): every literal target comes from tenantFacts or the ticket. */
+const CODER_GROUNDING_RULE =
+  "`tenantFacts` is what the tenant actually holds. Every resource, resource group, user, group and policy the script or Terraform diff targets by literal name must appear in `tenantFacts` or the ticket; never invent one. " +
+  "When a target you need is not there, take it as a mandatory parameter without a default instead of guessing a name. ";
+
+/**
+ * Coder output names checked against the tenant context: an invented target is flagged in riskNotes here and
+ * becomes a pre-flight finding when the bundle is staged (tier3-remediate.ts).
+ */
+function withGroundingNotes<T extends { powershellScript: string; terraformDiff: string; riskNotes?: string[] | undefined }>(template: T, grounding: GroundingIndex | null | undefined): T {
+  const findings = groundingFindings(grounding ?? null, template.powershellScript, template.terraformDiff);
+  return findings.length ? { ...template, riskNotes: [...findings, ...(template.riskNotes ?? [])] } : template;
 }
 
 export async function synthesizeCustomRemediation(input: CoderInput): Promise<SynthesizedRemediationWithMeta> {
@@ -404,6 +425,7 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
               : "") +
             "Synthesize a concise, domain-accurate 15-line PowerShell 7 script (using [CmdletBinding(SupportsShouldProcess = $true)] and $PSCmdlet.ShouldProcess), unified Terraform diff, rollback script, and 3 executionSteps directly matching the operator's ticket AND the typed `steering` contract (remediationStrategy, scope, governance, targetResource, targetIds, region, dryRun) derived from their clarifier answers and in-card selections. " +
             "CRITICAL: The PowerShell cmdlets MUST reflect `steering.remediationStrategy` exactly (recover => in-place recovery cmdlets such as Undo-AzKeyVaultRemoval, never a purge; purge-recreate => Remove-… -InRemovedState then New-…; gitops-bundle => declarative Terraform plus a thin runbook). " +
+            (input.grounding ? CODER_GROUNDING_RULE : "") +
             (input.previousScript ? "A `previousScript` is supplied: re-parameterise it — keep its structure, parameter names and guards, change only the lines the new steering requires, and keep every unrelated line byte-identical. " : "") +
             (input.repairFindings?.length ? "`repairFindings` lists what the sandbox pre-flight rejected in the previous script: fix exactly those findings (add the missing param() block, wrap every mutating cmdlet in $PSCmdlet.ShouldProcess, remove forbidden commands) and change nothing else. " : ""),
         },
@@ -418,17 +440,18 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
             ...(input.previousScript ? { previousScript: input.previousScript } : {}),
             ...(input.repairFindings?.length ? { repairFindings: input.repairFindings } : {}),
             ...(abacContext ? { abacFacts: abacContext } : {}),
+            ...(input.grounding ? { tenantFacts: input.grounding.facts } : {}),
           }),
         },
       ],
       REMEDIATION_CODER_TOOL,
-      { timeoutMs: 32000, temperature: 0.1, maxTokens: 4000, reasoningEffort: "low" },
+      { timeoutMs: 32000, temperature: 0.1, maxTokens: 4000, reasoningEffort: "low", piiScope: { tenantId: input.tenantId ?? input.grounding?.tenantId ?? "unscoped", ticketId: input.scenarioId } },
     );
     const raw = parseToolArguments(res.argumentsRaw) as Partial<CustomRemediationTemplate>;
     // An ABAC script that lost the steered cmdlet, a lab name or the condition is not shipped: the template is.
     const abacOk = !abacChoice || (typeof raw?.powershellScript === "string" && abacScriptExpectations(abacChoice).every((t) => raw.powershellScript!.includes(t)));
     if (raw && abacOk && typeof raw.title === "string" && typeof raw.powershellScript === "string" && raw.powershellScript.length > 30) {
-      return {
+      return withGroundingNotes<SynthesizedRemediationWithMeta>({
         title: raw.title.slice(0, 120),
         summary: (raw.summary ?? fallback.summary).slice(0, 500),
         powershellScript: raw.powershellScript,
@@ -448,7 +471,7 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
           status: "completed",
           source: "llm",
         },
-      };
+      }, input.grounding);
     }
   } catch {
     /* fallback below */
@@ -720,6 +743,9 @@ export async function runSubAgentPipeline(
     steering?: SteeringParams;
     /** The ticket's sender; the ABAC scout starts from this identity. */
     requesterUpn?: string;
+    /** Scenario or tenant whose correlation context grounds the coder and the card (gatherContext key). */
+    contextKey?: string;
+    tenantId?: string;
   },
   onProgress?: ProgressSink,
 ): Promise<{
@@ -760,6 +786,14 @@ export async function runSubAgentPipeline(
     return { data: res, wallClockMs, abac: abacState };
   });
 
+  // Grounding (item 8): the tenant context the coder and the UI architect must stay inside, gathered next to S1/S2.
+  const groundingPromise: Promise<GroundingIndex | null> = input.contextKey
+    ? gatherContext(input.contextKey)
+        .then((ctx) => buildGroundingIndex(ctx, { ticketText: `${input.title}\n${input.body}` }))
+        .catch(() => null)
+    : Promise.resolve(null);
+  const piiScope = { tenantId: input.tenantId ?? "unscoped", ticketId: input.scenarioId };
+
   // S1 first: its answers steer the gatekeeper, the UI architect and the coder (L-05, L-07).
   const t1Start = performance.now();
   report("agent:1:start", "Goal Clarifier scoping target & parameters");
@@ -767,6 +801,7 @@ export async function runSubAgentPipeline(
     title: input.title,
     body: input.body,
     ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
+    piiScope,
   }).then((res) => ({ ...res, wallClockMs: Math.max(1, Math.round(performance.now() - t1Start)) }));
   const effectiveAnswers = effectiveClarifiedAnswers(clarifierRes.questions, input.clarifiedAnswers);
   // The typed steering both S3 and S4 read; the coder gets it as its contract, not a label string (U-1).
@@ -802,10 +837,12 @@ export async function runSubAgentPipeline(
       elementRouting: routing.decision,
     });
     const facts = abacStatePromise ? abacFacts(await abacStatePromise, { createdAt: input.createdAt, ...(input.requesterUpn ? { requesterUpn: input.requesterUpn } : {}) }) : null;
+    const grounding = await groundingPromise;
     let elements = await synthesizeAndPersistMissingElements({
       ticketId: input.scenarioId,
       ticketPrompt: `${input.title}\n${input.body}`,
       decision: routing.decision,
+      grounding,
       gatekeeperModel: routing.source === "llm" ? routing.modelUsed : "deterministic-router",
       // The ABAC view is diagnostic and reused across tickets: it must not present the clarifier's defaults as the decided fix.
       clarifiedAnswers: facts ? {} : effectiveAnswers,
@@ -823,13 +860,17 @@ export async function runSubAgentPipeline(
 
   const t4Start = performance.now();
   report("agent:4:start", "IaC & PS7 Coder writing the PowerShell 7 runbook");
-  const coderPromise = synthesizeCustomRemediation({
-    scenarioId: input.scenarioId,
-    ticketTitle: input.title,
-    ticketBody: input.body,
-    clarifiedAnswers: effectiveAnswers,
-    steering,
-  }).then((res) => {
+  const coderPromise = groundingPromise.then((grounding) =>
+    synthesizeCustomRemediation({
+      scenarioId: input.scenarioId,
+      ticketTitle: input.title,
+      ticketBody: input.body,
+      clarifiedAnswers: effectiveAnswers,
+      steering,
+      grounding,
+      tenantId: input.tenantId ?? grounding?.tenantId ?? "unscoped",
+    }),
+  ).then((res) => {
     const wallClockMs = Math.max(1, Math.round(performance.now() - t4Start));
     const { _meta: _coderMeta, ...customRemediation } = res;
     report("agent:4:done", `IaC & PS7 Coder wrote ${customRemediation.powershellScript.split("\n").length} script lines (${wallClockMs} ms)`, { customRemediation });
@@ -1014,6 +1055,8 @@ export async function refineEntryWithSubAgentsAsync(
       clarifiedAnswers: mergedAnswers,
       ...(entry.ticket.requester?.upn ? { requesterUpn: entry.ticket.requester.upn } : {}),
       ...(synced.steering ? { steering: synced.steering } : {}),
+      contextKey: entry.scenarioId,
+      tenantId: entry.tenantId,
     },
     pipelineSink,
   );

@@ -30,6 +30,7 @@ import {
 } from "@contextpane/catalog";
 import { config, describeConfig, isLiveCloudMode, providers } from "./config.ts";
 import { localApiGuard, operatorIdentity } from "./security.ts";
+import { rowClickGrounded } from "./local/grounding.ts";
 import { buildScenarioBrief } from "./local/brief.ts";
 import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
 import { applyScenarioState } from "./local/lab.ts";
@@ -524,6 +525,13 @@ app.patch("/api/tickets/:scenarioId/steer", async (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
   const body = SteerBodySchema.parse(await c.req.json().catch(() => ({})));
   const { rerun, ...delta } = body;
+  // A row a model wrote (no tenant data behind it) cannot target the fix (item 9); the web card disables those rows too.
+  if (delta.rowClick) {
+    const entry = getCustomScenario(scenarioId);
+    if (entry && rowClickGrounded(entry.synthesizedElements ?? [], delta.rowClick.key, delta.rowClick.value) === false) {
+      return c.json({ error: `'${delta.rowClick.value.slice(0, 80)}' is in a model-authored row with no tenant data behind it; type the target instead` }, 422);
+    }
+  }
   // The newest pending drawer of this ticket is the diff base and gets re-staged; approved ones stay as they were.
   const pendingDrawer = remediationStore.list().filter((d) => d.ticketId === scenarioId && d.approval.state === "pending").at(-1) ?? null;
   const outcome = await steerCustomTicket(scenarioId, delta, { ...(rerun ? { rerun } : {}), ...(pendingDrawer ? { previousScript: pendingDrawer.powershellScript } : {}) });

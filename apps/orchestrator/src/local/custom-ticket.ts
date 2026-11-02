@@ -39,6 +39,8 @@ import {
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 import { abacRoutingDecision, isAbacTicketText } from "./abac.ts";
 import { metaCallsEnabled } from "../router/openai.ts";
+import { gatherContext } from "../mcp/context.ts";
+import { buildGroundingIndex } from "./grounding.ts";
 import { applySteeringDelta, clarifiedAnswersFromSteering, deriveSteeringFromAnswers, scriptDiff } from "./steering.ts";
 import {
   applyClarifiedAnswersToEntry,
@@ -610,6 +612,9 @@ export async function triageCustomTicketAsync(
     matchedSeededComponents: rawExtraction.components,
     ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
     ...(input.requester?.upn ? { requesterUpn: input.requester.upn } : {}),
+    // Not registered yet: the base scenario (or the tenant's default) supplies the context the fix is grounded in.
+    contextKey: rawExtraction.baseScenarioId ?? rawExtraction.tenantId,
+    tenantId: rawExtraction.tenantId,
   });
 
   const hasMissingElements = routingDecision.missingElements.length > 0;
@@ -718,6 +723,9 @@ export async function steerCustomTicket(
   // re-parameterising a script whose cmdlets no longer apply. The diff below still compares against the previous one.
   const abac = isAbacTicketText(`${existing.ticket.title}\n${existing.ticket.body}`);
 
+  const grounding = await gatherContext(scenarioId)
+    .then((ctx) => buildGroundingIndex(ctx, { ticketText: `${existing.ticket.title}\n${existing.ticket.body}` }))
+    .catch(() => null);
   const coded = await synthesizeCustomRemediation({
     scenarioId,
     ticketTitle: existing.ticket.title,
@@ -725,6 +733,8 @@ export async function steerCustomTicket(
     clarifiedAnswers,
     steering,
     ...(previousScript && !abac ? { previousScript } : {}),
+    grounding,
+    tenantId: existing.tenantId,
   });
   const { _meta, ...template } = coded;
   const coder: RemediationCoderMeta = _meta ?? { modelUsed: "deterministic-template", latencyMs: 1, tokensUsed: 0, status: "fallback", source: "fallback-on-error" };
@@ -742,6 +752,7 @@ export async function steerCustomTicket(
       decision: existing.elementRouting,
       gatekeeperModel: existing.subAgentTasks?.find((t) => t.stepIndex === 3)?.modelId.split(" -> ")[0] ?? "deterministic-router",
       clarifiedAnswers,
+      grounding,
     });
     if (cards.length) {
       synthesizedElements = cards;
