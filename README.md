@@ -7,7 +7,7 @@
 [![Track](https://img.shields.io/badge/Meta_Hackathon-Indie_Developer_Track-6cb4ff?style=flat-square)](HACKATHON_ATTRIBUTION.md)
 [![Models](https://img.shields.io/badge/Meta_Muse-Glimmer_30B_·_Spark_1.3_·_Wonder_1.0_·_Voice_Transcribe-b69cff?style=flat-square)](#3-meta-muse-models-in-execution-order)
 [![Open weights](https://img.shields.io/badge/Open_weights-Muse_Glimmer_30B_on_Modal_L40S-58d39a?style=flat-square)](modal-sandbox/README.md)
-[![Tests](https://img.shields.io/badge/bun_test-278_passing-58d39a?style=flat-square)](#6-quickstart-and-verification)
+[![Tests](https://img.shields.io/badge/bun_test-357_tests-58d39a?style=flat-square)](#6-quickstart-and-verification)
 [![License](https://img.shields.io/badge/license-MIT-9aa3b1?style=flat-square)](LICENSE)
 
 </div>
@@ -62,7 +62,7 @@
 | Common category | Why ContextPane is different |
 |---|---|
 | **A dashboard** | Dashboards display state. In ContextPane every view ends in an action. Each lens and plan step leads to a staged PowerShell 7 / Graph / Terraform change in the permanent 440 px **Muse Code rail**. The change carries a pre-flight verdict, a blast radius, an undo script and a human approve button |
-| **A chatbot or RAG app** | There is no chat box. Models are called through forced tool schemas (Zod → JSON schema), and their output is validated before anything renders. Prompts carry pseudonyms for the identities the vault detects (§4.1). Built-in cards bind to live MCP rows through `ptr://` pointers instead of prose; synthesized cards do not yet (§4.3) |
+| **A chatbot or RAG app** | There is no chat box. Models are called through forced tool schemas (Zod → JSON schema), and their output is validated before anything renders. Prompts carry pseudonyms for the identities the vault detects, and customer-written text reaches a model only as delimited untrusted data (§4.1). Cards bind to live MCP rows through `ptr://` pointers instead of prose; in synthesized cards only the rows backed by tenant data do, and model-written values are labelled as estimates (§4.3) |
 | **An autonomous agent** | The agent proposes, checks and repairs; the operator steers and approves. Scope chips and lens-row clicks travel back into the coder (`PATCH /api/tickets/:id/steer`), and writes happen only from an explicit click |
 | **A static demo** | Cards that do not exist are composed at triage time (see [§4.3](#43-self-expanding-nk-generative-ui)). The registry grew from k=4 to k=5 while these screenshots were being captured |
 
@@ -86,7 +86,7 @@ sequenceDiagram
     Note over Orc,Gl: start-up: warmHoverCache answers every pill once and persists it
     Op->>Web: hover a pill (60 ms dwell → speculative pre-fetch)
     Web->>Orc: POST /api/hover
-    Orc-->>Web: persisted Glimmer answer (2 ms) or live chain
+    Orc-->>Web: persisted Glimmer answer (2 ms, while its context is unchanged) or live chain
     Op->>Web: paste an unscripted ticket
     Web->>Orc: POST /api/tickets/triage-custom
     Orc->>MCP: Telemetry Scout probe (stage 2, runs throughout)
@@ -114,7 +114,7 @@ sequenceDiagram
 
 | Stage | Model id (configured → answering) | Contract | Measured | Why this model here | Code |
 |---|---|---|---|---|---|
-| **0 · Hover (Tier 1A)** | `muse-glimmer-30b` on Modal; chain falls back to `muse-spark-1.3` | entity id → `HoverDiagnosticPopover` JSON (strict schema, GBNF) | 22.8 s to generate once; 2 ms from the persisted cache | Hover is the hottest path and the most repetitive. An open-weight model on our own GPU can answer every pill ahead of time at no per-call cost | [`tier1-hover.ts:218`](apps/orchestrator/src/tiers/tier1-hover.ts#L218) · warm-up [`:412`](apps/orchestrator/src/tiers/tier1-hover.ts#L412) |
+| **0 · Hover (Tier 1A)** | `muse-glimmer-30b` on Modal; chain falls back to `muse-spark-1.3` | entity id → `HoverDiagnosticPopover` JSON (strict schema, GBNF) | 22.8 s to generate once; 2 ms from the persisted cache, served only while the entity's context digest is unchanged (cleared on approve and rollback) | Hover is the hottest path and the most repetitive. An open-weight model on our own GPU can answer every pill ahead of time at no per-call cost | [`tier1-hover.ts:218`](apps/orchestrator/src/tiers/tier1-hover.ts#L218) · warm-up [`:412`](apps/orchestrator/src/tiers/tier1-hover.ts#L412) |
 | **1 · Goal Clarifier** | `muse-wonder-1.0` | ticket → clarifying questions → `SteeringParams` v0 | 9.7 s · 2,452 tok | Needs judgment over vague prose; its answers become the typed contract every later stage reads | [`subagent-orchestrator.ts:161`](apps/orchestrator/src/local/subagent-orchestrator.ts#L161) |
 | **2 · Telemetry Scout** | none (MCP probe) | ticket + time → `UpstreamCloudStatusCorrelation` | 852 ms | Facts come from tools, not from a model | [`subagent-orchestrator.ts:710`](apps/orchestrator/src/local/subagent-orchestrator.ts#L710) |
 | **3 · UI Architect** | gatekeeper `muse-spark-1.3` → synthesizer `muse-wonder-1.0` | ticket → `ElementRoutingDecision` → `SynthesizedDynamicCard` | 19.8 s · 2,875 tok | Spark is fast at classifying "which element is missing". Wonder writes the dense, domain-accurate card | [`dynamic-catalog.ts:188`](apps/orchestrator/src/local/dynamic-catalog.ts#L188) · [`:301`](apps/orchestrator/src/local/dynamic-catalog.ts#L301) |
@@ -147,17 +147,19 @@ At start-up [`router/meta-models.ts:11`](apps/orchestrator/src/router/meta-model
 | v2 | `…/entra/users?where=state:Drifted&select=upn` | relational filter. Equality only; anything else fails closed ([`parsePtrQuery`, :392](packages/catalog/src/dataplane.ts#L392)) |
 | v3 | `…#tenant-contoso-01:<epoch>:<generation>` | fence ([`fencedDataPtr`, :264](packages/catalog/src/dataplane.ts#L264)). [`verifyPointerFence` (:285)](packages/catalog/src/dataplane.ts#L285) returns `valid · stale-epoch · cross-tenant · aba-generation-mismatch · unregistered-or-invalid`, and `GET /api/dataplane` answers 409 on any failure |
 
-**Vault.** Every prompt to every provider goes through one function, [`chatWithForcedTool` (router/openai.ts:142)](apps/orchestrator/src/router/openai.ts#L142). It first runs [`vaultMessages` (:116)](apps/orchestrator/src/router/openai.ts#L116), which replaces e-mail addresses / UPNs, the display names of people it knows from tenant context, and public IPv4 addresses in prompt text with session tokens (`upn_tok_03`, `displayName_tok_01`, …) from the process-wide [`PiiVault` (dataplane.ts:745)](packages/catalog/src/dataplane.ts#L745). Structured rows also vault `userId` and `deviceName` fields; free text does not catch GUIDs, device names, phone numbers, IPv6 or names it has not seen, and image parts (ticket screenshots) are sent unvaulted. `recordPrompt` runs the same detector over each outgoing prompt and counts its **detector hits**, and the drawer shows the count. It measures what the detector can see, not all PII. In the capture: **19 fields vaulted, 0 detector hits in 76 prompts**. Model replies are rehydrated **in the orchestrator** ([:207](apps/orchestrator/src/router/openai.ts#L207)), so the browser shows real names and the provider never sees them.
+**Vault.** Every prompt to every provider goes through one function, [`chatWithForcedTool` (router/openai.ts)](apps/orchestrator/src/router/openai.ts). It first runs [`vaultMessages`](apps/orchestrator/src/router/openai.ts), which replaces e-mail addresses / UPNs, the display names of people it knows from tenant context, known user object ids, known device names, phone numbers and public IPv4 addresses in prompt text with session tokens (`upn_tok_03`, `displayName_tok_01`, …) from the [`PiiVault`](packages/catalog/src/dataplane.ts). Free text does not catch IPv6, unknown GUIDs or names the vault has not seen. Image parts are refused: the vision tier sends a ticket screenshot only with `CTX_VISION_SEND_IMAGES=true`, because a screenshot bypasses the text vault. `recordPrompt` runs the same detector over each outgoing prompt and counts its **detector hits**, and the drawer shows the count. It measures what the detector can see, not all PII. In the capture: **19 fields vaulted, 0 detector hits in 76 prompts**. Model replies are rehydrated **in the orchestrator**, so the browser shows real names and the provider never sees them. A reply can only turn back into real values the tokens its own prompt carried, or tokens earlier prompts of the same tenant and ticket carried; any other token stays a token and is counted as a refused rehydration in the drawer.
+
+**Untrusted text.** Ticket titles and bodies, ERP descriptions and highlighted selections reach a model only inside `<untrusted_customer_data>` delimiters ([`router/untrusted.ts`](apps/orchestrator/src/router/untrusted.ts)), and every system prompt that receives them says to treat that text as evidence and never follow instructions in it. Tenant context passed to the coder and the card synthesizer (`tenantFacts`) is declared data in the same way, since tenant users can write names and descriptions. The eval set (§6) includes prompt-injection tickets.
 
 **The 3-step MCP vault boundary** ([full trace on INC-4092](docs/traces/mcp-vault-boundary.md)):
 
 | Step | Where | What crosses |
 |---|---|---|
 | 1 · Gather | [`gatherContext`](apps/orchestrator/src/mcp/context.ts#L118) → msgraph · azure-iac · erp | The orchestrator calls MCP itself, with real UPNs and GUIDs; no model picks the calls. Rows are published under fenced `ptr://` pointers |
-| 2 · Outbound | [`contextForCorrelation`](apps/orchestrator/src/mcp/context.ts#L495) + [`vaultMessages`](apps/orchestrator/src/router/openai.ts#L116) | Descriptors without rows; identities as `upn_tok_NN`. In the trace: "Ticket from upn_tok_01", 8,155 characters, 0 raw PII hits |
+| 2 · Outbound | [`contextForCorrelation`](apps/orchestrator/src/mcp/context.ts#L495) + [`vaultMessages`](apps/orchestrator/src/router/openai.ts#L116) | Descriptors without rows; identities as `upn_tok_NN`. In the trace: "Ticket from upn_tok_01", 8,155 characters, 0 detector hits |
 | 3 · Inbound | [`depseudonymizeJsonText`](apps/orchestrator/src/router/openai.ts#L207) + [`resolveDataPtr`](apps/orchestrator/src/local/dataplane.ts#L318) | Tool args `{"targetEntityId":"upn_tok_01","dataPtr":"ptr://inc-4092/entra/users"}` become the real UPN in memory; the pointer resolves only through the fence (a cross-tenant check fails); rows sent back to a model are pseudonymised again ([explore.ts:173](apps/orchestrator/src/tiers/explore.ts#L173)) |
 
-Models never issue MCP tool calls, and no service principal is involved. The one Activity Log hop is the orchestrator's own, for the ABAC tickets in real-tenant mode: [`readAbacLabLive`](packages/mcp-azure-iac/src/abac.ts#L282) reads the storage account, its containers, the payroll identity, the policy assignment, the identity's role assignments and the last 24 h of failed `roleAssignments/write` events with `RequestDisallowedByPolicy` ([`readActivityLog`, :239](packages/mcp-azure-iac/src/abac.ts#L239), 2.5 s budget). It uses the engineer's Az token, and its [`arm`](packages/mcp-azure-iac/src/abac.ts#L69) helper refuses any path outside the lab subscription. Activity Log ingestion lags by up to 15 minutes, so the denial the ticket reports is added as a deterministic entry stamped at the ticket's time ([`abacActivity`](apps/orchestrator/src/local/abac.ts#L161)). The policy rows of the built-in scenarios are fixtures (§5).
+Models never issue MCP tool calls, and no service principal is involved in these reads. The one Activity Log hop is the orchestrator's own, for the ABAC tickets in real-tenant mode: [`readAbacLabLive`](packages/mcp-azure-iac/src/abac.ts#L282) reads the storage account, its containers, the payroll identity, the policy assignment, the identity's role assignments and the last 24 h of failed `roleAssignments/write` events with `RequestDisallowedByPolicy` ([`readActivityLog`, :239](packages/mcp-azure-iac/src/abac.ts#L239), 2.5 s budget). It uses the engineer's Az token, and its [`arm`](packages/mcp-azure-iac/src/abac.ts#L69) helper refuses any path outside the lab subscription. Activity Log ingestion lags by up to 15 minutes, so the denial the ticket reports is added as a deterministic entry stamped at the ticket's time ([`abacActivity`](apps/orchestrator/src/local/abac.ts#L161)). The policy rows of the built-in scenarios are fixtures (§5).
 
 <p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Glimmer hover popover with model badge, pseudonym vault token map and the PII detector-hit count" width="100%"></p>
 
@@ -187,7 +189,7 @@ The catalog starts with hand-built cards (N). It grows by k whenever a ticket ne
 4. **Mount.** The web app's local interpreter, [`SynthesizedDynamicCard`](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L286), maps each block to a React primitive ([`renderBlock`, :116](apps/web/src/components/cards/SynthesizedDynamicCard.tsx#L116)). It runs no model-written code. The spec is stored with the triaged ticket (`synthesizedElements` in `data/custom-scenarios.json`). Drawing the card from a stored spec is client-side rendering and makes no model call.
 5. **Persistence.** A passing spec is also exported as `data/synthesized-elements/<ElementId>.tsx`, a typed module that re-exports the schema and the spec so the card can be reviewed as source, and is added to [`data/dynamic-catalog.json`](data/dynamic-catalog.json). The System & audit drawer lists the registry.
 
-Every data-table row in a synthesized card is steerable: clicking a row narrows the fix to that resource (§4.4). Synthesized cards carry no `ptr://` bindings yet: their gauges, rows and events are values Wonder wrote into the spec, built from live lab facts only for the ABAC tickets.
+The synthesizer gets the ticket's tenant context (`tenantFacts`) and must name only resources in it or in the ticket. The orchestrator, not the model, then sets each block's provenance ([`local/grounding.ts`](apps/orchestrator/src/local/grounding.ts)): data-table rows that match tenant data link to their `ptr://` dataset, and the card labels every other value, gauges included, as a model estimate. Only rows backed by tenant data are steerable: clicking one narrows the fix to that resource (§4.4); `PATCH /steer` answers 422 for a click on a model-written row.
 
 <p align="center"><img src="docs/assets/04-nk-wonder-synthesis-and-reuse.png" alt="The net-new FinanceBlobAbacConditionFix card next to the k=5 synthesized element registry" width="100%"></p>
 
@@ -216,6 +218,8 @@ Every data-table row in a synthesized card is steerable: clicking a row narrows 
 | PowerShell 7 AST parse + one shared rule set ([`preflight-rules.json`](packages/catalog/src/preflight-rules.json)): a command outside the allow-list, a forbidden command, a destructive wildcard or a missing steered command fails the bundle | ✓ (persistent pwsh AST server) | ✓ `Parser::ParseFile` |
 | `terraform fmt -check` · `terraform validate` (1.9.8, azurerm ~> 4.0) | ✓ | ✓ when the ticket has an HCL baseline |
 | Mutating cmdlets inside `$PSCmdlet.ShouldProcess` | static check after either ([`applyWhatIfGate`](apps/orchestrator/src/preflight/local.ts)): an unguarded mutation fails the bundle; a read-only script without the guard only warns | same |
+| Execution surface ([`preflight/execution-surface.ts`](apps/orchestrator/src/preflight/execution-surface.ts)): .NET and COM calls, runtime script blocks, dot-sourcing, aliases, commands that run code or sign in again (`Invoke-Command`, `Add-Type`, `Set-AzContext`, `Connect-MgGraph`, …; listed in the same rule file), and `Invoke-MgGraphRequest` / `Invoke-AzRestMethod` targets outside an allow-list of paths and methods all fail the bundle | applied to the sandbox's AST report by the orchestrator | same; a text scan stands in when pwsh is missing |
+| Literal targets that are in neither the tenant context nor the ticket | `Ungrounded target:` finding after either ([`local/grounding.ts`](apps/orchestrator/src/local/grounding.ts)); it warns rather than fails, since a fix may create a new resource | same |
 | `#Requires -Version 7.0` header (the executor runs pwsh 7 only) | static check after either ([tier3-remediate.ts:485](apps/orchestrator/src/tiers/tier3-remediate.ts#L485)) | same |
 
 **The sandbox is offline and holds no tenant credentials.** Its only secret is the bearer token the orchestrator presents. It holds no Azure, Graph or Terraform state credentials. The Terraform working directory is set up at image build with `terraform init -backend=false`, and each bundle gets `fmt -check` and `validate`. It is Terraform 1.9.8, not OpenTofu, and nothing runs `plan` or `-WhatIf`.
@@ -224,7 +228,7 @@ Every data-table row in a synthesized card is steerable: clicking a row narrows 
 
 [`runRepairLoop`](apps/orchestrator/src/tiers/repair-loop.ts#L129) feeds the repairable findings back to the coder, for at most [`MAX_REPAIR_ITERATIONS = 2`](apps/orchestrator/src/tiers/repair-loop.ts#L34) turns. Infrastructure findings (sandbox unavailable, Terraform missing, …) are not sent back. The loop stops early if the coder returns an unchanged script, and it never forces a verdict. The verdict badge then reads "· N iter" and the proof panel lists every round. The run in the screenshot passed on the first attempt, so no repair timeline is drawn; the loop is covered by [`repair-loop.test.ts`](apps/orchestrator/src/tiers/repair-loop.test.ts).
 
-**Prover and f⁻¹.**
+**Invariant checks and f⁻¹.**
 - [`formal-verifier.ts`](apps/orchestrator/src/local/formal-verifier.ts) checks seven invariants as a PCC bitmask ([`0x7f`, :84](apps/orchestrator/src/local/formal-verifier.ts#L84)): `break-glass-non-lockout`, `target-remediation`, `nsg-reachability`, `shadow-admin-zero-transitive`, `proactive-remediation-detect-read-only`, `idempotency-fork-isolated` and `bijective-inverse-rollback`. It also checks idempotency, f(f(S)) = f(S), on a forked state ([`:754`](apps/orchestrator/src/local/formal-verifier.ts#L754)). An ad-hoc ticket has no symbolic model, so the strip says "not provable" rather than claiming a proof.
 - **Snapshot.** On a break-glass approve, [`captureEntitySnapshot`](apps/orchestrator/src/local/snapshot.ts#L107) records the touched users, groups, CA policies, NSG rules, Intune objects and workload identities.
 - **Inverse.** [`buildInverseFromSnapshot`](apps/orchestrator/src/local/inverse-rollback.ts#L205) derives the inverse for only the sections the bundle changed.
@@ -270,7 +274,7 @@ bun install
 bun run dev
 ```
 
-The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the workbench on http://localhost:5173. Vite proxies `/api` and `/ws`.
+The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the workbench on http://localhost:5173. Vite proxies `/api` and `/ws`. Everything but `GET /api/health` needs a bearer token, a `127.0.0.1` / `localhost` Host header and `application/json` writes; the orchestrator mints the token into the git-ignored `.contextpane/api-token` at start-up (or reads `CTX_API_TOKEN`) and the Vite proxy adds it, so `bun run dev` needs no setup. Approvals, overrides, rollbacks and closures record the signed-in operator, never a name from the request body.
 
 | Mode | How | What you get |
 |---|---|---|
@@ -280,8 +284,8 @@ The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the wo
 
 ```bash
 bun run typecheck   # 6 workspaces, tsc --noEmit
-bun test            # 278 tests across 44 files, 0 failures (2026-10-29)
-bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema
+bun test            # 357 tests across 57 files (2026-11-03); the 2 write-then-test repair-loop tests need pwsh
+bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema (reads the API token from .contextpane/api-token)
 bun run eval        # coder eval: 24 tickets incl. 8 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
 ```
 

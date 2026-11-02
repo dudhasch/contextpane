@@ -23,7 +23,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 | File | Shows |
 |---|---|
 | [`assets/01-flight-deck-3zone.png`](assets/01-flight-deck-3zone.png) | the three zones (400 px · fluid · 440 px) on #INC-4092 |
-| [`assets/02-glimmer-hover-and-pii-vault.png`](assets/02-glimmer-hover-and-pii-vault.png) | Glimmer hover badge (22.8 s generated, 2 ms cached) + pseudonym vault + 0-raw-PII metric |
+| [`assets/02-glimmer-hover-and-pii-vault.png`](assets/02-glimmer-hover-and-pii-vault.png) | Glimmer hover badge (22.8 s generated, 2 ms cached) + pseudonym vault + PII detector-hit count |
 | [`assets/03-kinematic-prewarm-telemetry.png`](assets/03-kinematic-prewarm-telemetry.png) | per-tier routing ledger, 5-stage pipeline records, pre-fetch counters |
 | [`assets/04-nk-wonder-synthesis-and-reuse.png`](assets/04-nk-wonder-synthesis-and-reuse.png) | the synthesized ABAC card + the k=5 registry |
 | [`assets/05-coderail-modal-sandbox-finverse.png`](assets/05-coderail-modal-sandbox-finverse.png) | scope chips, steering diff, prover strip, 1-click undo, approve footer |

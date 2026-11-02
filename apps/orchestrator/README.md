@@ -42,7 +42,7 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 
 **One exit point for prompts.** [`chatWithForcedTool` (router/openai.ts:142)](src/router/openai.ts#L142) handles every call to every provider:
 1. **Pseudonymise.** [`vaultMessages`](src/router/openai.ts#L116) replaces identities with vault tokens.
-2. **Scan.** `recordPrompt` counts any raw PII left in the prompt.
+2. **Scan.** `recordPrompt` counts the detector hits left in the prompt (what the vault detector can see, not all PII).
 3. **Force the tool.** It forces the named tool schema; the Meta API accepts only `tool_choice: "auto"`, so Meta gets "auto" plus a system nudge.
 4. **Rehydrate.** The reply is rehydrated before it leaves the function ([`:207`](src/router/openai.ts#L207)).
 

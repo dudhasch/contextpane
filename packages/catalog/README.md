@@ -64,7 +64,7 @@ The orchestrator side (`applySteeringDelta`, `deriveSteeringFromAnswers`) lives 
 - **Fields.** It covers `upn`, `displayName`, `ipAddress`, `userId` and `deviceName`.
 - **Tokens.** Values become `<field>_tok_NN` (for example `upn_tok_03`), assigned in case-folded sorted order within a batch.
 - **Text.** `pseudonymizeText` (`:869`) handles emails, known person names (registered from MCP context) and public IPv4 addresses.
-- **Metrics.** `recordPrompt` maintains the "0 raw PII in N prompts" metric (`zeroRawPiiInLlmPrompt`).
+- **Metrics.** `recordPrompt` counts detector hits per prompt (`zeroRawPiiInLlmPrompt` is true while the detector found none); it measures what the detector can see, not all PII. Rehydration is limited to the tokens a prompt (or its tenant and ticket scope) carried; refused tokens are counted in `refusedRehydrations`.
 
 Each token also gets an epoch- and field-salted 64-bit FNV-style digest (`computeEpochSaltedDigest`, `:724`). Some fields are named `hmac…`, but it is a fingerprint, not a cryptographic MAC.
 
