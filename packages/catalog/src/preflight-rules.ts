@@ -11,6 +11,8 @@ export interface PreflightRules {
   allowedCommands: string[];
   forbiddenCommands: string[];
   destructivePatterns: string[];
+  /** Commands that run code, open sessions or rebind the Az context; enforced by the execution-surface rules. */
+  deniedExecutionCommands: string[];
 }
 
 export const PREFLIGHT_RULES: PreflightRules = {
@@ -18,10 +20,12 @@ export const PREFLIGHT_RULES: PreflightRules = {
   allowedCommands: rules.allowedCommands,
   forbiddenCommands: rules.forbiddenCommands,
   destructivePatterns: rules.destructivePatterns,
+  deniedExecutionCommands: rules.deniedExecutionCommands,
 };
 
 /** Finding prefixes that fail the bundle in either sandbox. */
-export const PREFLIGHT_HARD_FAIL_PREFIXES = ["Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list"] as const;
+/** "Execution surface:" findings come from apps/orchestrator/src/preflight/execution-surface.ts, applied to either sandbox's AST report. */
+export const PREFLIGHT_HARD_FAIL_PREFIXES = ["Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list", "Execution surface:"] as const;
 
 const ALLOWED_VERBS = new Set(PREFLIGHT_RULES.allowedVerbs.map((v) => v.toLowerCase()));
 const ALLOWED_COMMANDS = new Set(PREFLIGHT_RULES.allowedCommands);

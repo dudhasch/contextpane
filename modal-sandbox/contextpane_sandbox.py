@@ -99,7 +99,9 @@ ALLOWED_VERBS = {v.lower() for v in RULES["allowedVerbs"]}
 ALLOWED_COMMANDS = set(RULES["allowedCommands"])
 FORBIDDEN = set(RULES["forbiddenCommands"])
 DESTRUCTIVE = [re.compile(p, re.IGNORECASE) for p in RULES["destructivePatterns"]]
-HARD_FAIL_PREFIXES = ("Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list")
+# "Execution surface:" findings (RULES["deniedExecutionCommands"], .NET calls, aliases, REST targets) are added by the
+# orchestrator from this sandbox's AST report; listed here so the two sides share one set of hard-fail prefixes.
+HARD_FAIL_PREFIXES = ("Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list", "Execution surface:")
 REQUIRED = {"set-mguserlicense"}
 
 # Execution-surface extraction (.NET calls, dynamic invocations, aliases, REST targets); the orchestrator applies

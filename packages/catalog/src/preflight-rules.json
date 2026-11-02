@@ -1,5 +1,5 @@
 {
-  "$comment": "One rule set for both pre-flight sandboxes: apps/orchestrator/src/preflight/local.ts (via packages/catalog/src/preflight-rules.ts) and modal-sandbox/contextpane_sandbox.py (copied into the Modal image). Every rule here is a hard failure. Command names are lower-case; destructivePatterns are case-insensitive regular expressions valid in both JavaScript and Python.",
+  "$comment": "One rule set for both pre-flight sandboxes: apps/orchestrator/src/preflight/local.ts (via packages/catalog/src/preflight-rules.ts) and modal-sandbox/contextpane_sandbox.py (copied into the Modal image). Every rule here is a hard failure. Command names are lower-case; destructivePatterns are case-insensitive regular expressions valid in both JavaScript and Python. deniedExecutionCommands are applied by the execution-surface rules (apps/orchestrator/src/preflight/execution-surface.ts) to the AST report of either sandbox.",
   "allowedVerbs": [
     "Get",
     "Set",
@@ -64,5 +64,25 @@
     "\\bRemove-MgUser\\s+-All\\b",
     "\\bRemove-AzResource\\b(?![^\\n]*-(?:ResourceId|Name|ResourceName))\\s+-Force\\b",
     "\\bFormat-Volume\\s+-Force\\b"
+  ],
+  "deniedExecutionCommands": [
+    "invoke-command",
+    "invoke-item",
+    "invoke-cimmethod",
+    "invoke-wmimethod",
+    "start-job",
+    "start-threadjob",
+    "start-bitstransfer",
+    "add-type",
+    "new-pssession",
+    "enter-pssession",
+    "import-pssession",
+    "set-alias",
+    "new-alias",
+    "register-scheduledjob",
+    "register-scheduledtask",
+    "set-azcontext",
+    "select-azsubscription",
+    "clear-azcontext"
   ]
 }

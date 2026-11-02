@@ -8,9 +8,12 @@
  * `Invoke-MgGraphRequest` / `Invoke-AzRestMethod`. Every finding here is a hard failure.
  *
  * The PowerShell AST runners (preflight/local.ts and modal-sandbox/contextpane_sandbox.py)
- * report an {@link ExecutionSurface}; when no AST report is available (pwsh missing, an older
+ * report an {@link ExecutionSurface}; the denied commands live in packages/catalog/src/preflight-rules.json
+ * with the rest of the shared rule set. When no AST report is available (pwsh missing, an older
  * sandbox deployment) {@link scanExecutionSurfaceText} extracts a best-effort one from the text.
  */
+
+import { PREFLIGHT_RULES } from "@contextpane/catalog";
 
 export interface ExecutionSurface {
   staticCalls: Array<{ type: string; member: string }>;
@@ -81,26 +84,7 @@ export const SURFACE_PS = String.raw`
 `;
 
 /** Commands that run code, open sessions or rebind the Az context; the verb allow-list (Invoke, Start, Set, Add, New) lets them through. */
-export const DENIED_EXECUTION_COMMANDS = new Set([
-  "invoke-command",
-  "invoke-item",
-  "invoke-cimmethod",
-  "invoke-wmimethod",
-  "start-job",
-  "start-threadjob",
-  "start-bitstransfer",
-  "add-type",
-  "new-pssession",
-  "enter-pssession",
-  "import-pssession",
-  "set-alias",
-  "new-alias",
-  "register-scheduledjob",
-  "register-scheduledtask",
-  "set-azcontext",
-  "select-azsubscription",
-  "clear-azcontext",
-]);
+export const DENIED_EXECUTION_COMMANDS = new Set(PREFLIGHT_RULES.deniedExecutionCommands);
 
 /**
  * Aliases a model script might use; scripts must spell cmdlets out (an alias hides what runs, and
