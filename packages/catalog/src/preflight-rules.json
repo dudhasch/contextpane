@@ -1,5 +1,5 @@
 {
-  "$comment": "One rule set for both pre-flight sandboxes: apps/orchestrator/src/preflight/local.ts (via packages/catalog/src/preflight-rules.ts) and modal-sandbox/contextpane_sandbox.py (copied into the Modal image). Every rule here is a hard failure. Command names are lower-case; destructivePatterns are case-insensitive regular expressions valid in both JavaScript and Python. deniedExecutionCommands are applied by the execution-surface rules (apps/orchestrator/src/preflight/execution-surface.ts) to the AST report of either sandbox.",
+  "$comment": "One rule set for both pre-flight sandboxes: apps/orchestrator/src/preflight/local.ts (via packages/catalog/src/preflight-rules.ts) and modal-sandbox/contextpane_sandbox.py (copied into the Modal image). Every rule here is a hard failure. Command names are lower-case; destructivePatterns are case-insensitive regular expressions valid in both JavaScript and Python. deniedExecutionCommands are applied by the execution-surface rules (apps/orchestrator/src/preflight/execution-surface.ts) to the AST report of either sandbox. The executor connects before the script runs (apps/orchestrator/src/execution/executor-identity.ts), so a script that signs in again would replace that identity: Connect-/Disconnect- of Graph and Az are denied too.",
   "allowedVerbs": [
     "Get",
     "Set",
@@ -83,6 +83,10 @@
     "register-scheduledtask",
     "set-azcontext",
     "select-azsubscription",
-    "clear-azcontext"
+    "clear-azcontext",
+    "connect-mggraph",
+    "connect-azaccount",
+    "disconnect-mggraph",
+    "disconnect-azaccount"
   ]
 }

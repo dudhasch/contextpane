@@ -127,3 +127,28 @@ describe("Modal pre-flight applies the execution-surface rules", () => {
     Object.assign(config.modal, saved);
   });
 });
+
+describe("text scan ignores string literals", () => {
+  test("a cmdlet named inside a message string is not a call; a subexpression is", async () => {
+    const { scanCommandsText } = await import("./execution-surface.ts");
+    const script = [
+      "if (-not (Get-MgContext)) { throw 'No Microsoft Graph context. Connect-MgGraph first.' }",
+      'Write-Output "Run Connect-AzAccount, then retry. Can\'t continue"',
+      "$body = @'\nRemove-Item C:\\x\n'@",
+      'Write-Output "now: $(Invoke-Command -ScriptBlock { 1 })"',
+    ].join("\n");
+    const commands = scanCommandsText(script);
+    expect(commands).toContain("Get-MgContext");
+    expect(commands).toContain("Write-Output");
+    expect(commands).toContain("Invoke-Command");
+    expect(commands).not.toContain("Connect-MgGraph");
+    expect(commands).not.toContain("Connect-AzAccount");
+    expect(commands).not.toContain("Remove-Item");
+  });
+
+  test("a script that signs in again is denied: the executor identity connects before it runs", async () => {
+    const { executionSurfaceCheck } = await import("./local.ts");
+    const findings = executionSurfaceCheck("[CmdletBinding(SupportsShouldProcess)]\nparam()\nConnect-MgGraph -Scopes 'User.ReadWrite.All'\nGet-MgUser -Top 1");
+    expect(findings.some((f) => f.includes("Connect-MgGraph"))).toBe(true);
+  });
+});

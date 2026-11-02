@@ -319,9 +319,24 @@ export function scanExecutionSurfaceText(script: string): ExecutionSurface {
   return surface;
 }
 
-/** Command names the text fallback can see (`Verb-Noun` at command position). */
+/**
+ * String literals hold text, not commands: single-quoted strings and here-strings are dropped whole,
+ * double-quoted ones keep only their `$( … )` subexpressions, which do run. Approximate (no nesting),
+ * which is the most a text fallback can do; the AST report is exact.
+ */
+export function stripStringLiterals(code: string): string {
+  // One pass, so whichever literal opens first wins ("can't" does not start a single-quoted string).
+  return code.replace(/@'[\s\S]*?'@|@"[\s\S]*?"@|'(?:[^']|'')*'|"(?:[^"`]|`[\s\S])*"/g, (m) => (m.startsWith("'") || m.startsWith("@'") ? "''" : keepSubexpressions(m)));
+}
+
+function keepSubexpressions(literal: string): string {
+  const subs = [...literal.matchAll(/\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1]!);
+  return subs.length ? `"";${subs.join(";")}` : '""';
+}
+
+/** Command names the text fallback can see (`Verb-Noun` at command position, outside string literals). */
 export function scanCommandsText(script: string): string[] {
-  const code = stripComments(script);
+  const code = stripStringLiterals(stripComments(script));
   return [...new Set([...code.matchAll(/(?:^|[;|{(=]|\bif\s*\(|\s)([A-Z][a-z]+-[A-Za-z][\w]*)\b/gm)].map((m) => m[1]!))];
 }
 
