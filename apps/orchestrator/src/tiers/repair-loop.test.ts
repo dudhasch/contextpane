@@ -137,8 +137,9 @@ describe("write-then-test: sandbox findings feed a Wonder repair turn before the
       expect(v.repair!.iterations).toBe(2);
       expect(v.repair!.exhausted).toBe(false);
       expect(v.repair!.rounds.map((r) => [r.verdictBefore, r.verdictAfter])).toEqual([
-        ["Verified With Warnings", "Verified With Warnings"],
-        ["Verified With Warnings", "Verified Safe"],
+        // An unguarded write is a hard failure (review item 2), so both rejected scripts read Verification Failed.
+        ["Verification Failed", "Verification Failed"],
+        ["Verification Failed", "Verified Safe"],
       ]);
       expect(v.repair!.rounds.every((r) => r.tokensUsed === 1050 && r.tokensPrompt === 900 && r.scriptChanged)).toBe(true);
       expect(v.precheck?.name).toBe("syntax-heuristic");
@@ -191,7 +192,9 @@ describe("write-then-test: sandbox findings feed a Wonder repair turn before the
     const stageSpy = spyOn(staging, "stageRemediationBranch").mockRejectedValue(new Error("git staging disabled in tests"));
     try {
       const { drawer } = await remediate({ scenarioId: entry.scenarioId, fresh: true });
-      expect(drawer.verificationStatus.verdict).toBe("Verified With Warnings");
+      // Unguarded Set-AzKeyVaultAccessPolicy: the -WhatIf gate fails the bundle, it is not approvable with warnings.
+      expect(drawer.verificationStatus.verdict).toBe("Verification Failed");
+      expect(drawer.verificationStatus.whatIfSafe).toBe(false);
       expect(drawer.verificationStatus.repair).toMatchObject({ iterations: 0, exhausted: false, skipped: expect.stringContaining("coder offline") });
       expect(drawer.powershellScript).toBe(UNGUARDED);
     } finally {
