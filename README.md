@@ -282,6 +282,7 @@ The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the wo
 bun run typecheck   # 6 workspaces, tsc --noEmit
 bun test            # 278 tests across 44 files, 0 failures (2026-10-29)
 bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema
+bun run eval        # coder eval: 24 tickets incl. 8 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
 ```
 
 **Hotkeys** (press `?` in the app): `Ctrl+K` work queue · `h` hover hero entity · `e` run step 1 · `d` diff · `f` open remediation · `x` approve · `u` explore selection · `c` clarifier · `t` router savings · `a` audit · `0` reset drift. The full list is in [`apps/web/README.md`](apps/web/README.md#hotkeys).

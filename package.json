@@ -18,6 +18,7 @@
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test",
     "smoke": "pwsh -NoProfile -File ./scripts/Test-ContextPaneSmoke.ps1",
+    "eval": "bun run apps/orchestrator/evals/run.ts",
     "mcp:erp": "bun run packages/mcp-erp/src/server.ts",
     "mcp:msgraph": "bun run packages/mcp-msgraph/src/server.ts",
     "mcp:azure-iac": "bun run packages/mcp-azure-iac/src/server.ts"
