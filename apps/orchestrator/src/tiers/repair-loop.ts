@@ -9,6 +9,7 @@ import {
 } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { synthesizeCustomRemediation, syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
+import { buildGroundingIndex } from "../local/grounding.ts";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
 
@@ -93,6 +94,8 @@ async function repairTurn(input: RepairLoopInput, findings: string[]): Promise<R
       ...(input.ctx.custom.steering ? { steering: input.ctx.custom.steering } : {}),
       previousScript: input.bundle.powershellScript,
       repairFindings: findings,
+      grounding: buildGroundingIndex(input.ctx, { ticketText: `${input.ctx.custom.ticket.title}\n${input.ctx.custom.ticket.body}` }),
+      tenantId: input.ctx.tenantId,
     });
     const meta = res._meta;
     return {
@@ -112,7 +115,7 @@ async function repairTurn(input: RepairLoopInput, findings: string[]): Promise<R
       { role: "user", content: JSON.stringify({ repairFindings: findings, requiredCommands: input.requiredCommands, previousBundle: input.bundle }) },
     ],
     getRemediationBundleToolDefinition(),
-    { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
+    { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: input.ctx.tenantId, ticketId: input.ctx.ticketId } },
   );
   const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
   if (!parsed.success) throw new Error(`repair turn returned an invalid bundle: ${parsed.error.issues.map((i) => i.message).join("; ")}`);

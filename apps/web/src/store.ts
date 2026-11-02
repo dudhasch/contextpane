@@ -1554,7 +1554,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     const { drawer } = get();
     if (!drawer) return;
     try {
-      const { drawer: updated } = await api.overrideRemediation(drawer.remediationId, { justification, operator: drawer.approval.requiredIdentity });
+      const { drawer: updated } = await api.overrideRemediation(drawer.remediationId, { justification });
       set({ drawer: updated, remediateStatus: "ready" });
       get().toast({ tone: "warning", title: "Pre-flight overridden", detail: "Justification recorded in the audit ledger; the failed checks keep their results." });
     } catch (error) {
@@ -1582,7 +1582,6 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       const result: ApproveResponse = await api.approve({
         remediationId: drawer.remediationId,
         decision,
-        approvedBy: drawer.approval.requiredIdentity,
         ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode, simulateCanaryFailure: get().simulateCanaryFailure } : {}),
       });
       const { executionLog, ...updated } = result.drawer;

@@ -107,6 +107,38 @@ function useBlockRefill(pending: boolean, count: number): (index: number) => boo
 
 type RowSteer = (key: string, value: string, label: string) => void;
 
+type BlockProvenance = "tenant-data" | "mixed" | "model-estimate";
+
+/**
+ * Where a block's values come from (set by the orchestrator, local/grounding.ts). A block without the field
+ * predates grounding and is shown as unverified, never as tenant data.
+ */
+function ProvenanceTag({ provenance, dataPtr }: { provenance?: BlockProvenance | undefined; dataPtr?: string | undefined }) {
+  if (provenance === "tenant-data")
+    return (
+      <span className="text-healthy" title={dataPtr ? `Bound to ${dataPtr}` : "Every row names something in the tenant context"} data-provenance="tenant-data">
+        tenant data
+      </span>
+    );
+  if (provenance === "mixed")
+    return (
+      <span className="text-warning" title="Some rows name nothing in the tenant context: those are model-authored" data-provenance="mixed">
+        partly model-authored
+      </span>
+    );
+  return (
+    <span className="text-warning" title="Written by the model; no tenant data backs these values" data-provenance={provenance ?? "unverified"}>
+      {provenance === "model-estimate" ? "model estimate" : "unverified"}
+    </span>
+  );
+}
+
+/** Original row indexes no tenant data backs: they cannot steer the fix. */
+function modelRowIndexes(block: Extract<SynthesizedBlock, { kind: "data-table" }>): Set<number> {
+  if (block.ungroundedRows) return new Set(block.ungroundedRows);
+  return block.provenance === "tenant-data" ? new Set() : new Set(block.rows.map((_, i) => i));
+}
+
 /** The column a row click steers with: the card's rowParamKey, else the first name/id/resource-like column. */
 function rowSteerColumn(block: Extract<SynthesizedBlock, { kind: "data-table" }>): string | null {
   if (block.rowParamKey && block.columns.some((c) => c.key === block.rowParamKey)) return block.rowParamKey;
@@ -118,7 +150,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
     case "quota-gauges":
       return (
         <div key={block.title} data-block={block.kind} data-ghost={pending || undefined} className={BLOCK_FRAME}>
-          <BlockHead label={block.title} cardTitle={cardTitle} count={block.gauges.length} />
+          <BlockHead label={block.title} cardTitle={cardTitle} count={block.gauges.length} aside={<ProvenanceTag provenance={block.provenance} dataPtr={block.dataPtr} />} />
           <div className="grid grid-cols-1 gap-x-6 gap-y-2.5 px-3 py-2 sm:grid-cols-2">
             {block.gauges.map((g) => {
               const pct = Math.min(100, Math.round((g.used / Math.max(1, g.limit)) * 100));
@@ -163,7 +195,7 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
     case "policy-chain":
       return (
         <div key={block.title} data-block={block.kind} data-ghost={pending || undefined} className={BLOCK_FRAME}>
-          <BlockHead label={block.title} cardTitle={cardTitle} count={block.hops.length} />
+          <BlockHead label={block.title} cardTitle={cardTitle} count={block.hops.length} aside={<ProvenanceTag provenance={block.provenance} dataPtr={block.dataPtr} />} />
           <ol className="mx-3 my-2 space-y-1.5 border-l-2 border-[color:var(--cat)] pl-3">
             {block.hops.map((hop, idx) => (
               <li key={`${hop.step}-${idx}`} className="min-w-0 text-12">
@@ -195,21 +227,41 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
       const q = filterText.trim().toLowerCase();
       const filteredRows = q ? block.rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q))) : block.rows;
       const steerKey = onRowSteer ? rowSteerColumn(block) : null;
+      // Only rows backed by tenant data steer the fix; a model-authored row would target a name nothing confirms.
+      const modelRows = modelRowIndexes(block);
+      const steerable = (i: number) => {
+        const row = filteredRows[i];
+        return Boolean(steerKey && row && !modelRows.has(block.rows.indexOf(row)));
+      };
+      const anySteerable = Boolean(steerKey) && filteredRows.some((_, i) => steerable(i));
       return (
         <div key={block.title} data-block={block.kind} data-ghost={pending || undefined} className={BLOCK_FRAME}>
           <BlockHead
             label={block.title}
             cardTitle={cardTitle}
             count={q ? `${filteredRows.length}/${block.rows.length}` : block.rows.length}
-            aside={steerKey ? "click a row to target the fix" : undefined}
+            aside={
+              <>
+                <ProvenanceTag provenance={block.provenance} dataPtr={block.dataPtr} />
+                {anySteerable ? " · click a row to target the fix" : ""}
+              </>
+            }
           />
           <DataTable
             className="px-3 pb-1"
             head={block.columns.map((c) => c.label)}
-            rowClassName={steerKey ? () => "cursor-pointer transition-colors duration-120 hover:bg-raised focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal" : undefined}
-            onRowClick={
+            rowClassName={
               steerKey
+                ? (i) =>
+                    steerable(i)
+                      ? "cursor-pointer transition-colors duration-120 hover:bg-raised focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-signal"
+                      : "cursor-not-allowed opacity-70"
+                : undefined
+            }
+            onRowClick={
+              steerKey && anySteerable
                 ? (i) => {
+                    if (!steerable(i)) return;
                     const row = filteredRows[i];
                     const value = row ? String(row[steerKey] ?? "") : "";
                     if (value) onRowSteer?.("targetResource", value, block.columns.map((c) => String(row?.[c.key] ?? "")).filter(Boolean).join(" · "));
@@ -249,7 +301,12 @@ function renderBlock(block: SynthesizedBlock, filterText: string, pending = fals
       const isArm = /\barm\b/i.test(block.title);
       return (
         <div key={block.title} data-block={block.kind} data-ghost={pending || undefined} className={BLOCK_FRAME}>
-          <BlockHead label={block.title} cardTitle={cardTitle} count={`${block.events.length} ${isArm ? "ARM" : "audit"}`} />
+          <BlockHead
+            label={block.title}
+            cardTitle={cardTitle}
+            count={`${block.events.length} ${isArm ? "ARM" : "audit"}`}
+            aside={<ProvenanceTag provenance={block.provenance} dataPtr={block.dataPtr} />}
+          />
           <ul className="divide-y divide-hairline-2 px-3 font-mono text-11">
             {block.events.map((ev) => (
               <li key={ev.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1">

@@ -175,6 +175,8 @@ export const config = {
   allowExecute: envBool("CTX_ALLOW_EXECUTE", false),
   /** Built-in scenarios execute through their typed lab write; this also runs their approved script (writes twice). */
   allowExecuteBuiltinScripts: envBool("CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS", false),
+  /** Screenshots bypass the text PII vault (a UPN in the image reaches the provider), so vision is opt-in. */
+  visionSendImages: envBool("CTX_VISION_SEND_IMAGES", false),
   mcpTransport: (env("CTX_MCP_TRANSPORT", "in-process") === "stdio" ? "stdio" : "in-process") as "in-process" | "stdio",
   timeouts: {
     hoverMs: envInt("CTX_HOVER_TIMEOUT_MS", 2500),
@@ -257,6 +259,7 @@ export function describeConfig() {
     liveCloudMode: isLiveCloudMode(),
     bootLiveCloudMode: config.liveCloudMode,
     forceLocal: config.forceLocal,
+    visionSendImages: config.visionSendImages,
     mcpTransport: config.mcpTransport,
     providers: Object.values(providers).map((p) => ({ id: p.id, label: p.label, baseUrl: p.baseUrl, hasKey: p.hasKey })),
     models,

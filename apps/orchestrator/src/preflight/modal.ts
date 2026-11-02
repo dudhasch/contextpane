@@ -1,6 +1,6 @@
 import type { VerificationStatus } from "@contextpane/catalog";
 import { config } from "../config.ts";
-import type { PreflightInput } from "./local.ts";
+import { executionSurfaceCheck, type PreflightInput } from "./local.ts";
 
 /**
  * Modal sandbox client (Tier 3B). POSTs the bundle to the validate_remediation
@@ -18,6 +18,9 @@ interface ModalResponse {
   validationLatencyMs?: number;
   findings?: string[];
   checkLatencyMs?: { powershellAst?: number; terraformFmt?: number; terraformValidate?: number };
+  /** AST command names and execution surface; an older deployment sends neither and the text scan applies. */
+  commands?: string[];
+  surface?: unknown;
 }
 
 export function modalConfigured(): boolean {
@@ -83,7 +86,10 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
     const json = (await response.json()) as ModalResponse;
     lastWarmAt = Date.now();
     console.log(`  [modal] pre-flight round trip ${Math.round(performance.now() - started)} ms (sandbox ${json.validationLatencyMs ?? "?"} ms)`);
-    const findings = json.findings ?? [];
+    // The execution-surface rules live here, so the Modal and local pre-flights apply the same ones.
+    const surfaceFindings = executionSurfaceCheck(input.powershellScript, Array.isArray(json.commands) ? { commands: json.commands, surface: json.surface } : null);
+    const findings = [...(json.findings ?? []), ...surfaceFindings];
+    if (surfaceFindings.length) json.astCheckPassed = false;
     const hardFail = json.astCheckPassed === false || json.terraformFmtPassed === false || json.terraformValidatePassed === false;
     const hasIac = input.terraformDiff.trim() !== "";
     const skipped = json.astCheckPassed === null || (hasIac && (json.terraformFmtPassed === null || json.terraformValidatePassed === null));

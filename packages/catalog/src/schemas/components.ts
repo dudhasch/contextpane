@@ -446,6 +446,21 @@ export const SynthesizedDomainSchema = z.enum([
 ]);
 export type SynthesizedDomain = z.infer<typeof SynthesizedDomainSchema>;
 
+/**
+ * Where a synthesized block's values come from. Set by the orchestrator after synthesis
+ * (local/grounding.ts), never taken from the model: "tenant-data" every row or hop names something
+ * in the tenant context, "mixed" some do, "model-estimate" none do (gauge numbers always are).
+ */
+export const BlockProvenanceSchema = z.enum(["tenant-data", "mixed", "model-estimate"]);
+export type BlockProvenance = z.infer<typeof BlockProvenanceSchema>;
+
+/** Orchestrator-owned block fields; whatever a model writes here is overwritten. */
+const blockProvenanceFields = {
+  provenance: BlockProvenanceSchema.optional().describe("Set by the orchestrator; leave unset"),
+  /** ptr:// dataset the block's grounded rows were read from. */
+  dataPtr: z.string().optional().describe("Set by the orchestrator; leave unset"),
+};
+
 export const QuotaGaugeItemSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -463,6 +478,7 @@ export const QuotaGaugeBlockSchema = z.object({
   kind: z.literal("quota-gauges"),
   title: z.string(),
   gauges: z.array(QuotaGaugeItemSchema).min(1).max(8),
+  ...blockProvenanceFields,
 });
 export type QuotaGaugeBlock = z.infer<typeof QuotaGaugeBlockSchema>;
 
@@ -480,6 +496,7 @@ export const PolicyChainBlockSchema = z.object({
   kind: z.literal("policy-chain"),
   title: z.string(),
   hops: z.array(PolicyChainHopSchema).min(1).max(8),
+  ...blockProvenanceFields,
 });
 export type PolicyChainBlock = z.infer<typeof PolicyChainBlockSchema>;
 
@@ -497,6 +514,9 @@ export const DataTableBlockSchema = z.object({
   rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).max(30),
   /** Column whose cell becomes steering.targetResource when the operator clicks a row (U-1); unset: no row steering. */
   rowParamKey: z.string().optional(),
+  ...blockProvenanceFields,
+  /** Rows no tenant data backs (model-authored); they cannot steer the fix. Set by the orchestrator. */
+  ungroundedRows: z.array(z.number().int().nonnegative()).optional().describe("Set by the orchestrator; leave unset"),
 });
 export type DataTableBlock = z.infer<typeof DataTableBlockSchema>;
 
@@ -524,6 +544,7 @@ export const EventStreamBlockSchema = z.object({
   kind: z.literal("event-stream"),
   title: z.string(),
   events: z.array(EventStreamItemSchema).min(1).max(20),
+  ...blockProvenanceFields,
 });
 export type EventStreamBlock = z.infer<typeof EventStreamBlockSchema>;
 

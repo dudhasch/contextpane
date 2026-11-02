@@ -31,6 +31,7 @@ import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.t
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { applyWhatIfGate, runLocalPreflight } from "../preflight/local.ts";
 import { invalidateHoverCache } from "./tier1-hover.ts";
+import { buildGroundingIndex, groundingFindings } from "../local/grounding.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
@@ -172,7 +173,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
             { role: "user", content: JSON.stringify({ context: model, referenceSummary: reference.summary }) },
           ],
           PLAN_TOOL,
-          { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate },
+          { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId } },
         );
         const parsed = PlanArgsSchema.safeParse(clipPlanText(parseToolArguments(result.argumentsRaw)));
         if (!parsed.success) throw new InvalidSchemaError("plan failed validation", formatIssues(parsed.error));
@@ -209,7 +210,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
             },
           ],
           tool,
-          { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
+          { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId } },
         );
         const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
         if (!parsed.success) throw new InvalidSchemaError("bundle failed validation", formatIssues(parsed.error));
@@ -484,8 +485,23 @@ async function preflight(
     }
   }
 
+  applyGroundingCheck(verification, bundle, ctx);
   report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
   return verification;
+}
+
+/**
+ * Review item 8: a custom ticket's script may only target names the tenant context (or the ticket) holds.
+ * An invented target is a finding the approver sees; it downgrades "Verified Safe" but does not fail the
+ * bundle, because a resource the fix creates or one the context did not load can be legitimate.
+ */
+function applyGroundingCheck(verification: VerificationStatus, bundle: Pick<RemediationBundleArgs, "powershellScript" | "terraformDiff">, ctx: CorrelationContext): void {
+  if (!ctx.custom) return;
+  const index = buildGroundingIndex(ctx, { ticketText: `${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}` });
+  const findings = groundingFindings(index, bundle.powershellScript, bundle.terraformDiff);
+  if (!findings.length) return;
+  verification.findings.push(...findings);
+  if (verification.verdict === "Verified Safe") verification.verdict = "Verified With Warnings";
 }
 
 /** Lines in this repository that declare what the fix converges to (Terraform block, golden-tenant JSON). */

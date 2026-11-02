@@ -179,6 +179,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
   const vaultedFields = pii?.piiFieldsVaulted ?? 0;
   const promptsScanned = pii?.promptsScanned ?? 0;
   const rawPiiPromptHits = pii?.rawPiiPromptHits ?? 0;
+  const refusedRehydrations = pii?.refusedRehydrations ?? 0;
 
   return (
     <section className="space-y-3 border-t border-hairline pt-3 text-12" data-testid="omega-prime-telemetry">
@@ -242,6 +243,11 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
           <div className="text-11 text-muted">
             {promptsScanned > 0 ? `${promptsScanned} model prompts scanned after pseudonymisation` : "No model prompt scanned yet"}
           </div>
+          {refusedRehydrations > 0 && (
+            <div className="text-11 text-warning" data-testid="pii-refused-rehydrations">
+              {refusedRehydrations} token{refusedRehydrations === 1 ? "" : "s"} in model replies not rehydrated (not shown to that ticket)
+            </div>
+          )}
         </div>
       </div>
     </section>
