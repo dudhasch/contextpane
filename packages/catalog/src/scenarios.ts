@@ -255,6 +255,8 @@ export const SubAgentTaskRecordSchema = z.object({
   tokensCompletion: z.number().int().nonnegative().optional(),
   /** Write-then-test repair turns this step ran (the coder, U-2); absent when the loop did not run. */
   iterations: z.number().int().nonnegative().optional(),
+  /** Why the step fell back to its deterministic template (a provider error, a rejected reply, model calls off). */
+  fallbackReason: z.string().max(300).optional(),
   inputSummary: z.string(),
   outputSummary: z.string(),
   timestamp: z.string(),

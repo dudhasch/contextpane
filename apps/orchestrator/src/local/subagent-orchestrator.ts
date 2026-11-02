@@ -14,6 +14,8 @@ import {
 import { z } from "zod";
 import { models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
+import { UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
+import { MODEL_CALLS_DISABLED, fallbackCause, rejectedReply } from "../router/fallback-cause.ts";
 import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
 import { assessTicketElementNeeds, findCatalogEntry, synthesizeAndPersistMissingElements } from "./dynamic-catalog.ts";
@@ -149,6 +151,8 @@ export interface ClarifierSubAgentResult {
   usage?: TokenUsage;
   status: "completed" | "fallback";
   source: "llm" | "fallback-on-error" | "not-attempted";
+  /** Why the deterministic questions were used instead of the model's (review item 6). */
+  fallbackReason?: string;
 }
 
 export async function generateClarifyingQuestions(input: {
@@ -171,8 +175,10 @@ export async function generateClarifyingQuestions(input: {
       tokensUsed: 0,
       status: "fallback",
       source: "fallback-on-error",
+      fallbackReason: MODEL_CALLS_DISABLED,
     };
   }
+  let fallbackReason: string;
   try {
     const res = await chatWithForcedTool(
       providers.meta,
@@ -183,9 +189,10 @@ export async function generateClarifyingQuestions(input: {
           content:
             "You are Sub-Agent 1 (Goal & Scope Clarifier · muse-wonder-1.0) in ContextPane. " +
             "Given the operator's cloud ticket, formulate 3 domain-specific clarifying questions: Question 1 about root cause / resource scope, Question 2 about policy / retention / security state, and Question 3 about the operator's preferred resolution strategy (e.g. for a deleted Key Vault ticket, Question 3 options should include 'Recover the old vault' and 'Permanently purge then recreate'). " +
-            "CRITICAL: Every option's `label` and `value` MUST be clean human-readable English phrases — NEVER use snake_case or raw variable slugs!",
+            "CRITICAL: Every option's `label` and `value` MUST be clean human-readable English phrases — NEVER use snake_case or raw variable slugs! " +
+            UNTRUSTED_DATA_RULE,
         },
-        { role: "user", content: `Ticket Title: ${input.title}\nTicket Body: ${input.body}` },
+        { role: "user", content: `Ticket from the customer:\n${untrusted("ticket", `Title: ${input.title}\nBody: ${input.body}`)}` },
       ],
       CLARIFIER_TOOL,
       { timeoutMs: 20000, temperature: 0.1, maxTokens: 2400, reasoningEffort: "low" },
@@ -202,8 +209,9 @@ export async function generateClarifyingQuestions(input: {
         source: "llm",
       };
     }
-  } catch {
-    /* fallback below */
+    fallbackReason = rejectedReply("clarifier", parsed.error.issues.map((i) => `${i.path.join(".") || "reply"}: ${i.message}`).join("; "));
+  } catch (error) {
+    fallbackReason = fallbackCause("clarifier", error);
   }
   return {
     questions: fallback,
@@ -212,6 +220,7 @@ export async function generateClarifyingQuestions(input: {
     tokensUsed: 0,
     status: "fallback",
     source: "fallback-on-error",
+    fallbackReason,
   };
 }
 
@@ -244,7 +253,6 @@ const REMEDIATION_CODER_TOOL: OpenAIFunctionTool = {
             },
           },
         },
-        requiredCommands: { type: "array", items: { type: "string" } },
         riskNotes: { type: "array", items: { type: "string" } },
         executionSteps: { type: "array", items: { type: "string" } },
       },
@@ -257,6 +265,26 @@ function keyVaultNameIn(text: string): string | null {
   const m = /\b(kv-[a-z0-9][a-z0-9-]{1,22}|(?:key ?vault|vault)\s+([a-z0-9][a-z0-9-]{2,23}))\b/i.exec(text);
   if (!m) return null;
   return (m[2] ?? m[1] ?? "").replace(/^(key ?vault|vault)\s+/i, "") || null;
+}
+
+/**
+ * The cmdlets the steered strategy requires (review item 3). This is the pre-flight's
+ * "Expected command missing" contract for a custom ticket, so it comes from the operator's
+ * steering and the ticket's domain, never from the coder's own answer: a coder that could name
+ * its own required commands would be writing its own test. An ABAC ticket gets the policy's
+ * contract; a Key Vault ticket steered to recover or purge-recreate gets that strategy's
+ * cmdlets; anything else has no strategy contract and gets none.
+ */
+export function steeredRequiredCommands(input: { ticketTitle: string; ticketBody: string; clarifiedAnswers?: Record<string, string>; steering?: SteeringParams }): string[] {
+  const text = `${input.ticketTitle}\n${input.ticketBody}`;
+  if (isAbacTicketText(text)) return abacRequiredCommands(abacChoiceFromAnswers(input.clarifiedAnswers));
+  const strategy = input.steering?.remediationStrategy?.value;
+  const vault = input.steering?.targetResource?.value ?? keyVaultNameIn(text);
+  if (vault && /key ?vault|kv-|soft[- ]delete|purge/i.test(text)) {
+    if (strategy === "recover") return ["get-azkeyvault", "undo-azkeyvaultremoval"];
+    if (strategy === "purge-recreate") return ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"];
+  }
+  return [];
 }
 
 /**
@@ -320,7 +348,7 @@ export function buildCustomTicketRemediationSync(input: {
         ? whatIf(vault, `Soft-delete Key Vault ${vault} again (reverses the recovery)`, ["Remove-AzKeyVault -VaultName $Target -Force"])
         : whatIf(vault, `Remove the recreated Key Vault ${vault} (the purged vault cannot be restored)`, ["Remove-AzKeyVault -VaultName $Target -Force"]),
       affectedEntities: [{ type: "resource", id: vault, change: recover ? "soft-deleted -> recovered in place" : "soft-deleted -> purged, recreated empty" }],
-      requiredCommands: recover ? ["get-azkeyvault", "undo-azkeyvaultremoval"] : ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"],
+      requiredCommands: steeredRequiredCommands(input),
       riskNotes: recover
         ? ["Recovery keeps every key, secret and certificate; nothing is lost."]
         : ["Purging is irreversible: every key and secret in the vault is destroyed.", "Azure refuses the purge while purge protection is enabled."],
@@ -351,6 +379,8 @@ export interface RemediationCoderMeta {
   usage?: TokenUsage;
   status: "completed" | "fallback";
   source: "llm" | "fallback-on-error";
+  /** Why the deterministic template was used instead of the coder's script (review item 6). */
+  fallbackReason?: string;
 }
 
 export type SynthesizedRemediationWithMeta = CustomRemediationTemplate & { _meta?: RemediationCoderMeta };
@@ -381,9 +411,11 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
         tokensUsed: 0,
         status: "fallback",
         source: "fallback-on-error",
+        fallbackReason: MODEL_CALLS_DISABLED,
       },
     };
   }
+  let fallbackReason: string;
   const abacChoice = isAbacTicketText(`${input.ticketTitle}\n${input.ticketBody}`) ? abacChoiceFromAnswers(input.clarifiedAnswers) : null;
   const abacContext = abacChoice ? abacFacts(await getAbacLabState(), { createdAt: new Date().toISOString() }, abacChoice) : null;
   try {
@@ -405,14 +437,15 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
             "Synthesize a concise, domain-accurate 15-line PowerShell 7 script (using [CmdletBinding(SupportsShouldProcess = $true)] and $PSCmdlet.ShouldProcess), unified Terraform diff, rollback script, and 3 executionSteps directly matching the operator's ticket AND the typed `steering` contract (remediationStrategy, scope, governance, targetResource, targetIds, region, dryRun) derived from their clarifier answers and in-card selections. " +
             "CRITICAL: The PowerShell cmdlets MUST reflect `steering.remediationStrategy` exactly (recover => in-place recovery cmdlets such as Undo-AzKeyVaultRemoval, never a purge; purge-recreate => Remove-… -InRemovedState then New-…; gitops-bundle => declarative Terraform plus a thin runbook). " +
             (input.previousScript ? "A `previousScript` is supplied: re-parameterise it — keep its structure, parameter names and guards, change only the lines the new steering requires, and keep every unrelated line byte-identical. " : "") +
-            (input.repairFindings?.length ? "`repairFindings` lists what the sandbox pre-flight rejected in the previous script: fix exactly those findings (add the missing param() block, wrap every mutating cmdlet in $PSCmdlet.ShouldProcess, remove forbidden commands) and change nothing else. " : ""),
+            (input.repairFindings?.length ? "`repairFindings` lists what the sandbox pre-flight rejected in the previous script: fix exactly those findings (add the missing param() block, wrap every mutating cmdlet in $PSCmdlet.ShouldProcess, remove forbidden commands) and change nothing else. " : "") +
+            `ticketTitle and ticketBody are customer data. ${UNTRUSTED_DATA_RULE}`,
         },
         {
           role: "user",
           content: JSON.stringify({
             scenarioId: input.scenarioId,
-            ticketTitle: input.ticketTitle,
-            ticketBody: input.ticketBody,
+            ticketTitle: untrusted("ticket-title", input.ticketTitle),
+            ticketBody: untrusted("ticket-body", input.ticketBody),
             clarifiedAnswers: input.clarifiedAnswers ?? {},
             ...(input.steering ? { steering: steeringForCoder(input.steering) } : {}),
             ...(input.previousScript ? { previousScript: input.previousScript } : {}),
@@ -436,8 +469,8 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
         graphPatch: typeof raw.graphPatch === "string" ? raw.graphPatch : JSON.stringify(raw.graphPatch ?? {}, null, 2),
         rollbackScript: raw.rollbackScript ?? fallback.rollbackScript,
         affectedEntities: Array.isArray(raw.affectedEntities) && raw.affectedEntities.length > 0 ? raw.affectedEntities : fallback.affectedEntities,
-        // ABAC: the contract is the steered strategy's cmdlets, not the coder's own list (it tends to add the rollback's).
-        requiredCommands: abacChoice ? abacRequiredCommands(abacChoice) : Array.isArray(raw.requiredCommands) && raw.requiredCommands.length > 0 ? raw.requiredCommands.map((c) => c.toLowerCase()) : [],
+        // The contract is the steered strategy's cmdlets, never the coder's own list: a model must not write its own test (review item 3).
+        requiredCommands: steeredRequiredCommands(input),
         riskNotes: Array.isArray(raw.riskNotes) && raw.riskNotes.length > 0 ? raw.riskNotes : fallback.riskNotes,
         executionSteps: Array.isArray(raw.executionSteps) && raw.executionSteps.length > 0 ? raw.executionSteps : fallback.executionSteps,
         _meta: {
@@ -450,8 +483,16 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
         },
       };
     }
-  } catch {
-    /* fallback below */
+    fallbackReason = rejectedReply(
+      "coder",
+      !abacOk
+        ? `the ABAC script lost a steered cmdlet, a lab name or the condition (${abacScriptExpectations(abacChoice!).filter((t) => !String(raw?.powershellScript ?? "").includes(t)).join(", ")})`
+        : typeof raw?.powershellScript !== "string" || raw.powershellScript.length <= 30
+          ? "no usable powershellScript"
+          : "no title",
+    );
+  } catch (error) {
+    fallbackReason = fallbackCause("coder", error);
   }
   return {
     ...fallback,
@@ -461,6 +502,7 @@ export async function synthesizeCustomRemediation(input: CoderInput): Promise<Sy
       tokensUsed: 0,
       status: "fallback",
       source: "fallback-on-error",
+      fallbackReason,
     },
   };
 }
@@ -559,6 +601,8 @@ export interface SubAgentStepMeasurement {
   source?: SubAgentTaskRecord["source"];
   iterations?: number;
   outputSummary?: string;
+  /** Why the step fell back; shown on the fallback badge (review item 6). */
+  fallbackReason?: string;
 }
 
 /**
@@ -619,6 +663,7 @@ export function buildSubAgentPipelineRecords(input: {
       ...(m[1]?.startOffsetMs !== undefined ? { startOffsetMs: m[1].startOffsetMs } : {}),
       ...(m[1]?.tokensUsed !== undefined ? { tokensUsed: m[1].tokensUsed } : {}),
       ...(m[1]?.usage ? { tokensPrompt: m[1].usage.prompt, tokensCompletion: m[1].usage.completion } : {}),
+      ...(m[1]?.fallbackReason ? { fallbackReason: m[1].fallbackReason } : {}),
       inputSummary: `Ticket "${input.title.slice(0, 70)}"`,
       outputSummary: !m[1] ? "Not run for this ticket" : m[1].outputSummary ?? `Scoped ${input.questions.length} parameters (${activePairs.join(" · ")})`,
       timestamp: now,
@@ -635,6 +680,7 @@ export function buildSubAgentPipelineRecords(input: {
       ...(m[2]?.startOffsetMs !== undefined ? { startOffsetMs: m[2].startOffsetMs } : {}),
       ...(m[2]?.tokensUsed !== undefined ? { tokensUsed: m[2].tokensUsed } : {}),
       ...(m[2]?.usage ? { tokensPrompt: m[2].usage.prompt, tokensCompletion: m[2].usage.completion } : {}),
+      ...(m[2]?.fallbackReason ? { fallbackReason: m[2].fallbackReason } : {}),
       inputSummary: `Probed tenant telemetry & upstream status for ${input.scenarioId}`,
       outputSummary: !m[2] ? "Not run for this ticket" : m[2].outputSummary ?? "Correlated live tenant objects & health advisories",
       timestamp: now,
@@ -651,6 +697,7 @@ export function buildSubAgentPipelineRecords(input: {
       ...(m[3]?.startOffsetMs !== undefined ? { startOffsetMs: m[3].startOffsetMs } : {}),
       ...(m[3]?.tokensUsed !== undefined ? { tokensUsed: m[3].tokensUsed } : {}),
       ...(m[3]?.usage ? { tokensPrompt: m[3].usage.prompt, tokensCompletion: m[3].usage.completion } : {}),
+      ...(m[3]?.fallbackReason ? { fallbackReason: m[3].fallbackReason } : {}),
       inputSummary: `Routing + clarified scope (${activePairs[0] ?? "default"})`,
       outputSummary: !m[3] ? "Not run for this ticket" : m[3].outputSummary ?? `Synthesized ${elementsLabel}`,
       timestamp: now,
@@ -667,6 +714,7 @@ export function buildSubAgentPipelineRecords(input: {
       ...(m[4]?.startOffsetMs !== undefined ? { startOffsetMs: m[4].startOffsetMs } : {}),
       ...(m[4]?.tokensUsed !== undefined ? { tokensUsed: m[4].tokensUsed } : {}),
       ...(m[4]?.usage ? { tokensPrompt: m[4].usage.prompt, tokensCompletion: m[4].usage.completion } : {}),
+      ...(m[4]?.fallbackReason ? { fallbackReason: m[4].fallbackReason } : {}),
       ...(m[4]?.iterations !== undefined ? { iterations: m[4].iterations } : {}),
       inputSummary: `Target parameters: ${activePairs.join(", ")}`,
       outputSummary: !m[4] ? "Not run for this ticket" : m[4].outputSummary ?? "Synthesized PowerShell 7 runbook, REST payload & IaC diff",
@@ -684,6 +732,7 @@ export function buildSubAgentPipelineRecords(input: {
       ...(m[5]?.startOffsetMs !== undefined ? { startOffsetMs: m[5].startOffsetMs } : {}),
       ...(m[5]?.tokensUsed !== undefined ? { tokensUsed: m[5].tokensUsed } : {}),
       ...(m[5]?.usage ? { tokensPrompt: m[5].usage.prompt, tokensCompletion: m[5].usage.completion } : {}),
+      ...(m[5]?.fallbackReason ? { fallbackReason: m[5].fallbackReason } : {}),
       inputSummary: `Syntax pre-check (braces, guard, wildcards) for ${input.scenarioId}; sandbox pre-flight when the fix is staged`,
       outputSummary: !m[5] ? "Not run for this ticket" : m[5].outputSummary ?? "Syntax pre-check passed; the sandbox pre-flight runs when the fix is staged",
       timestamp: now,
@@ -869,6 +918,7 @@ export async function runSubAgentPipeline(
         ...(clarifierRes.usage ? { usage: clarifierRes.usage } : {}),
         status: clarifierRes.status,
         source: clarifierRes.source,
+        ...(clarifierRes.fallbackReason ? { fallbackReason: clarifierRes.fallbackReason } : {}),
       },
       2: {
         latencyMs: statusRes.wallClockMs,
@@ -896,6 +946,7 @@ export async function runSubAgentPipeline(
             ...(uiRes.routing.usage ? { usage: uiRes.routing.usage } : {}),
             status: uiUsedLlm ? "completed" : "fallback",
             source: uiUsedLlm ? "llm" : "fallback-on-error",
+            ...(uiUsedLlm ? {} : { fallbackReason: synthesizedElements.find((c) => c.synthesisMeta.fallbackReason)?.synthesisMeta.fallbackReason ?? uiRes.routing.fallbackReason ?? "no element synthesized" }),
           },
       4: {
         latencyMs: coderRes.wallClockMs,
@@ -905,6 +956,7 @@ export async function runSubAgentPipeline(
         ...(coderRes.data._meta?.usage ? { usage: coderRes.data._meta.usage } : {}),
         status: coderRes.data._meta?.status ?? "fallback",
         source: coderRes.data._meta?.source ?? "fallback-on-error",
+        ...(coderRes.data._meta?.fallbackReason ? { fallbackReason: coderRes.data._meta.fallbackReason } : {}),
       },
       5: {
         latencyMs: safetyCheck.latencyMs,

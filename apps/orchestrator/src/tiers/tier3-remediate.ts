@@ -29,11 +29,13 @@ import { config, isLiveCloudMode, models, providers } from "../config.ts";
 import { applyScenarioState, type LabWriteOutcome } from "../local/lab.ts";
 import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
-import { checkWhatIfSafety, runLocalPreflight } from "../preflight/local.ts";
+import { applyWhatIfGate, runLocalPreflight } from "../preflight/local.ts";
+import { invalidateHoverCache } from "./tier1-hover.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { withUntrustedRule } from "../router/untrusted.ts";
 import { syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
 import { patchCustomTicketPipeline } from "../local/custom-ticket.ts";
 import { runRepairLoop } from "./repair-loop.ts";
@@ -166,7 +168,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           providers.meta,
           step.modelId,
           [
-            { role: "system", content: PLANNER_PROMPT },
+            { role: "system", content: withUntrustedRule(PLANNER_PROMPT) },
             { role: "user", content: JSON.stringify({ context: model, referenceSummary: reference.summary }) },
           ],
           PLAN_TOOL,
@@ -195,7 +197,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           providers.meta,
           step.modelId,
           [
-            { role: "system", content: CODER_PROMPT },
+            { role: "system", content: withUntrustedRule(CODER_PROMPT) },
             {
               role: "user",
               content: JSON.stringify({
@@ -472,14 +474,8 @@ async function preflight(
     report("preflight:start", `Pre-flight: PowerShell AST parse${bundle.terraformDiff ? " + terraform fmt/validate" : ""} (local)`);
     verification = await runLocalPreflight(input);
   }
-  const whatIf = checkWhatIfSafety(bundle.powershellScript);
-  verification.whatIfSafe = whatIf.safe;
-  if (!whatIf.safe) {
-    verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
-    if (verification.verdict === "Verified Safe") {
-      verification.verdict = "Verified With Warnings";
-    }
-  }
+  // An unguarded mutation fails the bundle; a read-only script without the guard only warns.
+  applyWhatIfGate(verification, bundle.powershellScript);
   // The delegated executor runs pwsh 7 only; without the header the same script would also start under Windows PowerShell 5.1.
   if (bundle.powershellScript.trim() && !/^\s*#Requires\s+-Version\s+7(\.\d+)?\b/im.test(bundle.powershellScript)) {
     verification.findings.push("PowerShell 7 header missing: add '#Requires -Version 7.0' (the executor runs pwsh 7 only)");
@@ -1026,6 +1022,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   }
 
   remediationStore.save(updated);
+  // The approval may have changed tenant state (live or lab write): drop the scenario's cached hover answers (review item 5).
+  invalidateHoverCache(drawer.ticketId);
   const latencyMs = Math.round(performance.now() - started);
   // Only a live write converges the canvas; a staged GitOps patch leaves the drift visible until the pipeline runs.
   // A custom bundle that was staged but not executed changed nothing, so its ticket stays open (L-02).

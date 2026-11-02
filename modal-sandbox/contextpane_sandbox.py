@@ -5,7 +5,9 @@ Deploys a web endpoint that validates a Tier 3 remediation bundle in an isolated
 container, exactly like the local pre-flight in apps/orchestrator/src/preflight/local.ts:
 
   * PowerShell 7 AST parse of the remediation script via
-    [System.Management.Automation.Language.Parser]::ParseInput() (+ cmdlet allow-list)
+    [System.Management.Automation.Language.Parser]::ParseInput() and the shared rule set in
+    packages/catalog/src/preflight-rules.json (allow-list, forbidden commands, destructive
+    wildcards: all hard failures, exactly as in the local pre-flight)
   * unified diff applied to the live NSG state must reproduce the Terraform baseline
   * `terraform fmt -check` and `terraform validate` on the patched state
 
@@ -70,6 +72,8 @@ image = (
         f"cd {TF_WORKDIR} && TF_PLUGIN_CACHE_DIR=/opt/tfcache CHECKPOINT_DISABLE=1 terraform init -backend=false -input=false -no-color",
     )
     .pip_install("fastapi[standard]", "unidiff==0.7.5")
+    # The rule set the local pre-flight enforces too (packages/catalog/src/preflight-rules.json): one list, two sandboxes.
+    .add_local_file(str(Path(__file__).resolve().parent.parent / "packages" / "catalog" / "src" / "preflight-rules.json"), "/root/preflight-rules.json")
 )
 
 with image.imports():
@@ -79,7 +83,23 @@ app = modal.App("contextpane-sandbox", image=image)
 
 SANDBOX_PROVIDER = "modal-cloud-sandbox"
 
-FORBIDDEN = {"invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod"}
+
+
+def _load_rules() -> dict:
+    """The shared rule set: next to this file inside the Modal image, under packages/catalog/src in a checkout."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "preflight-rules.json", here.parent / "packages" / "catalog" / "src" / "preflight-rules.json"):
+        if candidate.exists():
+            return json.loads(candidate.read_text(encoding="utf-8"))
+    raise FileNotFoundError("preflight-rules.json not found next to the sandbox or in packages/catalog/src")
+
+
+RULES = _load_rules()
+ALLOWED_VERBS = {v.lower() for v in RULES["allowedVerbs"]}
+ALLOWED_COMMANDS = set(RULES["allowedCommands"])
+FORBIDDEN = set(RULES["forbiddenCommands"])
+DESTRUCTIVE = [re.compile(p, re.IGNORECASE) for p in RULES["destructivePatterns"]]
+HARD_FAIL_PREFIXES = ("Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list")
 REQUIRED = {"set-mguserlicense"}
 
 # One request per stdin line (the script as base64), one compressed JSON report per stdout line.
@@ -175,16 +195,26 @@ def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] 
     findings: list[str] = []
     for err in report.get("parseErrors", []):
         findings.append(f"AST parse error: {err}")
-    lowered = [c.lower() for c in report.get("commands", [])]
-    for bad in FORBIDDEN:
+    commands = report.get("commands", [])
+    lowered = [c.lower() for c in commands]
+    for bad in sorted(FORBIDDEN):
         if bad in lowered:
             findings.append(f"Forbidden command: {bad}")
     for req in required if required is not None else REQUIRED:
         if req not in lowered:
             findings.append(f"Expected command missing: {req}")
+    for cmd in commands:
+        if "-" not in cmd:
+            continue
+        lower = cmd.lower()
+        if lower.split("-")[0] not in ALLOWED_VERBS and lower not in ALLOWED_COMMANDS and lower not in FORBIDDEN:
+            findings.append(f"Verb outside allow-list: {cmd}")
+    if any(p.search(script) for p in DESTRUCTIVE):
+        findings.append("Destructive wildcard command detected (e.g. Remove-MgUser -All or unscoped Remove-AzResource -Force)")
     if not report.get("supportsShouldProcess"):
         findings.append("Script does not declare SupportsShouldProcess (-WhatIf unsupported)")
-    passed = not report.get("parseErrors") and not any(f.startswith(("Forbidden", "Expected command missing")) for f in findings)
+    # Same hard failures as the local pre-flight: allow-list, forbidden, steered commands, destructive wildcards.
+    passed = not report.get("parseErrors") and not any(f.startswith(HARD_FAIL_PREFIXES) for f in findings)
     return passed, findings
 
 

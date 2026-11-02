@@ -567,6 +567,8 @@ export const SynthesizedDynamicCardSchema = z.object({
     synthesizedAt: z.string(),
     /** "llm" when muse-wonder produced the card, "fallback" for the deterministic template. */
     source: z.enum(["llm", "fallback"]).optional(),
+    /** Why the template was used instead of a synthesized card. */
+    fallbackReason: z.string().max(300).optional(),
   }),
   sourceRef: SourceRefSchema.nullable().default(null),
 });
