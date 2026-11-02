@@ -4,6 +4,7 @@ import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInline
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled } from "../router/openai.ts";
 import { UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
+import { MODEL_CALLS_DISABLED, fallbackCause, rejectedReply } from "../router/fallback-cause.ts";
 
 export interface DynamicCatalogEntry {
   elementId: string; title: string; domain: SynthesizedDynamicCard["domain"]; reason: string;
@@ -192,10 +193,11 @@ export async function assessTicketElementNeeds(input: {
   matchedSeededComponents: string[];
   clarifiedAnswers?: Record<string, string>;
   timeoutMs?: number;
-}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error" }> {
+}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error"; fallbackReason?: string }> {
   const started = performance.now();
   const fallback = buildDeterministicRoutingDecision(input);
   const gatekeeperModel = models.metaCatalog;
+  let fallbackReason = MODEL_CALLS_DISABLED;
   if (metaCallsEnabled()) {
     try {
       const res = await chatWithForcedTool(
@@ -225,8 +227,9 @@ export async function assessTicketElementNeeds(input: {
           source: "llm",
         };
       }
-    } catch {
-      /* fallback below */
+      fallbackReason = rejectedReply("gatekeeper", parsed.success ? "no missing element named" : parsed.error.issues.map((i) => `${i.path.join(".") || "reply"}: ${i.message}`).join("; "));
+    } catch (error) {
+      fallbackReason = fallbackCause("gatekeeper", error);
     }
   }
   return {
@@ -235,11 +238,12 @@ export async function assessTicketElementNeeds(input: {
     latencyMs: Math.max(1, Math.round(performance.now() - started)),
     tokensUsed: 0,
     source: "fallback-on-error",
+    fallbackReason,
   };
 }
 
 /** The deterministic template card. It is never persisted, so it points at no stub (L-03). */
-function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: string, synthesizerModel: string, latencyMs: number): SynthesizedDynamicCard {
+function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: string, synthesizerModel: string, latencyMs: number, fallbackReason?: string): SynthesizedDynamicCard {
   const nowIso = new Date().toISOString();
   return {
     elementId: missing.elementId,
@@ -257,7 +261,7 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
       { kind: "event-stream", title: "Activity & Audit Log", events: [{ id: "ev1", timestamp: nowIso, operation: "Control-plane check", status: "Warning", code: "DiagnosticEvent", caller: "ControlPlane", detail: truncateAtWord(missing.reason, 160) }] },
     ],
     recommendedActions: [{ id: "stage-fix", label: "Stage Remediation Fix", description: missing.reason.slice(0, 140), command: "Get-AzResource -WhatIf", kind: "stage-fix" }],
-    synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: "", synthesizedAt: nowIso, source: "fallback" },
+    synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: "", synthesizedAt: nowIso, source: "fallback", ...(fallbackReason ? { fallbackReason } : {}) },
     sourceRef: null,
   };
 }
@@ -331,6 +335,7 @@ export async function synthesizeAndPersistMissingElements(input: {
     }
     let card: SynthesizedDynamicCard | null = null;
     let tokens = { prompt: 0, completion: 0, total: 0 };
+    let synthFallbackReason: string = MODEL_CALLS_DISABLED;
     if (metaCallsEnabled()) {
       try {
         const res = await chatWithForcedTool(
@@ -386,14 +391,15 @@ export async function synthesizeAndPersistMissingElements(input: {
         };
         const parsed = SynthesizedDynamicCardSchema.safeParse(candidate);
         if (parsed.success && parsed.data.blocks.length >= 2) card = parsed.data;
-      } catch {
-        /* fallback below */
+        else synthFallbackReason = rejectedReply("synthesizer", parsed.success ? `only ${parsed.data.blocks.length} block(s)` : parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".") || "card"}: ${i.message}`).join("; "));
+      } catch (error) {
+        synthFallbackReason = fallbackCause("synthesizer", error);
       }
     }
     const latencyMs = Math.max(1, Math.round(performance.now() - started));
     if (!card) {
       // No synthesis happened: the template is shown, and the catalog is left alone.
-      results.push(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs));
+      results.push(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs, synthFallbackReason));
       continue;
     }
     // Card copy is slug-cleaned once here, before it is persisted and served (WP8).

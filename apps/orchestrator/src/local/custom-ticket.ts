@@ -773,6 +773,7 @@ export async function steerCustomTicket(
         modelId: coder.modelUsed,
         status: coder.status,
         source: coder.source,
+        fallbackReason: coder.fallbackReason?.slice(0, 300),
         latencyMs: coder.latencyMs,
         tokensUsed: coder.tokensUsed,
         ...(coder.usage ? { tokensPrompt: coder.usage.prompt, tokensCompletion: coder.usage.completion } : {}),
