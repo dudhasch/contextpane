@@ -153,7 +153,7 @@ describe("JSON line provenance", () => {
   });
 });
 
-describe("ptr:// v3 generation fencing, columnar bitmap index, order-preserving HMAC & IB scorer", () => {
+describe("ptr:// v3 generation fencing, columnar bitmap index, order-preserving digest & IB scorer", () => {
   test("generation & tenant fence fails closed on stale epochs and cross-tenant pointers", () => {
     const epochBefore = getDataPlaneEpoch();
     const rows = [

@@ -47,7 +47,6 @@ export {
   computeBurstiness,
   computeLog2RowBucket,
   createPiiVault,
-  createPseudonymVault,
   fencedDataPtr,
   getDataPlaneEpoch,
   getDataPlaneGeneration,
@@ -306,13 +305,10 @@ function createPiiVaultForValue(_value: unknown): PiiVault {
   const snap = [...latest.values()].at(-1);
   return snap?.piiVault ?? sessionPiiVault;
 }
-export function unvaultForLlm(value: unknown, vault?: PiiVault): unknown {
+export function depseudonymizeForLlm(value: unknown, vault?: PiiVault): unknown {
   const v = vault ?? [...latest.values()].at(-1)?.piiVault ?? sessionPiiVault;
   return v.depseudonymize(value);
 }
-export const depseudonymizeForLlm = unvaultForLlm;
-export function vaultPii(value: unknown, vault?: PiiVault): unknown { return pseudonymizeForLlm(value, vault); }
-export function unvaultPii(value: unknown, vault?: PiiVault): unknown { return unvaultForLlm(value, vault); }
 
 /** Rows behind a pointer (plain or ptr:// v2/v3 relational query), from the latest snapshot of its scenario. */
 export function resolveDataPtr(
