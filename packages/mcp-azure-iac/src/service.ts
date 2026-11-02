@@ -420,7 +420,7 @@ export const azureIacService = {
   },
 
   /**
-   * Snapshot-driven restore (U-5): the live NSG is put back to the captured rule set and tags
+   * Snapshot-driven restore: the live NSG is put back to the captured rule set and tags
    * (rules the fix added are deleted, captured ones re-put), through the same ARM calls as the
    * forward write. Simulated outside live mode.
    */

@@ -250,7 +250,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       ...(bundle.terraformDiff ? { terraformDiff: bundle.terraformDiff } : {}),
     });
 
-    /* ---- pre-flight, then write-then-test: sandbox findings go back to the coder, at most 2 turns (U-2) ---- */
+    /* ---- pre-flight, then write-then-test: sandbox findings go back to the coder, at most 2 turns ---- */
     const firstPass = await preflight(bundle, ctx, plan, report);
     const loop = await runRepairLoop({
       bundle,
@@ -352,7 +352,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       staging,
       approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },
       providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
-      // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on (U-1).
+      // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on.
       ...(ctx.custom?.steering ? { steering: { version: ctx.custom.steering.version, digest: ctx.custom.steering.digest } } : {}),
       ...(typed?.action ? { typedAction: typed.action } : {}),
     });
@@ -384,7 +384,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     const fallbackPlan = buildRemediationPlan(fallbackCtx);
     const fallbackBundle = fallbackPlan.bundle;
     const latencyMs = Math.round(performance.now() - started);
-    // Nothing was checked on this path, so nothing may claim to have passed (L-01).
+    // Nothing was checked on this path, so nothing may claim to have passed.
     const fallbackVerification = preflightNotRunVerification(unexpectedError);
     const drawer = ActionApprovalDrawerSchema.parse({
       remediationId,
@@ -857,7 +857,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let writeSummary = "";
   let write: LabWriteOutcome | null = null;
   let verification = drawer.verificationStatus;
-  // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
+  // the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
   const abacTicket = before?.custom ? isAbacTicketText(`${before.custom.ticket.title}\n${before.custom.ticket.body}`) : false;
   // Drawers staged before typed actions existed still execute their ABAC grant through the catalog.
   const typedAction = drawer.typedAction ?? (before ? clarifierTypedAction(before) : null);
@@ -911,7 +911,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         log.push(...script.log);
       }
       if (scriptRan?.ok) {
-        // Exit code 0 is not "executed": the read-back probe against the pre-change snapshot decides (HARD_CASES 2).
+        // Exit code 0 is not "executed": the read-back probe against the pre-change snapshot decides.
         invalidateContext(scenarioId);
         let changed: string[] | null = null;
         if (preSnapshot) {
@@ -946,7 +946,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       }
     } else if (labScenarioId) {
       // The lab write runs in every mode; outside live mode the services simulate it and the in-process lab state
-      // follows, so the read-back probe and the inverse have something real to compare against (U-5).
+      // follows, so the read-back probe and the inverse have something real to compare against.
       // The typed lab write below is the executor for a built-in scenario; running its script on top would write twice.
       if (isLiveCloudMode() && config.allowExecute && config.allowExecuteBuiltinScripts) {
         log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS → running the approved script as the executor identity");
@@ -1023,7 +1023,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   remediationStore.save(updated);
   const latencyMs = Math.round(performance.now() - started);
   // Only a live write converges the canvas; a staged GitOps patch leaves the drift visible until the pipeline runs.
-  // A custom bundle that was staged but not executed changed nothing, so its ticket stays open (L-02).
+  // A custom bundle that was staged but not executed changed nothing, so its ticket stays open.
   const stagedCustomOnly = isCustomScenarioId(drawer.ticketId) && state !== "executed";
   const convergence: Convergence | null =
     mode === "break-glass" && !stagedCustomOnly
@@ -1080,7 +1080,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
 }
 
 /**
- * Re-stages a pending drawer after the ticket was steered (U-1): the bundle is rebuilt from the
+ * Re-stages a pending drawer after the ticket was steered: the bundle is rebuilt from the
  * entry's re-parameterised remediation, the real pre-flight runs again and the drawer records the
  * steering version it now matches. An approved or executed drawer is never rewritten.
  */
@@ -1091,7 +1091,7 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   if (drawer.approval.state !== "pending") return drawer;
   const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
   const plan = buildRemediationPlan(ctx);
-  // Same write-then-test as the first staging (U-2): sandbox findings on the steered script go back to the coder.
+  // Same write-then-test as the first staging: sandbox findings on the steered script go back to the coder.
   const firstPass = await preflight(plan.bundle, ctx, plan, () => {});
   const loop = await runRepairLoop({
     bundle: plan.bundle,
@@ -1132,9 +1132,8 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   return updated;
 }
 
-/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the executor identity. */
 /**
- * Auto-Fix (L-08): repairs the ShouldProcess guard on the server, re-runs the real pre-flight
+ * Auto-Fix: repairs the ShouldProcess guard on the server, re-runs the real pre-flight
  * against fresh context and stores whatever verdict it returns. Nothing is marked passed
  * that the pre-flight did not pass.
  */
@@ -1165,7 +1164,7 @@ export async function autofixRemediation(remediationId: string): Promise<ActionA
 }
 
 /**
- * Override (L-08): the operator approves a bundle whose pre-flight did not pass. The checks
+ * Override: the operator approves a bundle whose pre-flight did not pass. The checks
  * keep their real results; the verdict becomes "Overridden" and the justification is audited.
  */
 export function overrideRemediation(remediationId: string, justification: string, operator?: string): ActionApprovalDrawer {
@@ -1193,6 +1192,7 @@ export function overrideRemediation(remediationId: string, justification: string
   return updated;
 }
 
+/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the executor identity. */
 async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: boolean; log: string[] }> {
   return runScriptText(drawer.powershellScript, `Invoke-Remediate-${drawer.ticketId}`);
 }

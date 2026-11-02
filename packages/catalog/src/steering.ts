@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Steering contract (U-1).
+ * Steering contract.
  *
  * One typed object carries everything the operator steered: the clarifier pills, a row
  * clicked inside a synthesized card, a card action that sets parameters, or a value typed

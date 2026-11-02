@@ -494,7 +494,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       return [q.id, matched ? matched.label : raw];
     }),
   );
-  // The typed steering the deterministic coder reads (U-1): version 0, every answer sourced from the clarifier.
+  // The typed steering the deterministic coder reads: version 0, every answer sourced from the clarifier.
   const steering = deriveSteeringFromAnswers(clarifyingQuestions, initialAnswers, { now: createdAt });
 
   const t4Start = performance.now();
@@ -525,7 +525,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
     gatekeeperModel: "deterministic-router",
     synthesizerModel: "deterministic-template",
-    // The sync path makes zero model calls: S1/S3/S4 ran their deterministic templates (L-06).
+    // The sync path makes zero model calls: S1/S3/S4 ran their deterministic templates.
     measurements: {
       1: { latencyMs: t1Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
       2: { latencyMs: t2Ms, modelId: "cloud-status (seeded, sync)", status: "completed", source: "mcp-probe", tokensUsed: 0 },
@@ -692,11 +692,11 @@ export interface SteerOutcome {
 }
 
 /**
- * Steering that moves code (U-1): one pill toggle, row click or typed parameter becomes a new
+ * Steering that moves code: one pill toggle, row click or typed parameter becomes a new
  * SteeringParams version, and exactly one coder call re-parameterises the current script against
  * it. The synthesized card's config-diff block is rewritten from the real script diff, so the
  * card and the PowerShell tab agree without a second Wonder call; `rerun: "coder+ui"` adds the
- * card synthesis on request (HARD_CASES 3).
+ * card synthesis on request.
  */
 export async function steerCustomTicket(
   scenarioId: string,
@@ -808,7 +808,7 @@ export async function steerCustomTicket(
 
 /**
  * Lets the remediation tier write what really happened to a ticket's pipeline records (the coder's
- * repair iterations, the sandbox verdict) once the fix was staged (U-2). No-op for built-in scenarios.
+ * repair iterations, the sandbox verdict) once the fix was staged. No-op for built-in scenarios.
  */
 export function patchCustomTicketPipeline(scenarioId: string, patch: (tasks: SubAgentTaskRecord[]) => SubAgentTaskRecord[]): CustomScenarioEntry | null {
   const existing = getCustomScenario(scenarioId);

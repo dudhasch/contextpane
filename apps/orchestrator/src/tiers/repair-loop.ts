@@ -13,7 +13,7 @@ import type { CorrelationContext } from "../mcp/context.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
 
 /**
- * Write-then-test (U-2): the sandbox is the test harness and the coder is the loop body.
+ * Write-then-test: the sandbox is the test harness and the coder is the loop body.
  *
  * `remediate()` runs the real pre-flight (pwsh AST + cmdlet allow-list + -WhatIf proof +
  * terraform validate, in the Modal sandbox when configured). When that pre-flight returns
@@ -27,7 +27,7 @@ import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router
  * What the loop never does: it never changes a verdict itself. The verdict is always the last
  * thing the sandbox said; when the budget is exhausted with findings left, the drawer opens as
  * the sandbox left it (Verification Failed / With Warnings) and `repair.exhausted` is true
- * (L-01 stays: no forced verdicts). Findings that no script change can fix (the sandbox was
+ * (no forced verdicts). Findings that no script change can fix (the sandbox was
  * unavailable, terraform is not installed, git staging was skipped) do not start a turn.
  */
 

@@ -378,7 +378,7 @@ app.post("/api/tickets/triage-custom", async (c) => {
   const idempotency = verifyIdempotency(entry.baseScenarioId ?? entry.scenarioId);
   const timeline = getTimeline(entry.baseScenarioId ?? entry.scenarioId);
   const latencyMs = Math.round(performance.now() - started);
-  // Provider, model and tokens come from what the sub-agents actually did; no constant savings (L-06, M-02).
+  // Provider, model and tokens come from what the sub-agents actually did; no constant savings.
   const pipeline = telemetryFromSubAgentTasks(entry.subAgentTasks ?? []);
   const event = telemetry.record({
     requestId: telemetry.nextRequestId("t0"),
@@ -509,7 +509,7 @@ app.post("/api/tickets/:scenarioId/refine-goal", async (c) => {
 const SteerBodySchema = SteeringDeltaSchema.extend({ rerun: z.enum(["coder", "coder+ui"]).optional() });
 
 /**
- * Steering that moves code (U-1): a clarifier pill, a lens row click or a typed parameter becomes a
+ * Steering that moves code: a clarifier pill, a lens row click or a typed parameter becomes a
  * new steering version; one coder call re-parameterises the script (the previous script is its diff
  * base), the pending drawer is re-staged through the real pre-flight, and the card's config-diff
  * block shows the diff. The System & Audit drawer sees the call with its real tokens.
@@ -564,7 +564,7 @@ app.patch("/api/tickets/:scenarioId/steer", async (c) => {
 app.get("/api/dynamic-catalog", (c) => {
   const catalog = loadDynamicCatalog();
   const auditLog = loadSynthesizedElementsLog();
-  // Template cards live only in memory (HARD_CASES 1): the HUD lists them from the custom-ticket registry, labelled as templates.
+  // Template cards live only in memory: the HUD lists them from the custom-ticket registry, labelled as templates.
   const templateCards = listCustomScenarios().flatMap((entry) =>
     (entry.synthesizedElements ?? [])
       .filter((card) => card.synthesisMeta.source !== "llm")
@@ -760,9 +760,9 @@ app.get("/api/formal/:scenarioId", (c) => {
 });
 
 /**
- * Revert (U-5): the inverse is derived from the pre-change snapshot the approval captured and
+ * Revert: the inverse is derived from the pre-change snapshot the approval captured and
  * executed through the same write path approve used; the console prints the server's log and
- * the read-back against the snapshot. Nothing is claimed that did not happen (L-09).
+ * the read-back against the snapshot. Nothing is claimed that did not happen.
  */
 app.post("/api/rollback", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { scenarioId?: string; approvedBy?: string };
@@ -1025,11 +1025,11 @@ const approveHandler = async (c: Context) => {
   const scenarioId = drawer.ticketId;
   const liveWriteApplied = drawer.approval.state === "executed";
   const drill = body.simulateCanaryFailure === true;
-  // No canary for an approval that wrote nothing: there is no change in the tenant to probe (HARD_CASES 4).
+  // No canary for an approval that wrote nothing: there is no change in the tenant to probe.
   // A rollback drill still runs so the operator can see the dead-man's switch, labelled as a drill.
   if (!liveWriteApplied && !drill) return c.json({ drawer, convergence, canary: null });
   const canaryTarget = baseScenarioOf(scenarioId) ?? scenarioId;
-  // A drill after a live write reverts first through the snapshot inverse (U-5), so the canary reports what happened, not the request flag (M-15).
+  // A drill after a live write reverts first through the snapshot inverse, so the canary reports what happened, not the request flag.
   const preSnapshot = convergenceStore.snapshot(scenarioId);
   const revertRun =
     drill && liveWriteApplied && preSnapshot
@@ -1050,7 +1050,7 @@ const approveHandler = async (c: Context) => {
   if (canary.finalState === "AUTO_ROLLED_BACK") {
     convergenceStore.clear(scenarioId, drawer.tenantId);
     invalidateContext(scenarioId);
-    // Wording keyed on what executed: a drill without a live write reverted nothing (HARD_CASES 6).
+    // Wording keyed on what executed: a drill without a live write reverted nothing.
     const failedWrites = revertWrite?.results.filter((r) => !r.ok).map((r) => `${r.id}: HTTP ${r.status}`).join(", ");
     const rollbackLog = revertWrite
       ? revertLanded

@@ -366,11 +366,11 @@ export const VerificationStatusSchema = z.object({
     .object({ powershellAst: z.number().optional(), terraformFmt: z.number().optional(), terraformValidate: z.number().optional() })
     .optional()
     .describe("Per-check time inside the sandbox"),
-  /** The cheap regex pre-check that ran before the sandbox; never a verdict on its own (U-2). */
+  /** The cheap regex pre-check that ran before the sandbox; never a verdict on its own. */
   precheck: z
     .object({ name: z.literal("syntax-heuristic"), passed: z.boolean(), warnings: z.array(z.string().max(300)).default([]), latencyMs: z.number().int().nonnegative() })
     .optional(),
-  /** Write-then-test loop (U-2): sandbox findings fed back to the coder, at most maxIterations repair turns before the drawer opened. */
+  /** Write-then-test loop: sandbox findings fed back to the coder, at most maxIterations repair turns before the drawer opened. */
   repair: RepairLoopSchema.optional(),
 });
 export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
@@ -498,7 +498,7 @@ export const DataTableBlockSchema = z.object({
   title: z.string(),
   columns: z.array(DataTableColumnSchema).min(1).max(8),
   rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).max(30),
-  /** Column whose cell becomes steering.targetResource when the operator clicks a row (U-1); unset: no row steering. */
+  /** Column whose cell becomes steering.targetResource when the operator clicks a row; unset: no row steering. */
   rowParamKey: z.string().optional(),
 });
 export type DataTableBlock = z.infer<typeof DataTableBlockSchema>;
@@ -545,7 +545,7 @@ export const SynthesizedCardActionSchema = z.object({
   description: z.string().optional(),
   command: z.string().optional(),
   kind: z.enum(["stage-fix", "view-diff", "inspect"]).default("stage-fix"),
-  /** Typed steering parameters this action sets before the fix is (re)generated, e.g. { remediationStrategy: "recover" } (U-1). */
+  /** Typed steering parameters this action sets before the fix is (re)generated, e.g. { remediationStrategy: "recover" }. */
   setsParams: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
 });
 export type SynthesizedCardAction = z.infer<typeof SynthesizedCardActionSchema>;

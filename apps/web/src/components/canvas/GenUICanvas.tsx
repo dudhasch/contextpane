@@ -86,7 +86,7 @@ const SUB_AGENT_SYNTHESIS_STAGES = [
   { step: 2, name: "Live telemetry", role: "Live Graph, ARM and cloud status correlation", source: "Graph and ARM" },
   { step: 3, name: "View layout", role: "Diagnostic card and block layout", source: "Live context" },
   { step: 4, name: "Remediation plan", role: "PowerShell 7, Graph JSON and Terraform diff", source: "Idempotent fix" },
-  { step: 5, name: "Pre-flight safety", role: "AST, -WhatIf guard and 1-click undo verification", source: "Safety prover" },
+  { step: 5, name: "Pre-flight safety", role: "AST, -WhatIf guard and 1-click undo verification", source: "Static safety checks" },
 ] as const;
 
 function SubAgentSynthesisSkeleton({ mode, title }: { mode: "triage" | "refine"; title: string }) {

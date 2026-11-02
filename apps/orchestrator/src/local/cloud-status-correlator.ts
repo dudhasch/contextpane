@@ -219,7 +219,7 @@ function m365Status(raw: string): UpstreamServiceHealth["status"] {
 /**
  * Entra ID and Intune have no public feed; the honest source is Graph serviceAnnouncement/healthOverviews on the
  * delegated identity (ServiceHealth.Read.All). Live mode only; a missing scope or an unreachable Graph keeps both
- * "not probed" and says why (HARD_CASES 31).
+ * "not probed" and says why.
  */
 async function probeM365ServiceHealth(): Promise<UpstreamServiceHealth[]> {
   const unprobed = (why: string) => [notProbed("entra-id", "Entra ID", "https://status.cloud.microsoft", why), notProbed("intune", "Intune", "https://status.cloud.microsoft", why)];

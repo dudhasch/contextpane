@@ -16,7 +16,7 @@ import { getAbacLabState, invalidateAbacLabState, isAbacTicketText } from "../lo
 import { TYPED_ACTION_DESCRIPTIONS, getCustomScenario, type CustomScenarioId, type TypedAction } from "@contextpane/catalog";
 
 /**
- * Real f⁻¹ (U-5).
+ * Real f⁻¹.
  *
  * The approve path captured the affected entities before it wrote (`convergenceStore.snapshot`).
  * Revert derives the inverse from that snapshot and the executed bundle (`inverse-rollback.ts`),
@@ -109,7 +109,7 @@ export async function rollbackRemediation(scenarioId: string, options: { approve
     ...partial,
   });
 
-  // A staged Free-Roam action never executed: nothing to revert (HARD_CASES 29).
+  // A staged Free-Roam action never executed: nothing to revert.
   if (isFreeRoamActionId(scenarioId)) {
     const rollback = buildInverseRollback(scenarioId);
     return finish({ executed: false, execution: "none", reason: rollback.note ?? "staged action, nothing to revert", inverseSource: "none", rollback, executionLog: [`${scenarioId} is a staged Free-Roam action: nothing was executed, so there is nothing to revert.`], canary: null, preSnapshotAt: null, convergenceCleared: false });

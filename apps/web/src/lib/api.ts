@@ -319,7 +319,7 @@ export interface RefinePartial {
   subAgentTasks?: SubAgentTaskRecord[];
 }
 
-/** PATCH /api/tickets/:id/steer (U-1): one steering interaction, one coder call, the re-staged drawer. */
+/** PATCH /api/tickets/:id/steer: one steering interaction, one coder call, the re-staged drawer. */
 export interface SteerBody {
   clarifier?: Record<string, string>;
   params?: Record<string, string | boolean | string[]>;
@@ -347,7 +347,7 @@ export interface SteerResponse {
   telemetry: RouterTelemetry;
 }
 
-/** POST /api/rollback (U-5): what the server did, and the read-back against the pre-change snapshot. */
+/** POST /api/rollback: what the server did, and the read-back against the pre-change snapshot. */
 export interface RollbackResponse {
   ok: boolean;
   scenarioId: string;

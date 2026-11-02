@@ -512,7 +512,7 @@ function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: Clarifying
 function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; scope: ScopeDraft; first?: boolean }) {
   // While a refine streams the chips keep their look but take no input (the cursor says why).
   const locked = useWorkbench((s) => s.refiningGoal);
-  // U-1: a chip toggle steers the script at once (one coder call); Update plan stays the full re-triage.
+  // a chip toggle steers the script at once (one coder call); Update plan stays the full re-triage.
   const steer = useWorkbench((s) => s.steer);
   const steerPending = useWorkbench((s) => s.steerStatus === "pending");
   const savedAnswer = useWorkbench((s) => s.brief?.clarifiedAnswers?.[q.id] ?? "");

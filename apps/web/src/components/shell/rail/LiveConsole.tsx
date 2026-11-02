@@ -13,7 +13,7 @@ export function LiveConsole() {
   const streaming = useWorkbench((s) => s.liveConsoleStreaming);
   const reverted = useWorkbench((s) => s.liveConsoleReverted);
   const copy = useCopy();
-  // U-5: the step header is the orchestrator's verdict (inverse executed / simulated / staged); a run
+  // the step header is the orchestrator's verdict (inverse executed / simulated / staged); a run
   // that wrote nothing live is not painted as a success.
   const wroteNothing = !reverted && !streaming && /\bstaged\b|nothing (?:was )?(?:written|executed)/i.test(step ?? "");
   const stepTone = reverted ? "text-warning" : streaming ? "text-signal" : wroteNothing ? "text-muted" : "text-healthy";

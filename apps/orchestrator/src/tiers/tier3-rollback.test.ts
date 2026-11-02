@@ -44,7 +44,7 @@ async function quietLedger<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-describe("U-5: approve captures the pre-change snapshot, rollback derives f⁻¹ from it and reads the tenant back", () => {
+describe("approve captures the pre-change snapshot, rollback derives f⁻¹ from it and reads the tenant back", () => {
   test("simulated mode, INC-4092: approve -> lab state moves -> rollback -> the read-back deep-equals the snapshot", async () => {
     await quietLedger(async () => {
       // Start from the drifted lab state (the in-process MCP services keep it in memory).
@@ -144,7 +144,7 @@ describe("U-5: approve captures the pre-change snapshot, rollback derives f⁻¹
     });
   });
 
-  test("a staged Free-Roam action has nothing to revert and /api/rollback says so instead of throwing (HARD_CASES 29)", async () => {
+  test("a staged Free-Roam action has nothing to revert and /api/rollback says so instead of throwing", async () => {
     const { app } = await import("../app.ts");
     const res = await app.request("/api/rollback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scenarioId: "FREE-1A2B3C4D" }) });
     expect(res.status).toBe(200);

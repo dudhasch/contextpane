@@ -41,7 +41,7 @@ export interface ExploreInput {
   viewMode?: ContextViewMode;
   /** Free-form ticket text the selection came from (an unscripted ticket), for the prompt only. */
   customTicketText?: string;
-  /** Kinematic selectionchange pre-fetch: nobody is waiting, so the open-weight GPU may answer first. */
+  /** Speculative selectionchange pre-fetch: nobody is waiting, so the open-weight GPU may answer first. */
   prefetch?: boolean;
 }
 

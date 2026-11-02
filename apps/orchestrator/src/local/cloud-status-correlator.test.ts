@@ -20,7 +20,7 @@ async function withLiveMode<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-describe("Entra / Intune upstream status through Graph serviceAnnouncement/healthOverviews (HARD_CASES 31)", () => {
+describe("Entra / Intune upstream status through Graph serviceAnnouncement/healthOverviews", () => {
   test("outside live mode both services stay not probed and say why", async () => {
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() => Promise.reject(new Error("offline test"))) as never);
     try {

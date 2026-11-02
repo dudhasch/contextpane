@@ -292,7 +292,7 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
   // WP6: a refine keeps this section mounted; its blocks ghost until the UI Architect's card lands.
   const pending = useWorkbench((s) => s.pendingRefine.elements);
   const blockPending = useBlockRefill(pending, props.blocks.length);
-  // U-1: a row click narrows the fix to that resource; an action with setsParams steers before it opens the drawer.
+  // a row click narrows the fix to that resource; an action with setsParams steers before it opens the drawer.
   const onRowSteer = (key: string, value: string, label: string) => {
     if (steerStatus === "pending") return;
     void steer({ rowClick: { key, value, label }, source: "row-click" });
@@ -390,7 +390,7 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
                 icon={<Wrench />}
                 data-testid="synth-stage-fix-btn"
                 onClick={() => {
-                  // U-1: an action that names parameters steers the script before the rail opens on it.
+                  // an action that names parameters steers the script before the rail opens on it.
                   if (stageAction?.setsParams && Object.keys(stageAction.setsParams).length) void steer({ params: stageAction.setsParams, source: "operator" });
                   openRemediation({ tab: "powershell", focusBanner: `Focused: ${primaryCtaLabel}` });
                 }}

@@ -96,7 +96,7 @@ function SynthesizedElementsLedgerSection({
   };
 
   const elements = catalog?.catalog?.dynamicElements ?? [];
-  // A template card was built without a model call; only the rest are syntheses (L-03).
+  // A template card was built without a model call; only the rest are syntheses.
   const isTemplate = (el: { synthesizerModel: string }) => el.synthesizerModel === "deterministic-template";
   const synthesizedCount = elements.filter((el) => !isTemplate(el)).length;
 

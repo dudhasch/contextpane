@@ -117,7 +117,7 @@ export function SelectionTrigger({ children, className, style }: { children: Rea
     };
   }, [readSelection, refs.floating]);
 
-  // Silent kinematic pre-fetch on selectionchange ONLY for literal UPN/GUID selections without refinement
+  // Silent speculative pre-fetch on selectionchange ONLY for literal UPN/GUID selections without refinement
   useEffect(() => {
     const onSelectionChange = () => {
       if (debounceRef.current !== null) {

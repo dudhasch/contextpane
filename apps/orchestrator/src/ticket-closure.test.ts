@@ -79,13 +79,13 @@ describe("a resolved ticket is not remediated twice", () => {
   });
 });
 
-describe("POST /api/rollback (L-09)", () => {
+describe("POST /api/rollback", () => {
   test("stages the revert script and never claims it executed", async () => {
     const res = await post("/api/rollback", { scenarioId: SCENARIO });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { executed: unknown; execution: string; inverseSource: string; reason?: string; executionLog: string[] };
     expect(body.executed).toBe(false);
-    // Nothing was approved for the scenario: the static reference is staged and no inverse runs (U-5).
+    // Nothing was approved for the scenario: the static reference is staged and no inverse runs.
     expect(body.execution).toBe("none");
     expect(body.inverseSource).toBe("static-reference");
     expect(body.reason).toContain("static reference");

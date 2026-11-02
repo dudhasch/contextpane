@@ -39,7 +39,7 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
   const proven = invariants.filter((i) => i.passed).length;
   // Idempotency is null when no symbolic model checked a fixture transform (ad-hoc tickets, Free-Roam).
   const proofOk = formal?.formal.passed === true && formal.idempotency?.passed === true;
-  // U-2: how many write-then-test turns the sandbox findings cost before this verdict.
+  // how many write-then-test turns the sandbox findings cost before this verdict.
   const repair = drawer.verificationStatus.repair;
   const iterations = repair?.iterations ?? 0;
   const targets = formal?.blastRadius.rows.find((r) => r.cohort === "target")?.entities.length;
@@ -85,13 +85,13 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
           className="shrink-0"
           title={
             !formal
-              ? "Formal safety invariants: proving…"
+              ? "Symbolic safety invariants: checking…"
               : notProvable
-                ? "Formal safety invariants: no symbolic model for this ticket, so none is claimed"
-                : `Formal safety invariants: ${proven} of ${invariants.length} proven`
+                ? "Symbolic safety invariants: no fixture model for this ticket, so none is claimed"
+                : `Symbolic safety invariants: ${proven} of ${invariants.length} passed on the fixture model (a model check, not a proof about the tenant)`
           }
         >
-          {!formal ? "proving…" : notProvable ? "not provable" : `${proven}/${invariants.length} proven`}
+          {!formal ? "checking…" : notProvable ? "not checkable" : `${proven}/${invariants.length} invariants`}
         </Pill>
         {formal && (
           <Pill
@@ -132,7 +132,7 @@ function CanaryTrace() {
   const canary = useWorkbench((s) => s.canary);
   const reverted = useWorkbench((s) => s.liveConsoleReverted || s.drawer?.approval.state === "rolled-back");
   if (!canary) return null;
-  // Wording keyed on what executed: only a landed inverse restored anything in the tenant (HARD_CASES 6).
+  // Wording keyed on what executed: only a landed inverse restored anything in the tenant.
   const rolledBack = canary.rollbackExecuted
     ? "ROLLED_BACK · tenant restored from the pre-change snapshot"
     : canary.execution === "live-graph"
@@ -329,7 +329,7 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
   );
 }
 
-/** U-2: the write-then-test loop as a per-iteration timeline (sandbox findings → coder → sandbox again). */
+/** the write-then-test loop as a per-iteration timeline (sandbox findings → coder → sandbox again). */
 function RepairLoopTimeline({ drawer }: { drawer: Drawer }) {
   const repair = drawer.verificationStatus.repair;
   if (!repair || repair.iterations === 0) return null;

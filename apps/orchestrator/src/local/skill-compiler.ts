@@ -306,14 +306,14 @@ function makeSkill(def: CompiledSkillDef): CompiledSkill {
     match: (q) => ((mask & PCC_FULL_BITMASK) === PCC_FULL_BITMASK) && signatureMatches(def.signature, q),
     hydrate: (params) => {
       if ((mask & PCC_FULL_BITMASK) !== PCC_FULL_BITMASK) {
-        throw new Error(`Tier 0 PCC bitwise guard failed: invariantProofMask 0x${mask.toString(16)} !== 0x7f`);
+        throw new Error(`Tier 0 invariant check failed: invariantProofMask 0x${mask.toString(16)} !== 0x7f`);
       }
       const fuzz = fuzzParamsFor(1);
       return buildFuzzLayout(def.signature, { ...fuzz, tenantId: def.signature.tenantId, groupName: def.signature.groupNames[0] ?? fuzz.groupName, policyId: def.signature.policyIds[0] ?? fuzz.policyId, ...params });
     },
     remediate: (params) => {
       if ((mask & PCC_FULL_BITMASK) !== PCC_FULL_BITMASK) {
-        throw new Error(`Tier 0 PCC bitwise guard failed: invariantProofMask 0x${mask.toString(16)} !== 0x7f`);
+        throw new Error(`Tier 0 invariant check failed: invariantProofMask 0x${mask.toString(16)} !== 0x7f`);
       }
       const fuzz = fuzzParamsFor(1);
       const sig = def.signature;
@@ -390,7 +390,7 @@ export function saveRegistry(defs?: CompiledSkillDef[]): void {
 export function promoteSkill(skill: CompiledSkill): CompiledSkill {
   if (skill.fuzz.passed !== skill.fuzz.cases) throw new Error(`Promotion refused: fuzz ${skill.fuzz.passed}/${skill.fuzz.cases}`);
   if (!verifyPccBitmask(skill.invariantProofMask)) {
-    throw new Error(`Promotion refused: PCC invariantProofMask 0x${(skill.invariantProofMask ?? 0).toString(16)} !== 0x7f`);
+    throw new Error(`Promotion refused: invariantProofMask 0x${(skill.invariantProofMask ?? 0).toString(16)} !== 0x7f`);
   }
   loadRegistryIfNeeded();
   memory.set(skill.id, skill);
@@ -406,7 +406,7 @@ export function lookupTier0Skill(signature: SignatureQuery): { skill: CompiledSk
   loadRegistryIfNeeded();
   const t0 = performance.now();
   for (const s of memory.values()) {
-    // <0.01ms bitwise Proof-Carrying Certificate guard
+    // Every invariant bit of the symbolic checker must have passed before a compiled skill is served
     if ((s.invariantProofMask & PCC_FULL_BITMASK) === PCC_FULL_BITMASK && s.match(signature)) {
       return { skill: s, latencyMs: performance.now() - t0, pccVerified: true };
     }

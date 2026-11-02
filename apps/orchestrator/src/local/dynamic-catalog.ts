@@ -236,7 +236,7 @@ export async function assessTicketElementNeeds(input: {
   };
 }
 
-/** The deterministic template card. It is never persisted, so it points at no stub (L-03). */
+/** The deterministic template card. It is never persisted, so it points at no stub. */
 function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: string, synthesizerModel: string, latencyMs: number): SynthesizedDynamicCard {
   const nowIso = new Date().toISOString();
   return {
@@ -262,7 +262,7 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
 
 /**
  * Template cards for the deterministic triage path and first paint: no model call, and
- * nothing written, because the catalog holds model syntheses only (L-03).
+ * nothing written, because the catalog holds model syntheses only.
  */
 export function buildTemplateCards(decision: ElementRoutingDecision, gatekeeperModel = "deterministic-router"): SynthesizedDynamicCard[] {
   return decision.missingElements.map((m) => {

@@ -212,7 +212,7 @@ describe("every scenario (offline fixtures)", () => {
   });
 });
 
-describe("remediate() unexpected-error path (L-01)", () => {
+describe("remediate() unexpected-error path", () => {
   test("a crash before pre-flight yields Verification Failed with every check unknown", async () => {
     const { spyOn } = await import("bun:test");
     const remediateModule = await import("../local/remediate.ts");
@@ -234,7 +234,7 @@ describe("remediate() unexpected-error path (L-01)", () => {
   });
 });
 
-describe("approve() on a custom ticket (L-02)", () => {
+describe("approve() on a custom ticket", () => {
   test("break-glass with LIVE_CLOUD_MODE records a staged, simulated execution and no convergence", async () => {
     const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
     const { config } = await import("../config.ts");
@@ -345,7 +345,7 @@ describe("approve() with a typed action", () => {
   });
 });
 
-describe("Auto-Fix and Override run on the server (L-08)", () => {
+describe("Auto-Fix and Override run on the server", () => {
   async function failingCustomDrawer(script: string) {
     const { ActionApprovalDrawerSchema } = await import("@contextpane/catalog");
     const { remediationStore } = await import("../store/remediations.ts");

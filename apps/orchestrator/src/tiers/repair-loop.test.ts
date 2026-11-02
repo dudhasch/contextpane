@@ -17,7 +17,7 @@ const TICKET = {
   customerName: "Contoso Finance",
 };
 
-/** Deliberately unguarded: no param() block, no SupportsShouldProcess, a bare mutating cmdlet (what L-08's Auto-Fix used to paper over). */
+/** Deliberately unguarded: no param() block, no SupportsShouldProcess, a bare mutating cmdlet (what Auto-Fix used to paper over). */
 const UNGUARDED = ["Get-AzKeyVault -VaultName 'kv-contoso-fin-02' | Out-Null", "Set-AzKeyVaultAccessPolicy -VaultName 'kv-contoso-fin-02' -UserPrincipalName 'lynne.robins.contoso@c4a8shili.onmicrosoft.com' -PermissionsToSecrets get,list"].join("\n");
 /** Turn 1: the coder adds the attribute and param() but leaves the mutation outside ShouldProcess (still not -WhatIf safe). */
 const HALF_REPAIRED = [
@@ -64,7 +64,7 @@ function coderAnswer(script: string) {
   };
 }
 
-/** No git worktree, no Modal, no audit file from the tests (HARD_CASES 11); the coder is the only thing mocked. */
+/** No git worktree, no Modal, no audit file from the tests; the coder is the only thing mocked. */
 async function withLoopFixture<T>(scripts: string[], run: (seen: Array<Record<string, unknown>>) => Promise<T>): Promise<T> {
   const auditSpy = spyOn(auditLedger, "append").mockImplementation(((input: unknown) => input) as never);
   const modalSpy = spyOn(modal, "modalConfigured").mockReturnValue(false);
@@ -106,7 +106,7 @@ function stageUnguarded(script: string, title = TICKET.title) {
   return entry;
 }
 
-describe("write-then-test: sandbox findings feed a Wonder repair turn before the drawer opens (U-2)", () => {
+describe("write-then-test: sandbox findings feed a Wonder repair turn before the drawer opens", () => {
   test("repairableFindings skips infrastructure findings and anything on a Verified Safe verdict", () => {
     expect(repairableFindings({ verdict: "Verified Safe", findings: ["x"] })).toEqual([]);
     expect(repairableFindings({ verdict: "Verified With Warnings", findings: ["Modal sandbox unavailable; validated locally instead", "Git staging skipped: no origin", "-WhatIf is not a full dry run: Set-AzKeyVaultAccessPolicy outside $PSCmdlet.ShouldProcess"] })).toEqual([

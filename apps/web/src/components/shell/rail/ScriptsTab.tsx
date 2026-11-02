@@ -116,7 +116,7 @@ export function ScriptsTab({ drawer }: { drawer: Drawer }) {
 }
 
 /**
- * U-1: a staged script that predates the ticket's current steering says so and offers one coder call
+ * a staged script that predates the ticket's current steering says so and offers one coder call
  * to catch up; while a steer is in flight the same module says which version is being built.
  */
 function SteeringStaleBanner({ drawer }: { drawer: Drawer }) {
