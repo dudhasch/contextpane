@@ -75,7 +75,7 @@ import { getInboxDir, listInbox, resolveAttachmentPath, scanInbox, simulateDrop,
 import { ERP_TICKETS } from "@contextpane/mcp-erp";
 import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
-import { buildBriefHovers, hover, warmHoverCache } from "./tiers/tier1-hover.ts";
+import { buildBriefHovers, hover, invalidateHoverCache, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
 import { approve, autofixRemediation, overrideRemediation, remediate, restageRemediationForSteering } from "./tiers/tier3-remediate.ts";
 import { executeInverse, rollbackRemediation } from "./tiers/tier3-rollback.ts";
@@ -1051,6 +1051,8 @@ const approveHandler = async (c: Context) => {
       : null;
   const revertWrite = revertRun?.write ?? null;
   const revertLanded = Boolean(revertRun?.landed);
+  // The drill's revert changed tenant state after approve already cleared the cache: clear it again.
+  if (revertLanded) invalidateHoverCache(scenarioId);
   const canary = {
     ...runCanaryConvergence(canaryTarget, {
       mode: body.mode ?? "break-glass",
