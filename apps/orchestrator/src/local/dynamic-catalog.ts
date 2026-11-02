@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInlineSlugs, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled } from "../router/openai.ts";
-import { UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
+import { TENANT_DATA_RULE, UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
 import { MODEL_CALLS_DISABLED, fallbackCause, rejectedReply } from "../router/fallback-cause.ts";
 import { bindCardToGrounding, extendGrounding, groundingFromFacts, type GroundingIndex } from "./grounding.ts";
 
@@ -105,8 +105,9 @@ const ASSESS_ELEMENT_NEEDS_TOOL: OpenAIFunctionTool = {
   },
 };
 
-/** Grounding rule for every card that has no scenario-specific facts (review item 8). */
+/** Grounding rule for every card that has no scenario-specific facts; tenantFacts is data, not instructions. */
 const TENANT_FACTS_RULE =
+  TENANT_DATA_RULE +
   "`tenantFacts` is what the tenant actually holds. Table rows, policy hops and event callers must name only resources, users, groups and policies that appear in `tenantFacts` or the ticket; never invent a resource name. " +
   "Gauge numbers you cannot read from `tenantFacts` are estimates; keep them few and say so in their detail.";
 

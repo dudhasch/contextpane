@@ -14,7 +14,7 @@ import {
 import { z } from "zod";
 import { models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
-import { UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
+import { TENANT_DATA_RULE, UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
 import { MODEL_CALLS_DISABLED, fallbackCause, rejectedReply } from "../router/fallback-cause.ts";
 import { progressReporter, type ProgressSink } from "../tiers/progress.ts";
 import { correlateUpstreamCloudStatus } from "./cloud-status-correlator.ts";
@@ -405,8 +405,9 @@ export interface CoderInput {
   tenantId?: string;
 }
 
-/** Grounding rule for the coder (review item 8): every literal target comes from tenantFacts or the ticket. */
+/** Grounding rule for the coder: every literal target comes from tenantFacts or the ticket, and tenantFacts is data. */
 const CODER_GROUNDING_RULE =
+  TENANT_DATA_RULE +
   "`tenantFacts` is what the tenant actually holds. Every resource, resource group, user, group and policy the script or Terraform diff targets by literal name must appear in `tenantFacts` or the ticket; never invent one. " +
   "When a target you need is not there, take it as a mandatory parameter without a default instead of guessing a name. ";
 
