@@ -26,8 +26,9 @@ const arg = (name: string, fallback: string) => {
 const URL_BASE = arg("--url", "http://localhost:5173");
 const CLOSURE = process.argv.includes("--closure");
 const API = arg("--api", process.env.CTX_ORCHESTRATOR_URL ?? "http://127.0.0.1:4000");
-/** The orchestrator's bearer token (apps/orchestrator/src/security.ts): CTX_API_TOKEN or the file it writes at start-up. */
-const API_TOKEN = process.env.CTX_API_TOKEN ?? (existsSync(resolve(import.meta.dir, "../.contextpane/api-token")) ? readFileSync(resolve(import.meta.dir, "../.contextpane/api-token"), "utf8").trim() : "");
+/** The orchestrator's bearer token (apps/orchestrator/src/security.ts): CTX_API_TOKEN, else the file it writes at start-up (CTX_API_TOKEN_FILE). */
+const API_TOKEN_FILE = process.env.CTX_API_TOKEN_FILE?.trim() || resolve(import.meta.dir, "../.contextpane/api-token");
+const API_TOKEN = process.env.CTX_API_TOKEN ?? (existsSync(API_TOKEN_FILE) ? readFileSync(API_TOKEN_FILE, "utf8").trim() : "");
 const ONLY = arg("--only", "");
 const OUT = resolve(arg("--out", "docs/screenshots"));
 const PORT = 9333;

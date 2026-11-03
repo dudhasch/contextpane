@@ -70,7 +70,7 @@ Zustand (`useWorkbench`). Key actions:
 
 `src/lib/api.ts` is the typed fetch layer for about 30 endpoints (`?stream=1` for SSE); every write is sent as `application/json`, which the orchestrator requires. `src/lib/ws.ts` subscribes to `/ws` telemetry.
 
-**System & audit drawer.** Below the tabs, the "PII redaction vault" block of the pipeline and privacy telemetry shows the fields vaulted and the prompts in which the detector still found something (labelled "prompts with raw PII"; these are detector hits, not a full PII audit). When it is above zero, it also shows how many tokens in model replies were **not rehydrated** because the ticket's prompts never carried them (`refusedRehydrations`).
+**System & audit drawer.** Below the tabs, the "PII redaction vault" block of the pipeline and privacy telemetry shows the fields vaulted and the prompts in which the detector still found something (labelled "prompts with detector hits": the vault's own detector, not a full PII audit). When it is above zero, it also shows how many tokens in model replies were **not rehydrated** because the ticket's prompts never carried them (`refusedRehydrations`).
 
 ## Hotkeys
 

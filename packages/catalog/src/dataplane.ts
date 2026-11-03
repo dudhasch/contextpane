@@ -910,7 +910,8 @@ export class PiiVault {
   /**
    * Free-text pseudonymisation for prompts (ticket bodies, selection text, rendered context):
    * UPNs / e-mail addresses, the display names of known people (and the "First Last" read
-   * from a `first.last@` UPN) and public IPv4 addresses become stable session tokens.
+   * from a `first.last@` UPN), known device names, known user object ids, phone numbers and
+   * public IPv4 addresses become stable session tokens.
    */
   pseudonymizeText(text: string): string {
     if (!text) return text;
@@ -933,7 +934,7 @@ export class PiiVault {
     return out;
   }
 
-  /** Raw personal data still present in `text`: e-mail addresses, known person names, public IPv4s. */
+  /** Detector hits still present in `text`: e-mail addresses, known person and device names, known user ids, phone numbers, public IPv4s. */
   scanForRawPii(text: string): string[] {
     const hits = new Set<string>();
     for (const m of text.matchAll(EMAIL_RE)) hits.add(m[0]);
