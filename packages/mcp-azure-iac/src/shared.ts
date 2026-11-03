@@ -125,6 +125,34 @@ export function isLiveCloudMode(): boolean {
   return /^(true|1|yes)$/i.test(process.env.LIVE_CLOUD_MODE ?? "");
 }
 
+/** The one gate in front of every live ARM write: live mode AND CTX_ALLOW_EXECUTE=true. Null when a write may go out. */
+export function liveWriteBlockReason(): string | null {
+  if (!isLiveCloudMode()) return "LIVE_CLOUD_MODE=false";
+  if (!/^(true|1|yes)$/i.test(process.env.CTX_ALLOW_EXECUTE ?? "")) return "CTX_ALLOW_EXECUTE=false: live tenant writes are off";
+  return null;
+}
+
+/** The lab tenant every live write must target (CTX_LAB_TENANT_ID, defaulting to the seeded lab). */
+export function labTenantId(): string {
+  return (process.env.CTX_LAB_TENANT_ID ?? "").trim() || "4cc41c20-8b01-40a3-93c6-b4f1e846f6ea";
+}
+
+/** Throws before an ARM write leaves the process when writes are off or the token is from another directory. */
+export function assertArmWriteAllowed(token: string): void {
+  const blocked = liveWriteBlockReason();
+  if (blocked) throw new Error(`ARM write refused: ${blocked}`);
+  let tid: unknown;
+  try {
+    tid = (JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as Record<string, unknown>).tid;
+  } catch {
+    tid = undefined;
+  }
+  const lab = labTenantId();
+  if (typeof tid !== "string" || tid.toLowerCase() !== lab.toLowerCase()) {
+    throw new Error(`ARM write refused: the signed-in token belongs to tenant ${typeof tid === "string" ? tid : "(unknown)"}, not the lab tenant ${lab}`);
+  }
+}
+
 let pwshAvailable: boolean | null = null;
 
 export async function isPwshAvailable(): Promise<boolean> {

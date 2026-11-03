@@ -1,4 +1,5 @@
 import type { NsgRule, NsgState } from "./hcl.ts";
+import { assertArmWriteAllowed } from "./shared.ts";
 import { cachedTokenClaims, getAccessToken, invalidateAccessToken } from "./token.ts";
 
 /**
@@ -88,6 +89,7 @@ const nsgPath = (subscriptionId: string, resourceGroup: string, nsgName: string)
 async function armWrite(method: "PUT" | "DELETE" | "PATCH", path: string, body: unknown, timeoutMs: number): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   const token = await getAccessToken(`${ARM}/`, 30_000);
+  assertArmWriteAllowed(token);
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const response = await fetch(`${ARM}${path}?api-version=${NSG_API_VERSION}`, {
     method,

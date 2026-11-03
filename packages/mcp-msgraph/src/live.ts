@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { cachedTokenClaims, getAccessToken, getGraphSdkAccessToken, invalidateAccessToken, invalidateGraphSdkAccessToken } from "./token.ts";
+import { labTenantId, liveWriteBlockReason } from "./pwsh.ts";
+import { cachedTokenClaims, claimsOf, getAccessToken, getGraphSdkAccessToken, invalidateAccessToken, invalidateGraphSdkAccessToken } from "./token.ts";
 
 /**
  * Live Microsoft Graph reads over plain fetch() with a bearer token minted once
@@ -94,9 +95,34 @@ export class GraphHttpError extends Error {
 /** "az": the Get-AzAccessToken bearer every read uses; "graph-sdk": the Connect-MgGraph one (Conditional Access and Intune). */
 type TokenSource = "az" | "graph-sdk";
 
-async function graphFetch(path: string, init: RequestInit, timeoutMs: number, tokenSource: TokenSource = "az"): Promise<unknown> {
+/** Thrown before a write leaves the process: writes are off, or the token belongs to another directory. */
+export class LiveWriteRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LiveWriteRefusedError";
+  }
+}
+
+/**
+ * Last line of defence for every Graph write: the live-write gate must be open and the bearer's
+ * tenant (`tid`) must be the lab tenant, so a token from another directory never reaches a PATCH.
+ */
+export function assertWriteAllowed(token: string): void {
+  const blocked = liveWriteBlockReason();
+  if (blocked) throw new LiveWriteRefusedError(`Graph write refused: ${blocked}`);
+  const tid = claimsOf(token)?.tid;
+  const lab = labTenantId();
+  if (typeof tid !== "string" || tid.toLowerCase() !== lab.toLowerCase()) {
+    throw new LiveWriteRefusedError(`Graph write refused: the signed-in token belongs to tenant ${typeof tid === "string" ? tid : "(unknown)"}, not the lab tenant ${lab}`);
+  }
+}
+
+async function graphFetch(path: string, init: RequestInit, timeoutMs: number, tokenSource: TokenSource = "az", options: { write?: boolean } = {}): Promise<unknown> {
+  // A POST to /$batch is a read unless the batch carries a write (graphBatch says so); every other non-GET is a write.
+  const write = options.write ?? ((init.method ?? "GET").toUpperCase() !== "GET" && path !== "/$batch");
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = tokenSource === "graph-sdk" ? await getGraphSdkAccessToken(Math.max(timeoutMs, 30_000)) : await getAccessToken(GRAPH, Math.max(timeoutMs, 30_000));
+    if (write) assertWriteAllowed(token);
     // "/beta/..." paths go to the beta endpoint (Intune Settings Catalog), everything else to v1.0.
     const response = await fetch(path.startsWith("/beta/") ? `${GRAPH}${path}` : `${GRAPH_V1}${path}`, {
       ...init,
@@ -145,6 +171,8 @@ async function graphBatch(requests: BatchRequest[], timeoutMs: number): Promise<
       }),
     },
     timeoutMs,
+    "az",
+    { write: requests.some((r) => (r.method ?? "GET") !== "GET") },
   )) as { responses?: BatchResponse[] };
   return new Map((body.responses ?? []).map((r) => [r.id, r]));
 }
@@ -253,8 +281,9 @@ function mapPolicy(p: GraphPolicy): LiveCaPolicy {
   if (builtIn.length === 0) {
     const authStrength = p.grantControls?.authenticationStrength;
     const strengthLabel = typeof authStrength === "string" ? authStrength : authStrength?.displayName;
-    if (strengthLabel || /CA-001|PhishingResistant/i.test(p.displayName ?? "")) {
-      builtIn.push("Require Phishing-Resistant MFA (FIDO2 / Windows Hello)");
+    // Only a real authentication strength counts; the policy's display name is never evidence of a control.
+    if (strengthLabel) {
+      builtIn.push(/phish/i.test(strengthLabel) ? "Require Phishing-Resistant MFA (FIDO2 / Windows Hello)" : `Require authentication strength: ${strengthLabel}`);
     }
   }
   return {
@@ -543,6 +572,7 @@ export interface LiveIntuneState {
 }
 
 const BETA = "/beta";
+const DEMO_PREFIX = "[ContextPane-Demo]";
 
 /** Reads the seeded demo Intune objects by display name; throws when none exist so the caller falls back to the fixture. */
 export async function fetchIntuneStateLive(
@@ -556,8 +586,10 @@ export async function fetchIntuneStateLive(
     delegatedFetch(`/deviceManagement/deviceConfigurations?$select=id,displayName`, { method: "GET" }, timeoutMs) as Promise<{ value?: Array<{ id: string; displayName: string }> }>,
     graphFetch(`/groups?$filter=${encodeURIComponent(`displayName eq '${probe.assignmentGroup.replace(/'/g, "''")}'`)}&$select=id`, { method: "GET" }, timeoutMs) as Promise<{ value?: Array<{ id: string }> }>,
   ]);
-  const asrPolicy = (policies.value ?? []).find((p) => p.name.endsWith(probe.asrPolicy ?? "\u0000"));
-  const profile = (configs.value ?? []).find((c) => c.displayName.endsWith(probe.conflictingProfile));
+  // Exact names only: the seeded object is "<name>" or "[ContextPane-Demo] <name>", never any object that merely ends with it.
+  const named = (actual: string, wanted: string | undefined) => !!wanted && (actual === wanted || actual === `${DEMO_PREFIX} ${wanted}`);
+  const asrPolicy = (policies.value ?? []).find((p) => named(p.name, probe.asrPolicy));
+  const profile = (configs.value ?? []).find((c) => named(c.displayName, probe.conflictingProfile));
   if (!asrPolicy && !profile) throw new Error("no [ContextPane-Demo] Intune objects found in the lab tenant (seed the lab first)");
 
   let asrRuleValue: string | null = null;
@@ -566,16 +598,18 @@ export async function fetchIntuneStateLive(
     asrRuleValue = new RegExp(`${probe.asrRuleSetting}_(block|audit|warn|off)"`, "i").exec(settings)?.[1]?.toLowerCase() ?? null;
   }
   let conflictingProfileAssigned: boolean | null = null;
+  const assignmentGroupId = groups.value?.[0]?.id ?? null;
   if (profile) {
-    const assignments = (await delegatedFetch(`/deviceManagement/deviceConfigurations/${profile.id}/assignments`, { method: "GET" }, timeoutMs)) as { value?: unknown[] };
-    conflictingProfileAssigned = (assignments.value ?? []).length > 0;
+    const assigned = await deviceConfigurationGroupIdsLive(profile.id, timeoutMs);
+    // The drift is the profile being assigned to the named group, not to any group at all.
+    conflictingProfileAssigned = assignmentGroupId ? assigned.includes(assignmentGroupId) : assigned.length > 0;
   }
   return {
     asrRuleValue,
     asrPolicyId: asrPolicy?.id ?? null,
     conflictingProfileId: profile?.id ?? null,
     conflictingProfileAssigned,
-    assignmentGroupId: groups.value?.[0]?.id ?? null,
+    assignmentGroupId,
   };
 }
 
@@ -614,14 +648,27 @@ export async function setAsrRuleLive(policyId: string, ruleSetting: string, valu
   );
 }
 
-/** Replaces the assignments of a Device Configuration profile (null group = unassign). */
-export async function assignDeviceConfigurationLive(profileId: string, groupId: string | null, timeoutMs: number): Promise<void> {
+/** The group ids a Device Configuration profile is assigned to (group targets only). */
+async function deviceConfigurationGroupIdsLive(profileId: string, timeoutMs: number): Promise<string[]> {
+  const body = (await delegatedFetch(`/deviceManagement/deviceConfigurations/${profileId}/assignments`, { method: "GET" }, timeoutMs)) as {
+    value?: Array<{ target?: { "@odata.type"?: string; groupId?: string } }>;
+  };
+  return (body.value ?? []).map((a) => a.target?.groupId).filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+/**
+ * Assigns or unassigns ONE group on a Device Configuration profile and keeps every other group
+ * assignment as it is: `/assign` replaces the whole list, so the current list is read first.
+ */
+export async function setDeviceConfigurationGroupAssignmentLive(profileId: string, groupId: string, assigned: boolean, timeoutMs: number): Promise<void> {
+  const current = await deviceConfigurationGroupIdsLive(profileId, timeoutMs);
+  const next = assigned ? [...new Set([...current, groupId])] : current.filter((id) => id.toLowerCase() !== groupId.toLowerCase());
   await delegatedFetch(
     `/deviceManagement/deviceConfigurations/${profileId}/assign`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ assignments: groupId ? [{ target: { "@odata.type": "#microsoft.graph.groupAssignmentTarget", groupId } }] : [] }),
+      body: JSON.stringify({ assignments: next.map((id) => ({ target: { "@odata.type": "#microsoft.graph.groupAssignmentTarget", groupId: id } })) }),
     },
     timeoutMs,
   );
@@ -832,6 +879,35 @@ export interface RealAppRegistrationRow {
   passwordCredentials: Array<{ keyId: string; displayName: string | null; endDateTime: string | null }>;
   keyCredentialsCount: number;
   requiredResourceAccessCount: number;
+}
+
+export interface LiveApplicationOwner {
+  objectId: string;
+  upn: string;
+  displayName: string;
+}
+
+export interface LiveFederatedCredential {
+  name: string;
+  issuer: string;
+  subject: string;
+  audiences: string[];
+}
+
+/** The real owners and federated identity credentials of one app registration (GET, two calls). */
+export async function fetchApplicationOwnersAndFicsLive(objectId: string, timeoutMs: number): Promise<{ owners: LiveApplicationOwner[]; federatedCredentials: LiveFederatedCredential[] }> {
+  const id = encodeURIComponent(objectId);
+  const [owners, fics] = (await Promise.all([
+    graphFetch(`/applications/${id}/owners?$select=id,displayName,userPrincipalName`, { method: "GET" }, timeoutMs),
+    graphFetch(`/applications/${id}/federatedIdentityCredentials`, { method: "GET" }, timeoutMs),
+  ])) as [
+    { value?: Array<{ id: string; displayName?: string | null; userPrincipalName?: string | null }> },
+    { value?: Array<{ name?: string; issuer?: string; subject?: string; audiences?: string[] }> },
+  ];
+  return {
+    owners: (owners.value ?? []).map((o) => ({ objectId: o.id, upn: o.userPrincipalName ?? o.displayName ?? o.id, displayName: o.displayName ?? o.userPrincipalName ?? o.id })),
+    federatedCredentials: (fics.value ?? []).map((f) => ({ name: f.name ?? "", issuer: f.issuer ?? "", subject: f.subject ?? "", audiences: f.audiences ?? [] })),
+  };
 }
 
 export async function fetchRealApplicationsLive(timeoutMs: number): Promise<RealAppRegistrationRow[]> {
