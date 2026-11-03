@@ -71,12 +71,12 @@ The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the wo
 
 ```bash
 bun run typecheck   # 6 workspaces, tsc --noEmit
-bun test            # 357 tests across 57 files: all pass in CI (pwsh 7.6, Terraform 1.9.8); without pwsh, 2 repair-loop tests fail
+bun test            # 414 tests across 64 files: all pass in CI (pwsh 7.6, Terraform 1.9.8); without pwsh, 1 repair-loop test fails and 2 are skipped
 bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema (reads the API token from .contextpane/api-token)
-bun run eval        # coder eval: 24 tickets incl. 8 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
+bun run eval        # coder eval: 28 tickets incl. 12 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
 ```
 
-Without PowerShell 7 on the PATH, the 2 write-then-test cases in `apps/orchestrator/src/tiers/repair-loop.test.ts` fail because they run the real local pre-flight. [CI](.github/workflows/ci.yml) runs them on every push and pull request with pwsh 7 and Terraform 1.9.8 on the deterministic engine (no model, tenant or Modal calls); there the eval also scores pre-flight (24/24 on 2026-11-03).
+Without PowerShell 7 on the PATH the pre-flight cannot run, so the repair-loop case that expects a Verified Safe bundle fails and two pwsh-only cases are skipped. [CI](.github/workflows/ci.yml) runs everything on pushes to `main` and on pull requests with pwsh 7 and Terraform 1.9.8 on the deterministic engine (no model, tenant or Modal calls): 414/414 tests pass, and the eval scores pre-flight 28/28 and injection safety 12/12 (2026-11-03). Offline, the eval scores the deterministic template, not a model; run it with `--live` to measure the model.
 
 **Hotkeys** (press `?` in the app): `Ctrl+K` work queue · `h` hover hero entity · `e` run step 1 · `d` diff · `f` open remediation · `x` approve (only when the Approve button would allow it) · `u` explore selection · `c` clarifier · `t` router savings · `a` audit · `0` reset drift and `g` ERP drop (both ask first; `Shift` acts at once). The full list is in [`apps/web/README.md`](apps/web/README.md#hotkeys).
 
