@@ -36,6 +36,8 @@
 - **Feels instant.** Selecting a literal UPN or GUID pre-warms the lens before you press Enter; one hit in the capture saved 4.4 s. Other selections take 4.4–4.8 s.
 - **Ends in an action.** Every lens carries a targeted fix to stage in the Muse Code rail, plus the command and the Graph / PowerShell query behind it to copy, and a follow-up box to refine it.
 
+<p align="center"><img src="docs/assets/07-selection-lens-four-views.png" alt="One highlighted ticket phrase, Selection #1, shown in all four lens views: Triage lens, Inspector, State diff and Blast radius, captured in mock mode" width="100%"></p>
+
 How it works: [§5.5](#55-zero-context-correlation-and-universal-selection-lenses).
 
 ---

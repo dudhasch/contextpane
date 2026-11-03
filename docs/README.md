@@ -28,6 +28,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 | [`assets/04-nk-wonder-synthesis-and-reuse.png`](assets/04-nk-wonder-synthesis-and-reuse.png) | the synthesized ABAC card + the k=5 registry |
 | [`assets/05-coderail-modal-sandbox-finverse.png`](assets/05-coderail-modal-sandbox-finverse.png) | ABAC ticket: scope chips, steering diff v1 → v2, typed action, prover strip, 1-click undo, approve footer (mock mode, 2026-11-03) |
 | [`assets/06-universal-selection-lenses.png`](assets/06-universal-selection-lenses.png) | Selection #1 → Triage lens and Blast radius modes |
+| [`assets/07-selection-lens-four-views.png`](assets/07-selection-lens-four-views.png) | one selection in all four lens views: Triage lens, Inspector, State diff, Blast radius (mock mode, 2026-11-03) |
 
 ## How they were made
 
@@ -35,7 +36,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 2. **Annotate.** Crops and numbered callouts were composed as SVG in the Graphite & Signal palette and rasterised with VectorCraft (`vectorcraft-cli convert`).
 3. **Encode.** Lower-third captions were composited on each frame, then ffmpeg encoded the loops to animated WebP (libwebp, q70) and to GIF (two-pass palette).
 
-**Mock-mode recapture (2026-11-03).** 01, 02 and 05 were recaptured after the pre-flight, live-write and PII wording changed, with the stack in mock mode (`CTX_FORCE_LOCAL=true`, `LIVE_CLOUD_MODE=false`): headless Chromium through Playwright at 1440×900 and device scale factor 2, callouts composed in HTML and rendered the same way. No model, tenant or Modal call was made, so the hover badge reads `deterministic · 0 tokens`, the vault counts 0 prompts and the steering diff names the deterministic coder. The capture machine had pwsh 7.6 but no Terraform, which is why #INC-4092's verdict reads Warnings rather than Safe. 03, 04 and 06 and the animated loops are the live captures of 2026-10-29.
+**Mock-mode recapture (2026-11-03).** 01, 02 and 05 were recaptured, and 07 was added, after the pre-flight, live-write and PII wording changed, with the stack in mock mode (`CTX_FORCE_LOCAL=true`, `LIVE_CLOUD_MODE=false`): headless Chromium through Playwright at 1440×900 and device scale factor 2, callouts composed in HTML and rendered the same way. No model, tenant or Modal call was made, so the hover badge reads `deterministic · 0 tokens`, the vault counts 0 prompts, the steering diff names the deterministic coder and the lens header reads `deterministic · 0 tokens`. The capture machine had pwsh 7.6 but no Terraform, which is why #INC-4092's verdict reads Warnings rather than Safe. 03, 04 and 06 and the animated loops are the live captures of 2026-10-29.
 
 [`scripts/capture-readme-screenshots.ts`](../scripts/capture-readme-screenshots.ts) is the repository's own repeatable CDP capture script.
 
