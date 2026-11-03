@@ -62,6 +62,7 @@ import { ABAC_LAB, deleteAbacRoleAssignmentsLive } from "@contextpane/mcp-azure-
 import { erpScenarioId } from "@contextpane/catalog";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import {
+  DataModeRefusedError,
   getFreeRoamInventory,
   getPersistedDataMode,
   scanTenantForAnomalies,
@@ -77,12 +78,13 @@ import { buildResolutionNote } from "./local/psa-note.ts";
 import { closureStore } from "./store/closure.ts";
 import { buildBriefHovers, hover, invalidateHoverCache, warmHoverCache } from "./tiers/tier1-hover.ts";
 import { correlate } from "./tiers/tier2-correlate.ts";
-import { approve, autofixRemediation, overrideRemediation, remediate, restageRemediationForSteering } from "./tiers/tier3-remediate.ts";
+import { ApproveRefusedError, approve, autofixRemediation, overrideRemediation, remediate, restageRemediationForSteering } from "./tiers/tier3-remediate.ts";
 import { executeInverse, rollbackRemediation } from "./tiers/tier3-rollback.ts";
 import { buildInverseFromSnapshot } from "./local/inverse-rollback.ts";
 import { visionExtract } from "./tiers/vision.ts";
 import { voiceSteer } from "./tiers/voice.ts";
 import type { ProgressEvent } from "./tiers/progress.ts";
+import type { McpDataMode } from "@contextpane/mcp-msgraph";
 
 export const app = new Hono();
 
@@ -107,7 +109,7 @@ app.use("/api/*", async (_c, next) => {
 
 app.onError((error, c) => {
   console.error(`[orchestrator] ${c.req.method} ${c.req.path} failed:`, error);
-  const status = error instanceof RecipeNotFoundError ? 404 : 500;
+  const status = error instanceof RecipeNotFoundError ? 404 : error instanceof ApproveRefusedError ? 409 : 500;
   return c.json({ error: error.message, path: c.req.path }, status);
 });
 
@@ -224,7 +226,13 @@ const DataModeBodySchema = z.object({
 app.post("/api/settings/data-mode", (c) =>
   c.req.json().then((raw) => {
     const body = DataModeBodySchema.parse(raw);
-    const dataMode = setPersistedDataMode(body.dataMode);
+    let dataMode: McpDataMode;
+    try {
+      dataMode = setPersistedDataMode(body.dataMode);
+    } catch (error) {
+      if (error instanceof DataModeRefusedError) return c.json({ ok: false, error: error.message, dataMode: getPersistedDataMode(), liveCloudMode: isLiveCloudMode() }, 409);
+      throw error;
+    }
     return c.json({
       ok: true,
       dataMode,
@@ -1020,12 +1028,24 @@ const ApproveBodySchema = z.object({
  * fix branch, then a zero-token canvas convergence push. gitops: no live write, a fresh pre-flight,
  * nothing converges. Either way a PR is opened only when openPullRequest is true.
  */
+/** Approvals still running server-side (one may outlive its HTTP request after the deadline). */
+const approvalsInFlight = new Set<string>();
+
 const approveHandler = async (c: Context) => {
   // The approver is the signed-in operator (security.ts), not a field of the request.
   const body = { ...ApproveBodySchema.parse(await c.req.json()), approvedBy: operatorIdentity() };
   const pending = remediationStore.get(body.remediationId);
   const conflict = body.decision !== "reject" && pending ? resolvedConflict(pending.ticketId) : null;
   if (conflict) return c.json({ error: conflict, scenarioId: pending!.ticketId }, 409);
+  // The UI keeps Approve disabled while a formal invariant fails; the server holds the same line, so a hotkey,
+  // a script or a stale tab cannot approve past it. A recorded Override (with its justification) lifts it.
+  if (pending && body.decision !== "reject" && !isFreeRoamActionId(pending.ticketId) && pending.verificationStatus.verdict !== "Overridden") {
+    const formal = verifyFormalInvariants(baseScenarioOf(pending.ticketId) ?? pending.ticketId);
+    if (formal.passed === false) {
+      const failedInvariants = formal.invariants.filter((i) => !i.passed).map((i) => i.statement);
+      return c.json({ error: `Approve refused: ${failedInvariants.length} safety invariant(s) failed. Record an Override with a justification to proceed.`, failedInvariants, scenarioId: pending.ticketId }, 409);
+    }
+  }
   if (pending && body.decision !== "reject") {
     try {
       const preCtx = await gatherContext(pending.ticketId);
@@ -1034,7 +1054,45 @@ const approveHandler = async (c: Context) => {
       /* non-fatal if context gather fails */
     }
   }
-  const { convergence, ...drawer } = await approve(body);
+  if (approvalsInFlight.has(body.remediationId)) {
+    return c.json({ error: "This approval is still running from an earlier request: its outcome is not known yet. Check the tenant and the audit log before approving again.", remediationId: body.remediationId }, 409);
+  }
+  approvalsInFlight.add(body.remediationId);
+  const running = approve(body).finally(() => approvalsInFlight.delete(body.remediationId));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([
+    running.then((result) => ({ result })),
+    new Promise<{ timeout: true }>((resolveTimeout) => {
+      timer = setTimeout(() => resolveTimeout({ timeout: true }), config.timeouts.approveMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if ("timeout" in outcome) {
+    // The approval keeps running server-side; the client is told plainly that the result is unknown, never that it failed or landed.
+    running.catch((error: unknown) => console.error(`[orchestrator] approval ${body.remediationId} failed after its deadline:`, error));
+    auditLedger.append({
+      tenantId: pending?.tenantId ?? "tenant-contoso-01",
+      ticketId: pending?.ticketId ?? body.remediationId,
+      actionType: "hitl-approval",
+      delegatedIdentity: body.approvedBy,
+      modalSandboxVerified: false,
+      astPass: null,
+      tfValidatePass: null,
+      gitBranch: pending?.staging?.branchName ?? null,
+      prUrl: null,
+      latencyMs: config.timeouts.approveMs,
+      execution: "none",
+      detail: `outcome unknown: approval still running after ${Math.round(config.timeouts.approveMs / 1000)} s; check the tenant before retrying`.slice(0, 300),
+    });
+    return c.json(
+      {
+        error: `Approval still running after ${Math.round(config.timeouts.approveMs / 1000)} s: the outcome is unknown. Check the tenant and the audit log before retrying.`,
+        outcome: "unknown",
+        remediationId: body.remediationId,
+      },
+      504,
+    );
+  }
+  const { convergence, ...drawer } = outcome.result;
   if (body.decision === "reject" || drawer.approval.state === "rejected") return c.json({ drawer, convergence, canary: null });
   const scenarioId = drawer.ticketId;
   const liveWriteApplied = drawer.approval.state === "executed";
@@ -1164,7 +1222,8 @@ const ResetDriftBodySchema = z.object({ scenarioId: z.string().optional(), tenan
 app.post("/api/lab/abac/reset", async (c) => {
   const started = performance.now();
   const log: string[] = [];
-  if (isLiveCloudMode()) {
+  // Same gate as every other live write: live mode alone never deletes a role assignment.
+  if (isLiveCloudMode() && config.allowExecute) {
     try {
       const res = await deleteAbacRoleAssignmentsLive();
       log.push(`ARM: removed ${res.removed.length} ${ABAC_LAB.roleName} assignment(s) on ${ABAC_LAB.storageAccount}${res.failed.length ? `, ${res.failed.length} failed` : ""}`);
@@ -1172,7 +1231,7 @@ app.post("/api/lab/abac/reset", async (c) => {
       log.push(`ARM reset refused: ${error instanceof Error ? error.message : String(error)}`);
     }
   } else {
-    log.push("Simulated-Lab mode: no ARM call");
+    log.push(isLiveCloudMode() ? "CTX_ALLOW_EXECUTE=false: no ARM call (live writes are off)" : "Simulated-Lab mode: no ARM call");
   }
   invalidateAbacLabState();
   log.push(removeCatalogEntry(ABAC_ELEMENT_ID) ? `Catalog: ${ABAC_ELEMENT_ID} removed` : "Catalog: no ABAC view to remove");

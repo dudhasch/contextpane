@@ -54,7 +54,8 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   fetch: app.fetch,
   websocket,
-  idleTimeout: 120,
+  // Bun's maximum: an approve with live writes and a read-back can take minutes; approveHandler answers 504 well before this.
+  idleTimeout: 255,
 });
 
 const activeDataMode = initDataModeOnStartup();

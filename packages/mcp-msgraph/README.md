@@ -49,7 +49,14 @@ All tools are read-only except the mode switch.
 
 ## Reversible mutations
 
-The service performs these writes; they are not exposed as MCP tools. The orchestrator calls them only after a human approval, and simulates them offline or for manifest-only tenants:
+The service performs these writes; they are not exposed as MCP tools. The orchestrator calls them only after a human approval (or a Reset drift click), and every one of them sits behind one gate:
+
+- **Live only with `LIVE_CLOUD_MODE=true` and `CTX_ALLOW_EXECUTE=true`** ([`liveWriteBlockReason`](src/pwsh.ts)). With either off, the write is simulated and its `fallbackReason` says which flag; live mode alone never writes.
+- **Lab tenant only.** Before any non-GET leaves the process, [`assertWriteAllowed`](src/live.ts) checks the bearer's `tid` claim against `CTX_LAB_TENANT_ID` (default: the seeded lab) and refuses a token from any other directory.
+- **Failures are failures.** A live attempt that throws (no token, a 4xx/5xx, the seeded object missing) returns `source: "live-graph"` with `ok: false` rows, the real status and the error; it is never reported as a simulated success. The in-memory Conditional Access lab state moves only on a simulated write or after a 2xx, and a live read applies it only for 60 s after a confirmed write (Graph read-after-write lag), so a failed PATCH cannot be read back as remediated.
+- **Intune** objects are matched by exact name (`<name>` or `[ContextPane-Demo] <name>`), and a fix assigns or unassigns only the named group; the profile's other assignments are read first and kept.
+
+| Method | Graph call | Reversal |
 
 | Method | Graph call | Reversal |
 |---|---|---|
@@ -57,7 +64,7 @@ The service performs these writes; they are not exposed as MCP tools. The orches
 | `setConditionalAccessState` (`service.ts:1240`) | PATCH the CA policy: exclude the AVD group, switch to report-only | restored on reset |
 | `setIntuneState` (`service.ts:1443`) | PUT `configurationPolicies`, POST `/assign` | restored on reset |
 
-Each takes a `LabLicenseState`, so remediate and reset are the same operation in opposite directions. The orchestrator's pre-change snapshot ([`apps/orchestrator/src/local/snapshot.ts`](../../apps/orchestrator/src/local/snapshot.ts)) uses these reads, and the f⁻¹ inverse goes through these writes.
+Each takes a `LabLicenseState`, so remediate and reset are the same operation in opposite directions. In strict real-tenant mode the reads report what Graph returned and nothing else: a Conditional Access policy without built-in controls shows none, the workload-identity view carries the app's real first owner and federated credential (or says there is none, or that they could not be read), and seeded sign-ins re-keyed to live policy ids are `live-synthesized`, never `live-graph`. The orchestrator's pre-change snapshot ([`apps/orchestrator/src/local/snapshot.ts`](../../apps/orchestrator/src/local/snapshot.ts)) uses these reads, and the f⁻¹ inverse goes through these writes.
 
 ## Tests
 

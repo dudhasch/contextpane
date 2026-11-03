@@ -23,6 +23,7 @@ import {
   getManifestTenant,
   getMcpDataMode,
   isLiveCloudMode,
+  liveWriteBlockReason,
   isStrictRealTenantMode,
   resolveIacDir,
   setMcpDataMode,
@@ -441,13 +442,16 @@ export const azureIacService = {
       results,
       ...(fallbackReason ? { fallbackReason } : {}),
     });
-    if (!isLiveCloudMode()) return done("simulated", [], "LIVE_CLOUD_MODE=false");
+    const blocked = liveWriteBlockReason();
+    if (blocked) return done("simulated", [], blocked);
     if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return done("simulated", [], `${tenantId} is manifest-only`);
     let live: NsgState;
     try {
       live = await fetchNsgLive(resourceGroup, nsgName, tenant.subscriptionId, LIVE_TIMEOUT_MS);
     } catch (error) {
-      return done("simulated", [], error instanceof Error ? error.message : String(error));
+      // A live write that could not even read the NSG did not land: report it as failed, never as a simulated success.
+      const message = error instanceof Error ? error.message : String(error);
+      return done("live-azure", [{ id: `read ${nsgName}`, ok: false, status: 0, error: message }], message);
     }
     const targetByName = new Map(target.rules.map((r) => [r.name, r]));
     const liveByName = new Map(live.rules.map((r) => [r.name, r]));

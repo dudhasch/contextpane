@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertArmWriteAllowed } from "./shared.ts";
 import { getAccessToken, invalidateAccessToken } from "./token.ts";
 
 /**
@@ -73,6 +74,7 @@ async function arm<T>(method: "GET" | "PUT" | "DELETE", path: string, apiVersion
   const sep = path.includes("?") ? "&" : "?";
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await getAccessToken(`${ARM}/`, Math.max(timeoutMs, 30_000));
+    if (method !== "GET") assertArmWriteAllowed(token);
     const response = await fetch(`${ARM}${path}${sep}api-version=${apiVersion}`, {
       method,
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

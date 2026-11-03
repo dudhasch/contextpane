@@ -12,14 +12,38 @@ const { setPersistedDataMode } = await import("./free-roam.ts");
 
 describe("Free-Roam Landing Page & MCP Data Mode ('real-tenant' vs 'simulated-lab')", () => {
   const prevForceLocal = config.forceLocal;
+  const prevLive = config.liveCloudMode;
   beforeEach(() => {
     (config as { forceLocal: boolean }).forceLocal = true;
+    // These cases model an orchestrator started with LIVE_CLOUD_MODE=true; the refusal case below resets it.
+    (config as { liveCloudMode: boolean }).liveCloudMode = true;
     process.env.CTX_SKIP_PWSH = "true";
   });
   afterEach(() => {
     (config as { forceLocal: boolean }).forceLocal = prevForceLocal;
     delete process.env.CTX_SKIP_PWSH;
     setPersistedDataMode("simulated-lab");
+    (config as { liveCloudMode: boolean }).liveCloudMode = prevLive;
+  });
+
+  test("without LIVE_CLOUD_MODE=true at boot, the toggle cannot switch to real-tenant (409) and simulated toggling still works", async () => {
+    (config as { liveCloudMode: boolean }).liveCloudMode = false;
+    const refused = await app.request("/api/settings/data-mode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataMode: "real-tenant" }),
+    });
+    expect(refused.status).toBe(409);
+    const body = (await refused.json()) as { ok: boolean; error: string; dataMode: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("LIVE_CLOUD_MODE=true");
+    expect(sources.getDataMode()).toBe("simulated-lab");
+    const sim = await app.request("/api/settings/data-mode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataMode: "simulated-lab" }),
+    });
+    expect(sim.status).toBe(200);
   });
 
   test("POST /api/settings/data-mode switches MCP servers between real-tenant and simulated-lab and filters seeded scenarios", async () => {

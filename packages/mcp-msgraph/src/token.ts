@@ -80,7 +80,7 @@ export function invalidateGraphSdkAccessToken() {
   cache.delete(MG_KEY);
 }
 
-function claimsOf(token: string): Record<string, unknown> | null {
+export function claimsOf(token: string): Record<string, unknown> | null {
   const payload = token.split(".")[1];
   if (!payload) return null;
   try {
