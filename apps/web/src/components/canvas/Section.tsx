@@ -200,9 +200,15 @@ export function Section({
           {after}
         </h3>
         {converged ? (
-          <Pill variant="status" tone="healthy" mono={false} title={`${convergence!.remediationId} · converged ${convergence!.convergedAt.slice(11, 19)}Z`}>
-            Healthy
-          </Pill>
+          convergence!.execution === "live-graph" ? (
+            <Pill variant="status" tone="healthy" mono={false} title={`${convergence!.remediationId} · applied live and read back ${convergence!.convergedAt.slice(11, 19)}Z`}>
+              Healthy
+            </Pill>
+          ) : (
+            <Pill variant="status" tone="primary" mono={false} title={`${convergence!.remediationId} · approved ${convergence!.convergedAt.slice(11, 19)}Z without a live write: the lab model shows the fixed state, the tenant is unchanged`}>
+              Fixed (simulated)
+            </Pill>
+          )
         ) : sliceHealthy ? (
           <Pill variant="status" tone="healthy" mono={false} title={sliceCard?.summary ?? activeSlice!.state.summary}>
             Healthy

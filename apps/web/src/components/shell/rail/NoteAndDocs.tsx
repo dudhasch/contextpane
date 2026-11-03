@@ -2,7 +2,7 @@ import { BookOpen, ClipboardCopy } from "lucide-react";
 import { useState } from "react";
 import { useWorkbench } from "@/store";
 import { Button } from "../../ui/Button";
-import { cleanDrawerTitle, humanizeInvariant, useCopy, type Drawer } from "./shared";
+import { cleanDrawerTitle, humanizeInvariant, useCopy, verifiedLines, type CanaryData, type Drawer, type FormalData } from "./shared";
 
 function formatFriendlyEntityList(drawer: Drawer): string {
   const friendly: string[] = [];
@@ -23,19 +23,18 @@ function formatFriendlyEntityList(drawer: Drawer): string {
   return [...new Set(friendly)].join(", ");
 }
 
-function buildCustomerEmail(drawer: Drawer, customerSummary?: string): string {
+function buildCustomerEmail(drawer: Drawer, state: { execution: "live-graph" | "simulated" | null; canary: CanaryData | null; formal: FormalData | null }, customerSummary?: string): string {
+  const verified = verifiedLines({ drawer, ...state });
+  const title = cleanDrawerTitle(drawer).replace(/^Fix [^:]+:\s*/, "");
+  const resolvedLive = state.execution === "live-graph" && (!state.canary || state.canary.finalState === "CONVERGED");
   if (customerSummary) {
     return [
-      `Subject: Resolved — ${drawer.ticketId}: ${cleanDrawerTitle(drawer).replace(/^Fix [^:]+:\s*/, "")}`,
+      `Subject: ${resolvedLive ? "Resolved" : "Update"} — ${drawer.ticketId}: ${title}`,
       "",
       "Hi team,",
       "",
       customerSummary,
-      "",
-      "What we verified:",
-      "• All affected users and services are back online and matching your security baseline.",
-      "• Pre-flight safety checks and post-change health checks passed with zero impact on other users.",
-      "• No extra license charges were incurred.",
+      ...(verified.length ? ["", "What we checked:", ...verified] : []),
       "",
       "Please let us know if anyone still experiences an issue signing in.",
       "",
@@ -44,18 +43,18 @@ function buildCustomerEmail(drawer: Drawer, customerSummary?: string): string {
     ].join("\n");
   }
   return [
-    `Subject: Update on ${drawer.ticketId} — ${cleanDrawerTitle(drawer).replace(/^Fix [^:]+:\s*/, "")}`,
+    `Subject: Update on ${drawer.ticketId} — ${title}`,
     "",
     "Hi team,",
     "",
-    `We identified the root cause of ${drawer.ticketId} and prepared a verified fix:`,
+    `We identified the root cause of ${drawer.ticketId} and prepared a fix:`,
     "",
     `${drawer.summary}`,
     "",
     "Impact & Safety:",
-    `• Affected items repaired: ${formatFriendlyEntityList(drawer)}`,
-    "• 0 other users or emergency admin accounts are affected.",
-    "• A 1-click undo script is saved in case we need to roll back immediately.",
+    `• Items the fix changes: ${formatFriendlyEntityList(drawer)}`,
+    ...verified,
+    ...(state.formal?.rollback.powershellScript ? ["• A 1-click undo script is saved in case we need to roll back immediately."] : []),
     "",
     "Best regards,",
     "Cloud Operations Team",
@@ -67,9 +66,11 @@ export function NoteAndDocs({ drawer }: { drawer: Drawer }) {
   const [view, setView] = useState<"email" | "runbook">("email");
   const formal = useWorkbench((s) => s.formal);
   const resolutionNote = useWorkbench((s) => s.resolutionNote);
+  const execution = useWorkbench((s) => s.convergence[drawer.ticketId]?.execution ?? null);
+  const canary = useWorkbench((s) => s.canary);
   const copy = useCopy();
 
-  const customerEmail = buildCustomerEmail(drawer, resolutionNote?.customerSummary);
+  const customerEmail = buildCustomerEmail(drawer, { execution, canary, formal }, resolutionNote?.customerSummary);
   const runbookMarkdown = [
     `# Step-by-Step Runbook · ${drawer.ticketId} — ${cleanDrawerTitle(drawer)}`,
     "",
@@ -78,8 +79,13 @@ export function NoteAndDocs({ drawer }: { drawer: Drawer }) {
     "",
     `## 2. Pre-Flight Safety Checks`,
     `- Status: ${drawer.verificationStatus.verdict}`,
-    `- Dry-Run (-WhatIf) Verified: ${drawer.verificationStatus.whatIfSafe ? "Yes" : "No"}`,
-    ...(formal ? formal.formal.invariants.map((i) => `- ✓ ${humanizeInvariant(i.id, drawer.ticketId, i.statement)}`) : []),
+    `- Pre-flight ran in: ${drawer.verificationStatus.sandboxProvider}`,
+    `- Dry-Run (-WhatIf) guard: ${drawer.verificationStatus.whatIfSafe === true ? "every mutation is guarded" : drawer.verificationStatus.whatIfSafe === false ? "NOT every mutation is guarded" : "not checked"}`,
+    ...(formal
+      ? formal.formal.passed === null
+        ? ["- Invariants: none checked (no symbolic model for this ticket)"]
+        : formal.formal.invariants.map((i) => `- ${i.passed ? "✓" : "✗ FAILED:"} ${humanizeInvariant(i.id, drawer.ticketId, i.statement)} (modelled)`)
+      : []),
     "",
     `## 3. Fix Script (PowerShell)`,
     "```powershell",
