@@ -110,6 +110,8 @@ function withPromptScan(rowsVaulted: PiiVaultMetrics): PiiVaultMetrics {
     zeroRawPiiInLlmPrompt: live.zeroRawPiiInLlmPrompt,
     promptsScanned: live.promptsScanned,
     rawPiiPromptHits: live.rawPiiPromptHits,
+    detectorHits: live.detectorHits,
+    metricKind: live.metricKind,
     refusedRehydrations: live.refusedRehydrations,
   };
 }

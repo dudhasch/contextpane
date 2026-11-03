@@ -1,6 +1,7 @@
 import type {
   ExecutionMode,
   ActionApprovalDrawer,
+  AuditChainStatus,
   AuditEntry,
   ClarifyingQuestion,
   ComponentType,
@@ -211,7 +212,7 @@ export interface SkillDef {
   schemaSignature?: string;
   badge: string;
 }
-export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; promptsScanned?: number; rawPiiPromptHits?: number; refusedRehydrations?: number; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
+export interface PiiMetrics { piiFieldsVaulted: number; zeroRawPiiInLlmPrompt: boolean; promptsScanned?: number; rawPiiPromptHits?: number; detectorHits?: number; metricKind?: "self-check"; refusedRehydrations?: number; tokenMapVisibility?: string; sampleMappings: Record<string, string>; tokenMappings?: Record<string, string> }
 export interface DataPlaneDetailResponse {
   scenarioId?: string;
   tenantId?: string;
@@ -405,7 +406,10 @@ export interface PsaResolutionNote {
 export interface TelemetryStats {
   totalRequests: number;
   totalTokens: number;
+  /** Requests a cache, Tier 0 recipe or compiled skill served without a model call. */
   zeroTokenRequests: number;
+  /** Zero-token requests a failed or disabled model left to the deterministic engine (not savings). */
+  fallbackZeroTokenRequests?: number;
   estimatedSavings: { tokens: number; ms: number; usd?: number };
   pricing?: { usdPer1MTokens: number };
   tier2Baseline: { tokens: number; ms: number };
@@ -575,7 +579,7 @@ export const api = {
   resetDrift: (scenarioId?: string) => request<ResetDriftResponse>("/api/lab/reset-drift", { method: "POST", body: JSON.stringify(scenarioId ? { scenarioId } : {}) }),
   visionExtract: (body: { tenantId: string; ticketId: string; fileName: string; imageDataUri: string }) =>
     request<VisionResponse>("/api/vision-extract", { method: "POST", body: JSON.stringify(body) }),
-  audit: (limit = 50) => request<{ entries: AuditEntry[]; file: string }>(`/api/audit?limit=${limit}`),
+  audit: (limit = 50) => request<{ entries: AuditEntry[]; file: string; chain?: AuditChainStatus }>(`/api/audit?limit=${limit}`),
   voiceSteer: (body: { tenantId?: string; text?: string; audioBase64?: string; mimeType?: string }) =>
     request<VoiceResponse>("/api/voice-steer", { method: "POST", body: JSON.stringify(body) }),
   telemetryStats: () => request<TelemetryStats>("/api/telemetry/stats"),
