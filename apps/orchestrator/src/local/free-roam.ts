@@ -895,16 +895,17 @@ export async function stageFreeRoamRemediation(
     actualHcl: "",
     expectedHcl: "",
   });
-  // Free-Roam has no live HCL to patch, so Terraform findings only warn; the AST rules and the -WhatIf gate fail the action (review items 1-2).
+  // Free-Roam has no live HCL to patch, so Terraform findings only warn; the AST rules and the -WhatIf gate fail the
+  // action, and so does an AST check that never ran (no pwsh): null stays null, it is never reported as a pass.
   const gated = applyWhatIfGate(
     {
       ...localPreflight,
-      verdict: localPreflight.astCheckPassed === false ? "Verification Failed" : localPreflight.astCheckPassed === null || localPreflight.findings.length ? "Verified With Warnings" : "Verified Safe",
+      verdict: localPreflight.astCheckPassed !== true ? "Verification Failed" : localPreflight.findings.length ? "Verified With Warnings" : "Verified Safe",
       findings: [...localPreflight.findings],
     },
     powershellScript,
   );
-  const astCheckPassed = localPreflight.astCheckPassed ?? true;
+  const astCheckPassed = localPreflight.astCheckPassed;
   const whatIfSafe = gated.whatIfSafe === true;
   const allFindings = gated.findings;
 

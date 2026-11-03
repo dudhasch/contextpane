@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { SCENARIO_IDS } from "@contextpane/catalog";
 
 process.env.LIVE_CLOUD_MODE = "false";
@@ -151,12 +152,15 @@ describe("Free-Roam Landing Page & MCP Data Mode ('real-tenant' vs 'simulated-la
       drawer: {
         remediationId: string;
         powershellScript: string;
-        verificationStatus: { astCheckPassed: boolean; verdict: string };
+        verificationStatus: { astCheckPassed: boolean | null; verdict: string };
       };
     };
     expect(body.drawer.remediationId).toStartWith("rem-freeroam-");
     expect(body.drawer.powershellScript).toContain("SupportsShouldProcess");
-    expect(body.drawer.verificationStatus.astCheckPassed).toBe(true);
+    // A pass only when the AST really ran: without pwsh it stays null and the action fails closed (review M1).
+    const hasPwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]).status === 0;
+    expect(body.drawer.verificationStatus.astCheckPassed).toBe(hasPwsh ? true : null);
+    if (!hasPwsh) expect(body.drawer.verificationStatus.verdict).toBe("Verification Failed");
   });
 
   test("POST /api/free-roam/remediate streams progress like /api/remediate when SSE is requested", async () => {

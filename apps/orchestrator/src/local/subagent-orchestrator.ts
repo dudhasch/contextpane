@@ -296,6 +296,22 @@ export function steeredRequiredCommands(input: { ticketTitle: string; ticketBody
 }
 
 /**
+ * The bundle's steered contract for the pre-flight allow-list: the required commands plus what the
+ * steered strategy may use beyond them. Purge-recreate on a Key Vault is the one strategy that needs a
+ * privileged command (Remove-AzKeyVault) that the shared allow-list never grants on its own. Like
+ * requiredCommands, this comes from the steering and the ticket, never from the coder.
+ */
+export function steeredAllowedCommands(input: { ticketTitle: string; ticketBody: string; clarifiedAnswers?: Record<string, string>; steering?: SteeringParams }): string[] {
+  const allowed = new Set(steeredRequiredCommands(input));
+  const text = `${input.ticketTitle}\n${input.ticketBody}`;
+  const vault = input.steering?.targetResource?.value ?? keyVaultNameIn(text);
+  if (!isAbacTicketText(text) && vault && /key ?vault|kv-|soft[- ]delete|purge/i.test(text) && input.steering?.remediationStrategy?.value === "purge-recreate") {
+    for (const c of ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"]) allowed.add(c);
+  }
+  return [...allowed];
+}
+
+/**
  * The deterministic coder. It reads the typed steering, so the offline path produces the same
  * cmdlet family as the model path would: a soft-deleted Key Vault steered to "recover" gets
  * Undo-AzKeyVaultRemoval, steered to "purge-recreate" gets Remove-AzKeyVault -InRemovedState

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { SCENARIO_IDS } from "@contextpane/catalog";
+import { PREFLIGHT_RULES, SCENARIO_IDS } from "@contextpane/catalog";
 
 // Offline fixtures only: the tests never reach the lab tenant, whatever .env.local says.
 process.env.LIVE_CLOUD_MODE = "false";
@@ -63,18 +63,20 @@ describe("generated cloud scripts (Dim 4 ledger)", () => {
   test.skipIf(!HAS_PWSH)(
     "every generated script parses with the PowerShell 7 parser",
     async () => {
-      const scripts: Array<[string, string]> = [];
+      // Each script with its contract: a forward fix with its scenario's steered commands, an inverse with the inverse contract.
+      const scripts: Array<[string, string, string[]]> = [];
       for (const id of SCENARIO_IDS) {
-        scripts.push([`${id} forward`, buildRemediationPlan(await gatherContext(id, { fresh: true })).bundle.powershellScript]);
-        scripts.push([`${id} inverse`, buildInverseRollback(id).powershellScript]);
+        const plan = buildRemediationPlan(await gatherContext(id, { fresh: true }));
+        scripts.push([`${id} forward`, plan.bundle.powershellScript, [...plan.requiredCommands, ...(plan.allowedCommands ?? [])]]);
+        scripts.push([`${id} inverse`, buildInverseRollback(id).powershellScript, PREFLIGHT_RULES.inverseCommands]);
       }
       for (const id of ["INC-4099", "ANOM-INT-309"]) {
         const { detect, remediate } = buildDeviceHealthScripts(id);
-        scripts.push([`${id} Detect.ps1`, detect], [`${id} Remediate.ps1`, remediate]);
+        scripts.push([`${id} Detect.ps1`, detect, []], [`${id} Remediate.ps1`, remediate, []]);
       }
       // Tenant scripts also go through the pre-flight verb allow-list; endpoint scripts (*.ps1) only need to parse.
-      const lint = (name: string) => (name.endsWith(".ps1") ? /parse|AST runner|Unbalanced/i : /parse|AST runner|Verb outside|Unbalanced|Forbidden/i);
-      const results = await Promise.all(scripts.map(async ([name, s]) => ({ name, findings: (await checkPowerShellAst(s, 30_000, [])).findings.filter((f) => lint(name).test(f)) })));
+      const lint = (name: string) => (name.endsWith(".ps1") ? /parse|AST runner|Unbalanced/i : /parse|AST runner|outside allow-list|Privileged command|Unbalanced|Forbidden/i);
+      const results = await Promise.all(scripts.map(async ([name, s, allow]) => ({ name, findings: (await checkPowerShellAst(s, 30_000, [], allow)).findings.filter((f) => lint(name).test(f)) })));
       expect(results.filter((r) => r.findings.length > 0)).toEqual([]);
     },
     120_000,
