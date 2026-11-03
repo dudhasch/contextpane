@@ -2,7 +2,7 @@
   "name": "contextpane",
   "version": "0.1.0",
   "private": true,
-  "description": "ContextPane — local-first, MCP-driven, catalog-constrained Generative UI workbench for MSP Azure & Microsoft 365 engineers.",
+  "description": "ContextPane: an operator-steered remediation workbench for MSP engineers on Microsoft Entra ID, Intune and Azure.",
   "license": "MIT",
   "author": "Timur Dudhasch",
   "type": "module",
