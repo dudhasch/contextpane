@@ -15,7 +15,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 | File | Shows |
 |---|---|
 | [`assets/arch-muse-execution-pipeline.svg`](assets/arch-muse-execution-pipeline.svg) | Meta Muse models in execution order: Stage 0 hover, stages 1–5, steering, Tier 3, provider boundary |
-| [`assets/arch-pii-pointer-vault.svg`](assets/arch-pii-pointer-vault.svg) | `ptr://` v1/v2/v3 data plane, session PII vault, rehydration, fence outcomes (drawn before rehydration was scoped per prompt and ticket; see the catalog README for the current rules) |
+| [`assets/arch-pii-pointer-vault.svg`](assets/arch-pii-pointer-vault.svg) | `ptr://` v1/v2/v3 data plane, session PII vault, scoped rehydration, fence outcomes |
 | [`assets/arch-kinematic-prewarm.svg`](assets/arch-kinematic-prewarm.svg) | click-then-fetch vs hover-intent speculative pre-fetch (60 ms dwell, 4-slot epoch-fenced buffer) |
 
 ## Annotated screenshots
