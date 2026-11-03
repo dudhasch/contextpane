@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -13,12 +14,13 @@ import {
   type RouterTelemetry,
   baseScenarioOf,
 } from "@contextpane/catalog";
-import { config, models, providerFor, providers } from "../config.ts";
+import { config, isLiveCloudMode, models, providerFor, providers } from "../config.ts";
 import { scenarioEntities } from "../local/brief.ts";
 import { buildHoverDiagnostic, inferEntityType } from "../local/hover.ts";
 import { gatherContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { untrusted, withUntrustedRule } from "../router/untrusted.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 
 export interface HoverInput {
@@ -67,13 +69,19 @@ interface CachedHover {
   latencyMs: number;
   tokensUsed: TokenUsage;
   args: HoverDiagnosticArgs;
+  /**
+   * Digest of the context the model saw (hoverContextDigest). An answer is served only while the
+   * entity's tenant state still hashes to it (review item 5). Absent on seed and pre-digest entries.
+   */
+  contextDigest?: string;
 }
 
 /**
  * Model answers per (tenant, entity), persisted to data/hover-cache.json so a restart
  * serves every pill from disk instead of waking the scale-to-zero GPU again. An entry is
- * reused while it comes from the preferred (first configured) provider; ?refresh=true
- * regenerates it. A fresh clone has no cache file yet and starts from the tracked
+ * reused only while the entity's context still matches the digest it was generated from, so a
+ * fix, a rollback or any drift regenerates it; approve and rollback also drop the scenario's
+ * entries outright (invalidateHoverCache). ?refresh=true regenerates it. A fresh clone has no cache file yet and starts from the tracked
  * data/hover-cache.seed.json: genuine Muse Glimmer 30B answers from the Modal L40S.
  */
 const HOVER_CACHE_FILE = join(config.dataDir, "hover-cache.json");
@@ -151,8 +159,12 @@ function writeHoverCache(): void {
   }
 }
 
+/** Tests never rewrite the developer's data/hover-cache.json. */
+const PERSIST_HOVER_CACHE = process.env.NODE_ENV !== "test" && !process.env.BUN_TEST;
+
 /** Debounced, so a warm-up burst writes the file once; a pending write is flushed on exit. */
 function saveHoverCache(): void {
+  if (!PERSIST_HOVER_CACHE) return;
   saveTimer ??= setTimeout(writeHoverCache, 250);
 }
 
@@ -165,10 +177,54 @@ function preferredProvider(): RouterTelemetry["provider"] | undefined {
   return config.forceLocal ? undefined : chainSteps().find((s) => s.hasKey)?.provider;
 }
 
-/** Any cached model answer is served (Muse Glimmer ones included without a GPU configured); ?refresh=true regenerates it. */
-function cachedHover(scope: string, entityId: string): CachedHover | undefined {
+/**
+ * A cached model answer for the entity, served only while the context behind it is unchanged
+ * (Muse Glimmer ones included without a GPU configured); ?refresh=true regenerates it.
+ * Seed and pre-digest answers were generated against the lab fixtures: they are served in
+ * simulated-lab mode only, and are pinned to the context they are first served for.
+ */
+function cachedHover(scope: string, entityId: string, digest: string): CachedHover | undefined {
   if (config.forceLocal) return undefined;
-  return hoverCache.get(hoverKey(scope, entityId));
+  const entry = hoverCache.get(hoverKey(scope, entityId));
+  const decision = hoverCacheDecision(entry, digest, isLiveCloudMode());
+  if (decision === "miss" || !entry) return undefined;
+  if (decision === "pin") {
+    entry.contextDigest = digest;
+    saveHoverCache();
+  }
+  return entry;
+}
+
+/** "hit": generated from this context · "pin": a seed answer served in simulated-lab mode · "miss": absent, or stale. */
+export function hoverCacheDecision(entry: { contextDigest?: string } | undefined, digest: string, liveCloudMode: boolean): "hit" | "pin" | "miss" {
+  if (!entry) return "miss";
+  if (entry.contextDigest) return entry.contextDigest === digest ? "hit" : "miss";
+  return liveCloudMode ? "miss" : "pin";
+}
+
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+/**
+ * Digest of what the hover model is shown for this entity: licences, groups, policy state and
+ * drift, Intune settings, sign-in outcomes, NSG drift. Timestamps are left out, because the lab
+ * fixtures stamp events relative to "now" and would otherwise change the digest every second.
+ */
+export function hoverContextDigest(ctx: CorrelationContext, entityId: string, entityType: EntityType): string {
+  const stable = JSON.stringify(hoverContext(ctx, entityId, entityType), (_key, value: unknown) => (typeof value === "string" && ISO_TIMESTAMP_RE.test(value) ? undefined : value));
+  return createHash("sha256").update(stable ?? "").digest("hex").slice(0, 16);
+}
+
+/** Drops every cached answer of the scenario's scope: called after an approve or a rollback changed tenant state. */
+export function invalidateHoverCache(scenarioId: string): number {
+  const prefix = `${hoverScope(resolveScenarioId(scenarioId))}|`;
+  let dropped = 0;
+  for (const key of [...hoverCache.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    hoverCache.delete(key);
+    dropped++;
+  }
+  if (dropped) saveHoverCache();
+  return dropped;
 }
 
 /**
@@ -196,7 +252,8 @@ function hoverContext(ctx: CorrelationContext, entityId: string, entityType: Ent
   const id = entityId.toLowerCase();
   const signIns = (ctx.signIns?.data ?? []).filter((e) => e.upn.toLowerCase() === id || e.errorCodeLabel?.toLowerCase() === id || e.blockingPolicyId === entityId);
   return {
-    scenario: { scenarioId: ctx.scenarioId ?? ctx.ticketId, title: ctx.erp.ticket?.title ?? ctx.custom?.title ?? ctx.scenarioId ?? ctx.ticketId },
+    // Ticket titles are customer-written: delimited as data (review item 4).
+    scenario: { scenarioId: ctx.scenarioId ?? ctx.ticketId, title: ctx.erp.ticket?.title || ctx.custom?.title ? untrusted("ticket-title", ctx.erp.ticket?.title ?? ctx.custom?.title) : (ctx.scenarioId ?? ctx.ticketId) },
     user: entityType === "upn" ? (ctx.license?.data.users.find((u) => u.upn.toLowerCase() === id) ?? null) : undefined,
     groups: entityType === "upn" ? (ctx.groupsByUpn.get(id) ?? []) : undefined,
     skuPools: ctx.license?.data.skuPools,
@@ -221,10 +278,11 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
   const scenarioId = resolveScenarioId(input.scenarioId);
   const scope = hoverScope(scenarioId);
   const entityType = input.entityType ?? inferEntityType(input.entityId);
-  const cached = input.fresh ? undefined : cachedHover(scope, input.entityId);
+  const ctx = await gatherContext(scenarioId, { fresh: input.fresh ?? false });
+  const digest = hoverContextDigest(ctx, input.entityId, entityType);
+  const cached = input.fresh ? undefined : cachedHover(scope, input.entityId, digest);
   if (cached) {
     const modelId = `${cached.modelId} (cached)`;
-    const ctx = await gatherContext(scenarioId);
     const latencyMs = Math.round(performance.now() - started);
     return {
       popover: HoverDiagnosticPopoverSchema.parse({
@@ -245,7 +303,6 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
       }),
     };
   }
-  const ctx = await gatherContext(scenarioId, { fresh: input.fresh ?? false });
   const deterministic = buildHoverDiagnostic(ctx, { entityId: input.entityId, entityType });
 
   let args: HoverDiagnosticArgs = deterministic;
@@ -267,7 +324,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
         providerFor(step.provider),
         step.modelId,
         [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: withUntrustedRule(SYSTEM_PROMPT) },
           { role: "user", content: JSON.stringify(userPayload) },
         ],
         tool,
@@ -281,6 +338,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
           temperature: 0,
           maxTokens: step.provider === providers.openWeight.id ? config.openWeightHoverMaxTokens : 1500,
           reasoningEffort: config.reasoning.hover,
+          piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId },
         },
       );
       const raw = parseToolArguments(result.argumentsRaw);
@@ -305,7 +363,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
       provider = outcome.winner.provider;
       modelId = outcome.winner.modelId;
       // A fallback answer (Glimmer timed out on an interactive refresh) never replaces a cached Glimmer one.
-      if (provider === preferredProvider() || provider === providers.openWeight.id || !cachedHover(scope, input.entityId)) {
+      if (provider === preferredProvider() || provider === providers.openWeight.id || !cachedHover(scope, input.entityId, digest)) {
         hoverCache.set(hoverKey(scope, input.entityId), {
           generatedAt: new Date().toISOString(),
           provider,
@@ -313,6 +371,7 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
           latencyMs: chain.at(-1)?.latencyMs ?? 0,
           tokensUsed: usage,
           args,
+          contextDigest: digest,
         });
         saveHoverCache();
       }
@@ -386,7 +445,7 @@ export function buildBriefHovers(
     if (e.hoverable === false) continue;
     const entityType = e.type ?? inferEntityType(e.id);
     const deterministic = buildHoverDiagnostic(ctx, { entityId: e.id, entityType });
-    const cached = cachedHover(scope, e.id);
+    const cached = cachedHover(scope, e.id, hoverContextDigest(ctx, e.id, entityType));
     const args = cached ? withGroundTruth(cached.args, deterministic) : deterministic;
     out[e.id] = HoverDiagnosticPopoverSchema.parse({
       ...args,
@@ -417,12 +476,13 @@ export async function warmHoverCache(scenarioOrTenant: string): Promise<{ warmed
   try {
     const ctx = await gatherContext(scenarioId);
     const targets = hoverTargets(ctx);
-    const missing = targets.filter((t) => !cachedHover(scope, t.entityId));
+    const isCached = (t: { entityId: string; entityType: EntityType }) => Boolean(cachedHover(scope, t.entityId, hoverContextDigest(ctx, t.entityId, t.entityType)));
+    const missing = targets.filter((t) => !isCached(t));
     // Second pass for answers that came back malformed.
     for (let attempt = 0; attempt < 2; attempt++) {
-      await Promise.all(missing.filter((t) => !cachedHover(scope, t.entityId)).map((t) => withWarmSlot(() => hover({ scenarioId, ...t })).catch(() => undefined)));
+      await Promise.all(missing.filter((t) => !isCached(t)).map((t) => withWarmSlot(() => hover({ scenarioId, ...t })).catch(() => undefined)));
     }
-    return { warmed: targets.filter((t) => cachedHover(scope, t.entityId)).length, generated: missing.length, total: targets.length };
+    return { warmed: targets.filter(isCached).length, generated: missing.length, total: targets.length };
   } finally {
     warming.delete(scope);
   }

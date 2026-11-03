@@ -1,7 +1,7 @@
 import type { RemediationBundleArgs } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, WORKLOAD_IDENTITY, demoName, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
-import { buildCustomTicketRemediationSync } from "./subagent-orchestrator.ts";
+import { buildCustomTicketRemediationSync, steeredRequiredCommands } from "./subagent-orchestrator.ts";
 
 /**
  * Deterministic remediation templates, one per scenario. These are what Tier 3
@@ -892,10 +892,13 @@ export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
                 "All mutating operations are guarded by $PSCmdlet.ShouldProcess (-WhatIf safe).",
               ],
       },
-      requiredCommands:
-        cr.requiredCommands && cr.requiredCommands.length > 0
-          ? cr.requiredCommands.map((c) => c.toLowerCase())
-          : [...new Set((cr.powershellScript.match(/\b(Get|Set|New|Update|Remove|Undo|Invoke)-[A-Za-z0-9]+\b/g) ?? []).map((c) => c.toLowerCase()))],
+      // Recomputed from the steering, never read from the bundle or derived from its own script (review item 3).
+      requiredCommands: steeredRequiredCommands({
+        ticketTitle: ctx.custom?.ticket.title ?? ctx.ticketId,
+        ticketBody: ctx.custom?.ticket.body ?? "",
+        ...(ctx.custom?.clarifiedAnswers ? { clarifiedAnswers: ctx.custom.clarifiedAnswers } : {}),
+        ...(ctx.custom?.steering ? { steering: ctx.custom.steering } : {}),
+      }),
       remediatedUpns: [],
       reclaimedUpns: [],
     };

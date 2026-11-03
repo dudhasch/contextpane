@@ -30,6 +30,8 @@ input/tickets/*
 !input/tickets/.gitkeep
 !input/tickets/#2026323/
 data/router-debug.jsonl
+# eval runs (scores and staged scripts per case): local only
+apps/orchestrator/evals/results/
 # carries ticket prompts (names, UPNs before the vault landed): runtime state, not source
 data/synthesized-elements-log.json
 data/test-voice-command.*

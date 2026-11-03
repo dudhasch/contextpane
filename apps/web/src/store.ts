@@ -405,7 +405,7 @@ interface WorkbenchState {
   piiMetrics: PiiMetrics | null;
   dataplaneDetail: import("./lib/api").DataPlaneDetailResponse | null;
 
-  /* Ω-Prime kinematic speculative pre-warm */
+  /* Hover-intent speculative pre-fetch (60 ms dwell; no cursor-velocity model) */
   speculativeEpoch: number;
   speculativeSelectionCache: Record<string, SpeculativeSelectionSlot>;
   speculativeBuffer: SpeculativeBufferSlot[];
@@ -426,7 +426,7 @@ interface WorkbenchState {
   pendingTriageTitle: string | null;
   refiningGoal: boolean;
   lastRefinedAt: string | null;
-  /** U-1: a steer is in flight (the pill already flipped, the PowerShell tab shows the re-parameterising shimmer). */
+  /** a steer is in flight (the pill already flipped, the PowerShell tab shows the re-parameterising shimmer). */
   steerStatus: "idle" | "pending" | "error";
   /** The last steer that landed: what changed in the script, which versions, what the coder spent. */
   lastSteer: { scenarioId: string; fromVersion: number; toVersion: number; diff: string; coder: { modelId: string; source: string; latencyMs: number; tokensUsed: number }; at: string } | null;
@@ -575,7 +575,7 @@ interface WorkbenchState {
   extractVision(attachment: ErpAttachment): Promise<void>;
   /** Highlight → Generate Context UI: spawns a cyan mini-dashboard for the phrase on the canvas. */
   exploreSelection(text: string, options?: { refinementText?: string; viewMode?: ContextViewMode }): Promise<void>;
-  /** Silent kinematic pre-warm for text selection (zero Midas-touch jitter: never mutates visible UI until click). */
+  /** Silent speculative pre-fetch for a text selection; the visible UI does not change until the click. */
   prewarmSelectionExplore(
     rawText: string,
     options?: { refinementText?: string; viewMode?: ContextViewMode; prefetch?: boolean },
@@ -594,7 +594,7 @@ interface WorkbenchState {
   /** Interactive Goal Clarifier: apply clarified answers and regenerate brief, cards, and remediation via Sub-Agents. */
   refineGoal(clarifiedAnswers: Record<string, string>): Promise<void>;
   /**
-   * Steering that moves code (U-1): a pill toggle, a lens row click or a typed parameter. The pill flips
+   * Steering that moves code: a pill toggle, a lens row click or a typed parameter. The pill flips
    * at once, the PowerShell tab shimmers, then the real re-parameterised script and its diff land.
    */
   steer(delta: SteerBody): Promise<void>;
@@ -1554,7 +1554,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     const { drawer } = get();
     if (!drawer) return;
     try {
-      const { drawer: updated } = await api.overrideRemediation(drawer.remediationId, { justification, operator: drawer.approval.requiredIdentity });
+      const { drawer: updated } = await api.overrideRemediation(drawer.remediationId, { justification });
       set({ drawer: updated, remediateStatus: "ready" });
       get().toast({ tone: "warning", title: "Pre-flight overridden", detail: "Justification recorded in the audit ledger; the failed checks keep their results." });
     } catch (error) {
@@ -1566,7 +1566,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     const { drawer } = get();
     if (!drawer) return;
     const domain = get().brief?.verifiedDomain ?? "c4a8shili.onmicrosoft.com";
-    // The console shows only what the orchestrator reports; nothing here is scripted (L-09).
+    // The console shows only what the orchestrator reports; nothing here is scripted.
     if (decision === "approve") {
       set({
         codeRailOpen: true,
@@ -1582,7 +1582,6 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       const result: ApproveResponse = await api.approve({
         remediationId: drawer.remediationId,
         decision,
-        approvedBy: drawer.approval.requiredIdentity,
         ...(decision === "approve" ? { openPullRequest: get().openPrOnApprove, mode: get().executionMode, simulateCanaryFailure: get().simulateCanaryFailure } : {}),
       });
       const { executionLog, ...updated } = result.drawer;
@@ -1606,7 +1605,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
         liveConsoleLines: executionLog,
       });
       if (result.canary?.finalState === "AUTO_ROLLED_BACK") {
-        // The toast says only what the orchestrator did: a drill on a staged approval reverted nothing (HARD_CASES 6).
+        // The toast says only what the orchestrator did: a drill on a staged approval reverted nothing.
         const landed = result.canary.rollbackExecuted === true;
         get().toast({
           tone: landed ? "warning" : "critical",
@@ -1824,7 +1823,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
     set({ liveConsoleOpen: true, liveConsoleStreaming: true, liveConsoleStep: "⏳ Asking the orchestrator for the revert…" });
     try {
       const r = await api.rollback(scenarioId);
-      // Only what the server reports: a landed live inverse, a simulated one (lab state in memory), or a staged script (L-09, U-5).
+      // Only what the server reports: a landed live inverse, a simulated one (lab state in memory), or a staged script.
       const executed = r.executed === true;
       const reverted = executed || (r.execution === "simulated" && r.convergenceCleared);
       if (r.convergenceCleared) get().applyConvergence(scenarioId, null);
@@ -2445,7 +2444,7 @@ export const useWorkbench = create<WorkbenchState>()(withCodeRailModes((set, get
       get().toast({
         tone: "healthy",
         title: `${result.scenario.scenarioId} triaged in ${Math.round(performance.now() - started)} ms`,
-        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} tenant entities matched live · Formal proof ${result.verification.formal.passed === null ? "not provable for ad-hoc tickets" : result.verification.formal.passed ? "verified" : "flagged"}`,
+        detail: `${x.entities.filter((e) => e.resolvedTo).length}/${x.entities.length} tenant entities matched live · Symbolic checks ${result.verification.formal.passed === null ? "not checkable for ad-hoc tickets" : result.verification.formal.passed ? "passed" : "flagged"}`,
       });
       await get().selectScenario(result.scenario.scenarioId);
     } catch (error) {

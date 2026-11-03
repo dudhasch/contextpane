@@ -428,7 +428,7 @@ export function buildComponent(type: ComponentType, ctx: CorrelationContext): La
             body: ctx.custom.ticket.body,
             matchedSeededComponents: [],
           });
-        // First paint only: a template card in memory, never written to the catalog (L-03).
+        // First paint only: a template card in memory, never written to the catalog.
         const synthesized = buildTemplateCards(routing);
         if (synthesized[0]) {
           return {

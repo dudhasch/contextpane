@@ -17,7 +17,7 @@ const record = () =>
   telemetry.record({ requestId: "cfg-truth", endpoint: "/test", tier: "Tier 0", provider: "local", modelId: "deterministic", latencyMs: 0, tokensUsed: { prompt: 0, completion: 0, total: 0 }, fallbackChain: [] });
 
 describe("config truth", () => {
-  test("LIVE_CLOUD_MODE follows the Real-Tenant / Simulated-Lab toggle at runtime, not the boot value (M-10)", () => {
+  test("LIVE_CLOUD_MODE follows the Real-Tenant / Simulated-Lab toggle at runtime, not the boot value", () => {
     expect(config.liveCloudMode).toBe(false);
     setMcpDataMode("real-tenant");
     expect(isLiveCloudMode()).toBe(true);

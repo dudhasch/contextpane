@@ -100,7 +100,7 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
 }
 
 /**
- * f⁻¹ through the forward write path (U-5): every section of the captured pre-change snapshot
+ * f⁻¹ through the forward write path: every section of the captured pre-change snapshot
  * is written back through the same service methods the approve path writes through, so the
  * rollback honours LIVE_CLOUD_MODE and the live-capable tenant list exactly as approve does.
  * Outside live mode the writes are simulated and the in-memory lab state follows the snapshot.

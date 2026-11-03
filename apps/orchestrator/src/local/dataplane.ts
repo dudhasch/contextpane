@@ -47,7 +47,6 @@ export {
   computeBurstiness,
   computeLog2RowBucket,
   createPiiVault,
-  createPseudonymVault,
   fencedDataPtr,
   getDataPlaneEpoch,
   getDataPlaneGeneration,
@@ -106,7 +105,13 @@ const latest = new Map<string, DataPlaneSnapshot>();
 /** Row-vault counts for this snapshot plus the session's computed prompt scan (`router/openai.ts`). */
 function withPromptScan(rowsVaulted: PiiVaultMetrics): PiiVaultMetrics {
   const live = sessionPiiVault.metrics();
-  return { ...rowsVaulted, zeroRawPiiInLlmPrompt: live.zeroRawPiiInLlmPrompt, promptsScanned: live.promptsScanned, rawPiiPromptHits: live.rawPiiPromptHits };
+  return {
+    ...rowsVaulted,
+    zeroRawPiiInLlmPrompt: live.zeroRawPiiInLlmPrompt,
+    promptsScanned: live.promptsScanned,
+    rawPiiPromptHits: live.rawPiiPromptHits,
+    refusedRehydrations: live.refusedRehydrations,
+  };
 }
 
 /** Publishes (once per gathered context) every dataset the scenario's cards are bound from. */
@@ -306,13 +311,10 @@ function createPiiVaultForValue(_value: unknown): PiiVault {
   const snap = [...latest.values()].at(-1);
   return snap?.piiVault ?? sessionPiiVault;
 }
-export function unvaultForLlm(value: unknown, vault?: PiiVault): unknown {
+export function depseudonymizeForLlm(value: unknown, vault?: PiiVault): unknown {
   const v = vault ?? [...latest.values()].at(-1)?.piiVault ?? sessionPiiVault;
   return v.depseudonymize(value);
 }
-export const depseudonymizeForLlm = unvaultForLlm;
-export function vaultPii(value: unknown, vault?: PiiVault): unknown { return pseudonymizeForLlm(value, vault); }
-export function unvaultPii(value: unknown, vault?: PiiVault): unknown { return unvaultForLlm(value, vault); }
 
 /** Rows behind a pointer (plain or ptr:// v2/v3 relational query), from the latest snapshot of its scenario. */
 export function resolveDataPtr(

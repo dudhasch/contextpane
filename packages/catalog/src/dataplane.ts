@@ -621,6 +621,7 @@ export const PII_FIELDS = {
   ipAddress: { classification: PII_CLASSIFICATION, annotation: '@pii(classification:"EU-GDPR-Personal")', tokenPrefix: "ip" },
   userId: { classification: PII_CLASSIFICATION, annotation: '@pii(classification:"EU-GDPR-Personal")', tokenPrefix: "userId" },
   deviceName: { classification: PII_CLASSIFICATION, annotation: '@pii(classification:"EU-GDPR-Personal")', tokenPrefix: "device" },
+  phone: { classification: PII_CLASSIFICATION, annotation: '@pii(classification:"EU-GDPR-Personal")', tokenPrefix: "phone" },
 } as const;
 export type PiiField = keyof typeof PII_FIELDS;
 export const PII_FIELD_NAMES = Object.keys(PII_FIELDS) as PiiField[];
@@ -641,10 +642,12 @@ export interface PiiVaultMetrics {
   promptsScanned: number;
   /** Prompts in which the scan still found raw PII after pseudonymisation. */
   rawPiiPromptHits: number;
+  /** Tokens a model reply used that the calling scope was never shown; they stay tokens and are not rehydrated. */
+  refusedRehydrations: number;
   sampleMappings: Record<string, string>;
   tokenMappings: Record<string, string>;
   orderPreservingCohortSorted?: boolean;
-  hmacEpoch?: number;
+  digestEpoch?: number;
 }
 
 const GITHUB_RUNNER_IPS = new Set(["185.199.108.40", "185.199.109.40", "185.199.110.40", "185.199.111.40", "140.82.112.10"]);
@@ -689,7 +692,28 @@ export function isMachineOrNonPersonalPii(field: string, raw: string, row?: Reco
 
 const EMAIL_RE = /[A-Za-z0-9._%+'-]+(?:#EXT#)?@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b(?!\/\d)/g;
-const TOKEN_RE = /\b(?:upn|displayName|ip|userId|device)_tok_\d+\b/;
+const TOKEN_SOURCE = String.raw`\b(?:upn|displayName|ip|userId|device|phone)_tok_\d+\b`;
+const TOKEN_RE = new RegExp(TOKEN_SOURCE);
+const tokenGlobalRe = () => new RegExp(TOKEN_SOURCE, "g");
+const GUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+/** International numbers (`+49 30 1234567`, `+1 (425) 555-0100`) and the US `(425) 555-0100` form. */
+const PHONE_RE = /(?<![\w+])\+\d{1,3}(?:[\s.-]?\(?\d{1,4}\)?){2,5}(?![\w])|(?<![\w(])\(\d{3}\)\s?\d{3}-\d{4}(?!\w)/g;
+
+/** A phone match must carry 8-15 digits, so version strings and short codes are left alone. */
+function isPhoneNumber(candidate: string): boolean {
+  const digits = candidate.replace(/\D/g, "").length;
+  return digits >= 8 && digits <= 15;
+}
+
+/** Who a prompt was sent for: model replies may only rehydrate tokens that scope was shown. */
+export interface PiiScope {
+  tenantId: string;
+  ticketId?: string;
+}
+
+export function piiScopeKey(scope: PiiScope): string {
+  return `${scope.tenantId}|${scope.ticketId ?? "*"}`;
+}
 
 /** Public addresses only: network plumbing (RFC 1918, 0.0.0.0, CIDR prefixes, GitHub runners) is not personal data. */
 function isPersonalIpv4(ip: string): boolean {
@@ -745,10 +769,16 @@ function caseFoldCompare(a: string, b: string): number {
 export class PiiVault {
   private tokenByReal = new Map<string, string>();
   private realByToken = new Map<string, string>();
-  private hmacByToken = new Map<string, string>();
+  private digestByToken = new Map<string, string>();
   private counters = new Map<string, number>();
   /** Person display names known to belong to a UPN (registered from tenant context or derived from UPNs). */
   private knownPersonNames = new Set<string>();
+  /** User object ids and device names seen in tenant rows, so the same values in free text are vaulted too. */
+  private knownUserIds = new Set<string>();
+  private knownDeviceNames = new Set<string>();
+  /** Scope key -> every token sent to a model for that scope. */
+  private exposedByScope = new Map<string, Set<string>>();
+  private refusedRehydrations = 0;
   private promptsScanned = 0;
   private rawPiiPromptHits = 0;
   private epoch: number;
@@ -768,14 +798,11 @@ export class PiiVault {
     const token = `${prefix}_tok_${String(n).padStart(2, "0")}`;
     this.tokenByReal.set(key, token);
     this.realByToken.set(token, value);
-    this.hmacByToken.set(token, computeEpochSaltedDigest(this.epoch, String(field), value));
+    this.digestByToken.set(token, computeEpochSaltedDigest(this.epoch, String(field), value));
     return token;
   }
-  tokenize = this.vault.bind(this);
   unvault(token: string): string | null { return this.realByToken.get(token) ?? null; }
-  devault = this.unvault.bind(this);
-  lookup = this.unvault.bind(this);
-  hmacForToken(token: string): string | null { return this.hmacByToken.get(token) ?? null; }
+  digestForToken(token: string): string | null { return this.digestByToken.get(token) ?? null; }
 
   /**
    * Pre-sorts all unique `@pii(EU-GDPR-Personal)` strings in case-folded lexicographical order
@@ -833,8 +860,6 @@ export class PiiVault {
     return value;
   }
 
-  pseudonymizeForLlm(value: unknown): unknown { return this.pseudonymize(value); }
-
   /** Remember `displayName ↔ upn` pairs from any MCP result so free text naming those people can be vaulted. */
   registerPersonsFrom(value: unknown): void {
     const walk = (node: unknown, depth: number) => {
@@ -849,6 +874,15 @@ export class PiiVault {
       if (upn && upn.includes("@") && name && name.includes(" ") && !isMachineOrNonPersonalPii("displayName", name, rec)) {
         this.knownPersonNames.add(name);
       }
+      if (upn && upn.includes("@") && !isMachineOrNonPersonalPii("upn", upn, rec)) {
+        for (const key of ["userId", "objectId", "id"]) {
+          const v = rec[key];
+          if (typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) this.knownUserIds.add(v.toLowerCase());
+        }
+      }
+      if (typeof rec.deviceName === "string" && rec.deviceName.trim().length >= 4 && !isMachineOrNonPersonalPii("deviceName", rec.deviceName, rec)) {
+        this.knownDeviceNames.add(rec.deviceName.trim());
+      }
       for (const v of Object.values(rec)) if (v && typeof v === "object") walk(v, depth + 1);
     };
     walk(value, 0);
@@ -861,10 +895,23 @@ export class PiiVault {
     return [...names].filter((n) => n.trim().length >= 4).sort((a, b) => b.length - a.length);
   }
 
+  private userIds(): Set<string> {
+    const ids = new Set(this.knownUserIds);
+    for (const [key] of this.tokenByReal) if (key.startsWith("userId:")) ids.add(key.slice("userId:".length).toLowerCase());
+    return ids;
+  }
+
+  private deviceNames(): string[] {
+    const names = new Set(this.knownDeviceNames);
+    for (const [key] of this.tokenByReal) if (key.startsWith("deviceName:")) names.add(key.slice("deviceName:".length));
+    return [...names].filter((n) => n.trim().length >= 4).sort((a, b) => b.length - a.length);
+  }
+
   /**
    * Free-text pseudonymisation for prompts (ticket bodies, selection text, rendered context):
    * UPNs / e-mail addresses, the display names of known people (and the "First Last" read
-   * from a `first.last@` UPN) and public IPv4 addresses become stable session tokens.
+   * from a `first.last@` UPN), known device names, known user object ids, phone numbers and
+   * public IPv4 addresses become stable session tokens.
    */
   pseudonymizeText(text: string): string {
     if (!text) return text;
@@ -877,17 +924,29 @@ export class PiiVault {
       const re = personNameRe(name, "gi");
       out = out.replace(re, (hit) => this.vault(name, "displayName") || hit);
     }
+    for (const device of this.deviceNames()) {
+      out = out.replace(personNameRe(device, "gi"), (hit) => this.vault(device, "deviceName") || hit);
+    }
+    const userIds = this.userIds();
+    out = out.replace(GUID_RE, (guid) => (userIds.has(guid.toLowerCase()) ? this.vault(guid.toLowerCase(), "userId") : guid));
+    out = out.replace(PHONE_RE, (phone) => (isPhoneNumber(phone) ? this.vault(phone, "phone") : phone));
     out = out.replace(IPV4_RE, (ip) => (isPersonalIpv4(ip) ? this.vault(ip, "ipAddress") : ip));
     return out;
   }
 
-  /** Raw personal data still present in `text`: e-mail addresses, known person names, public IPv4s. */
+  /** Detector hits still present in `text`: e-mail addresses, known person and device names, known user ids, phone numbers, public IPv4s. */
   scanForRawPii(text: string): string[] {
     const hits = new Set<string>();
     for (const m of text.matchAll(EMAIL_RE)) hits.add(m[0]);
     for (const name of this.personNames()) {
       if (personNameRe(name, "i").test(text)) hits.add(name);
     }
+    for (const device of this.deviceNames()) {
+      if (personNameRe(device, "i").test(text)) hits.add(device);
+    }
+    const userIds = this.userIds();
+    for (const m of text.matchAll(GUID_RE)) if (userIds.has(m[0].toLowerCase())) hits.add(m[0]);
+    for (const m of text.matchAll(PHONE_RE)) if (isPhoneNumber(m[0])) hits.add(m[0]);
     for (const m of text.matchAll(IPV4_RE)) if (isPersonalIpv4(m[0])) hits.add(m[0]);
     return [...hits].filter((h) => !TOKEN_RE.test(h));
   }
@@ -901,19 +960,46 @@ export class PiiVault {
   }
 
   depseudonymize(value: unknown): unknown {
-    if (typeof value === "string") return this.realByToken.get(value) ?? value.replace(/\b(?:upn|displayName|ip|userId|device)_tok_\d+\b/g, (t) => this.realByToken.get(t) ?? t);
+    if (typeof value === "string") return this.realByToken.get(value) ?? value.replace(tokenGlobalRe(), (t) => this.realByToken.get(t) ?? t);
     if (Array.isArray(value)) return value.map((v) => this.depseudonymize(v));
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, this.depseudonymize(v)]));
     return value;
   }
-  /** Map tokens back inside a JSON document (a model's tool-call arguments), escaping each real value for its string. */
-  depseudonymizeJsonText(json: string): string {
-    return json.replace(/\b(?:upn|displayName|ip|userId|device)_tok_\d+\b/g, (t) => {
+  /**
+   * Map tokens back inside a JSON document (a model's tool-call arguments), escaping each real value for its string.
+   * With `allowed`, only those tokens are rehydrated: a token the caller's prompt never carried (another tenant's,
+   * another ticket's, or one the model guessed) stays a token and is counted in `refusedRehydrations`.
+   */
+  depseudonymizeJsonText(json: string, allowed?: ReadonlySet<string>): string {
+    return json.replace(tokenGlobalRe(), (t) => {
       const real = this.realByToken.get(t);
-      return real === undefined ? t : JSON.stringify(real).slice(1, -1);
+      if (real === undefined) return t;
+      if (allowed && !allowed.has(t)) {
+        this.refusedRehydrations += 1;
+        return t;
+      }
+      return JSON.stringify(real).slice(1, -1);
     });
   }
-  unvaultValue(value: unknown): unknown { return this.depseudonymize(value); }
+  /** Every vault token that occurs in `text`. */
+  tokensIn(text: string): Set<string> {
+    return new Set([...text.matchAll(tokenGlobalRe())].map((m) => m[0]).filter((t) => this.realByToken.has(t)));
+  }
+  /** Record that the tokens in `text` were sent to a model on behalf of `scope`; returns everything that scope has seen. */
+  exposeTo(scope: PiiScope, text: string): Set<string> {
+    const key = piiScopeKey(scope);
+    let seen = this.exposedByScope.get(key);
+    if (!seen) {
+      seen = new Set<string>();
+      this.exposedByScope.set(key, seen);
+    }
+    for (const t of this.tokensIn(text)) seen.add(t);
+    return new Set(seen);
+  }
+  /** Tokens already sent to a model for `scope` (empty for a scope nothing was sent for). */
+  exposedTokens(scope: PiiScope): Set<string> {
+    return new Set(this.exposedByScope.get(piiScopeKey(scope)) ?? []);
+  }
   metrics(): PiiVaultMetrics {
     const tokenMappings = Object.fromEntries(this.realByToken);
     return {
@@ -921,30 +1007,23 @@ export class PiiVault {
       zeroRawPiiInLlmPrompt: this.rawPiiPromptHits === 0,
       promptsScanned: this.promptsScanned,
       rawPiiPromptHits: this.rawPiiPromptHits,
+      refusedRehydrations: this.refusedRehydrations,
       sampleMappings: { ...tokenMappings },
       tokenMappings,
       orderPreservingCohortSorted: true,
-      hmacEpoch: this.epoch,
+      digestEpoch: this.epoch,
     };
   }
-  getMetrics(): PiiVaultMetrics { return this.metrics(); }
 }
-export const PseudonymVault = PiiVault;
 export function createPiiVault(epoch?: number): PiiVault { return new PiiVault(epoch); }
-export const createPseudonymVault = createPiiVault;
 /** Per-session default vault (deterministic within the process/session). */
 export const sessionPiiVault = new PiiVault();
-export const defaultPiiVault = sessionPiiVault;
 
-export function vaultPii(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.pseudonymize(value); }
-export function unvaultPii(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.depseudonymize(value); }
-export const unvaultValue = unvaultPii;
 export function pseudonymizeForLlm(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.pseudonymize(value); }
-export const pseudonymiseForLlm = pseudonymizeForLlm;
 export function depseudonymizeForLlm(value: unknown, vault: PiiVault = sessionPiiVault): unknown { return vault.depseudonymize(value); }
 export function getPiiVaultMetrics(vault: PiiVault = sessionPiiVault): PiiVaultMetrics { return vault.metrics(); }
 
-/* ---------------- Honest Blind Structural Sketches (B1.3) ---------------- */
+/* ---------------- Honest Blind Structural Sketches ---------------- */
 
 /**
  * Computes Goh-Barabási burstiness parameter B = (σ - μ) / (σ + μ) ∈ [-1, 1]

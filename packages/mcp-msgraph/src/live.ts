@@ -363,7 +363,7 @@ export interface LiveServiceHealthOverview {
 /**
  * GET /admin/serviceAnnouncement/healthOverviews through the delegated Connect-MgGraph token.
  * Needs ServiceHealth.Read.All on that identity; a 403 means the scope is not granted and the
- * caller reports the service as not probed (HARD_CASES 31).
+ * caller reports the service as not probed.
  */
 export async function fetchServiceHealthOverviewsLive(timeoutMs: number): Promise<LiveServiceHealthOverview[]> {
   const body = (await graphFetch("/admin/serviceAnnouncement/healthOverviews", { method: "GET" }, timeoutMs, "graph-sdk")) as {

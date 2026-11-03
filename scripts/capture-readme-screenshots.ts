@@ -14,7 +14,7 @@
  * (a live lab write in LIVE_CLOUD_MODE), captures the RESOLVED & VERIFIED badge with the
  * auto-drafted PSA resolution note, then resets the drift.
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -26,6 +26,9 @@ const arg = (name: string, fallback: string) => {
 const URL_BASE = arg("--url", "http://localhost:5173");
 const CLOSURE = process.argv.includes("--closure");
 const API = arg("--api", process.env.CTX_ORCHESTRATOR_URL ?? "http://127.0.0.1:4000");
+/** The orchestrator's bearer token (apps/orchestrator/src/security.ts): CTX_API_TOKEN, else the file it writes at start-up (CTX_API_TOKEN_FILE). */
+const API_TOKEN_FILE = process.env.CTX_API_TOKEN_FILE?.trim() || resolve(import.meta.dir, "../.contextpane/api-token");
+const API_TOKEN = process.env.CTX_API_TOKEN ?? (existsSync(API_TOKEN_FILE) ? readFileSync(API_TOKEN_FILE, "utf8").trim() : "");
 const ONLY = arg("--only", "");
 const OUT = resolve(arg("--out", "docs/screenshots"));
 const PORT = 9333;
@@ -287,7 +290,7 @@ try {
     await cdp.mouseTo(WIDTH - 20, HEIGHT - 20);
     await cdp.key("Escape");
     await sleep(300);
-    const drop = (await fetch(`${API}/api/tickets/simulate-drop`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ archetype: "Mixed" }) }).then((r) => r.json())) as { scenarioId: string; dir: string; folder: string };
+    const drop = (await fetch(`${API}/api/tickets/simulate-drop`, { method: "POST", headers: { "content-type": "application/json", ...(API_TOKEN ? { authorization: `Bearer ${API_TOKEN}` } : {}) }, body: JSON.stringify({ archetype: "Mixed" }) }).then((r) => r.json())) as { scenarioId: string; dir: string; folder: string };
     try {
       await cdp.waitFor(`document.querySelector('[data-testid="queue-unseen"]')`, 15_000, "the ERP drop to reach the queue");
       await openItem(drop.scenarioId);

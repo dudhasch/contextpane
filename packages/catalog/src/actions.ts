@@ -96,7 +96,7 @@ export const ConvergenceSchema = z.object({
   remediatedUpns: z.array(z.string()),
   /** Disabled accounts whose licenses the fix reclaimed. */
   reclaimedUpns: z.array(z.string()).default([]),
-  /** When the pre-change entity snapshot was captured (U-5); null when none could be read. */
+  /** When the pre-change entity snapshot was captured; null when none could be read. */
   preSnapshotAt: z.string().nullable().optional(),
   /** True when Revert can execute an inverse derived from that snapshot through the live write path; the button says so. */
   inverseExecutable: z.boolean().optional(),

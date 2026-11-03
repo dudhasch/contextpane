@@ -15,7 +15,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 | File | Shows |
 |---|---|
 | [`assets/arch-muse-execution-pipeline.svg`](assets/arch-muse-execution-pipeline.svg) | Meta Muse models in execution order: Stage 0 hover, stages 1–5, steering, Tier 3, provider boundary |
-| [`assets/arch-pii-pointer-vault.svg`](assets/arch-pii-pointer-vault.svg) | `ptr://` v1/v2/v3 data plane, session PII vault, rehydration, fence outcomes |
+| [`assets/arch-pii-pointer-vault.svg`](assets/arch-pii-pointer-vault.svg) | `ptr://` v1/v2/v3 data plane, session PII vault, rehydration, fence outcomes (drawn before rehydration was scoped per prompt and ticket; see the catalog README for the current rules) |
 | [`assets/arch-kinematic-prewarm.svg`](assets/arch-kinematic-prewarm.svg) | click-then-fetch vs hover-intent speculative pre-fetch (60 ms dwell, 4-slot epoch-fenced buffer) |
 
 ## Annotated screenshots
@@ -23,7 +23,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 | File | Shows |
 |---|---|
 | [`assets/01-flight-deck-3zone.png`](assets/01-flight-deck-3zone.png) | the three zones (400 px · fluid · 440 px) on #INC-4092 |
-| [`assets/02-glimmer-hover-and-pii-vault.png`](assets/02-glimmer-hover-and-pii-vault.png) | Glimmer hover badge (22.8 s generated, 2 ms cached) + pseudonym vault + 0-raw-PII metric |
+| [`assets/02-glimmer-hover-and-pii-vault.png`](assets/02-glimmer-hover-and-pii-vault.png) | Glimmer hover badge (22.8 s generated, 2 ms cached) + pseudonym vault + PII detector-hit count |
 | [`assets/03-kinematic-prewarm-telemetry.png`](assets/03-kinematic-prewarm-telemetry.png) | per-tier routing ledger, 5-stage pipeline records, pre-fetch counters |
 | [`assets/04-nk-wonder-synthesis-and-reuse.png`](assets/04-nk-wonder-synthesis-and-reuse.png) | the synthesized ABAC card + the k=5 registry |
 | [`assets/05-coderail-modal-sandbox-finverse.png`](assets/05-coderail-modal-sandbox-finverse.png) | scope chips, steering diff, prover strip, 1-click undo, approve footer |
@@ -40,6 +40,8 @@ The visual documentation for ContextPane. All media was captured from the runnin
 ## Other documentation
 
 - [`traces/`](traces/README.md): boundary traces captured from the orchestrator's own code (the 3-step MCP vault boundary)
+- [`../apps/orchestrator/evals/README.md`](../apps/orchestrator/evals/README.md): the coder eval set (24 tickets, 8 prompt-injection cases) and `bun run eval`
+- Hardened pipeline, by topic: [pre-flight rules and the execution surface](../apps/orchestrator/README.md#tier-3-stage-verify-approve-revert) · [typed actions and the executor identity](../apps/orchestrator/README.md#tier-3-stage-verify-approve-revert) · [grounding and card provenance](../apps/orchestrator/README.md#the-five-stage-sub-agent-pipeline) · [local API security](../apps/orchestrator/README.md#local-api-security) · [hover cache](../apps/orchestrator/README.md#hover-cache) · [PII vault API](../packages/catalog/README.md#ptr-data-plane-and-the-pii-vault-srcdataplanets) · [shared rule file](../packages/catalog/README.md#pre-flight-rules-srcpreflight-rulesjson) · [typed action catalog](../packages/catalog/README.md#typed-action-catalog-srctyped-actionsts)
 - [`../README.md`](../README.md): overview, model execution order, deep dives, quickstart
 - [`../HACKATHON_ATTRIBUTION.md`](../HACKATHON_ATTRIBUTION.md): models, endpoints, provenance
 - [`../DESIGN.md`](../DESIGN.md): the Graphite & Signal design system

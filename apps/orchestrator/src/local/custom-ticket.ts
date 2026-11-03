@@ -39,6 +39,8 @@ import {
 import { LAB_INCIDENT_TICKETS } from "./erp-drop-generator.ts";
 import { abacRoutingDecision, isAbacTicketText } from "./abac.ts";
 import { metaCallsEnabled } from "../router/openai.ts";
+import { gatherContext } from "../mcp/context.ts";
+import { buildGroundingIndex } from "./grounding.ts";
 import { applySteeringDelta, clarifiedAnswersFromSteering, deriveSteeringFromAnswers, scriptDiff } from "./steering.ts";
 import {
   applyClarifiedAnswersToEntry,
@@ -494,7 +496,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
       return [q.id, matched ? matched.label : raw];
     }),
   );
-  // The typed steering the deterministic coder reads (U-1): version 0, every answer sourced from the clarifier.
+  // The typed steering the deterministic coder reads: version 0, every answer sourced from the clarifier.
   const steering = deriveSteeringFromAnswers(clarifyingQuestions, initialAnswers, { now: createdAt });
 
   const t4Start = performance.now();
@@ -525,7 +527,7 @@ export function registerCustomTicket(input: CustomTicketRequest, options: Regist
     elementIds: hasMissingElements ? routingDecision.missingElements.map((m) => m.elementId) : finalComponents,
     gatekeeperModel: "deterministic-router",
     synthesizerModel: "deterministic-template",
-    // The sync path makes zero model calls: S1/S3/S4 ran their deterministic templates (L-06).
+    // The sync path makes zero model calls: S1/S3/S4 ran their deterministic templates.
     measurements: {
       1: { latencyMs: t1Ms, modelId: "deterministic-template", status: "fallback", source: "not-attempted", tokensUsed: 0 },
       2: { latencyMs: t2Ms, modelId: "cloud-status (seeded, sync)", status: "completed", source: "mcp-probe", tokensUsed: 0 },
@@ -610,6 +612,9 @@ export async function triageCustomTicketAsync(
     matchedSeededComponents: rawExtraction.components,
     ...(input.clarifiedAnswers ? { clarifiedAnswers: input.clarifiedAnswers } : {}),
     ...(input.requester?.upn ? { requesterUpn: input.requester.upn } : {}),
+    // Not registered yet: the base scenario (or the tenant's default) supplies the context the fix is grounded in.
+    contextKey: rawExtraction.baseScenarioId ?? rawExtraction.tenantId,
+    tenantId: rawExtraction.tenantId,
   });
 
   const hasMissingElements = routingDecision.missingElements.length > 0;
@@ -692,11 +697,11 @@ export interface SteerOutcome {
 }
 
 /**
- * Steering that moves code (U-1): one pill toggle, row click or typed parameter becomes a new
+ * Steering that moves code: one pill toggle, row click or typed parameter becomes a new
  * SteeringParams version, and exactly one coder call re-parameterises the current script against
  * it. The synthesized card's config-diff block is rewritten from the real script diff, so the
  * card and the PowerShell tab agree without a second Wonder call; `rerun: "coder+ui"` adds the
- * card synthesis on request (HARD_CASES 3).
+ * card synthesis on request.
  */
 export async function steerCustomTicket(
   scenarioId: string,
@@ -718,6 +723,9 @@ export async function steerCustomTicket(
   // re-parameterising a script whose cmdlets no longer apply. The diff below still compares against the previous one.
   const abac = isAbacTicketText(`${existing.ticket.title}\n${existing.ticket.body}`);
 
+  const grounding = await gatherContext(scenarioId)
+    .then((ctx) => buildGroundingIndex(ctx, { ticketText: `${existing.ticket.title}\n${existing.ticket.body}` }))
+    .catch(() => null);
   const coded = await synthesizeCustomRemediation({
     scenarioId,
     ticketTitle: existing.ticket.title,
@@ -725,6 +733,8 @@ export async function steerCustomTicket(
     clarifiedAnswers,
     steering,
     ...(previousScript && !abac ? { previousScript } : {}),
+    grounding,
+    tenantId: existing.tenantId,
   });
   const { _meta, ...template } = coded;
   const coder: RemediationCoderMeta = _meta ?? { modelUsed: "deterministic-template", latencyMs: 1, tokensUsed: 0, status: "fallback", source: "fallback-on-error" };
@@ -742,6 +752,7 @@ export async function steerCustomTicket(
       decision: existing.elementRouting,
       gatekeeperModel: existing.subAgentTasks?.find((t) => t.stepIndex === 3)?.modelId.split(" -> ")[0] ?? "deterministic-router",
       clarifiedAnswers,
+      grounding,
     });
     if (cards.length) {
       synthesizedElements = cards;
@@ -773,6 +784,7 @@ export async function steerCustomTicket(
         modelId: coder.modelUsed,
         status: coder.status,
         source: coder.source,
+        fallbackReason: coder.fallbackReason?.slice(0, 300),
         latencyMs: coder.latencyMs,
         tokensUsed: coder.tokensUsed,
         ...(coder.usage ? { tokensPrompt: coder.usage.prompt, tokensCompletion: coder.usage.completion } : {}),
@@ -808,7 +820,7 @@ export async function steerCustomTicket(
 
 /**
  * Lets the remediation tier write what really happened to a ticket's pipeline records (the coder's
- * repair iterations, the sandbox verdict) once the fix was staged (U-2). No-op for built-in scenarios.
+ * repair iterations, the sandbox verdict) once the fix was staged. No-op for built-in scenarios.
  */
 export function patchCustomTicketPipeline(scenarioId: string, patch: (tasks: SubAgentTaskRecord[]) => SubAgentTaskRecord[]): CustomScenarioEntry | null {
   const existing = getCustomScenario(scenarioId);

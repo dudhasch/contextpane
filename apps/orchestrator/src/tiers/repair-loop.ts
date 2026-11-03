@@ -9,11 +9,12 @@ import {
 } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { synthesizeCustomRemediation, syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
+import { buildGroundingIndex } from "../local/grounding.ts";
 import type { CorrelationContext } from "../mcp/context.ts";
 import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router/openai.ts";
 
 /**
- * Write-then-test (U-2): the sandbox is the test harness and the coder is the loop body.
+ * Write-then-test: the sandbox is the test harness and the coder is the loop body.
  *
  * `remediate()` runs the real pre-flight (pwsh AST + cmdlet allow-list + -WhatIf proof +
  * terraform validate, in the Modal sandbox when configured). When that pre-flight returns
@@ -27,7 +28,7 @@ import { chatWithForcedTool, metaCallsEnabled, type TokenUsage } from "../router
  * What the loop never does: it never changes a verdict itself. The verdict is always the last
  * thing the sandbox said; when the budget is exhausted with findings left, the drawer opens as
  * the sandbox left it (Verification Failed / With Warnings) and `repair.exhausted` is true
- * (L-01 stays: no forced verdicts). Findings that no script change can fix (the sandbox was
+ * (no forced verdicts). Findings that no script change can fix (the sandbox was
  * unavailable, terraform is not installed, git staging was skipped) do not start a turn.
  */
 
@@ -93,6 +94,8 @@ async function repairTurn(input: RepairLoopInput, findings: string[]): Promise<R
       ...(input.ctx.custom.steering ? { steering: input.ctx.custom.steering } : {}),
       previousScript: input.bundle.powershellScript,
       repairFindings: findings,
+      grounding: buildGroundingIndex(input.ctx, { ticketText: `${input.ctx.custom.ticket.title}\n${input.ctx.custom.ticket.body}` }),
+      tenantId: input.ctx.tenantId,
     });
     const meta = res._meta;
     return {
@@ -112,7 +115,7 @@ async function repairTurn(input: RepairLoopInput, findings: string[]): Promise<R
       { role: "user", content: JSON.stringify({ repairFindings: findings, requiredCommands: input.requiredCommands, previousBundle: input.bundle }) },
     ],
     getRemediationBundleToolDefinition(),
-    { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
+    { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: input.ctx.tenantId, ticketId: input.ctx.ticketId } },
   );
   const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
   if (!parsed.success) throw new Error(`repair turn returned an invalid bundle: ${parsed.error.issues.map((i) => i.message).join("; ")}`);

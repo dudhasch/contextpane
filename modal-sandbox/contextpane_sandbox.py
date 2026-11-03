@@ -5,7 +5,9 @@ Deploys a web endpoint that validates a Tier 3 remediation bundle in an isolated
 container, exactly like the local pre-flight in apps/orchestrator/src/preflight/local.ts:
 
   * PowerShell 7 AST parse of the remediation script via
-    [System.Management.Automation.Language.Parser]::ParseInput() (+ cmdlet allow-list)
+    [System.Management.Automation.Language.Parser]::ParseInput() and the shared rule set in
+    packages/catalog/src/preflight-rules.json (allow-list, forbidden commands, destructive
+    wildcards: all hard failures, exactly as in the local pre-flight)
   * unified diff applied to the live NSG state must reproduce the Terraform baseline
   * `terraform fmt -check` and `terraform validate` on the patched state
 
@@ -70,6 +72,8 @@ image = (
         f"cd {TF_WORKDIR} && TF_PLUGIN_CACHE_DIR=/opt/tfcache CHECKPOINT_DISABLE=1 terraform init -backend=false -input=false -no-color",
     )
     .pip_install("fastapi[standard]", "unidiff==0.7.5")
+    # The rule set the local pre-flight enforces too (packages/catalog/src/preflight-rules.json): one list, two sandboxes.
+    .add_local_file(str(Path(__file__).resolve().parent.parent / "packages" / "catalog" / "src" / "preflight-rules.json"), "/root/preflight-rules.json")
 )
 
 with image.imports():
@@ -79,8 +83,77 @@ app = modal.App("contextpane-sandbox", image=image)
 
 SANDBOX_PROVIDER = "modal-cloud-sandbox"
 
-FORBIDDEN = {"invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod"}
+
+
+def _load_rules() -> dict:
+    """The shared rule set: next to this file inside the Modal image, under packages/catalog/src in a checkout."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "preflight-rules.json", here.parent / "packages" / "catalog" / "src" / "preflight-rules.json"):
+        if candidate.exists():
+            return json.loads(candidate.read_text(encoding="utf-8"))
+    raise FileNotFoundError("preflight-rules.json not found next to the sandbox or in packages/catalog/src")
+
+
+RULES = _load_rules()
+ALLOWED_VERBS = {v.lower() for v in RULES["allowedVerbs"]}
+ALLOWED_COMMANDS = set(RULES["allowedCommands"])
+FORBIDDEN = set(RULES["forbiddenCommands"])
+DESTRUCTIVE = [re.compile(p, re.IGNORECASE) for p in RULES["destructivePatterns"]]
+# "Execution surface:" findings (RULES["deniedExecutionCommands"], .NET calls, aliases, REST targets) are added by the
+# orchestrator from this sandbox's AST report; listed here so the two sides share one set of hard-fail prefixes.
+HARD_FAIL_PREFIXES = ("Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list", "Execution surface:")
 REQUIRED = {"set-mguserlicense"}
+
+# Execution-surface extraction (.NET calls, dynamic invocations, aliases, REST targets); the orchestrator applies
+# the rules to it (apps/orchestrator/src/preflight/execution-surface.ts). Keep in sync with SURFACE_PS there.
+SURFACE_PS = r"""
+  $surface = [ordered]@{ staticCalls = @(); newObjects = @(); dynamicInvocations = @(); dotSources = @(); scriptBlockInvokes = @(); aliases = @(); restCalls = @() }
+  foreach ($m in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
+    $member = if ($m.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $m.Member.Value } else { '<dynamic>' }
+    if ($m.Static -and $m.Expression -is [System.Management.Automation.Language.TypeExpressionAst]) {
+      $surface.staticCalls += [pscustomobject]@{ type = $m.Expression.TypeName.FullName; member = $member }
+    } elseif ($member -in @('Invoke', 'InvokeReturnAsIs', 'InvokeWithContext', 'AddScript', '<dynamic>')) {
+      $surface.scriptBlockInvokes += $m.Extent.Text
+    }
+  }
+  foreach ($c in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+    $name = $c.GetCommandName()
+    if ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot) { $surface.dotSources += $c.Extent.Text }
+    elseif ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and -not $name -and -not ($c.CommandElements[0] -is [System.Management.Automation.Language.ScriptBlockExpressionAst])) { $surface.dynamicInvocations += $c.Extent.Text }
+    if (-not $name) { continue }
+    $alias = Get-Alias -Name ([WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($alias) { $surface.aliases += [pscustomobject]@{ name = $name; definition = [string]$alias.Definition } }
+    $lower = $name.ToLowerInvariant()
+    if ($lower -eq 'new-object') {
+      $typeName = $null; $com = $false
+      for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
+        $e = $c.CommandElements[$i]
+        if ($e -is [System.Management.Automation.Language.CommandParameterAst]) {
+          if ($e.ParameterName -like 'Com*') { $com = $true }
+          elseif ($e.ParameterName -like 'Type*' -and $i + 1 -lt $c.CommandElements.Count) { $typeName = $c.CommandElements[$i + 1].Extent.Text.Trim([char[]]@([char]39, [char]34)) }
+        } elseif (-not $typeName -and $i -eq 1) { $typeName = $e.Extent.Text.Trim([char[]]@([char]39, [char]34)) }
+      }
+      $surface.newObjects += [pscustomobject]@{ typeName = $typeName; comObject = $com }
+    }
+    if ($lower -in @('invoke-mggraphrequest', 'invoke-azrestmethod')) {
+      $method = $null; $uri = $null; $dynamic = $false
+      for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
+        $e = $c.CommandElements[$i]
+        if (-not ($e -is [System.Management.Automation.Language.CommandParameterAst])) { continue }
+        $arg = if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $c.CommandElements.Count) { $c.CommandElements[$i + 1] } else { $null }
+        if (-not $arg) { continue }
+        if ($e.ParameterName -eq 'Method') {
+          $method = if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $arg.Value } else { '<dynamic>' }
+        } elseif ($e.ParameterName -in @('Uri', 'Path')) {
+          if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $uri = $arg.Value }
+          elseif ($arg -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) { $uri = $arg.Value; $dynamic = $true }
+          else { $uri = $arg.Extent.Text; $dynamic = $true }
+        }
+      }
+      $surface.restCalls += [pscustomobject]@{ command = $lower; method = $method; uri = $uri; uriDynamic = $dynamic }
+    }
+  }
+"""
 
 # One request per stdin line (the script as base64), one compressed JSON report per stdout line.
 # A -File loop rather than `pwsh -Command -`: -Command - executes stdin line by line and splits multi-line blocks.
@@ -94,18 +167,22 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Select-Object -Unique)
     $attrs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AttributeAst] }, $true) | ForEach-Object { $_.Extent.Text })
+__SURFACE_PS__
     $report = [pscustomobject]@{
       parseErrors = @($errors | ForEach-Object { "$($_.Extent.StartLineNumber):$($_.Extent.StartColumnNumber) $($_.Message)" })
       commands = @($commands)
       supportsShouldProcess = [bool]($attrs | Where-Object { $_ -match 'SupportsShouldProcess' })
+      surface = $surface
     }
   } catch {
     $report = [pscustomobject]@{ parseErrors = @("AST runner failed: $($_.Exception.Message)"); commands = @(); supportsShouldProcess = $false }
   }
-  [Console]::Out.WriteLine(($report | ConvertTo-Json -Depth 4 -Compress))
+  [Console]::Out.WriteLine(($report | ConvertTo-Json -Depth 6 -Compress))
   [Console]::Out.Flush()
 }
 """
+
+AST_SERVER = AST_SERVER.replace("__SURFACE_PS__", SURFACE_PS)
 
 SAMPLE_SCRIPT = "[CmdletBinding(SupportsShouldProcess)]\nparam()\nif ($PSCmdlet.ShouldProcess('x')) { Set-MgUserLicense -UserId x -AddLicenses @() -RemoveLicenses @() }\n"
 SAMPLE_HCL = 'resource "azurerm_resource_group" "warm" {\n  name     = "rg-warm"\n  location = "westeurope"\n}\n'
@@ -168,24 +245,36 @@ def timed(fn, *args):
     return result, int((time.time() - started) * 1000)
 
 
-def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None) -> tuple[bool | None, list[str]]:
+def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None) -> tuple[bool | None, list[str], dict | None]:
+    """Parse verdict, findings and the raw AST report (its commands and surface go back to the orchestrator)."""
     report = ast_server.parse(script)
     if report is None:
-        return None, ["PowerShell AST check timed out"]
+        return None, ["PowerShell AST check timed out"], None
     findings: list[str] = []
     for err in report.get("parseErrors", []):
         findings.append(f"AST parse error: {err}")
-    lowered = [c.lower() for c in report.get("commands", [])]
-    for bad in FORBIDDEN:
+    commands = report.get("commands", [])
+    lowered = [c.lower() for c in commands]
+    for bad in sorted(FORBIDDEN):
         if bad in lowered:
             findings.append(f"Forbidden command: {bad}")
     for req in required if required is not None else REQUIRED:
         if req not in lowered:
             findings.append(f"Expected command missing: {req}")
+    for cmd in commands:
+        if "-" not in cmd:
+            continue
+        lower = cmd.lower()
+        if lower.split("-")[0] not in ALLOWED_VERBS and lower not in ALLOWED_COMMANDS and lower not in FORBIDDEN:
+            findings.append(f"Verb outside allow-list: {cmd}")
+    if any(p.search(script) for p in DESTRUCTIVE):
+        findings.append("Destructive wildcard command detected (e.g. Remove-MgUser -All or unscoped Remove-AzResource -Force)")
     if not report.get("supportsShouldProcess"):
         findings.append("Script does not declare SupportsShouldProcess (-WhatIf unsupported)")
-    passed = not report.get("parseErrors") and not any(f.startswith(("Forbidden", "Expected command missing")) for f in findings)
-    return passed, findings
+    # Same hard failures as the local pre-flight: allow-list, forbidden, steered commands, destructive wildcards.
+    # The execution-surface rules run on the returned report in the orchestrator (preflight/execution-surface.ts).
+    passed = not report.get("parseErrors") and not any(f.startswith(HARD_FAIL_PREFIXES) for f in findings)
+    return passed, findings, report
 
 
 def apply_unified_diff(original: str, diff: str) -> str | None:
@@ -337,7 +426,7 @@ class Sandbox:
             if not validate_passed:
                 findings.append(f"terraform validate: {validate_output[:300]}")
 
-        (ast_passed, ast_findings), timings["powershellAst"] = ast_future.result()
+        (ast_passed, ast_findings, ast_report), timings["powershellAst"] = ast_future.result()
         return {
             "VerifiedSafe": ast_passed is True and (not has_iac or (fmt_passed is True and validate_passed is True)),
             "astCheckPassed": ast_passed,
@@ -346,6 +435,8 @@ class Sandbox:
             "sandboxProvider": SANDBOX_PROVIDER,
             "validationLatencyMs": int((time.time() - started) * 1000),
             "findings": ast_findings + findings,
+            # The orchestrator applies the execution-surface rules to these (preflight/modal.ts).
+            **({"commands": ast_report.get("commands", []), "surface": ast_report.get("surface")} if ast_report else {}),
             "checkLatencyMs": timings,
             "terraformVersion": TERRAFORM_VERSION,
         }

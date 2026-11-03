@@ -10,13 +10,16 @@ import {
 } from "./shadow-admin.ts";
 
 /**
- * Place 1 · Tier 3C formal blast-radius prover.
+ * Tier 3C symbolic blast-radius checker.
  *
- * Deterministic, symbolic, no LLM / GPU / I/O (<100 ms). It proves three
- * invariants of the *proposed* post-remediation state P_post against a small
- * in-memory model distilled from the repo fixtures (CA_POSTURE golden policies,
- * demo-iac/main.tf baseline for nsg-contoso-avd-hostpool-01, and the seeded
- * Contoso/Fabrikam drift). `CTX_OPEN_WEIGHT_TIERS=hover` is untouched.
+ * Deterministic, no LLM / GPU / I/O (<100 ms). It checks seven invariants of the
+ * *proposed* post-remediation state P_post against a small in-memory model distilled
+ * from the repo fixtures (CA_POSTURE golden policies, the demo-iac/main.tf baseline for
+ * nsg-contoso-avd-hostpool-01, and the seeded Contoso/Fabrikam drift). These are checks
+ * of that fixture model for the built-in scenarios, not proofs about a live tenant; an
+ * ad-hoc ticket has no model and is reported as not checkable. The `maxSmt*` names
+ * describe an exhaustive evaluation of a few candidate fixes; no SMT solver is involved,
+ * and the invariant bitmask is a pass/fail record, not a certificate.
  */
 
 export type Decision = "Allow" | "Blocked" | "Conditional";
@@ -749,7 +752,7 @@ export function hasSymbolicModel(scenarioId: ScenarioId | string | null): boolea
 /**
  * Copy-on-write fork check: f(f(S)) == f(S) and f does not mutate its input fork's source.
  * Returns null for ids without a symbolic model (ad-hoc tickets, Free-Roam actions): running the
- * fixture transform on them proved nothing about their script (HARD_CASES 5).
+ * fixture transform on them proved nothing about their script.
  */
 export function verifyIdempotency(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): IdempotencyResult | null {
   if (!hasSymbolicModel(scenarioId)) return null;
@@ -827,7 +830,7 @@ const MODULES: Record<string, string[]> = {
 /** f^-1: bundle that restores S from f(S) (pre-state values captured symbolically). */
 export function buildInverseRollback(scenarioId: ScenarioId | string | null): InverseRollbackBundle {
   const resolvedId = scenarioId ?? "CUSTOM-UNSEEDED";
-  // A Free-Roam action is staged, never executed: there is no f to invert (HARD_CASES 29).
+  // A Free-Roam action is staged, never executed: there is no f to invert.
   if (isFreeRoamActionId(resolvedId)) {
     return { scenarioId: resolvedId, powershellScript: "", terraformDiff: "", hcl: "", graphPatch: "{}", restores: [], note: "staged action, nothing to revert" };
   }

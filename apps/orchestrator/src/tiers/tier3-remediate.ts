@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   ActionApprovalDrawerSchema,
   RemediationBundleArgsSchema,
+  TYPED_ACTION_DESCRIPTIONS,
   baseScenarioOf,
   formatIssues,
   getScenarioEntry,
@@ -29,11 +30,14 @@ import { config, isLiveCloudMode, models, providers } from "../config.ts";
 import { applyScenarioState, type LabWriteOutcome } from "../local/lab.ts";
 import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.ts";
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
-import { checkWhatIfSafety, runLocalPreflight } from "../preflight/local.ts";
+import { applyWhatIfGate, runLocalPreflight } from "../preflight/local.ts";
+import { invalidateHoverCache } from "./tier1-hover.ts";
+import { buildGroundingIndex, groundingFindings } from "../local/grounding.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
+import { withUntrustedRule } from "../router/untrusted.ts";
 import { syntaxHeuristicPrecheck } from "../local/subagent-orchestrator.ts";
 import { patchCustomTicketPipeline } from "../local/custom-ticket.ts";
 import { runRepairLoop } from "./repair-loop.ts";
@@ -44,8 +48,11 @@ import { remediationStore } from "../store/remediations.ts";
 import { ZERO_USAGE, telemetry } from "../telemetry.ts";
 import { coerceAffectedEntityType } from "../local/entity-type.ts";
 import { progressReporter, type ProgressSink } from "./progress.ts";
-import { ABAC_LAB, putAbacRoleAssignmentLive } from "@contextpane/mcp-azure-iac";
-import { abacChoiceFromAnswers, invalidateAbacLabState, isAbacTicketText } from "../local/abac.ts";
+import { ABAC_LAB } from "@contextpane/mcp-azure-iac";
+import { abacChoiceFromAnswers, isAbacTicketText } from "../local/abac.ts";
+import { executorPrelude, executorRefusal, resolveExecutorIdentity } from "../execution/executor-identity.ts";
+import { clarifierTypedAction, selectTypedAction } from "../execution/select-action.ts";
+import { describeTypedAction, executeTypedAction, typedActionGate } from "../execution/typed-actions.ts";
 
 export interface RemediateInput {
   /** Scenario id (INC-4092, ANOM-CA-204, ...); a tenant id selects its ticket scenario. */
@@ -90,7 +97,7 @@ function clipPlanText(raw: unknown): unknown {
 }
 
 const CODER_PROMPT = `You are ContextPane's remediation coder (Tier 3B). Produce the exact artefacts a human will approve:
-1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use every cmdlet listed in requiredCommands, wrap every mutation in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs. For INC-4092 group-licensed users, use Remove-MgGroupMemberByRef + New-MgGroupMemberByRef + Invoke-MgLicenseUser (never Set-MgUserLicense -RemoveLicenses).
+1. powershellScript: a complete PowerShell 7 script with [CmdletBinding(SupportsShouldProcess)], Microsoft.Graph cmdlets only. It MUST use every cmdlet listed in requiredCommands, wrap every mutation in $PSCmdlet.ShouldProcess, and fail fast if Get-MgContext is missing or the tenant id differs. Never call Connect-MgGraph, Connect-AzAccount, Set-AzContext or Select-AzSubscription (the executor signs in first), and use no aliases, .NET calls, Invoke-Command or dynamic script blocks. For INC-4092 group-licensed users, use Remove-MgGroupMemberByRef + New-MgGroupMemberByRef + Invoke-MgLicenseUser (never Set-MgUserLicense -RemoveLicenses).
 2. terraformDiff: only when the reference bundle has one, a unified diff (---/+++ headers, valid @@ -a,b +c,d @@ hunks) that transforms the live state into the baseline; reproduce the reference exactly unless it is wrong. Otherwise an empty string.
 3. NEVER emit angle-bracket placeholders like <... id> or <... skuId> anywhere in powershellScript, graphPatch, or terraformDiff; always use concrete deterministic UUIDs from the context.
 Use only identifiers from the context. A deterministic reference bundle is supplied: match its cmdlets and entities, improve clarity where useful. Respond only through emit_remediation_bundle.`;
@@ -166,11 +173,11 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           providers.meta,
           step.modelId,
           [
-            { role: "system", content: PLANNER_PROMPT },
+            { role: "system", content: withUntrustedRule(PLANNER_PROMPT) },
             { role: "user", content: JSON.stringify({ context: model, referenceSummary: reference.summary }) },
           ],
           PLAN_TOOL,
-          { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate },
+          { timeoutMs: config.timeouts.remediateMs, temperature: 0.1, maxTokens: 4000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId } },
         );
         const parsed = PlanArgsSchema.safeParse(clipPlanText(parseToolArguments(result.argumentsRaw)));
         if (!parsed.success) throw new InvalidSchemaError("plan failed validation", formatIssues(parsed.error));
@@ -195,7 +202,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
           providers.meta,
           step.modelId,
           [
-            { role: "system", content: CODER_PROMPT },
+            { role: "system", content: withUntrustedRule(CODER_PROMPT) },
             {
               role: "user",
               content: JSON.stringify({
@@ -207,7 +214,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
             },
           ],
           tool,
-          { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate },
+          { timeoutMs: config.timeouts.remediateMs, temperature: 0, maxTokens: 12000, reasoningEffort: config.reasoning.remediate, piiScope: { tenantId: ctx.tenantId, ticketId: ctx.ticketId } },
         );
         const parsed = RemediationBundleArgsSchema.safeParse(parseToolArguments(result.argumentsRaw));
         if (!parsed.success) throw new InvalidSchemaError("bundle failed validation", formatIssues(parsed.error));
@@ -246,7 +253,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       ...(bundle.terraformDiff ? { terraformDiff: bundle.terraformDiff } : {}),
     });
 
-    /* ---- pre-flight, then write-then-test: sandbox findings go back to the coder, at most 2 turns (U-2) ---- */
+    /* ---- pre-flight, then write-then-test: sandbox findings go back to the coder, at most 2 turns ---- */
     const firstPass = await preflight(bundle, ctx, plan, report);
     const loop = await runRepairLoop({
       bundle,
@@ -325,6 +332,10 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     verification.findings = verification.findings.map((f) => f.slice(0, 300));
     report("stage:done", staging ? `Branch ${staging.branchName} @ ${staging.commitSha?.slice(0, 7)}` : "Staging skipped", { ...(staging ?? {}) });
 
+    // A custom bundle executes through a typed catalog action when one fits; the script stays the reviewable artifact.
+    const typed = ctx.custom ? await selectTypedAction(ctx) : null;
+    if (typed?.action) report("action:selected", `Typed action: ${describeTypedAction(typed.action).summary} (${typed.source})`, { kind: typed.action.kind });
+
     const latencyMs = Math.round(performance.now() - started);
     const tier: RouterTelemetry["tier"] = "Tier 3B";
     const drawer = ActionApprovalDrawerSchema.parse({
@@ -344,8 +355,9 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
       staging,
       approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },
       providerTelemetry: { tier, provider, modelId: provider === "local" ? "deterministic" : planner === coder ? coder : `${planner} + ${coder}`, latencyMs, tokensUsed: usage.total },
-      // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on (U-1).
+      // The steering this script was built for; the drawer flags itself stale when the ticket's steering moves on.
       ...(ctx.custom?.steering ? { steering: { version: ctx.custom.steering.version, digest: ctx.custom.steering.digest } } : {}),
+      ...(typed?.action ? { typedAction: typed.action } : {}),
     });
     remediationStore.save(drawer);
     auditLedger.append({
@@ -375,7 +387,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     const fallbackPlan = buildRemediationPlan(fallbackCtx);
     const fallbackBundle = fallbackPlan.bundle;
     const latencyMs = Math.round(performance.now() - started);
-    // Nothing was checked on this path, so nothing may claim to have passed (L-01).
+    // Nothing was checked on this path, so nothing may claim to have passed.
     const fallbackVerification = preflightNotRunVerification(unexpectedError);
     const drawer = ActionApprovalDrawerSchema.parse({
       remediationId,
@@ -472,14 +484,8 @@ async function preflight(
     report("preflight:start", `Pre-flight: PowerShell AST parse${bundle.terraformDiff ? " + terraform fmt/validate" : ""} (local)`);
     verification = await runLocalPreflight(input);
   }
-  const whatIf = checkWhatIfSafety(bundle.powershellScript);
-  verification.whatIfSafe = whatIf.safe;
-  if (!whatIf.safe) {
-    verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
-    if (verification.verdict === "Verified Safe") {
-      verification.verdict = "Verified With Warnings";
-    }
-  }
+  // An unguarded mutation fails the bundle; a read-only script without the guard only warns.
+  applyWhatIfGate(verification, bundle.powershellScript);
   // The delegated executor runs pwsh 7 only; without the header the same script would also start under Windows PowerShell 5.1.
   if (bundle.powershellScript.trim() && !/^\s*#Requires\s+-Version\s+7(\.\d+)?\b/im.test(bundle.powershellScript)) {
     verification.findings.push("PowerShell 7 header missing: add '#Requires -Version 7.0' (the executor runs pwsh 7 only)");
@@ -488,8 +494,23 @@ async function preflight(
     }
   }
 
+  applyGroundingCheck(verification, bundle, ctx);
   report("preflight:done", `${verification.verdict} in ${verification.validationLatencyMs} ms`, { ...verification });
   return verification;
+}
+
+/**
+ * Review item 8: a custom ticket's script may only target names the tenant context (or the ticket) holds.
+ * An invented target is a finding the approver sees; it downgrades "Verified Safe" but does not fail the
+ * bundle, because a resource the fix creates or one the context did not load can be legitimate.
+ */
+function applyGroundingCheck(verification: VerificationStatus, bundle: Pick<RemediationBundleArgs, "powershellScript" | "terraformDiff">, ctx: CorrelationContext): void {
+  if (!ctx.custom) return;
+  const index = buildGroundingIndex(ctx, { ticketText: `${ctx.custom.ticket.title}\n${ctx.custom.ticket.body}` });
+  const findings = groundingFindings(index, bundle.powershellScript, bundle.terraformDiff);
+  if (!findings.length) return;
+  verification.findings.push(...findings);
+  if (verification.verdict === "Verified Safe") verification.verdict = "Verified With Warnings";
 }
 
 /** Lines in this repository that declare what the fix converges to (Terraform block, golden-tenant JSON). */
@@ -848,8 +869,10 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   let writeSummary = "";
   let write: LabWriteOutcome | null = null;
   let verification = drawer.verificationStatus;
-  // U-5: the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
+  // the affected entities as they are before anything is written. f⁻¹ and the read-back probe are derived from this.
   const abacTicket = before?.custom ? isAbacTicketText(`${before.custom.ticket.title}\n${before.custom.ticket.body}`) : false;
+  // Drawers staged before typed actions existed still execute their ABAC grant through the catalog.
+  const typedAction = drawer.typedAction ?? (before ? clarifierTypedAction(before) : null);
   // An ABAC grant's inverse is the ARM DELETE of the assignment it created; the tenant-wide entity snapshot plays no part in it.
   const preSnapshot = mode === "break-glass" && before && !abacTicket ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
 
@@ -859,64 +882,48 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       const captured = [preSnapshot.users.length ? `${preSnapshot.users.length} user${preSnapshot.users.length === 1 ? "" : "s"}` : null, preSnapshot.caPolicies.length ? `${preSnapshot.caPolicies.length} CA polic${preSnapshot.caPolicies.length === 1 ? "y" : "ies"}` : null, preSnapshot.nsg ? `NSG ${preSnapshot.nsg.name} (${preSnapshot.nsg.rules.length} rules)` : null, preSnapshot.intune ? "Intune assignments" : null, preSnapshot.workloadIdentity ? "workload identity" : null].filter(Boolean);
       log.push(`Pre-change snapshot captured (${captured.join(", ") || "no entity"}) for f⁻¹ and the read-back probe`);
     }
-    if (abacTicket && before?.custom) {
-      // ABAC: the approved New-AzRoleAssignment is applied as one typed ARM PUT (same role, scope and condition), never by running model-written PowerShell.
-      const choice = abacChoiceFromAnswers(before.custom.clarifiedAnswers);
+    if (typedAction) {
+      // A typed catalog action is the executor: one validated Graph / ARM write, never the model-written PowerShell.
       const approvedBy = input.approvedBy ?? drawer.approval.requiredIdentity;
-      if (choice.strategy !== "condition" || !choice.container) {
-        const fallbackReason = `the typed ARM executor only applies an ABAC-conditioned grant; this bundle (${choice.strategy}${choice.container ? ` · ${choice.container}` : " · all containers"}) stays staged`;
-        writeSummary = `${drawer.title} · staged, not executed`;
-        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
-        state = "simulated";
-        log.push(`No ARM write: ${fallbackReason}.`);
-      } else if (isLiveCloudMode() && config.allowExecute) {
-        log.push(`LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → ARM PUT roleAssignments on ${ABAC_LAB.storageAccount} (${ABAC_LAB.subscriptionName}) as ${approvedBy}`);
-        const res = await putAbacRoleAssignmentLive({ container: choice.container, description: `ContextPane ${drawer.ticketId} · ${ABAC_LAB.roleName} limited to ${choice.container} · approved by ${approvedBy}` }).catch((error: unknown) => ({
-          ok: false as const,
-          status: 0,
-          latencyMs: 0,
-          assignmentId: null,
-          principalId: null,
-          condition: "",
-          error: error instanceof Error ? error.message : String(error),
-          readBack: null,
-        }));
-        invalidateAbacLabState();
-        if (res.ok) {
-          const readBackOk = Boolean(res.readBack?.condition?.includes(`'${choice.container}'`) && res.readBack.conditionVersion === "2.0");
-          log.push(`ARM PUT ${res.assignmentId} → HTTP ${res.status} in ${res.latencyMs} ms · ${new Date().toISOString().replace(/\.\d+Z$/, "Z")}`);
-          log.push(`Read-back: ${ABAC_LAB.roleName} for ${ABAC_LAB.identityName}, conditionVersion ${res.readBack?.conditionVersion ?? "?"}, container = ${choice.container} ${readBackOk ? "✓" : "(condition not confirmed)"}`);
-          writeSummary = `${ABAC_LAB.roleName} granted to ${ABAC_LAB.identityName} on ${ABAC_LAB.storageAccount}, condition: container = ${choice.container}`;
-          write = { source: "live-graph", latencyMs: res.latencyMs, summary: writeSummary, results: [{ id: res.assignmentId ?? "roleAssignment", ok: true, status: res.status }] };
-          state = "executed";
-          execution = "live-graph";
-        } else {
-          writeSummary = `${drawer.title} · ARM write refused`;
-          write = { source: "simulated", latencyMs: res.latencyMs, summary: writeSummary, results: [], fallbackReason: res.error ?? `HTTP ${res.status}` };
-          state = "simulated";
-          log.push(`ARM PUT refused: ${res.error ?? `HTTP ${res.status}`}. Nothing was granted; the ticket stays open.`);
-        }
+      const described = describeTypedAction(typedAction);
+      log.push(`Typed action ${typedAction.kind}: ${described.summary}. The staged script is not executed.`);
+      if (!typedActionGate()) log.push(`LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → ${described.forward} · approved by ${approvedBy}`);
+      const res = await executeTypedAction(typedAction, { ticketId: drawer.ticketId, approvedBy }, before);
+      log.push(...res.log);
+      if (res.source === "live") {
+        const failed = res.results.filter((r) => !r.ok);
+        for (const f of failed) log.push(`  ${f.id}: HTTP ${f.status} ${f.error ?? ""}`.trimEnd());
+        writeSummary = res.summary;
+        write = { source: "live-graph", latencyMs: res.latencyMs, summary: writeSummary, results: res.results };
+        execution = "live-graph";
+        if (res.ok) state = "executed";
       } else {
-        const fallbackReason = !isLiveCloudMode() ? "Simulated-Lab mode" : "CTX_ALLOW_EXECUTE=false";
         writeSummary = `${drawer.title} · staged, not executed`;
-        write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
+        write = { source: "simulated", latencyMs: res.latencyMs, summary: writeSummary, results: [], fallbackReason: res.fallbackReason ?? "the typed write did not land" };
         state = "simulated";
-        log.push(`No ARM write (${fallbackReason}): the role assignment is staged for ${ABAC_LAB.storageAccount}.`);
       }
+    } else if (abacTicket && before?.custom) {
+      // ABAC strategies with no typed executor (exemption, reader role, every container) stay staged.
+      const choice = abacChoiceFromAnswers(before.custom.clarifiedAnswers);
+      const fallbackReason = `the typed ARM executor only applies an ABAC-conditioned grant; this bundle (${choice.strategy}${choice.container ? ` · ${choice.container}` : " · all containers"}) stays staged`;
+      writeSummary = `${drawer.title} · staged, not executed`;
+      write = { source: "simulated", latencyMs: 0, summary: writeSummary, results: [], fallbackReason };
+      state = "simulated";
+      log.push(`No ARM write: ${fallbackReason}.`);
     } else if (isCustomScenarioId(drawer.ticketId) && before?.custom?.customRemediation) {
       // A custom bundle has no lab write behind it: it is only executed when the approved script really runs.
       const plannedSteps = before.custom.customRemediation.executionSteps ?? [];
       log.push(...plannedSteps.map((s) => `Planned: ${s}`));
       let scriptRan: { ok: boolean; log: string[]; latencyMs: number } | null = null;
       if (isLiveCloudMode() && config.allowExecute) {
-        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script via the delegated identity");
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE → running the approved script as the executor identity");
         const scriptStarted = performance.now();
         const script = await runApprovedScript(drawer);
         scriptRan = { ...script, latencyMs: Math.round(performance.now() - scriptStarted) };
         log.push(...script.log);
       }
       if (scriptRan?.ok) {
-        // Exit code 0 is not "executed": the read-back probe against the pre-change snapshot decides (HARD_CASES 2).
+        // Exit code 0 is not "executed": the read-back probe against the pre-change snapshot decides.
         invalidateContext(scenarioId);
         let changed: string[] | null = null;
         if (preSnapshot) {
@@ -951,10 +958,10 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
       }
     } else if (labScenarioId) {
       // The lab write runs in every mode; outside live mode the services simulate it and the in-process lab state
-      // follows, so the read-back probe and the inverse have something real to compare against (U-5).
+      // follows, so the read-back probe and the inverse have something real to compare against.
       // The typed lab write below is the executor for a built-in scenario; running its script on top would write twice.
       if (isLiveCloudMode() && config.allowExecute && config.allowExecuteBuiltinScripts) {
-        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS → running the approved script via the delegated identity");
+        log.push("LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS → running the approved script as the executor identity");
         const script = await runApprovedScript(drawer);
         log.push(...script.log);
       }
@@ -1026,9 +1033,11 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   }
 
   remediationStore.save(updated);
+  // The approval may have changed tenant state (live or lab write): drop the scenario's cached hover answers (review item 5).
+  invalidateHoverCache(drawer.ticketId);
   const latencyMs = Math.round(performance.now() - started);
   // Only a live write converges the canvas; a staged GitOps patch leaves the drift visible until the pipeline runs.
-  // A custom bundle that was staged but not executed changed nothing, so its ticket stays open (L-02).
+  // A custom bundle that was staged but not executed changed nothing, so its ticket stays open.
   const stagedCustomOnly = isCustomScenarioId(drawer.ticketId) && state !== "executed";
   const convergence: Convergence | null =
     mode === "break-glass" && !stagedCustomOnly
@@ -1046,12 +1055,12 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
           reclaimedUpns,
           preSnapshotAt: preSnapshot?.capturedAt ?? null,
           // Revert can execute only what approve could: a live write path (lab scenario) or, under CTX_ALLOW_EXECUTE, the inverse script.
-          inverseExecutable: abacTicket
+          inverseExecutable: abacTicket || (typedAction && !preSnapshot)
             ? execution === "live-graph" && isLiveCloudMode() && config.allowExecute
             : Boolean(preSnapshot) && execution === "live-graph" && isLiveCloudMode() && (labScenarioId !== null || config.allowExecute),
-          inverseReason: abacTicket
+          inverseReason: abacTicket || (typedAction && !preSnapshot)
             ? execution === "live-graph"
-              ? "inverse: ARM DELETE of the role assignment it created"
+              ? `inverse: ${typedAction ? TYPED_ACTION_DESCRIPTIONS[typedAction.kind].inverse : "ARM DELETE of the role assignment it created"}`
               : "nothing was written live"
             : !preSnapshot ? "no pre-change snapshot" : execution !== "live-graph" ? "nothing was written live" : !isLiveCloudMode() ? "LIVE_CLOUD_MODE=false" : labScenarioId === null && !config.allowExecute ? "custom ticket without CTX_ALLOW_EXECUTE" : "inverse derived from the pre-change snapshot",
         }
@@ -1085,7 +1094,7 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
 }
 
 /**
- * Re-stages a pending drawer after the ticket was steered (U-1): the bundle is rebuilt from the
+ * Re-stages a pending drawer after the ticket was steered: the bundle is rebuilt from the
  * entry's re-parameterised remediation, the real pre-flight runs again and the drawer records the
  * steering version it now matches. An approved or executed drawer is never rewritten.
  */
@@ -1096,7 +1105,7 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   if (drawer.approval.state !== "pending") return drawer;
   const ctx = await gatherContext(resolveScenarioId(drawer.ticketId), { fresh: true });
   const plan = buildRemediationPlan(ctx);
-  // Same write-then-test as the first staging (U-2): sandbox findings on the steered script go back to the coder.
+  // Same write-then-test as the first staging: sandbox findings on the steered script go back to the coder.
   const firstPass = await preflight(plan.bundle, ctx, plan, () => {});
   const loop = await runRepairLoop({
     bundle: plan.bundle,
@@ -1110,8 +1119,12 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   const step4 = ctx.custom?.subAgentTasks?.find((t) => t.stepIndex === 4);
   const usedLlm = step4?.source === "llm";
   const steering = ctx.custom?.steering;
+  // The steering may change the typed action too (an ABAC container, a narrower user set).
+  const typed = ctx.custom ? await selectTypedAction(ctx) : null;
+  const { typedAction: _previousAction, ...rest } = drawer;
   const updated: ActionApprovalDrawer = {
-    ...drawer,
+    ...rest,
+    ...(typed?.action ? { typedAction: typed.action } : {}),
     title: bundle.title.slice(0, 120),
     summary: bundle.summary.slice(0, 600),
     powershellScript: bundle.powershellScript,
@@ -1133,9 +1146,8 @@ export async function restageRemediationForSteering(remediationId: string): Prom
   return updated;
 }
 
-/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the signed-in delegated identity. */
 /**
- * Auto-Fix (L-08): repairs the ShouldProcess guard on the server, re-runs the real pre-flight
+ * Auto-Fix: repairs the ShouldProcess guard on the server, re-runs the real pre-flight
  * against fresh context and stores whatever verdict it returns. Nothing is marked passed
  * that the pre-flight did not pass.
  */
@@ -1166,7 +1178,7 @@ export async function autofixRemediation(remediationId: string): Promise<ActionA
 }
 
 /**
- * Override (L-08): the operator approves a bundle whose pre-flight did not pass. The checks
+ * Override: the operator approves a bundle whose pre-flight did not pass. The checks
  * keep their real results; the verdict becomes "Overridden" and the justification is audited.
  */
 export function overrideRemediation(remediationId: string, justification: string, operator?: string): ActionApprovalDrawer {
@@ -1194,22 +1206,25 @@ export function overrideRemediation(remediationId: string, justification: string
   return updated;
 }
 
+/** CTX_ALLOW_EXECUTE only: the approved PowerShell itself, as the executor identity. */
 async function runApprovedScript(drawer: ActionApprovalDrawer): Promise<{ ok: boolean; log: string[] }> {
   return runScriptText(drawer.powershellScript, `Invoke-Remediate-${drawer.ticketId}`);
 }
 
-/** CTX_ALLOW_EXECUTE only: runs a script as the signed-in delegated identity; the inverse rollback uses the same runner (U-5). */
+/**
+ * CTX_ALLOW_EXECUTE only: runs a script as the configured executor identity (a least-privilege service
+ * principal or managed identity; the engineer's own sign-in only with CTX_EXECUTOR_ALLOW_DELEGATED).
+ * The inverse rollback uses the same runner. With no executor identity the script does not run.
+ */
 export async function runScriptText(script: string, name: string): Promise<{ ok: boolean; log: string[] }> {
+  const identity = resolveExecutorIdentity();
+  const refusal = executorRefusal(identity);
+  if (refusal) return { ok: false, log: [refusal] };
   const dir = mkdtempSync(join(tmpdir(), "ctx-exec-"));
   const file = join(dir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.ps1`);
-  // Every executed script is pinned to the lab: it selects the lab subscription for its own process and stops on anything else,
+  // Every executed script connects as the executor identity and is pinned to the lab subscription for its own process,
   // whatever the saved Az context points at. A leading param() block stays the first statement.
-  const guard = [
-    `$__ctxLab = Get-AzContext -ListAvailable | Where-Object { $_.Subscription -and $_.Subscription.Id -eq '${ABAC_LAB.subscriptionId}' -and $_.Tenant.Id -eq '${ABAC_LAB.tenantId}' } | Select-Object -First 1`,
-    `if (-not $__ctxLab) { throw 'Refusing to execute: the lab subscription ${ABAC_LAB.subscriptionId} is not signed in' }`,
-    "$null = Set-AzContext -Context $__ctxLab -Scope Process",
-    `if ((Get-AzContext).Subscription.Id -ne '${ABAC_LAB.subscriptionId}') { throw 'Refusing to execute outside the lab subscription' }`,
-  ].join("\n");
+  const guard = executorPrelude(identity, { subscriptionId: ABAC_LAB.subscriptionId, tenantId: ABAC_LAB.tenantId });
   const lines = script.split("\n");
   const paramAt = lines.findIndex((l) => /^\s*param\s*\(/i.test(l));
   let paramEnd = -1;
@@ -1224,7 +1239,7 @@ export async function runScriptText(script: string, name: string): Promise<{ ok:
   writeFileSync(file, guarded, "utf8");
   try {
     const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
-    const log = result.stdout.split("\n").filter(Boolean).slice(-20);
+    const log = [`Executor identity: ${identity.label}`, ...result.stdout.split("\n").filter(Boolean).slice(-20)];
     if (result.code !== 0) log.push(`pwsh exited ${result.code}: ${result.stderr.split("\n").slice(-3).join(" | ")}`);
     return { ok: result.code === 0, log };
   } finally {

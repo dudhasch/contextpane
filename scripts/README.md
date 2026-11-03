@@ -17,4 +17,6 @@ PowerShell 7 and Bun scripts for setting up, seeding, verifying and publishing C
 | [`Publish-ContextPaneRepo.ps1`](Publish-ContextPaneRepo.ps1) | The one-time GitHub publish used at kickoff (audit + `gh repo create`); `ConfirmImpact=High` |
 | [`capture-readme-screenshots.ts`](capture-readme-screenshots.ts) | Headless Edge/Chrome over DevTools: repeatable README captures from the running stack |
 
+**API token.** The orchestrator requires a bearer token on `/api/*` (except `GET /api/health`) and `/ws`. `Test-ContextPaneSmoke.ps1` and `New-ContextPaneVoiceFixture.ps1` use `CTX_API_TOKEN` when set, otherwise the file the orchestrator writes at start-up (`CTX_API_TOKEN_FILE`, default `.contextpane/api-token`), and add it to every `Invoke-RestMethod` / `Invoke-WebRequest` call through `$PSDefaultParameterValues`. `capture-readme-screenshots.ts` uses `CTX_API_TOKEN` or `.contextpane/api-token` for its one direct API call (the ERP drop); the pages it captures go through the Vite proxy, which adds the token itself. Start the orchestrator before running them.
+
 **Smoke test caveat.** Five of the 53 smoke checks predate the standalone custom-ticket change: they still expect custom tickets to inherit a base scenario, and the pointer query check URL-decodes the pointer. A run whose only failures are those five is a pass.

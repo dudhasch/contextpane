@@ -96,7 +96,7 @@ function SynthesizedElementsLedgerSection({
   };
 
   const elements = catalog?.catalog?.dynamicElements ?? [];
-  // A template card was built without a model call; only the rest are syntheses (L-03).
+  // A template card was built without a model call; only the rest are syntheses.
   const isTemplate = (el: { synthesizerModel: string }) => el.synthesizerModel === "deterministic-template";
   const synthesizedCount = elements.filter((el) => !isTemplate(el)).length;
 
@@ -179,6 +179,7 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
   const vaultedFields = pii?.piiFieldsVaulted ?? 0;
   const promptsScanned = pii?.promptsScanned ?? 0;
   const rawPiiPromptHits = pii?.rawPiiPromptHits ?? 0;
+  const refusedRehydrations = pii?.refusedRehydrations ?? 0;
 
   return (
     <section className="space-y-3 border-t border-hairline pt-3 text-12" data-testid="omega-prime-telemetry">
@@ -237,11 +238,16 @@ function OmegaPrimeTelemetrySection({ catalogCount }: { catalogCount: number }) 
         <div className="sm:pl-3" data-testid="pii-redaction-vault-card">
           <div className="section-label">PII redaction vault</div>
           <div className={`mt-0.5 font-mono text-12 ${rawPiiPromptHits > 0 ? "text-critical" : "text-healthy"}`}>
-            {vaultedFields} fields vaulted · {rawPiiPromptHits} prompt{rawPiiPromptHits === 1 ? "" : "s"} with raw PII
+            {vaultedFields} fields vaulted · {rawPiiPromptHits} prompt{rawPiiPromptHits === 1 ? "" : "s"} with detector hits
           </div>
           <div className="text-11 text-muted">
             {promptsScanned > 0 ? `${promptsScanned} model prompts scanned after pseudonymisation` : "No model prompt scanned yet"}
           </div>
+          {refusedRehydrations > 0 && (
+            <div className="text-11 text-warning" data-testid="pii-refused-rehydrations">
+              {refusedRehydrations} token{refusedRehydrations === 1 ? "" : "s"} in model replies not rehydrated (not shown to that ticket)
+            </div>
+          )}
         </div>
       </div>
     </section>
@@ -316,8 +322,8 @@ function SkillsPiiBody() {
               <Pill variant="status" tone="healthy" mono={false}>
                 {pii.piiFieldsVaulted} PII fields vaulted
               </Pill>
-              <Pill variant="status" tone={pii.zeroRawPiiInLlmPrompt ? "healthy" : "critical"} mono={false} title="Computed by scanning every outgoing model prompt after the vault ran">
-                {pii.zeroRawPiiInLlmPrompt ? "No raw PII" : `Raw PII in ${pii.rawPiiPromptHits ?? "?"}`} in {pii.promptsScanned ?? 0} prompts
+              <Pill variant="status" tone={pii.zeroRawPiiInLlmPrompt ? "healthy" : "critical"} mono={false} title="Detector hits: the vault's own detector rescans every outgoing prompt; PII it cannot recognise is not counted">
+                {pii.zeroRawPiiInLlmPrompt ? "0 detector hits" : `Detector hits in ${pii.rawPiiPromptHits ?? "?"}`} in {pii.promptsScanned ?? 0} prompts
               </Pill>
             </div>
             <div className="border-l-2 border-hairline pl-2 font-mono text-11 text-muted">

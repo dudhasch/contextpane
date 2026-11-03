@@ -263,7 +263,7 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                         onClick={() => setSelectedStep(isSelected ? null : t.stepIndex)}
                         data-testid={`subagent-pill-${t.stepIndex}`}
                         aria-pressed={isSelected}
-                        title={`${stageMeta?.role ?? t.role} · ${t.latencyMs} ms — click to inspect`}
+                        title={`${stageMeta?.role ?? t.role} · ${t.latencyMs} ms${t.fallbackReason ? ` · fallback: ${t.fallbackReason}` : ""} — click to inspect`}
                         className={`flex h-6 w-full items-center gap-2 rounded-sm px-1 text-left transition-colors hover:bg-ground ${isSelected ? "bg-signal/12 text-signal-strong" : ""}`}
                       >
                         <span className={`w-3 shrink-0 font-mono ${isBusy ? "animate-pulse-dot text-signal" : ran ? "text-healthy" : t.source === "fallback-on-error" ? "text-critical" : "text-warning"}`}>
@@ -301,6 +301,12 @@ function AgentStatusLine({ scenarioId, tasks, correlation }: { scenarioId: strin
                   <span className="text-muted">{activeTask.inputSummary}</span>
                   <span className="font-mono text-faint">Output</span>
                   <span className="text-text">{activeTask.outputSummary}</span>
+                  {activeTask.fallbackReason && (
+                    <>
+                      <span className="font-mono text-faint">Fallback</span>
+                      <span className="text-critical" data-testid="subagent-fallback-reason">{activeTask.fallbackReason}</span>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -512,7 +518,7 @@ function ScopeBar({ scope, unmapped }: { scope: ScopeDraft; unmapped: Clarifying
 function ScopeQuestion({ q, scope, first = false }: { q: ClarifyingQuestion; scope: ScopeDraft; first?: boolean }) {
   // While a refine streams the chips keep their look but take no input (the cursor says why).
   const locked = useWorkbench((s) => s.refiningGoal);
-  // U-1: a chip toggle steers the script at once (one coder call); Update plan stays the full re-triage.
+  // a chip toggle steers the script at once (one coder call); Update plan stays the full re-triage.
   const steer = useWorkbench((s) => s.steer);
   const steerPending = useWorkbench((s) => s.steerStatus === "pending");
   const savedAnswer = useWorkbench((s) => s.brief?.clarifiedAnswers?.[q.id] ?? "");

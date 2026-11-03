@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { StagedSteeringSchema } from "../steering.ts";
+import { TypedActionSchema } from "../typed-actions.ts";
 import {
   DriftStatusSchema,
   EntityTypeSchema,
@@ -365,11 +366,11 @@ export const VerificationStatusSchema = z.object({
     .object({ powershellAst: z.number().optional(), terraformFmt: z.number().optional(), terraformValidate: z.number().optional() })
     .optional()
     .describe("Per-check time inside the sandbox"),
-  /** The cheap regex pre-check that ran before the sandbox; never a verdict on its own (U-2). */
+  /** The cheap regex pre-check that ran before the sandbox; never a verdict on its own. */
   precheck: z
     .object({ name: z.literal("syntax-heuristic"), passed: z.boolean(), warnings: z.array(z.string().max(300)).default([]), latencyMs: z.number().int().nonnegative() })
     .optional(),
-  /** Write-then-test loop (U-2): sandbox findings fed back to the coder, at most maxIterations repair turns before the drawer opened. */
+  /** Write-then-test loop: sandbox findings fed back to the coder, at most maxIterations repair turns before the drawer opened. */
   repair: RepairLoopSchema.optional(),
 });
 export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;
@@ -418,8 +419,10 @@ export const ActionApprovalDrawerSchema = z.object({
     approvedAt: IsoTimestampSchema.nullable().default(null),
   }),
   providerTelemetry: ProviderTelemetrySchema,
-  /** The steering version / digest this script was built for; stale when the ticket's steering moved on (U-1). */
+  /** The steering version / digest this script was built for; stale when the ticket's steering moved on. */
   steering: StagedSteeringSchema.optional(),
+  /** The typed write approve executes instead of the script; absent when no catalog action fits the bundle. */
+  typedAction: TypedActionSchema.optional(),
 });
 export type ActionApprovalDrawer = z.infer<typeof ActionApprovalDrawerSchema>;
 
@@ -446,6 +449,21 @@ export const SynthesizedDomainSchema = z.enum([
 ]);
 export type SynthesizedDomain = z.infer<typeof SynthesizedDomainSchema>;
 
+/**
+ * Where a synthesized block's values come from. Set by the orchestrator after synthesis
+ * (local/grounding.ts), never taken from the model: "tenant-data" every row or hop names something
+ * in the tenant context, "mixed" some do, "model-estimate" none do (gauge numbers always are).
+ */
+export const BlockProvenanceSchema = z.enum(["tenant-data", "mixed", "model-estimate"]);
+export type BlockProvenance = z.infer<typeof BlockProvenanceSchema>;
+
+/** Orchestrator-owned block fields; whatever a model writes here is overwritten. */
+const blockProvenanceFields = {
+  provenance: BlockProvenanceSchema.optional().describe("Set by the orchestrator; leave unset"),
+  /** ptr:// dataset the block's grounded rows were read from. */
+  dataPtr: z.string().optional().describe("Set by the orchestrator; leave unset"),
+};
+
 export const QuotaGaugeItemSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -463,6 +481,7 @@ export const QuotaGaugeBlockSchema = z.object({
   kind: z.literal("quota-gauges"),
   title: z.string(),
   gauges: z.array(QuotaGaugeItemSchema).min(1).max(8),
+  ...blockProvenanceFields,
 });
 export type QuotaGaugeBlock = z.infer<typeof QuotaGaugeBlockSchema>;
 
@@ -480,6 +499,7 @@ export const PolicyChainBlockSchema = z.object({
   kind: z.literal("policy-chain"),
   title: z.string(),
   hops: z.array(PolicyChainHopSchema).min(1).max(8),
+  ...blockProvenanceFields,
 });
 export type PolicyChainBlock = z.infer<typeof PolicyChainBlockSchema>;
 
@@ -495,8 +515,11 @@ export const DataTableBlockSchema = z.object({
   title: z.string(),
   columns: z.array(DataTableColumnSchema).min(1).max(8),
   rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))).max(30),
-  /** Column whose cell becomes steering.targetResource when the operator clicks a row (U-1); unset: no row steering. */
+  /** Column whose cell becomes steering.targetResource when the operator clicks a row; unset: no row steering. */
   rowParamKey: z.string().optional(),
+  ...blockProvenanceFields,
+  /** Rows no tenant data backs (model-authored); they cannot steer the fix. Set by the orchestrator. */
+  ungroundedRows: z.array(z.number().int().nonnegative()).optional().describe("Set by the orchestrator; leave unset"),
 });
 export type DataTableBlock = z.infer<typeof DataTableBlockSchema>;
 
@@ -524,6 +547,7 @@ export const EventStreamBlockSchema = z.object({
   kind: z.literal("event-stream"),
   title: z.string(),
   events: z.array(EventStreamItemSchema).min(1).max(20),
+  ...blockProvenanceFields,
 });
 export type EventStreamBlock = z.infer<typeof EventStreamBlockSchema>;
 
@@ -542,7 +566,7 @@ export const SynthesizedCardActionSchema = z.object({
   description: z.string().optional(),
   command: z.string().optional(),
   kind: z.enum(["stage-fix", "view-diff", "inspect"]).default("stage-fix"),
-  /** Typed steering parameters this action sets before the fix is (re)generated, e.g. { remediationStrategy: "recover" } (U-1). */
+  /** Typed steering parameters this action sets before the fix is (re)generated, e.g. { remediationStrategy: "recover" }. */
   setsParams: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
 });
 export type SynthesizedCardAction = z.infer<typeof SynthesizedCardActionSchema>;
@@ -567,6 +591,8 @@ export const SynthesizedDynamicCardSchema = z.object({
     synthesizedAt: z.string(),
     /** "llm" when muse-wonder produced the card, "fallback" for the deterministic template. */
     source: z.enum(["llm", "fallback"]).optional(),
+    /** Why the template was used instead of a synthesized card. */
+    fallbackReason: z.string().max(300).optional(),
   }),
   sourceRef: SourceRefSchema.nullable().default(null),
 });

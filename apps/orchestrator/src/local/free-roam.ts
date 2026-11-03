@@ -27,7 +27,7 @@ import type { McpDataMode } from "@contextpane/mcp-msgraph";
 import { config, models, providers } from "../config.ts";
 import { sources } from "../mcp/clients.ts";
 import { gatherContext, invalidateContext } from "../mcp/context.ts";
-import { checkWhatIfSafety, runLocalPreflight } from "../preflight/local.ts";
+import { applyWhatIfGate, runLocalPreflight } from "../preflight/local.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
 import { chatWithForcedTool, type TokenUsage } from "../router/openai.ts";
 import { remediationStore } from "../store/remediations.ts";
@@ -895,13 +895,18 @@ export async function stageFreeRoamRemediation(
     actualHcl: "",
     expectedHcl: "",
   });
-  const safety = checkWhatIfSafety(powershellScript);
+  // Free-Roam has no live HCL to patch, so Terraform findings only warn; the AST rules and the -WhatIf gate fail the action (review items 1-2).
+  const gated = applyWhatIfGate(
+    {
+      ...localPreflight,
+      verdict: localPreflight.astCheckPassed === false ? "Verification Failed" : localPreflight.astCheckPassed === null || localPreflight.findings.length ? "Verified With Warnings" : "Verified Safe",
+      findings: [...localPreflight.findings],
+    },
+    powershellScript,
+  );
   const astCheckPassed = localPreflight.astCheckPassed ?? true;
-  const whatIfSafe = localPreflight.whatIfSafe && safety.safe;
-  const allFindings = [
-    ...localPreflight.findings,
-    ...safety.unguarded.map((u) => `Unguarded mutation cmdlet: ${u}`),
-  ];
+  const whatIfSafe = gated.whatIfSafe === true;
+  const allFindings = gated.findings;
 
   report("preflight:done", `Pre-flight ${astCheckPassed && whatIfSafe ? "passed" : `flagged ${allFindings.length} finding(s)`}`, { astCheckPassed, whatIfSafe });
   const latencyMs = Math.round(performance.now() - started);
@@ -940,7 +945,7 @@ export async function stageFreeRoamRemediation(
             },
           ],
     verificationStatus: {
-      verdict: astCheckPassed && whatIfSafe ? "Verified Safe" : "Verified With Warnings",
+      verdict: gated.verdict,
       astCheckPassed,
       terraformFmtPassed: synthesized.terraformDiff ? localPreflight.terraformFmtPassed : null,
       terraformValidatePassed: synthesized.terraformDiff ? localPreflight.terraformValidatePassed : null,

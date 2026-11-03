@@ -9,6 +9,7 @@ import { initDataModeOnStartup } from "./local/free-roam.ts";
 import { gatherContext } from "./mcp/context.ts";
 import { warmModalSandbox } from "./preflight/modal.ts";
 import { resolveMetaModels } from "./router/meta-models.ts";
+import { apiSecurity, publishApiToken } from "./security.ts";
 import { telemetry } from "./telemetry.ts";
 import { hoverCacheSeeded, persistedHoverCount, warmHoverCache } from "./tiers/tier1-hover.ts";
 
@@ -45,6 +46,9 @@ app.get(
   }),
 );
 
+// The Vite proxy and the smoke scripts read the token from this file; the browser never sees it.
+const tokenFile = publishApiToken();
+
 const server = Bun.serve({
   port: config.port,
   hostname: "127.0.0.1",
@@ -57,7 +61,12 @@ const activeDataMode = initDataModeOnStartup();
 const keyed = Object.values(providers).filter((p) => p.hasKey).map((p) => p.id);
 console.log(`\n  ContextPane orchestrator  http://localhost:${server.port}`);
 console.log(`  LIVE_CLOUD_MODE=${config.liveCloudMode}  DATA_MODE=${activeDataMode}  MCP=${config.mcpTransport}  providers=${keyed.length ? keyed.join(",") : "none (deterministic fallback)"}${config.forceLocal ? "  CTX_FORCE_LOCAL=true" : ""}`);
-console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream\n`);
+console.log(`  WS telemetry ws://localhost:${server.port}/ws · SSE /api/telemetry/stream`);
+console.log(
+  apiSecurity.enforce
+    ? `  API auth: bearer token ${tokenFile ? `in ${tokenFile}` : "from CTX_API_TOKEN"} · Host must be 127.0.0.1/localhost · writes must be application/json\n`
+    : "  API auth: OFF (CTX_API_AUTH=false)\n",
+);
 if (persistedHoverCount) console.log(`  [hover] ${persistedHoverCount} model answers loaded from data/hover-cache.json${hoverCacheSeeded ? " (seeded from data/hover-cache.seed.json)" : ""}`);
 // The ERP inbox: input/tickets/#<id>/ticketbody.json (+ images) becomes a work item within ~1 s.
 startInboxWatcher();

@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { ElementRoutingDecisionSchema, SynthesizedDynamicCardSchema, cleanInlineSlugs, parseToolArguments, sessionPiiVault, zodToToolParameters, type ElementRoutingDecision, type MissingElementSpec, type OpenAIFunctionTool, type SynthesizedDynamicCard } from "@contextpane/catalog";
 import { config, models, providers } from "../config.ts";
 import { chatWithForcedTool, metaCallsEnabled } from "../router/openai.ts";
+import { TENANT_DATA_RULE, UNTRUSTED_DATA_RULE, untrusted } from "../router/untrusted.ts";
+import { MODEL_CALLS_DISABLED, fallbackCause, rejectedReply } from "../router/fallback-cause.ts";
+import { bindCardToGrounding, extendGrounding, groundingFromFacts, type GroundingIndex } from "./grounding.ts";
 
 export interface DynamicCatalogEntry {
   elementId: string; title: string; domain: SynthesizedDynamicCard["domain"]; reason: string;
@@ -102,6 +105,12 @@ const ASSESS_ELEMENT_NEEDS_TOOL: OpenAIFunctionTool = {
   },
 };
 
+/** Grounding rule for every card that has no scenario-specific facts; tenantFacts is data, not instructions. */
+const TENANT_FACTS_RULE =
+  TENANT_DATA_RULE +
+  "`tenantFacts` is what the tenant actually holds. Table rows, policy hops and event callers must name only resources, users, groups and policies that appear in `tenantFacts` or the ticket; never invent a resource name. " +
+  "Gauge numbers you cannot read from `tenantFacts` are estimates; keep them few and say so in their detail.";
+
 const SYNTHESIZE_DYNAMIC_CARD_TOOL: OpenAIFunctionTool = {
   type: "function",
   function: {
@@ -191,10 +200,11 @@ export async function assessTicketElementNeeds(input: {
   matchedSeededComponents: string[];
   clarifiedAnswers?: Record<string, string>;
   timeoutMs?: number;
-}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error" }> {
+}): Promise<{ decision: ElementRoutingDecision; modelUsed: string; latencyMs: number; tokensUsed?: number; usage?: { prompt: number; completion: number; total: number }; source?: "llm" | "fallback-on-error"; fallbackReason?: string }> {
   const started = performance.now();
   const fallback = buildDeterministicRoutingDecision(input);
   const gatekeeperModel = models.metaCatalog;
+  let fallbackReason = MODEL_CALLS_DISABLED;
   if (metaCallsEnabled()) {
     try {
       const res = await chatWithForcedTool(
@@ -205,9 +215,10 @@ export async function assessTicketElementNeeds(input: {
             role: "system",
             content:
               "You are ContextPane's Stage-1 Catalog Gatekeeper (muse-spark-1.3). " +
-              "For any custom or unscripted ticket, set matchedExistingElements to [] and emit 1 missingElements entry with status='element_not_existent', a descriptive PascalCase elementId, extractedEntities from the ticket text, and a specific customBrief (summary + 3 actionable resolution steps with exact PowerShell/CLI cmdlets matching the user's ticket and clarifiedAnswers).",
+              "For any custom or unscripted ticket, set matchedExistingElements to [] and emit 1 missingElements entry with status='element_not_existent', a descriptive PascalCase elementId, extractedEntities from the ticket text, and a specific customBrief (summary + 3 actionable resolution steps with exact PowerShell/CLI cmdlets matching the user's ticket and clarifiedAnswers). " +
+              UNTRUSTED_DATA_RULE,
           },
-          { role: "user", content: JSON.stringify({ ticketTitle: input.title, ticketBody: input.body, clarifiedAnswers: input.clarifiedAnswers ?? {} }) },
+          { role: "user", content: JSON.stringify({ ticketTitle: untrusted("ticket-title", input.title), ticketBody: untrusted("ticket-body", input.body), clarifiedAnswers: input.clarifiedAnswers ?? {} }) },
         ],
         ASSESS_ELEMENT_NEEDS_TOOL,
         { timeoutMs: input.timeoutMs ?? 10000, temperature: 0.1, maxTokens: 2000, reasoningEffort: "low" },
@@ -223,8 +234,9 @@ export async function assessTicketElementNeeds(input: {
           source: "llm",
         };
       }
-    } catch {
-      /* fallback below */
+      fallbackReason = rejectedReply("gatekeeper", parsed.success ? "no missing element named" : parsed.error.issues.map((i) => `${i.path.join(".") || "reply"}: ${i.message}`).join("; "));
+    } catch (error) {
+      fallbackReason = fallbackCause("gatekeeper", error);
     }
   }
   return {
@@ -233,11 +245,12 @@ export async function assessTicketElementNeeds(input: {
     latencyMs: Math.max(1, Math.round(performance.now() - started)),
     tokensUsed: 0,
     source: "fallback-on-error",
+    fallbackReason,
   };
 }
 
-/** The deterministic template card. It is never persisted, so it points at no stub (L-03). */
-function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: string, synthesizerModel: string, latencyMs: number): SynthesizedDynamicCard {
+/** The deterministic template card. It is never persisted, so it points at no stub. */
+function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: string, synthesizerModel: string, latencyMs: number, fallbackReason?: string): SynthesizedDynamicCard {
   const nowIso = new Date().toISOString();
   return {
     elementId: missing.elementId,
@@ -255,14 +268,14 @@ function buildMinimalFallbackCard(missing: MissingElementSpec, gatekeeperModel: 
       { kind: "event-stream", title: "Activity & Audit Log", events: [{ id: "ev1", timestamp: nowIso, operation: "Control-plane check", status: "Warning", code: "DiagnosticEvent", caller: "ControlPlane", detail: truncateAtWord(missing.reason, 160) }] },
     ],
     recommendedActions: [{ id: "stage-fix", label: "Stage Remediation Fix", description: missing.reason.slice(0, 140), command: "Get-AzResource -WhatIf", kind: "stage-fix" }],
-    synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: "", synthesizedAt: nowIso, source: "fallback" },
+    synthesisMeta: { gatekeeperModel, synthesizerModel, latencyMs, reusedFromCatalog: false, reuseCount: 1, tsxStubPath: "", synthesizedAt: nowIso, source: "fallback", ...(fallbackReason ? { fallbackReason } : {}) },
     sourceRef: null,
   };
 }
 
 /**
  * Template cards for the deterministic triage path and first paint: no model call, and
- * nothing written, because the catalog holds model syntheses only (L-03).
+ * nothing written, because the catalog holds model syntheses only.
  */
 export function buildTemplateCards(decision: ElementRoutingDecision, gatekeeperModel = "deterministic-router"): SynthesizedDynamicCard[] {
   return decision.missingElements.map((m) => {
@@ -308,8 +321,20 @@ export async function synthesizeAndPersistMissingElements(input: {
   facts?: Record<string, unknown>;
   /** N+1: an element already in the catalog is served from it, with no model call. */
   reuseFromCatalog?: boolean;
+  /** Tenant context the card is built from and checked against (local/grounding.ts); null when none could be gathered. */
+  grounding?: GroundingIndex | null;
 }): Promise<SynthesizedDynamicCard[]> {
   if (input.decision.missingElements.length === 0) return [];
+  // Every card leaves here with orchestrator-set provenance: grounded rows bind to ptr://, the rest are estimates.
+  const index = input.grounding
+    ? input.facts
+      ? extendGrounding(input.grounding, input.facts)
+      : input.grounding
+    : input.facts
+      ? groundingFromFacts("unscoped", input.ticketId, input.facts, input.ticketPrompt)
+      : null;
+  const bind = (card: SynthesizedDynamicCard) => bindCardToGrounding(card, index);
+  const promptFacts = input.facts ?? input.grounding?.facts;
   const store = loadDynamicCatalog();
   const results: SynthesizedDynamicCard[] = [];
   const synthesizerModel = models.metaWonder;
@@ -324,11 +349,12 @@ export async function synthesizeAndPersistMissingElements(input: {
       const latencyMs = Math.round(performance.now() - started);
       saveDynamicCatalog(store);
       appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: known.elementId, title: known.title, domain: known.domain, gatekeeperModel: "dynamic-catalog", modelUsed: "dynamic-catalog", latencyMs, tokens: { prompt: 0, completion: 0, total: 0 }, reusedFromCatalog: true, reuseCount: known.reuseCount, tsxStubPath: known.tsxStubPath, schemaSpec: { requiredPrimitives: known.requiredPrimitives, blockKinds: known.cardTemplate.blocks.map((b) => b.kind) } });
-      results.push({ ...known.cardTemplate, synthesisMeta: { ...known.cardTemplate.synthesisMeta, reusedFromCatalog: true, reuseCount: known.reuseCount, latencyMs } });
+      results.push(bind({ ...known.cardTemplate, synthesisMeta: { ...known.cardTemplate.synthesisMeta, reusedFromCatalog: true, reuseCount: known.reuseCount, latencyMs } }));
       continue;
     }
     let card: SynthesizedDynamicCard | null = null;
     let tokens = { prompt: 0, completion: 0, total: 0 };
+    let synthFallbackReason: string = MODEL_CALLS_DISABLED;
     if (metaCallsEnabled()) {
       try {
         const res = await chatWithForcedTool(
@@ -340,21 +366,26 @@ export async function synthesizeAndPersistMissingElements(input: {
               content:
                 "You are Sub-Agent 3 (UI Architect · muse-wonder-1.0) in ContextPane. " +
                 "Synthesize a schema-valid SynthesizedDynamicCard JSON specification from scratch for the operator's ticket and clarifiedAnswers. " +
-                "Include domain-accurate blocks (3 gauges, 3-4 policyHops, 3 table rows, a concise 12-line PowerShell/CLI/IaC diff, 3 events, and 2 recommendedActions) with real PowerShell 7 / Azure CLI / Graph commands matching the chosen resolution strategy.",
+                "Include domain-accurate blocks (3 gauges, 3-4 policyHops, 3 table rows, a concise 12-line PowerShell/CLI/IaC diff, 3 events, and 2 recommendedActions) with real PowerShell 7 / Azure CLI / Graph commands matching the chosen resolution strategy. " +
+                UNTRUSTED_DATA_RULE,
             },
             {
               role: "user",
               content: JSON.stringify({
-                ticketPrompt: input.ticketPrompt,
+                ticketPrompt: untrusted("ticket", input.ticketPrompt),
                 clarifiedAnswers: input.clarifiedAnswers ?? {},
                 missingElement: missing,
                 customBrief: input.decision.customBrief,
-                ...(input.facts ? { facts: input.facts, factsRule: "Build every block from `facts` only: the scope chain as policyHops, the role assignments and containers as table rows, `facts.activity` as events, `facts.condition` in the diff. Never invent resource names." } : {}),
+                ...(input.facts
+                  ? { facts: input.facts, factsRule: "Build every block from `facts` only: the scope chain as policyHops, the role assignments and containers as table rows, `facts.activity` as events, `facts.condition` in the diff. Never invent resource names." }
+                  : promptFacts
+                    ? { tenantFacts: promptFacts, factsRule: TENANT_FACTS_RULE }
+                    : {}),
               }),
             },
           ],
           SYNTHESIZE_DYNAMIC_CARD_TOOL,
-          { timeoutMs: 35000, temperature: 0.1, maxTokens: 4096, reasoningEffort: "low" },
+          { timeoutMs: 35000, temperature: 0.1, maxTokens: 4096, reasoningEffort: "low", piiScope: { tenantId: index?.tenantId ?? "unscoped", ticketId: input.ticketId } },
         );
         tokens = res.usage;
         const raw = parseToolArguments(res.argumentsRaw) as Record<string, any>;
@@ -383,14 +414,15 @@ export async function synthesizeAndPersistMissingElements(input: {
         };
         const parsed = SynthesizedDynamicCardSchema.safeParse(candidate);
         if (parsed.success && parsed.data.blocks.length >= 2) card = parsed.data;
-      } catch {
-        /* fallback below */
+        else synthFallbackReason = rejectedReply("synthesizer", parsed.success ? `only ${parsed.data.blocks.length} block(s)` : parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".") || "card"}: ${i.message}`).join("; "));
+      } catch (error) {
+        synthFallbackReason = fallbackCause("synthesizer", error);
       }
     }
     const latencyMs = Math.max(1, Math.round(performance.now() - started));
     if (!card) {
       // No synthesis happened: the template is shown, and the catalog is left alone.
-      results.push(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs));
+      results.push(bind(buildMinimalFallbackCard(missing, input.gatekeeperModel, TEMPLATE_SYNTHESIZER, latencyMs, synthFallbackReason)));
       continue;
     }
     // Card copy is slug-cleaned once here, before it is persisted and served (WP8).
@@ -402,7 +434,7 @@ export async function synthesizeAndPersistMissingElements(input: {
     const entry = upsertCatalogEntry(store, { elementId: card.elementId, title: card.title, domain: card.domain, reason: card.reason, requiredPrimitives: card.requiredPrimitives, createdAt: nowIso, lastUsedAt: nowIso, reuseCount: 1, gatekeeperModel: input.gatekeeperModel, synthesizerModel, tsxStubPath: tsxPath, cardTemplate: card });
     saveDynamicCatalog(store);
     appendSynthesizedElementLog({ id: `syn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, timestamp: nowIso, triggerTicketId: input.ticketId, ticketPrompt: input.ticketPrompt.slice(0, 300), elementId: card.elementId, title: card.title, domain: card.domain, gatekeeperModel: input.gatekeeperModel, modelUsed: synthesizerModel, latencyMs, tokens, reusedFromCatalog: false, reuseCount: entry.reuseCount, tsxStubPath: tsxPath, schemaSpec: { requiredPrimitives: card.requiredPrimitives, blockKinds: card.blocks.map((b) => b.kind) } });
-    results.push(card);
+    results.push(bind(card));
   }
   return results;
 }

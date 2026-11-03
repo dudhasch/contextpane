@@ -18,7 +18,7 @@ ContextPane's Modal infrastructure. Two deployments carry the demo:
 | File | App | What it does | Key lines |
 |---|---|---|---|
 | `glimmer_open_weights.py` | `contextpane-glimmer` | Muse Glimmer 30B (GGUF Q4_K_M, 16.8 GB) on llama.cpp `llama-server`, one L40S, strict `HoverDiagnostic` JSON schema (Tier 1A) | GPU `:46`, weight-size floor `:57`, schema `:139`, flags `:176-200`, Volume `:222`, `/health` readiness `:245` |
-| `contextpane_sandbox.py` | `contextpane-sandbox` | Tier 3B pre-flight for the write-then-test loop: PowerShell AST + cmdlet allow-list, `terraform fmt -check`, `terraform validate` | warm class `:283`, endpoint `:354` |
+| `contextpane_sandbox.py` | `contextpane-sandbox` | Tier 3B pre-flight for the write-then-test loop: PowerShell AST + the shared hard-fail rule set, execution-surface report, `terraform fmt -check`, `terraform validate` | warm class `:372`, endpoint `:445` |
 | `open_weights_vllm.py` | `contextpane-open-weights` | Alternative: full-precision `meta-models/Muse-Glimmer-30B` on vLLM 0.10.1.1, one H100 | |
 | `app.py` | (not a Modal app) | Pure-stdlib Python mirror of `apps/orchestrator/src/local/formal-verifier.ts`: symbolic invariants, inverse sketch, idempotency, blast-radius replay | |
 
@@ -26,22 +26,25 @@ How the orchestrator uses them:
 
 | Concern | Where |
 |---|---|
-| Glimmer in the hover chain (open weights first, then Meta) | [`apps/orchestrator/src/tiers/tier1-hover.ts:52`](../apps/orchestrator/src/tiers/tier1-hover.ts#L52) |
-| Background warm-up of every pill, persisted | [`tier1-hover.ts:412`](../apps/orchestrator/src/tiers/tier1-hover.ts#L412) → `data/hover-cache.json` (seed: `data/hover-cache.seed.json`) |
+| Glimmer in the hover chain (open weights first, then Meta) | [`apps/orchestrator/src/tiers/tier1-hover.ts:54`](../apps/orchestrator/src/tiers/tier1-hover.ts#L54) |
+| Background warm-up of every pill, persisted | [`tier1-hover.ts:471`](../apps/orchestrator/src/tiers/tier1-hover.ts#L471) → `data/hover-cache.json` (seed: `data/hover-cache.seed.json`) |
 | Strict response format for open-weight hovers | [`router/glimmer-payload.ts:93`](../apps/orchestrator/src/router/glimmer-payload.ts#L93), attached in `router/openai.ts` |
-| Sandbox call, local fallback on error | [`preflight/modal.ts:65`](../apps/orchestrator/src/preflight/modal.ts#L65), [`tier3-remediate.ts`](../apps/orchestrator/src/tiers/tier3-remediate.ts) |
-| Repair turns driven by sandbox findings (≤ 2) | [`tiers/repair-loop.ts:34`](../apps/orchestrator/src/tiers/repair-loop.ts#L34) |
+| Sandbox call, local fallback on error | [`preflight/modal.ts:68`](../apps/orchestrator/src/preflight/modal.ts#L68), [`tier3-remediate.ts`](../apps/orchestrator/src/tiers/tier3-remediate.ts) |
+| Repair turns driven by sandbox findings (≤ 2) | [`tiers/repair-loop.ts:35`](../apps/orchestrator/src/tiers/repair-loop.ts#L35) |
 
 Measured on the deployed apps: a Glimmer hover takes ~22–25 s warm and the cold boot is 17.7 s. That is why every answer is generated ahead of time and persisted, and the operator reads hovers from the cache in milliseconds. A warm sandbox pre-flight takes ~0.7 s.
 
-**The sandbox holds no tenant credentials and runs offline checks only.** Its single secret is the bearer token `CTX_MODAL_SANDBOX_TOKEN` that the orchestrator presents. It holds no Azure, Graph or Terraform state credentials, and it never reaches a tenant. Per bundle it runs three checks:
-- a `pwsh` AST parse plus the cmdlet allow-list;
+**The sandbox holds no tenant credentials and runs offline checks only.** Its single secret is the bearer token `CTX_MODAL_SANDBOX_TOKEN` that the orchestrator presents. It holds no Azure, Graph or Terraform state credentials, and it never reaches a tenant. Per bundle it runs these checks:
+- a `pwsh` AST parse plus the shared rule set from [`packages/catalog/src/preflight-rules.json`](../packages/catalog/src/preflight-rules.json) (allow-list, forbidden commands, destructive patterns, required commands);
+- the execution-surface extractor (`SURFACE_PS`), whose report goes back to the orchestrator;
 - the `SupportsShouldProcess` declaration check;
 - `terraform fmt -check` and `terraform validate` against a working directory set up at image build with `terraform init -backend=false`.
 
+**One rule set, hard failures.** The image adds `packages/catalog/src/preflight-rules.json` as `/root/preflight-rules.json` (`add_local_file`, the last image step); the local pre-flight reads the same file. Any finding that starts with one of `HARD_FAIL_PREFIXES` ("Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list", "Execution surface:") fails the bundle. The AST server also runs `SURFACE_PS` (.NET calls, `New-Object`, computed invocations, dot-sourcing, script-block invokes, aliases, REST calls) and returns that report with the command list as `commands` and `surface`. The orchestrator applies the execution-surface rules to it ([`preflight/execution-surface.ts`](../apps/orchestrator/src/preflight/execution-surface.ts), from [`preflight/modal.ts`](../apps/orchestrator/src/preflight/modal.ts)), so both sandboxes are judged by the same code. Keep `SURFACE_PS` in sync with the copy in `execution-surface.ts`. A deployment from before this change returns neither field; the orchestrator then falls back to a text scan of the script.
+
 It runs no `terraform plan` and has no OpenTofu binary; the rail's "OpenTofu" tab shows HCL that Terraform 1.9.8 validates. `-WhatIf` is never executed here.
 
-**Live runs happen outside the sandbox, after Approve.** The live write runs on the orchestrator host, as the engineer's own delegated identity (the Graph sign-in from `Connect-ContextPaneGraph.ps1` and the Az token cache), and only with `LIVE_CLOUD_MODE=true`. The approved PowerShell itself runs only with `CTX_ALLOW_EXECUTE=true` ([`runScriptText`, tier3-remediate.ts:1202](../apps/orchestrator/src/tiers/tier3-remediate.ts#L1202)). Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
+**Live runs happen outside the sandbox, after Approve.** The live write runs on the orchestrator host, as the engineer's own delegated identity (the Graph sign-in from `Connect-ContextPaneGraph.ps1` and the Az token cache), and only with `LIVE_CLOUD_MODE=true`. The approved PowerShell itself runs only with `CTX_ALLOW_EXECUTE=true`, and only as the configured executor identity (a least-privilege service principal or managed identity, `CTX_EXECUTOR_*`; see [`executor-identity.ts`](../apps/orchestrator/src/execution/executor-identity.ts)). A bundle that carries a typed catalog action runs that typed Graph / ARM call instead of its script. Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
 
 ## Tier 3B pre-flight sandbox
 
@@ -55,6 +58,8 @@ modal setup
 modal secret create contextpane-sandbox CTX_MODAL_SANDBOX_TOKEN=$(openssl rand -hex 24)
 uvx --from modal --with "fastapi[standard]" modal deploy modal-sandbox/contextpane_sandbox.py
 ```
+
+Deploy from a full checkout: the image definition adds `packages/catalog/src/preflight-rules.json` by its path relative to `contextpane_sandbox.py`. **Redeploy after any change to that file or to `SURFACE_PS`**, because the deployed app keeps the copy uploaded at deploy time.
 
 Modal prints the endpoint URL (`https://<workspace>--contextpane-sandbox-validate-remediation.modal.run`).
 Wire it into the orchestrator:
@@ -76,7 +81,7 @@ initialised with `hashicorp/azurerm`. The class runs on 4 vCPUs and stays up for
   attached provider is gone;
 - `terraform version`, `fmt` and one `validate` run once so the binaries sit in the page cache.
 
-Per request the AST parse (plus cmdlet allow-list), `terraform fmt -check` and `terraform validate`
+Per request the AST parse (plus the shared rules and the surface report), `terraform fmt -check` and `terraform validate`
 on the diff-patched NSG state run concurrently on a thread pool, and `checkLatencyMs` reports each:
 
 ```json

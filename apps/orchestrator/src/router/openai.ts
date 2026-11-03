@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { sessionPiiVault, type OpenAIFunctionTool } from "@contextpane/catalog";
+import { sessionPiiVault, type OpenAIFunctionTool, type PiiScope } from "@contextpane/catalog";
 import { config, providers, type ProviderConfig } from "../config.ts";
 import { buildHoverResponseFormat } from "./glimmer-payload.ts";
 
@@ -84,6 +84,24 @@ export interface ChatOptions {
   maxTokens?: number;
   /** Meta Model API: reasoning_effort. Open-weight Muse Glimmer: the template's reasoning_strength. */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Tenant and ticket the prompt is sent for. The reply may rehydrate only tokens this call's prompt carried,
+   * plus, when a scope is given, tokens earlier prompts of the same scope carried; any other token stays a token.
+   */
+  piiScope?: PiiScope;
+  /** Image parts bypass the text vault, so they are refused unless the caller opts in (CTX_VISION_SEND_IMAGES). */
+  allowImages?: boolean;
+}
+
+export class ImageBlockedError extends Error {
+  constructor(provider: string) {
+    super(`${provider}: image parts are not sent (they bypass the PII vault); set CTX_VISION_SEND_IMAGES=true to opt in`);
+    this.name = "ImageBlockedError";
+  }
+}
+
+function hasImagePart(messages: ChatMessage[]): boolean {
+  return messages.some((m) => typeof m.content !== "string" && m.content.some((p) => p.type === "image_url"));
 }
 
 const OPEN_WEIGHT_PROVIDERS = new Set<string>(["modal-open-weights", "runpod", "local-glimmer-30b"]);
@@ -147,11 +165,14 @@ export async function chatWithForcedTool(
   options: ChatOptions,
 ): Promise<ForcedToolCallResult> {
   if (!provider.hasKey) throw new NoKeyError(provider.id);
+  if (hasImagePart(messages) && !options.allowImages) throw new ImageBlockedError(provider.id);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const started = performance.now();
   const outgoing = vaultMessages(messages);
-  const rawPiiHits = sessionPiiVault.recordPrompt(promptText(outgoing));
+  const outgoingText = promptText(outgoing);
+  const rawPiiHits = sessionPiiVault.recordPrompt(outgoingText);
+  const rehydratable = options.piiScope ? sessionPiiVault.exposeTo(options.piiScope, outgoingText) : sessionPiiVault.tokensIn(outgoingText);
   const post = async (named: boolean): Promise<Response> => {
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
@@ -204,7 +225,7 @@ export async function chatWithForcedTool(
     return {
       toolName,
       // Logged pseudonymised above (router-debug.jsonl holds no raw UPN); returned with real identifiers.
-      argumentsRaw: sessionPiiVault.depseudonymizeJsonText(argumentsRaw),
+      argumentsRaw: sessionPiiVault.depseudonymizeJsonText(argumentsRaw, rehydratable),
       usage: {
         prompt: json.usage?.prompt_tokens ?? 0,
         completion: json.usage?.completion_tokens ?? 0,

@@ -3,13 +3,16 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyPatch } from "diff";
-import type { VerificationStatus } from "@contextpane/catalog";
+import { evaluatePreflightRules, isHardPreflightFinding, type VerificationStatus } from "@contextpane/catalog";
 import { config } from "../config.ts";
+import { SURFACE_PS, executionSurfaceFindings, scanCommandsText, scanExecutionSurfaceText, surfaceFromReport } from "./execution-surface.ts";
 
 /**
  * Local pre-flight sandbox:
  *  - PowerShell AST parse via [System.Management.Automation.Language.Parser]::ParseFile
- *    plus a cmdlet allow-list (Microsoft.Graph only, no Remove-x or Invoke-Expression)
+ *    plus the shared rule set (packages/catalog/src/preflight-rules.json, also enforced by the
+ *    Modal sandbox): a command outside the allow-list, a forbidden command or a destructive
+ *    wildcard fails the bundle
  *  - Terraform: apply the unified diff to the live-state render, confirm it
  *    reproduces the baseline, then `terraform fmt -check` and `terraform validate`
  */
@@ -66,62 +69,11 @@ function exec(command: string, args: string[], options: { cwd?: string; timeoutM
   });
 }
 
-const ALLOWED_VERBS = new Set([
-  "Get",
-  "Set",
-  "Update",
-  "New",
-  "Add",
-  "Connect",
-  "Select",
-  "Where",
-  "ForEach",
-  "Write",
-  "Out",
-  "Test",
-  "ConvertTo",
-  "ConvertFrom",
-  "Format",
-  "Measure",
-  "Sort",
-  "Group",
-  "Start",
-  "Import",
-  "Compare",
-  "Join",
-  "Split",
-  "Undo",
-  "Restore",
-  "Enable",
-  "Disable",
-  "Sync",
-  "Invoke",
-  "Revoke",
-]);
-/** Narrow exceptions to the verb allow-list: each is a scoped, reversible Graph or Az operation. */
-const ALLOWED_COMMANDS = new Set([
-  "remove-mggroupmemberbyref",
-  "new-mggroupmemberbyref",
-  "invoke-mglicenseuser",
-  "invoke-mggraphrequest",
-  "sync-mgdevicemanagementmanageddevice",
-  "new-mgbetadevicemanagementdevicehealthscript",
-  "new-mgsitepermission",
-  "remove-mgapplicationownerbyref",
-  "remove-mgoauth2permissiongrant",
-  "remove-mgserviceprincipalapproleassignment",
-  "remove-mgapplicationpassword",
-  "remove-mgapplicationfederatedidentitycredential",
-  "remove-azkeyvault",
-  "remove-aznetworksecurityruleconfig",
-]);
-const FORBIDDEN_COMMANDS = ["invoke-expression", "iex", "remove-mguser", "remove-mggroup", "remove-azresourcegroup", "remove-item", "start-process", "invoke-webrequest", "invoke-restmethod", "set-executionpolicy"];
-const DESTRUCTIVE_WILDCARD_RE = /\bRemove-MgUser\s+-All\b|\bRemove-AzResource\b(?![^\n]*-(?:ResourceId|Name|ResourceName))\s+-Force\b|\bFormat-Volume\s+-Force\b/i;
 const DEFAULT_REQUIRED_COMMANDS = ["set-mguserlicense"];
 
 /**
  * Mutating cmdlets: each must run inside $PSCmdlet.ShouldProcess for -WhatIf to be a real dry run.
- * Graph and Az alike: ad-hoc tickets stage Key Vault / NSG / resource changes with Az cmdlets (U-2).
+ * Graph and Az alike: ad-hoc tickets stage Key Vault / NSG / resource changes with Az cmdlets.
  */
 const MUTATING = /\b(Set-Mg\w+|Update-Mg\w+|New-Mg\w+|Remove-Mg\w+|Add-Mg\w+|Invoke-MgLicenseUser|Sync-Mg\w+|Invoke-MgGraphRequest\s+-Method\s+'?(POST|PATCH|PUT|DELETE)|Set-Az\w+|Update-Az\w+|New-Az\w+|Remove-Az\w+|Add-Az\w+|Undo-Az\w+|Restore-Az\w+|Invoke-AzRestMethod\s+-Method\s+'?(POST|PATCH|PUT|DELETE))/i;
 
@@ -159,10 +111,57 @@ export function checkWhatIfSafety(script: string): { safe: boolean; unguarded: s
   return { safe: unguarded.length === 0, unguarded: [...new Set(unguarded)] };
 }
 
+/** The mutating cmdlets a script calls outside comments (here-string bodies count as text, not calls, only if they are not Graph/Az cmdlets). */
+export function mutatingCommandsIn(script: string): string[] {
+  const found = new Set<string>();
+  let inBlockComment = false;
+  for (const raw of script.split("\n")) {
+    if (inBlockComment || /^\s*<#/.test(raw)) {
+      inBlockComment = !raw.includes("#>");
+      continue;
+    }
+    if (/^\s*#/.test(raw)) continue;
+    for (const m of raw.matchAll(new RegExp(MUTATING.source, "gi"))) found.add(m[1]!);
+  }
+  return [...found];
+}
+
+/**
+ * The -WhatIf gate, applied after either sandbox (review item 2). A script that mutates
+ * anything must declare SupportsShouldProcess and run every mutation inside
+ * $PSCmdlet.ShouldProcess, or the bundle fails: there is no approvable "With Warnings" for an
+ * unguarded write. A read-only script without the guard only warns.
+ */
+export function applyWhatIfGate(verification: VerificationStatus, script: string): VerificationStatus {
+  const whatIf = checkWhatIfSafety(script);
+  verification.whatIfSafe = whatIf.safe;
+  if (whatIf.safe) return verification;
+  const mutating = mutatingCommandsIn(script);
+  verification.findings.push(`-WhatIf is not a full dry run: ${whatIf.unguarded.join(", ")} outside $PSCmdlet.ShouldProcess`);
+  if (mutating.length > 0) {
+    verification.verdict = "Verification Failed";
+  } else if (verification.verdict === "Verified Safe") {
+    verification.verdict = "Verified With Warnings";
+  }
+  return verification;
+}
+
 interface AstReport {
   parseErrors: string[];
   commands: string[];
   supportsShouldProcess: boolean;
+  /** .NET calls, dynamic invocations, aliases and REST targets (preflight/execution-surface.ts). */
+  surface?: unknown;
+}
+
+/**
+ * Execution-surface findings (item 12): .NET calls, runtime script blocks, dot-sourcing, aliases and
+ * REST targets outside the allow-list. Uses the AST report when there is one, the text scan otherwise.
+ */
+export function executionSurfaceCheck(script: string, report?: Pick<AstReport, "commands" | "surface"> | null): string[] {
+  const surface = report ? surfaceFromReport(report.surface, script) : scanExecutionSurfaceText(script);
+  const commands = report ? report.commands : scanCommandsText(script);
+  return executionSurfaceFindings(surface, commands);
 }
 
 export async function checkPowerShellAst(script: string, timeoutMs = 20_000, requiredCommands = DEFAULT_REQUIRED_COMMANDS): Promise<{ passed: boolean | null; findings: string[]; commands: string[] }> {
@@ -177,11 +176,13 @@ try {
   $ast = [System.Management.Automation.Language.Parser]::ParseFile(${psPath}, [ref]$tokens, [ref]$errors)
   $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Select-Object -Unique)
   $attrs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AttributeAst] }, $true) | ForEach-Object { $_.Extent.Text })
+${SURFACE_PS}
   [pscustomobject]@{
     parseErrors = @($errors | ForEach-Object { "$($_.Extent.StartLineNumber):$($_.Extent.StartColumnNumber) $($_.Message)" })
     commands = @($commands)
     supportsShouldProcess = [bool]($attrs | Where-Object { $_ -match 'SupportsShouldProcess' })
-  } | ConvertTo-Json -Depth 4 -Compress
+    surface = $surface
+  } | ConvertTo-Json -Depth 6 -Compress
 } catch {
   [pscustomobject]@{ parseErrors = @("AST runner failed: $($_.Exception.Message)"); commands = @(); supportsShouldProcess = $false } | ConvertTo-Json -Depth 4 -Compress
   exit 1
@@ -192,41 +193,37 @@ try {
     const runner = join(dir, "ast-runner.ps1");
     writeFileSync(runner, ps, "utf8");
     const result = await exec("pwsh", ["-NoProfile", "-NonInteractive", "-NoLogo", "-File", runner], { timeoutMs });
-    if (result.timedOut) return { passed: null, findings: ["PowerShell AST check timed out"], commands: [] };
+    // No AST: the text scan still fails a script whose execution surface is visibly outside the rules.
+    if (result.timedOut) {
+      const surfaceOnly = executionSurfaceCheck(script);
+      return { passed: surfaceOnly.length ? false : null, findings: ["PowerShell AST check timed out", ...surfaceOnly], commands: [] };
+    }
     if (result.code !== 0 && !result.stdout.trim()) {
-      return { passed: null, findings: [`pwsh unavailable or failed: ${(result.stderr || "no output").trim().slice(0, 200)}`], commands: [] };
+      const surfaceOnly = executionSurfaceCheck(script);
+      return { passed: surfaceOnly.length ? false : null, findings: [`pwsh unavailable or failed: ${(result.stderr || "no output").trim().slice(0, 200)}`, ...surfaceOnly], commands: [] };
     }
     const start = result.stdout.indexOf("{");
     const report = JSON.parse(result.stdout.slice(start)) as AstReport;
     const findings: string[] = [];
     for (const e of report.parseErrors) findings.push(`AST parse error: ${e}`);
-    const lower = report.commands.map((c) => c.toLowerCase());
-    for (const forbidden of FORBIDDEN_COMMANDS) if (lower.includes(forbidden)) findings.push(`Forbidden command: ${forbidden}`);
-    for (const required of requiredCommands) if (!lower.includes(required.toLowerCase())) findings.push(`Expected command missing: ${required}`);
-    for (const cmd of report.commands) {
-      const verb = cmd.split("-")[0] ?? cmd;
-      if (cmd.includes("-") && !ALLOWED_VERBS.has(verb) && !ALLOWED_COMMANDS.has(cmd.toLowerCase())) findings.push(`Verb outside allow-list: ${cmd}`);
-    }
+    findings.push(...evaluatePreflightRules(report.commands, script, requiredCommands));
     if (!report.supportsShouldProcess) findings.push("Script does not declare SupportsShouldProcess (-WhatIf unsupported)");
     const openBraces = (script.match(/\{/g) ?? []).length;
     const closeBraces = (script.match(/\}/g) ?? []).length;
     if (openBraces !== closeBraces) {
       findings.push(`Unbalanced braces in PowerShell script ({=${openBraces}, }=${closeBraces})`);
     }
-    if (DESTRUCTIVE_WILDCARD_RE.test(script)) {
-      findings.push("Destructive wildcard command detected (e.g. Remove-MgUser -All or unscoped Remove-AzResource -Force)");
-    }
     if (/\bparam\s*\([^)]*=\s*""\s*\)/i.test(script)) {
       findings.push("Empty target parameter default detected in param() block");
     }
-    const passed =
-      report.parseErrors.length === 0 &&
-      openBraces === closeBraces &&
-      !DESTRUCTIVE_WILDCARD_RE.test(script) &&
-      !findings.some((f) => f.startsWith("Forbidden") || f.startsWith("Expected command missing") || f.startsWith("Destructive wildcard"));
+    // Allow-list, forbidden commands, missing steered commands, destructive wildcards and execution-surface rules all fail the bundle.
+    const surfaceFindings = executionSurfaceCheck(script, report);
+    findings.push(...surfaceFindings);
+    const passed = report.parseErrors.length === 0 && openBraces === closeBraces && !findings.some(isHardPreflightFinding) && surfaceFindings.length === 0;
     return { passed, findings, commands: report.commands };
   } catch (error) {
-    return { passed: null, findings: [`AST check could not run: ${error instanceof Error ? error.message : String(error)}`], commands: [] };
+    const surfaceOnly = executionSurfaceCheck(script);
+    return { passed: surfaceOnly.length ? false : null, findings: [`AST check could not run: ${error instanceof Error ? error.message : String(error)}`, ...surfaceOnly], commands: [] };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

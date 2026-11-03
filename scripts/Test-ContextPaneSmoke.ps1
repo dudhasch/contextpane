@@ -56,6 +56,14 @@ param(
     [int]$TimeoutSec = 180
 )
 
+# The orchestrator requires its bearer token (apps/orchestrator/src/security.ts): CTX_API_TOKEN, or the file it writes at start-up.
+$apiTokenFile = if ($env:CTX_API_TOKEN_FILE) { $env:CTX_API_TOKEN_FILE } else { Join-Path (Split-Path -Parent $PSScriptRoot) '.contextpane/api-token' }
+$apiToken = if ($env:CTX_API_TOKEN) { $env:CTX_API_TOKEN.Trim() } elseif (Test-Path -LiteralPath $apiTokenFile) { (Get-Content -Raw -LiteralPath $apiTokenFile).Trim() } else { '' }
+if ($apiToken) {
+    $PSDefaultParameterValues['Invoke-RestMethod:Headers'] = @{ Authorization = "Bearer $apiToken" }
+    $PSDefaultParameterValues['Invoke-WebRequest:Headers'] = @{ Authorization = "Bearer $apiToken" }
+}
+
 if ($Mode -ieq 'BreakGlass') { $Mode = 'break-glass' }
 if ($Mode -ieq 'GitOps') { $Mode = 'gitops' }
 
