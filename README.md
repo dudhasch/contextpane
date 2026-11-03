@@ -286,12 +286,12 @@ The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the wo
 
 ```bash
 bun run typecheck   # 6 workspaces, tsc --noEmit
-bun test            # 357 tests across 57 files (2026-11-03): 354 pass and 1 is skipped on a machine without pwsh 7
+bun test            # 357 tests across 57 files: all pass in CI (pwsh 7.6, Terraform 1.9.8); without pwsh, 2 repair-loop tests fail
 bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema (reads the API token from .contextpane/api-token)
 bun run eval        # coder eval: 24 tickets incl. 8 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
 ```
 
-Without PowerShell 7 on the PATH, 2 tests in `apps/orchestrator/src/tiers/repair-loop.test.ts` fail because they run the real local pre-flight: "an unguarded script is repaired server-side in two turns and the drawer opens Verified Safe with iterations: 2" and "when the budget is exhausted the verdict stays Verification Failed with its findings; nothing is forced". Run them on a machine with pwsh 7 to cover that path; [CI](.github/workflows/ci.yml) does, on every push and pull request (pwsh 7, Terraform 1.9.8, deterministic engine, no model or tenant calls).
+Without PowerShell 7 on the PATH, the 2 write-then-test cases in `apps/orchestrator/src/tiers/repair-loop.test.ts` fail because they run the real local pre-flight. [CI](.github/workflows/ci.yml) runs them on every push and pull request with pwsh 7 and Terraform 1.9.8 on the deterministic engine (no model, tenant or Modal calls); there the eval also scores pre-flight (24/24 on 2026-11-03).
 
 **Hotkeys** (press `?` in the app): `Ctrl+K` work queue · `h` hover hero entity · `e` run step 1 · `d` diff · `f` open remediation · `x` approve · `u` explore selection · `c` clarifier · `t` router savings · `a` audit · `0` reset drift. The full list is in [`apps/web/README.md`](apps/web/README.md#hotkeys).
 
