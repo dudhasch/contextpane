@@ -120,6 +120,11 @@ export const RouterTelemetrySchema = z.object({
   fallbackChain: z.array(FallbackStepSchema),
   timestamp: IsoTimestampSchema,
   tenantId: z.string().optional(),
+  /**
+   * Set only when the answer really avoided a model call: a cached model answer, a Tier 0 recipe or a compiled
+   * skill. Savings are counted for these events alone, never for a model failure or the offline fallback.
+   */
+  savingKind: z.enum(["cache-hit", "recipe", "compiled-skill"]).optional(),
   estimatedSavings: z
     .object({
       tokens: z.number().int().nonnegative(),

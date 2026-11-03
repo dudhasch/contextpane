@@ -35,8 +35,14 @@ export const AuditEntrySchema = z.object({
   /** Scenario id: an ERP ticket (INC-4092) or a tenant anomaly (ANOM-CA-204). */
   ticketId: z.string(),
   actionType: AuditActionTypeSchema,
-  /** Identity the action ran as (the GDAP / delegated admin), or the operator for a rejection. */
+  /**
+   * The account the action is recorded under. For approvals, overrides, rollbacks and closures this is the
+   * orchestrator host's signed-in Graph account (or the configured lab default), not the person who clicked:
+   * the web app has no sign-in of its own. `identitySource` says which.
+   */
   delegatedIdentity: z.string(),
+  /** Where `delegatedIdentity` came from: the host's Graph sign-in, the configured lab default, or a fixed/system identity. */
+  identitySource: z.enum(["host-graph-signin", "configured-default", "system"]).optional(),
   /** True only when the pre-flight ran in the Modal cloud sandbox and did not fail. */
   modalSandboxVerified: z.boolean(),
   astPass: z.boolean().nullable(),
@@ -58,8 +64,21 @@ export const AuditEntrySchema = z.object({
     .default("none"),
   /** Break-glass (live write + reconcile commit) or Pure GitOps (PR only), for approvals. */
   executionMode: ExecutionModeSchema.nullable().default(null),
+  /** Hash chain: sha256 of the previous entry (64 zeros for the first one). Set by the ledger, never by callers. */
+  prevHash: z.string().optional(),
+  /** sha256 over this entry's canonical JSON (without `hash`) including `prevHash`. */
+  hash: z.string().optional(),
 });
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
+
+/** Result of re-hashing the audit chain end to end. */
+export interface AuditChainStatus {
+  ok: boolean;
+  entries: number;
+  /** Id of the first entry whose hash or back-link does not match, when ok is false. */
+  brokenAt?: string;
+  reason?: string;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Vision ticket extraction                                                    */

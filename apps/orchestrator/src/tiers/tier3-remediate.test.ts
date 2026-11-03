@@ -395,7 +395,7 @@ describe("Auto-Fix and Override run on the server", () => {
       const script = [
         "param([string]$VaultName = 'kv-contoso-fin-02')",
         "Get-AzResource -Name $VaultName | Out-Null",
-        "Set-AzKeyVaultAccessPolicy -VaultName $VaultName -UserPrincipalName 'lynne@contoso.test' -PermissionsToSecrets get",
+        "Set-AzKeyVaultAccessPolicy -VaultName $VaultName -UserPrincipalName 'lynne.robins.contoso@c4a8shili.onmicrosoft.com' -PermissionsToSecrets get", // a lab user the tenant context holds (an identity only the ticket names fails pre-flight)
       ].join("\n");
       const { drawer, remediationStore } = await failingCustomDrawer(script);
       const fixed = await autofixRemediation(drawer.remediationId);

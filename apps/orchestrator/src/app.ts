@@ -59,7 +59,7 @@ import { SAMPLE_UNSCRIPTED_TICKETS, clearCustomTickets, customScenarioListItem, 
 import { clearSynthesizedElements, loadDynamicCatalog, loadSynthesizedElementsLog, removeCatalogEntry } from "./local/dynamic-catalog.ts";
 import { ABAC_ELEMENT_ID, ABAC_TICKET_FOLDERS, invalidateAbacLabState } from "./local/abac.ts";
 import { ABAC_LAB, deleteAbacRoleAssignmentsLive } from "@contextpane/mcp-azure-iac";
-import { erpScenarioId } from "@contextpane/catalog";
+import { erpScenarioId, type PiiVaultMetrics } from "@contextpane/catalog";
 import { correlateUpstreamCloudStatus } from "./local/cloud-status-correlator.ts";
 import {
   DataModeRefusedError,
@@ -316,9 +316,26 @@ app.get("/api/scenarios/:scenarioId/brief", async (c) => {
 });
 
 /** The ptr:// data plane: a scenario's dataset descriptors (what the model sees), and one pointer's rows. */
+/**
+ * The vault's token map rehydrates every pseudonym, so the dataplane route only shows a few sample pairs
+ * (what the System & audit drawer lists) unless ?includeMappings=true asks for the full map.
+ */
+function vaultMetricsForResponse(metrics: PiiVaultMetrics, includeMappings: boolean) {
+  const { tokenMappings, sampleMappings, ...rest } = metrics;
+  return {
+    ...rest,
+    sampleMappings: includeMappings ? sampleMappings : Object.fromEntries(Object.entries(sampleMappings).slice(0, 6)),
+    ...(includeMappings ? { tokenMappings } : {}),
+    tokenMapVisibility: includeMappings
+      ? "full token map included (?includeMappings=true): anyone holding the API token can rehydrate every pseudonym"
+      : "6 sample pairs only; the full token map is returned with ?includeMappings=true to callers holding the API token",
+  };
+}
+
 app.get("/api/dataplane/:scenarioId", async (c) => {
   const scenarioId = ScenarioIdSchema.parse(c.req.param("scenarioId"));
   const snapshot = publishDataPlane(await gatherContext(scenarioId));
+  const piiMetrics = vaultMetricsForResponse(snapshot.piiMetrics, c.req.query("includeMappings") === "true");
   return c.json({
     scenarioId,
     tenantId: snapshot.tenantId,
@@ -329,9 +346,9 @@ app.get("/api/dataplane/:scenarioId", async (c) => {
     gatheredAt: snapshot.gatheredAt,
     bytes: snapshot.bytes,
     datasets: snapshot.descriptors,
-    piiMetrics: snapshot.piiMetrics,
-    vaultMetrics: snapshot.piiMetrics,
-    pii: snapshot.piiMetrics,
+    piiMetrics,
+    vaultMetrics: piiMetrics,
+    pii: piiMetrics,
     evidenceGraph: snapshot.evidenceGraph,
     informationBottleneck: snapshot.informationBottleneck,
   });
@@ -1187,7 +1204,7 @@ app.post("/api/fleet/campaign/:scenarioId", (c) => {
   const scenarioId = baseScenarioOf(requested) ?? requested;
   const campaign = stageFleetCampaign(scenarioId);
   const fleet = immunizeFleet(scenarioId);
-  auditLedger.append({ tenantId: tenantOf(requested), ticketId: requested, actionType: "fleet-campaign", delegatedIdentity: "contextpane-fleet", modalSandboxVerified: true, astPass: true, tfValidatePass: null, gitBranch: campaign.branches[0]?.branch ?? null, prUrl: null, latencyMs: Math.round(campaign.latencyMs), execution: "none", detail: `Fleet GitOps campaign staged for ${campaign.branches.length} tenants (${fleet.signature})` });
+  auditLedger.append({ tenantId: tenantOf(requested), ticketId: requested, actionType: "fleet-campaign", delegatedIdentity: "contextpane-fleet", identitySource: "system", modalSandboxVerified: false, astPass: null, tfValidatePass: null, gitBranch: campaign.branches[0]?.branch ?? null, prUrl: null, latencyMs: Math.round(campaign.latencyMs), execution: "none", detail: `Fleet GitOps campaign staged for ${campaign.branches.length} tenants (${fleet.signature}); no sandbox pre-flight ran, invariants ${campaign.verified ? "checked" : "failed"}` });
   return c.json({ campaign, fleet });
 });
 
@@ -1314,7 +1331,7 @@ app.post("/api/vision-extract", async (c) => {
 /* ---------------------------------- audit ---------------------------------- */
 
 app.get("/api/audit", (c) =>
-  c.json({ entries: auditLedger.list(Number.parseInt(c.req.query("limit") ?? "50", 10), c.req.query("tenantId")), file: auditLedger.path() }),
+  c.json({ entries: auditLedger.list(Number.parseInt(c.req.query("limit") ?? "50", 10), c.req.query("tenantId")), file: auditLedger.path(), chain: auditLedger.verify() }),
 );
 
 /* ---------------------------------- Voice ---------------------------------- */

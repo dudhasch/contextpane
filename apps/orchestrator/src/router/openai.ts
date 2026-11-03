@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { sessionPiiVault, type OpenAIFunctionTool, type PiiScope } from "@contextpane/catalog";
 import { config, providers, type ProviderConfig } from "../config.ts";
 import { buildHoverResponseFormat } from "./glimmer-payload.ts";
+import { stripTokenLiteralsInUntrustedBlocks } from "./untrusted.ts";
 
 /** CTX_ROUTER_DEBUG=1 appends every model answer (no headers, no keys) to data/router-debug.jsonl. */
 const DEBUG_DIR = config.dataDir;
@@ -132,13 +133,28 @@ const OPEN_WEIGHT_PROVIDER_IDS = new Set(["modal-open-weights", "runpod", "local
  * model's answer is mapped back so scripts and cards carry the real identifiers.
  */
 export function vaultMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.map((m) => ({
+  return vaultMessagesWithExposure(messages).messages;
+}
+
+/**
+ * vaultMessages plus the tokens a reply to this prompt may rehydrate: the tokens the vault put in while
+ * pseudonymising this prompt, and tokens the orchestrator had already put into its own (pre-vaulted) context
+ * outside any untrusted block. Token-shaped text inside customer data is replaced first, so it never counts.
+ */
+export function vaultMessagesWithExposure(messages: ChatMessage[]): { messages: ChatMessage[]; exposed: Set<string> } {
+  const exposed = new Set<string>();
+  const vaultText = (raw: string): string => {
+    const text = stripTokenLiteralsInUntrustedBlocks(raw);
+    for (const t of sessionPiiVault.tokensIn(text)) exposed.add(t);
+    const { result, tokens } = sessionPiiVault.captureTokens(() => sessionPiiVault.pseudonymizeText(text));
+    for (const t of tokens) exposed.add(t);
+    return result;
+  };
+  const out = messages.map((m) => ({
     ...m,
-    content:
-      typeof m.content === "string"
-        ? sessionPiiVault.pseudonymizeText(m.content)
-        : m.content.map((part) => (part.type === "text" ? { ...part, text: sessionPiiVault.pseudonymizeText(part.text) } : part)),
+    content: typeof m.content === "string" ? vaultText(m.content) : m.content.map((part) => (part.type === "text" ? { ...part, text: vaultText(part.text) } : part)),
   }));
+  return { messages: out, exposed };
 }
 
 function promptText(messages: ChatMessage[]): string {
@@ -169,10 +185,11 @@ export async function chatWithForcedTool(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   const started = performance.now();
-  const outgoing = vaultMessages(messages);
+  const { messages: outgoing, exposed } = vaultMessagesWithExposure(messages);
   const outgoingText = promptText(outgoing);
   const rawPiiHits = sessionPiiVault.recordPrompt(outgoingText);
-  const rehydratable = options.piiScope ? sessionPiiVault.exposeTo(options.piiScope, outgoingText) : sessionPiiVault.tokensIn(outgoingText);
+  // Only tokens the vault itself placed (or the orchestrator's own vaulted context carried) widen what a reply may rehydrate.
+  const rehydratable = options.piiScope ? sessionPiiVault.exposeTokens(options.piiScope, exposed) : exposed;
   const post = async (named: boolean): Promise<Response> => {
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",

@@ -83,7 +83,7 @@ export function RouterSavingsBody() {
       </div>
 
       <div className="grid grid-cols-5 divide-x divide-hairline border-y border-hairline py-2">
-        <Stat label="0-token req" value={`${zero}`} sub={`${pct}% of ${total}`} tone="primary" />
+        <Stat label="Cache / recipe" value={`${zero}`} sub={`${pct}% of ${total}`} tone="primary" />
         <Stat label="Tokens saved" value={fmtTokens(saved.tokens)} sub={`${fmtTokens(spent)} spent`} tone="muted" />
         <Stat label="Latency saved" value={fmtMs(saved.ms)} sub="cumulative" tone="muted" />
         <Stat label="API credit saved" value={fmtUsd(usdSaved)} sub={`@ $${pricePer1M.toFixed(2)}/1M tok`} tone="muted" title="Estimated: tokens saved × blended price (CTX_PRICE_USD_PER_1M_TOKENS)" />

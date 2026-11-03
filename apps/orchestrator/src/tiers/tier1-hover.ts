@@ -300,6 +300,9 @@ export async function hover(input: HoverInput): Promise<HoverResult> {
         tokensUsed: ZERO_USAGE,
         fallbackChain: [],
         tenantId: ctx.tenantId,
+        savingKind: "cache-hit",
+        // Measured against the call that produced the cached answer: its real tokens and wall time.
+        estimatedSavings: { tokens: cached.tokensUsed.total, ms: Math.max(0, Math.round(cached.latencyMs) - latencyMs), versus: `the ${cached.modelId} call that generated this answer` },
       }),
     };
   }
