@@ -21,6 +21,8 @@ build/
 data/recipes.json
 data/hover-cache.json
 data/audit-log.json
+data/audit-log.json.migrated
+data/audit-log.jsonl
 data/remediations/
 data/custom-scenarios.json
 data/settings.json

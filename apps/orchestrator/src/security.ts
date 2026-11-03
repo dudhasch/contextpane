@@ -73,7 +73,10 @@ export const localApiGuard: MiddlewareHandler = async (c, next) => {
 
 /**
  * The identity an approval, override, rollback or closure is recorded under. It is never taken from
- * the request body: in live mode it is the signed-in Graph account, otherwise the lab's delegated identity.
+ * the request body, and it is not the person who clicked: the web app has no sign-in of its own. In live
+ * mode it is the orchestrator host's signed-in Graph account (the token minted from its Az/Graph cache),
+ * otherwise the configured lab default (`CTX_LAB_DELEGATED_IDENTITY`). Audit entries record which one in
+ * `identitySource` ("host-graph-signin" | "configured-default").
  */
 export function operatorIdentity(): string {
   if (isLiveCloudMode()) {
