@@ -206,7 +206,7 @@ The token is `CTX_API_TOKEN`, or a random one minted at start-up and written to 
 ## Tests
 
 ```bash
-bun test apps/orchestrator     # part of the root suite (357 tests)
+bun test apps/orchestrator     # part of the root suite (414 tests)
 ```
 
 Tests run with `NODE_ENV=test`, which disables Meta calls and catalog writes, so a test run never touches `data/`. Notable suites: `tiers/repair-loop.test.ts` (its two pwsh-backed cases need PowerShell 7 on the PATH), `tiers/tier3-rollback.test.ts`, `local/steering.test.ts`, `local/formal-verifier.test.ts`, `local/custom-ticket.test.ts`, `router/chain.test.ts`, `preflight/local.test.ts`, `preflight/execution-surface.test.ts`, `preflight/builtin-scripts.test.ts` (every built-in fix, inverse rollback and fallback template against the merged rules), `execution/typed-actions.test.ts`, `execution/executor-identity.test.ts`, `security.test.ts`, `router/untrusted.test.ts`, `router/pii-vault.test.ts`, `local/grounding.test.ts`.
