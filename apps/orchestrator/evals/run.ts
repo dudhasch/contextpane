@@ -20,7 +20,7 @@ if (!live) process.env.CTX_FORCE_LOCAL = "true";
 const { SteeringParamsSchema } = await import("@contextpane/catalog");
 const { providers } = await import("../src/config.ts");
 const { metaCallsEnabled } = await import("../src/router/openai.ts");
-const { synthesizeCustomRemediation } = await import("../src/local/subagent-orchestrator.ts");
+const { synthesizeCustomRemediation, steeredAllowedCommands } = await import("../src/local/subagent-orchestrator.ts");
 const { checkPowerShellAst, checkWhatIfSafety } = await import("../src/preflight/local.ts");
 const { EVAL_CASES } = await import("./cases.ts");
 const { scoreCase, summarize } = await import("./score.ts");
@@ -49,6 +49,7 @@ function steeringFor(c: EvalCase) {
 }
 
 const cases = EVAL_CASES.filter((c) => !only || c.id === only);
+if (!live) console.log("offline: model calls disabled, scoring the deterministic template\n");
 const started = performance.now();
 const rows = [];
 for (const c of cases) {
@@ -60,14 +61,18 @@ for (const c of cases) {
     clarifiedAnswers: c.answers ?? {},
     steering: steeringFor(c),
   });
-  const ast = await checkPowerShellAst(bundle.powershellScript, 20_000, bundle.requiredCommands ?? []);
+  const allowed = steeredAllowedCommands({ ticketTitle: c.title, ticketBody: c.body, clarifiedAnswers: c.answers ?? {}, steering: steeringFor(c) });
+  const ast = await checkPowerShellAst(bundle.powershellScript, 20_000, bundle.requiredCommands ?? [], allowed);
   const whatIf = checkWhatIfSafety(bundle.powershellScript);
   const findings = [...ast.findings, ...(whatIf.safe ? [] : [`-WhatIf not a full dry run: ${whatIf.unguarded.join(", ")}`])];
-  const passed = ast.passed === null ? null : ast.passed && whatIf.safe;
+  // Without pwsh the AST did not run: pre-flight is not scored (n/a) rather than scored on the text scan.
+  const passed = !ast.ran ? null : ast.passed === true && whatIf.safe;
   const score = scoreCase(c, bundle, { passed, findings });
-  rows.push({ ...score, source: bundle._meta?.source ?? "fallback-on-error", model: bundle._meta?.modelUsed ?? "deterministic", latencyMs: Math.round(performance.now() - caseStarted) });
+  // Offline the coder is never called: every row is the deterministic template, so say that instead of "fallback-on-error".
+  const source = live ? (bundle._meta?.source ?? "fallback-on-error") : "template (model calls disabled)";
+  rows.push({ ...score, source, ...(live && bundle._meta?.fallbackReason ? { fallbackReason: bundle._meta.fallbackReason } : {}), model: live ? (bundle._meta?.modelUsed ?? "deterministic") : "deterministic template", latencyMs: Math.round(performance.now() - caseStarted) });
   const mark = (v: boolean | null) => (v === null ? "·" : v ? "✓" : "✗");
-  console.log(`${c.id.padEnd(22)} target ${mark(score.targetHit)}  strategy ${mark(score.strategyMatch)}  must ${mark(score.mustContainHit)}  preflight ${mark(score.preflightPassed)}  injection ${mark(score.injectionSafe)}  ${bundle._meta?.source ?? ""}`);
+  console.log(`${c.id.padEnd(22)} target ${mark(score.targetHit)}  strategy ${mark(score.strategyMatch)}  must ${mark(score.mustContainHit)}  preflight ${mark(score.preflightPassed)}  injection ${mark(score.injectionSafe)}  ${source}`);
 }
 
 const summary = summarize(rows);
@@ -81,4 +86,5 @@ const pct = (r: { passed: number; scored: number; rate: number | null }) => (r.r
 console.log(`\n${out.mode} · ${summary.cases} cases · target ${pct(summary.targetAccuracy)} · strategy ${pct(summary.strategyMatch)} · must-contain ${pct(summary.mustContain)} · pre-flight ${pct(summary.preflightPass)} · injection-safe ${pct(summary.injectionSafe)}`);
 console.log(`results: ${file}`);
 if (summary.preflightPass.scored === 0) console.log("pre-flight not scored: pwsh is not installed");
+if (!live) console.log("offline mode scores the deterministic template, not a model: injection-safe here says nothing about how the model behaves (run with --live)");
 process.exit(summary.injectionSafe.rate !== null && summary.injectionSafe.rate < 1 ? 1 : 0);

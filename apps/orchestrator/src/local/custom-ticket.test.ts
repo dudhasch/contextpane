@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { findRolePermissionsInText, getScenarioEntry, isAnyScenarioId, isCustomScenarioId, lookupRoleOrPermission } from "@contextpane/catalog";
 
 process.env.LIVE_CLOUD_MODE = "false";
 process.env.CTX_FORCE_LOCAL = "true";
 const { SAMPLE_UNSCRIPTED_TICKETS, extractTicket, registerCustomTicket, refineCustomTicketGoal } = await import("./custom-ticket.ts");
+const { PREFLIGHT_NOT_RUN_FINDING } = await import("../preflight/local.ts");
+const HAS_PWSH = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]).status === 0;
 const { loadDynamicCatalog } = await import("./dynamic-catalog.ts");
 const { extractIncidentTimestampWindow } = await import("./cloud-status-correlator.ts");
 const { gatherContext, invalidateContext } = await import("../mcp/context.ts");
@@ -327,7 +330,15 @@ describe("CUSTOM-<hash> registration, ptr://custom-* data plane and remediation 
       modalSpy.mockRestore();
       stageSpy.mockRestore();
     });
-    expect(["Verified Safe", "Verified With Warnings"]).toContain(remResult.drawer.verificationStatus.verdict);
+    if (HAS_PWSH) {
+      expect(["Verified Safe", "Verified With Warnings"]).toContain(remResult.drawer.verificationStatus.verdict);
+    } else {
+      // No pwsh: the AST did not run, so the bundle fails closed and only an Override with a justification unblocks it.
+      expect(remResult.drawer.verificationStatus.verdict).toBe("Verification Failed");
+      expect(remResult.drawer.verificationStatus.findings).toContain(PREFLIGHT_NOT_RUN_FINDING);
+      const { overrideRemediation } = await import("../tiers/tier3-remediate.ts");
+      overrideRemediation(remResult.drawer.remediationId, "Test machine without pwsh 7: exercising the override path");
+    }
     expect(remResult.drawer.powershellScript).not.toContain("westeurope");
     expect(remResult.drawer.powershellScript).not.toContain("Standard_D4s_v5");
     expect(remResult.drawer.powershellScript).not.toContain("alex.wilber");

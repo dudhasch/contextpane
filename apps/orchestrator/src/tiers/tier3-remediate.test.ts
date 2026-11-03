@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { LayoutSchema, SCENARIO_IDS, SCENARIO_REGISTRY, ScenarioBriefSchema } from "@contextpane/catalog";
+
+const HAS_PWSH = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]).status === 0;
 
 // Offline fixtures only: the tests never reach the lab tenant, whatever .env.local says.
 process.env.LIVE_CLOUD_MODE = "false";
@@ -385,7 +388,8 @@ describe("Auto-Fix and Override run on the server", () => {
     }
   }
 
-  test("a failing bundle → Auto-Fix → re-verified by the pre-flight → approve succeeds", async () => {
+  // Needs a real AST verdict: without pwsh the re-verified bundle fails closed (review C2), which the next test covers.
+  test.skipIf(!HAS_PWSH)("a failing bundle → Auto-Fix → re-verified by the pre-flight → approve succeeds", async () => {
     const { autofixRemediation, approve } = await import("./tier3-remediate.ts");
     await withQuietLedgerAndLocalSandbox(async () => {
       const script = [

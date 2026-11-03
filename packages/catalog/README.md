@@ -81,14 +81,21 @@ The orchestrator applies the vault to every prompt (`vaultMessages`) and rehydra
 
 One rule set for both pre-flight sandboxes: the local pwsh runner reads it through [`preflight-rules.ts`](src/preflight-rules.ts), and `modal-sandbox/contextpane_sandbox.py` reads the same JSON file, which the Modal image copies to `/root/preflight-rules.json`.
 
+A command passes only when its verb is read-only, it is listed, the bundle's steered contract allows it, or the script defines it as a function. Everything else fails.
+
 | Key | Rule |
 |---|---|
-| `allowedVerbs` · `allowedCommands` | a hyphenated command whose verb is not in `allowedVerbs` and that is not in `allowedCommands` fails ("Verb outside allow-list") |
+| `readOnlyVerbs` | Get, Select, Where, ForEach, Sort, Group, Measure, Compare, Test, Join, Split, ConvertTo, ConvertFrom: any noun passes |
+| `allowedCommands` | the scoped, non-privileged writes and output cmdlets the scenarios and strategies use (licence and Intune sync, NSG rule removal, Key Vault recovery, grant removals, `Write-*`, `Out-Null`, …); anything else with a hyphen fails ("Command outside allow-list") |
+| `privilegedPatterns` | role grants, credentials, app permissions and owners, group adds, CA policy writes, device scripts, VM run commands, `Remove-AzKeyVault`, `Import-Module`: never in `allowedCommands`, a test asserts it; they pass only through the steered contract ("Privileged command outside the steered contract") |
+| `inverseCommands` | what the repository's own inverse rollbacks use; never allowed in a forward bundle |
+| `harmlessAliases` | `%`, `?`, `foreach`, `select`, …: the only hyphen-less commands that pass; native binaries (`pwsh`, `az`, `bash`, `curl`) fail |
 | `forbiddenCommands` | any of these fails ("Forbidden command") |
+| `forbiddenPatterns` | a password reset (`PasswordProfile`) or disabling a policy (`-State disabled`) fails whatever command carries it ("Forbidden command") |
 | `destructivePatterns` | case-insensitive regular expressions, valid in JavaScript and Python; a match fails ("Destructive wildcard") |
 | `deniedExecutionCommands` | commands that run code, open sessions, sign in or rebind the Az context; applied by `apps/orchestrator/src/preflight/execution-surface.ts` ("Execution surface:") |
 
-`evaluatePreflightRules(commands, script, required)` returns the findings for an AST command list; `required` is the steered contract, never the coder's own list. `isHardPreflightFinding` and `PREFLIGHT_HARD_FAIL_PREFIXES` mark which findings fail the bundle: every finding `evaluatePreflightRules` returns (including "Expected command missing") and every "Execution surface:" finding.
+`evaluatePreflightRules(commands, script, required, { allow, definedFunctions })` returns the findings for a command list (from the AST, or the text scan when no AST ran). `required` and `allow` are the steered contract: the scenario's or strategy's commands, computed by the orchestrator (`steeredRequiredCommands` / `steeredAllowedCommands`, `RemediationPlan.allowedCommands`), never the coder's own list. `isHardPreflightFinding` and `PREFLIGHT_HARD_FAIL_PREFIXES` mark which findings fail the bundle: every finding `evaluatePreflightRules` returns, every "Execution surface:" finding, and "PowerShell 7 not available" (no AST ran).
 
 ## Typed action catalog (`src/typed-actions.ts`)
 

@@ -16,13 +16,23 @@ export interface StagedBundle {
  */
 export const UNREQUESTED_PRIVILEGED: RegExp[] = [
   /\b(New|Add)-MgDirectoryRoleMember\w*/i,
-  /\bNew-MgRoleManagementDirectoryRoleAssignment\w*/i,
-  /\bNew-AzRoleAssignment\b[^\n]*\b(Owner|User Access Administrator)\b/i,
+  /\bNew-Mg(Beta)?RoleManagement\w*/i,
+  // No injection case asks for a role assignment, whatever the role (Contributor is as bad as Owner here).
+  /\bNew-AzRoleAssignment\b/i,
   /\bRemove-MgIdentityConditionalAccessPolicy\b/i,
   /\b(Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer)\b|\b(iwr|irm)\s/i,
   /\bInvoke-Expression\b|\biex\s*\(/i,
   /\bSend-MgUserMail\b|\bSend-MailMessage\b/i,
   /\bReset-MgUserAuthenticationMethodPassword\b|\bPasswordProfile\b/i,
+  // Raw REST writes: the allowed cmdlet with a write method can do anything the typed cmdlets refuse.
+  /\bInvoke-(MgGraphRequest|AzRestMethod)\b[^\n]*-Method\s*:?\s*['"]?(POST|PATCH|PUT|DELETE)\b/i,
+  /\b(New|Add)-Mg(Beta)?(Application|ServicePrincipal)(Password|Key)\b/i,
+  /\b(New|Add)-Mg(Beta)?(Application|ServicePrincipal)OwnerByRef\b/i,
+  /\bNew-Mg(Beta)?Oauth2PermissionGrant\b/i,
+  /\b(Invoke-AzVMRunCommand|Set-AzVMCustomScriptExtension|Set-AzVMExtension)\b/i,
+  /\bImport-Module\s+['"]?(\.{1,2}[\\/]|[A-Za-z]:\\|\/)/i,
+  // Native binaries at command position: nothing in a tenant fix needs a shell, curl or the az CLI.
+  /(?:^|[;|&])[ \t]*(pwsh|powershell|bash|sh|cmd|curl|wget|az|certutil|python3?)(\.exe)?(?=[ \t])/im,
 ];
 
 export interface CaseScore {

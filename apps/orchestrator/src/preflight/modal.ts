@@ -1,6 +1,6 @@
-import type { VerificationStatus } from "@contextpane/catalog";
+import { evaluatePreflightRules, isHardPreflightFinding, type VerificationStatus } from "@contextpane/catalog";
 import { config } from "../config.ts";
-import { executionSurfaceCheck, type PreflightInput } from "./local.ts";
+import { PREFLIGHT_NOT_RUN_FINDING, executionSurfaceCheck, textScanFindings, type PreflightInput } from "./local.ts";
 
 /**
  * Modal sandbox client (Tier 3B). POSTs the bundle to the validate_remediation
@@ -20,6 +20,7 @@ interface ModalResponse {
   checkLatencyMs?: { powershellAst?: number; terraformFmt?: number; terraformValidate?: number };
   /** AST command names and execution surface; an older deployment sends neither and the text scan applies. */
   commands?: string[];
+  functions?: string[];
   surface?: unknown;
 }
 
@@ -79,6 +80,7 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
         actualHcl: input.actualHcl,
         expectedHcl: input.expectedHcl,
         ...(input.requiredCommands ? { requiredCommands: input.requiredCommands } : {}),
+        ...(input.allowedCommands?.length ? { allowedCommands: input.allowedCommands } : {}),
       }),
       signal: controller.signal,
     });
@@ -86,11 +88,24 @@ export async function runModalPreflight(input: PreflightInput, timeoutMs = 60_00
     const json = (await response.json()) as ModalResponse;
     lastWarmAt = Date.now();
     console.log(`  [modal] pre-flight round trip ${Math.round(performance.now() - started)} ms (sandbox ${json.validationLatencyMs ?? "?"} ms)`);
-    // The execution-surface rules live here, so the Modal and local pre-flights apply the same ones.
-    const surfaceFindings = executionSurfaceCheck(input.powershellScript, Array.isArray(json.commands) ? { commands: json.commands, surface: json.surface } : null);
-    const findings = [...(json.findings ?? []), ...surfaceFindings];
-    if (surfaceFindings.length) json.astCheckPassed = false;
-    const hardFail = json.astCheckPassed === false || json.terraformFmtPassed === false || json.terraformValidatePassed === false;
+    const required = input.requiredCommands ?? [];
+    const findings = [...(json.findings ?? [])];
+    const astRan = json.astCheckPassed !== null && Array.isArray(json.commands);
+    if (astRan) {
+      // The shared rules and the execution-surface rules run here too, on the sandbox's AST report, so an older
+      // deployment with older lists cannot pass what the orchestrator's rule file refuses.
+      const ruleFindings = evaluatePreflightRules(json.commands!, input.powershellScript, required, { allow: input.allowedCommands ?? [], definedFunctions: json.functions ?? [] });
+      const surfaceFindings = executionSurfaceCheck(input.powershellScript, { commands: json.commands!, surface: json.surface });
+      for (const f of [...ruleFindings, ...surfaceFindings]) if (!findings.includes(f)) findings.push(f);
+      if (findings.some(isHardPreflightFinding)) json.astCheckPassed = false;
+    } else {
+      // The sandbox's AST did not run (timeout, older deployment without a report): the bundle fails, and the
+      // text scan still says what the rules see.
+      findings.unshift(PREFLIGHT_NOT_RUN_FINDING);
+      for (const f of textScanFindings(input.powershellScript, required, input.allowedCommands ?? [])) findings.push(`${f} (text scan)`);
+      if (json.astCheckPassed !== false) json.astCheckPassed = null;
+    }
+    const hardFail = !astRan || json.astCheckPassed !== true || json.terraformFmtPassed === false || json.terraformValidatePassed === false;
     const hasIac = input.terraformDiff.trim() !== "";
     const skipped = json.astCheckPassed === null || (hasIac && (json.terraformFmtPassed === null || json.terraformValidatePassed === null));
     return {

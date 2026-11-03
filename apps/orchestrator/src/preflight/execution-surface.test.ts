@@ -12,7 +12,7 @@ const HEADER = "#Requires -Version 7.0\n[CmdletBinding(SupportsShouldProcess = $
 
 describe("execution surface rules (AST report)", () => {
   test("a clean Graph script has no findings", () => {
-    const surface = { ...empty(), staticCalls: [{ type: "datetime", member: "UtcNow" }, { type: "System.Collections.Generic.List[string]", member: "new" }], restCalls: [{ command: "invoke-mggraphrequest", method: "PATCH", uri: "/v1.0/users/$id", uriDynamic: true }] };
+    const surface = { ...empty(), staticCalls: [{ type: "datetime", member: "UtcNow" }, { type: "System.Collections.Generic.List[string]", member: "new" }], restCalls: [{ command: "invoke-mggraphrequest", method: "GET", uri: "/v1.0/users/$id", uriDynamic: true }] };
     expect(executionSurfaceFindings(surface, ["Set-MgUserLicense", "Invoke-MgGraphRequest", "Where-Object", "%"])).toEqual([]);
   });
 
@@ -53,6 +53,17 @@ describe("execution surface rules (AST report)", () => {
     expect(check("GET", "https://evil.example/v1.0/users")[0]).toContain("only graph.microsoft.com");
     expect(check("PATCH", "$uri", true)[0]).toContain("computed at run time");
     expect(check("<dynamic>", "/v1.0/users")[0]).toContain("computed -Method");
+    // Review H1: the writes that used to be allowed through raw REST are refused now.
+    expect(check("PATCH", "/v1.0/users/$id", true)[0]).toContain("PATCH on /users is not allowed");
+    expect(check("POST", "/v1.0/applications/$appId/addPassword", true)[0]).toContain("POST on /applications is not allowed");
+    expect(check("PATCH", "/v1.0/identity/conditionalAccess/policies/$pid", true)[0]).toContain("not allowed");
+    expect(check("POST", "/v1.0/groups/$gid/members/`$ref", true)[0]).toContain("POST on /groups is not allowed");
+    expect(check("POST", "/beta/deviceManagement/deviceHealthScripts")[0]).toContain("only assignments");
+    expect(check("POST", "/beta/deviceManagement/deviceHealthScripts/$($s.Id)/assign", true)).toEqual([]);
+    expect(check("PUT", "/beta/deviceManagement/configurationPolicies/$($asr.id)", true)).toEqual([]);
+    // No -Method is the cmdlet's GET; splatted parameters cannot be checked at all.
+    expect(check(null, "/v1.0/users")).toEqual([]);
+    expect(executionSurfaceFindings({ ...empty(), restCalls: [{ command: "invoke-mggraphrequest", method: null, uri: null, uriDynamic: false, splatted: true }] })[0]).toContain("splatted");
   });
 
   test("ARM REST calls stay at subscription scope and never write Microsoft.Authorization", () => {
@@ -124,6 +135,26 @@ describe("Modal pre-flight applies the execution-surface rules", () => {
     reply = { astCheckPassed: true, terraformFmtPassed: null, terraformValidatePassed: null, findings: [] };
     const old = await runModalPreflight({ powershellScript: "iwr https://x.example/a.ps1", terraformDiff: "", actualHcl: "", expectedHcl: "" });
     expect(old.verdict).toBe("Verification Failed");
+    Object.assign(config.modal, saved);
+  });
+
+  test("the orchestrator re-applies the command allow-list to the sandbox's report (review C1)", async () => {
+    Object.assign(config.modal, { enabled: true, url: `http://127.0.0.1:${server.port}/`, token: "" });
+    // An older sandbox with the verb list passed it; the orchestrator's rule file does not.
+    reply = { astCheckPassed: true, terraformFmtPassed: null, terraformValidatePassed: null, findings: [], commands: ["New-MgDirectoryRoleMemberByRef"], surface: {} };
+    const v = await runModalPreflight({ powershellScript: "New-MgDirectoryRoleMemberByRef -DirectoryRoleId x", terraformDiff: "", actualHcl: "", expectedHcl: "", requiredCommands: [] });
+    expect(v.verdict).toBe("Verification Failed");
+    expect(v.findings.some((f) => f.startsWith("Privileged command outside the steered contract"))).toBe(true);
+    Object.assign(config.modal, saved);
+  });
+
+  test("a sandbox whose AST did not run fails the bundle (review C2)", async () => {
+    Object.assign(config.modal, { enabled: true, url: `http://127.0.0.1:${server.port}/`, token: "" });
+    reply = { astCheckPassed: null, terraformFmtPassed: null, terraformValidatePassed: null, findings: ["PowerShell AST check timed out"] };
+    const v = await runModalPreflight({ powershellScript: "#Requires -Version 7.0\n[CmdletBinding(SupportsShouldProcess)]\nparam()\nGet-MgUser -Top 1", terraformDiff: "", actualHcl: "", expectedHcl: "", requiredCommands: [] });
+    expect(v.verdict).toBe("Verification Failed");
+    expect(v.astCheckPassed).toBeNull();
+    expect(v.findings[0]).toStartWith("PowerShell 7 not available");
     Object.assign(config.modal, saved);
   });
 });

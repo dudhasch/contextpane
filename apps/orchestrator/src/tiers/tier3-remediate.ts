@@ -463,6 +463,7 @@ async function preflight(
     actualHcl: ctx.drift?.data.actualHcl ?? "",
     expectedHcl: ctx.drift?.data.expectedHcl ?? "",
     requiredCommands: plan.requiredCommands,
+    ...(plan.allowedCommands?.length ? { allowedCommands: plan.allowedCommands } : {}),
   };
   let verification: VerificationStatus;
   if (modalConfigured()) {

@@ -42,6 +42,7 @@ const UNREPAIRABLE = [
   /Git staging skipped/i,
   /AST check (timed out|could not run)/i,
   /pwsh unavailable/i,
+  /PowerShell 7 not available/i,
   /pre-flight not run/i,
   /Auto-Fix:/i,
 ];
