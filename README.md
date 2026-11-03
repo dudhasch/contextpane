@@ -21,7 +21,7 @@
   <br><sub>11.8 s loop, captured live from the running stack: ① Glimmer hover popover ② selection → Muse Wonder lens ③ scope chip → steering v1 → script diff in the Muse Code rail. A <a href="docs/assets/hero-flight-deck.gif">GIF fallback</a> is also included.</sub>
 </p>
 
-<p align="center"><img src="docs/assets/01-flight-deck-3zone.png" alt="The three-zone flight deck at 1440×900: ticket and plan, diagnostic lens canvas, Muse Code rail" width="100%"></p>
+<p align="center"><img src="docs/assets/01-flight-deck-3zone.png" alt="The three-zone flight deck at 1440×900, captured in mock mode: ticket and plan, diagnostic lens canvas, Muse Code rail with the prover strip and the simulated-lab Apply button" width="100%"></p>
 
 ---
 
@@ -35,6 +35,8 @@
 - **Four views of one selection.** The same lens switches between **Triage lens**, **Inspector**, **State diff** and **Blast radius**, so you go from "what is this" to "what else does it hit" without leaving the ticket.
 - **Feels instant.** Selecting a literal UPN or GUID pre-warms the lens before you press Enter; one hit in the capture saved 4.4 s. Other selections take 4.4–4.8 s.
 - **Ends in an action.** Every lens carries a targeted fix to stage in the Muse Code rail, plus the command and the Graph / PowerShell query behind it to copy, and a follow-up box to refine it.
+
+<p align="center"><img src="docs/assets/07-selection-lens-four-views.png" alt="One highlighted ticket phrase, Selection #1, shown in all four lens views: Triage lens, Inspector, State diff and Blast radius, captured in mock mode" width="100%"></p>
 
 How it works: [§5.5](#55-zero-context-correlation-and-universal-selection-lenses).
 
@@ -71,12 +73,12 @@ The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the wo
 
 ```bash
 bun run typecheck   # 6 workspaces, tsc --noEmit
-bun test            # 414 tests across 64 files: all pass in CI (pwsh 7.6, Terraform 1.9.8); without pwsh, 1 repair-loop test fails and 2 are skipped
+bun test            # 415 tests across 64 files: all pass in CI (pwsh 7.6, Terraform 1.9.8); without pwsh, 1 repair-loop test fails and 2 are skipped
 bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema (reads the API token from .contextpane/api-token)
 bun run eval        # coder eval: 28 tickets incl. 12 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
 ```
 
-Without PowerShell 7 on the PATH the pre-flight cannot run, so the repair-loop case that expects a Verified Safe bundle fails and two pwsh-only cases are skipped. [CI](.github/workflows/ci.yml) runs everything on pushes to `main` and on pull requests with pwsh 7 and Terraform 1.9.8 on the deterministic engine (no model, tenant or Modal calls): 414/414 tests pass, and the eval scores pre-flight 28/28 and injection safety 12/12 (2026-11-03). Offline, the eval scores the deterministic template, not a model; run it with `--live` to measure the model.
+Without PowerShell 7 on the PATH the pre-flight cannot run, so the repair-loop case that expects a Verified Safe bundle fails and two pwsh-only cases are skipped. [CI](.github/workflows/ci.yml) runs everything on pushes to `main` and on pull requests with pwsh 7 and Terraform 1.9.8 on the deterministic engine (no model, tenant or Modal calls): 415/415 tests pass, and the eval scores pre-flight 28/28 and injection safety 12/12 (2026-11-03). Offline, the eval scores the deterministic template, not a model; run it with `--live` to measure the model.
 
 **Hotkeys** (press `?` in the app): `Ctrl+K` work queue · `h` hover hero entity · `e` run step 1 · `d` diff · `f` open remediation · `x` approve (only when the Approve button would allow it) · `u` explore selection · `c` clarifier · `t` router savings · `a` audit · `0` reset drift and `g` ERP drop (both ask first; `Shift` acts at once). The full list is in [`apps/web/README.md`](apps/web/README.md#hotkeys).
 
@@ -200,7 +202,7 @@ At start-up [`router/meta-models.ts:11`](apps/orchestrator/src/router/meta-model
 
 Models never issue MCP tool calls, and no service principal is involved in these reads. The one Activity Log hop is the orchestrator's own, for the ABAC tickets in real-tenant mode: [`readAbacLabLive`](packages/mcp-azure-iac/src/abac.ts#L284) reads the storage account, its containers, the payroll identity, the policy assignment, the identity's role assignments and the last 24 h of failed `roleAssignments/write` events with `RequestDisallowedByPolicy` ([`readActivityLog`, :241](packages/mcp-azure-iac/src/abac.ts#L241), 2.5 s budget). It uses the engineer's Az token, and its [`arm`](packages/mcp-azure-iac/src/abac.ts#L70) helper refuses any path outside the lab subscription. Activity Log ingestion lags by up to 15 minutes, so the denial the ticket reports is added as a deterministic entry stamped at the ticket's time ([`abacActivity`](apps/orchestrator/src/local/abac.ts#L161)). The policy rows of the built-in scenarios are fixtures (§6).
 
-<p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Glimmer hover popover with model badge, pseudonym vault token map and the PII detector-hit count" width="100%"></p>
+<p align="center"><img src="docs/assets/02-glimmer-hover-and-pii-vault.png" alt="Entity-pill hover popover with its engine badge, the pseudonym vault token map and the PII detector-hit count, captured in mock mode" width="100%"></p>
 
 ### 5.2 Hover-intent speculative pre-fetch
 
@@ -238,7 +240,7 @@ The synthesizer gets the ticket's tenant context (`tenantFacts`) and must name o
 
 ### 5.4 Two-way steering and the write-then-test loop
 
-<p align="center"><img src="docs/assets/05-coderail-modal-sandbox-finverse.png" alt="Scope chips in zone 1; the Muse Code rail with the steering diff v0 → v1, prover strip, 1-click undo script and approve footer" width="100%"></p>
+<p align="center"><img src="docs/assets/05-coderail-modal-sandbox-finverse.png" alt="Scope chips in zone 1; the Muse Code rail with the steering diff v1 → v2 and the typed action Approve runs; the expanded prover strip with 1-click undo; captured in mock mode" width="100%"></p>
 
 **Steering contract.** [`SteeringParams`](packages/catalog/src/steering.ts#L37) is a typed object with fields `remediationStrategy`, `scope`, `governance`, `targetResource`, `targetIds`, `region`, `dryRun` and `answers`. Each value records its source (`clarifier · row-click · operator`). The object carries a version and an FNV-1a digest. A scope chip, a typed answer or a lens-row click sends a delta to `PATCH /api/tickets/:id/steer` ([app.ts:549](apps/orchestrator/src/app.ts#L549)):
 

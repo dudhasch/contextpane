@@ -1,5 +1,6 @@
 import type { SynthesizedBlock, SynthesizedDynamicCard } from "@contextpane/catalog";
 import { contextForCorrelation, type CorrelationContext } from "../mcp/context.ts";
+import { abacFacts, isAbacTicketText, peekAbacLabState } from "./abac.ts";
 import { publishDataPlane } from "./dataplane.ts";
 
 /**
@@ -103,6 +104,13 @@ export function namesInText(text: string): Set<string> {
 }
 
 export function buildGroundingIndex(ctx: CorrelationContext, options: { ticketText?: string; extraFacts?: unknown } = {}): GroundingIndex {
+  // An ABAC ticket's fix targets the ABAC lab (storage account, Function App identity, deny policy, role). Those names
+  // come from the lab read (live ARM in Real-Tenant mode, the fixture otherwise), never from the ticket text, so they
+  // ground the same way the coder and the card synthesizer already receive them (abacFacts).
+  if (options.ticketText && isAbacTicketText(options.ticketText)) {
+    const lab = abacFacts(peekAbacLabState(), { createdAt: new Date().toISOString() });
+    options = { ...options, extraFacts: options.extraFacts === undefined ? { abacLab: lab } : { facts: options.extraFacts, abacLab: lab } };
+  }
   const names = new Map<string, string | null>();
   // Data-plane rows first: their names get a ptr:// a card block can bind to.
   try {
