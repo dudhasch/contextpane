@@ -22,11 +22,11 @@ The visual documentation for ContextPane. All media was captured from the runnin
 
 | File | Shows |
 |---|---|
-| [`assets/01-flight-deck-3zone.png`](assets/01-flight-deck-3zone.png) | the three zones (400 px · fluid · 440 px) on #INC-4092 |
-| [`assets/02-glimmer-hover-and-pii-vault.png`](assets/02-glimmer-hover-and-pii-vault.png) | Glimmer hover badge (22.8 s generated, 2 ms cached) + pseudonym vault + PII detector-hit count |
+| [`assets/01-flight-deck-3zone.png`](assets/01-flight-deck-3zone.png) | the three zones (400 px · fluid · 440 px) on #INC-4092, prover strip and approve footer (mock mode, 2026-11-03) |
+| [`assets/02-glimmer-hover-and-pii-vault.png`](assets/02-glimmer-hover-and-pii-vault.png) | entity-pill hover with its engine badge + pseudonym vault + PII detector-hit count (mock mode, 2026-11-03) |
 | [`assets/03-kinematic-prewarm-telemetry.png`](assets/03-kinematic-prewarm-telemetry.png) | per-tier routing ledger, 5-stage pipeline records, pre-fetch counters |
 | [`assets/04-nk-wonder-synthesis-and-reuse.png`](assets/04-nk-wonder-synthesis-and-reuse.png) | the synthesized ABAC card + the k=5 registry |
-| [`assets/05-coderail-modal-sandbox-finverse.png`](assets/05-coderail-modal-sandbox-finverse.png) | scope chips, steering diff, prover strip, 1-click undo, approve footer |
+| [`assets/05-coderail-modal-sandbox-finverse.png`](assets/05-coderail-modal-sandbox-finverse.png) | ABAC ticket: scope chips, steering diff v1 → v2, typed action, prover strip, 1-click undo, approve footer (mock mode, 2026-11-03) |
 | [`assets/06-universal-selection-lenses.png`](assets/06-universal-selection-lenses.png) | Selection #1 → Triage lens and Blast radius modes |
 
 ## How they were made
@@ -34,6 +34,8 @@ The visual documentation for ContextPane. All media was captured from the runnin
 1. **Capture.** A headless Edge was driven over the Chrome DevTools protocol at exactly 1440×900, with `prefers-color-scheme: dark`, against the workbench and orchestrator. Stills and frame sequences (250–800 ms apart) were captured during real hover, selection, triage and steering interactions.
 2. **Annotate.** Crops and numbered callouts were composed as SVG in the Graphite & Signal palette and rasterised with VectorCraft (`vectorcraft-cli convert`).
 3. **Encode.** Lower-third captions were composited on each frame, then ffmpeg encoded the loops to animated WebP (libwebp, q70) and to GIF (two-pass palette).
+
+**Mock-mode recapture (2026-11-03).** 01, 02 and 05 were recaptured after the pre-flight, live-write and PII wording changed, with the stack in mock mode (`CTX_FORCE_LOCAL=true`, `LIVE_CLOUD_MODE=false`): headless Chromium through Playwright at 1440×900 and device scale factor 2, callouts composed in HTML and rendered the same way. No model, tenant or Modal call was made, so the hover badge reads `deterministic · 0 tokens`, the vault counts 0 prompts and the steering diff names the deterministic coder. The capture machine had pwsh 7.6 but no Terraform, which is why #INC-4092's verdict reads Warnings rather than Safe. 03, 04 and 06 and the animated loops are the live captures of 2026-10-29.
 
 [`scripts/capture-readme-screenshots.ts`](../scripts/capture-readme-screenshots.ts) is the repository's own repeatable CDP capture script.
 
