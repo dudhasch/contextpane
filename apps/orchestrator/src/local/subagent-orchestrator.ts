@@ -278,12 +278,17 @@ function keyVaultNameIn(text: string): string | null {
  * contract; a Key Vault ticket steered to recover or purge-recreate gets that strategy's
  * cmdlets; anything else has no strategy contract and gets none.
  */
+/** A ticket that is about a deleted or soft-deleted Key Vault (not merely one that names a vault). */
+const KEY_VAULT_DELETION_RE = /\b(?:soft[- ]?delet\w*|delet(?:ed|ing|ion)|purg\w*|in ?removed ?state|disappeared|name (?:is )?(?:already )?(?:taken|in use))\b/i;
+
 export function steeredRequiredCommands(input: { ticketTitle: string; ticketBody: string; clarifiedAnswers?: Record<string, string>; steering?: SteeringParams }): string[] {
   const text = `${input.ticketTitle}\n${input.ticketBody}`;
   if (isAbacTicketText(text)) return abacRequiredCommands(abacChoiceFromAnswers(input.clarifiedAnswers));
   const strategy = input.steering?.remediationStrategy?.value;
   const vault = input.steering?.targetResource?.value ?? keyVaultNameIn(text);
-  if (vault && /key ?vault|kv-|soft[- ]delete|purge/i.test(text)) {
+  // Only a ticket about a deleted / soft-deleted vault binds the recover or purge cmdlets: an access-policy
+  // or secret ticket on a live vault answered "recover or update in place" must not require Undo-AzKeyVaultRemoval.
+  if (vault && /key ?vault|kv-/i.test(text) && KEY_VAULT_DELETION_RE.test(text)) {
     if (strategy === "recover") return ["get-azkeyvault", "undo-azkeyvaultremoval"];
     if (strategy === "purge-recreate") return ["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"];
   }

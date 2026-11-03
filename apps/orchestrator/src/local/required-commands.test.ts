@@ -19,6 +19,9 @@ describe("requiredCommands come from the steering, never from the coder (review 
     expect(steeredRequiredCommands({ ...KV, steering: steering("purge-recreate") })).toEqual(["get-azkeyvault", "remove-azkeyvault", "new-azkeyvault"]);
     expect(steeredRequiredCommands({ ...KV, steering: steering("in-place") })).toEqual([]);
     expect(steeredRequiredCommands({ ticketTitle: "Teams calls drop", ticketBody: "Calls drop after 10 minutes." })).toEqual([]);
+    // A vault that exists: an access-policy ticket steered "recover or update in place" binds no recovery cmdlet.
+    const live = { ticketTitle: "Grant the finance analyst read access to secrets in kv-contoso-fin-02", ticketBody: "Lynne Robins needs get/list on secrets in Key Vault kv-contoso-fin-02 after the vault was recreated; the old access policy is gone." };
+    expect(steeredRequiredCommands({ ...live, steering: steering("recover") })).toEqual([]);
   });
 
   test("the deterministic template carries the same contract", () => {

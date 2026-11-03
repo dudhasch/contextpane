@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck · test · eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Deterministic engine only: CI never calls a model or a tenant.
+      CTX_FORCE_LOCAL: "true"
+      LIVE_CLOUD_MODE: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      # pwsh 7 ships with the ubuntu-latest image; the pre-flight tests run the real PowerShell AST check.
+      - name: PowerShell 7
+        run: pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Eval (offline, deterministic engine)
+        run: bun run eval
+
+      - name: Modal sandbox compiles
+        run: python3 -m py_compile modal-sandbox/*.py

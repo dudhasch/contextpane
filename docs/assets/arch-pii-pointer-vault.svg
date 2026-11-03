@@ -39,10 +39,10 @@
   <!-- vault -->
   <text x="842" y="112" class="lbl">SESSION PII VAULT</text>
   <rect x="842" y="122" width="326" height="196" rx="10" class="box" stroke="#b69cff"/>
-  <text x="858" y="148" class="t">PiiVault (process singleton)</text>
+  <text x="858" y="148" class="t">PiiVault · scoped rehydration</text>
   <text x="858" y="176" class="m">upn_tok_03 ↔ lynne.robins…</text>
   <text x="858" y="196" class="m">displayName_tok_01 ↔ Alex W…</text>
-  <text x="858" y="216" class="m">ipAddress · userId · deviceName</text>
+  <text x="858" y="216" class="m">ip · userId · device · phone</text>
   <text x="858" y="246" class="s">Tokens assigned in case-folded sorted</text>
   <text x="858" y="264" class="s">order; names come from MCP context.</text>
   <text x="858" y="300" class="m">PiiVault · pseudonymizeText</text>
@@ -61,14 +61,14 @@
   <text x="858" y="460" class="t">Meta Model API · Modal Glimmer</text>
   <text x="858" y="486" class="m">"upn_tok_03 is blocked by"</text>
   <text x="858" y="506" class="m">"[ContextPane-Demo] Block AVD…"</text>
-  <text x="858" y="536" class="s">recordPrompt: 0 raw PII in 76 prompts</text>
+  <text x="858" y="536" class="s">recordPrompt: 0 detector hits in 76 prompts</text>
 
   <path d="M842 494 L700 494" stroke="#9aa3b1" stroke-width="1.6" marker-end="url(#a)"/>
   <rect x="452" y="434" width="244" height="120" rx="10" class="box" stroke="#58d39a"/>
   <text x="468" y="460" class="t">depseudonymizeJsonText</text>
-  <text x="468" y="484" class="s">Reply rehydrated in the</text>
-  <text x="468" y="502" class="s">orchestrator; layout keeps</text>
-  <text x="468" y="520" class="s">its ptr:// references.</text>
+  <text x="468" y="484" class="s">Rehydrates only tokens</text>
+  <text x="468" y="502" class="s">this ticket&apos;s prompts carried;</text>
+  <text x="468" y="520" class="s">layout keeps its ptr:// refs.</text>
   <text x="468" y="542" class="m">router/openai.ts</text>
 
   <path d="M452 494 L290 494" stroke="#9aa3b1" stroke-width="1.6" marker-end="url(#a)"/>

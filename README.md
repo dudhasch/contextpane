@@ -7,7 +7,7 @@
 [![Track](https://img.shields.io/badge/Meta_Hackathon-Indie_Developer_Track-6cb4ff?style=flat-square)](HACKATHON_ATTRIBUTION.md)
 [![Models](https://img.shields.io/badge/Meta_Muse-Glimmer_30B_·_Spark_1.3_·_Wonder_1.0_·_Voice_Transcribe-b69cff?style=flat-square)](#3-meta-muse-models-in-execution-order)
 [![Open weights](https://img.shields.io/badge/Open_weights-Muse_Glimmer_30B_on_Modal_L40S-58d39a?style=flat-square)](modal-sandbox/README.md)
-[![Tests](https://img.shields.io/badge/bun_test-357_tests_%C2%B7_354_pass_without_pwsh-58d39a?style=flat-square)](#6-quickstart-and-verification)
+[![CI](https://github.com/dudhasch/contextpane/actions/workflows/ci.yml/badge.svg)](https://github.com/dudhasch/contextpane/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-9aa3b1?style=flat-square)](LICENSE)
 
 </div>
@@ -226,6 +226,8 @@ The synthesizer gets the ticket's tenant context (`tenantFacts`) and must name o
 
 **Live runs happen after Approve, through a typed action where one fits.** Typed lab writes run on the orchestrator host with the engineer's token, and only with `LIVE_CLOUD_MODE=true`. A custom bundle can carry a **typed action** from the catalog ([`packages/catalog/src/typed-actions.ts`](packages/catalog/src/typed-actions.ts)): an ABAC container-conditioned grant, a licence-state change or an NSG reconcile to the Terraform baseline. ABAC tickets take it from the clarifier answers. Other custom tickets ask `muse-wonder-1.0` to pick one through a forced tool, offering only the entity ids the gathered context holds ([`execution/select-action.ts`](apps/orchestrator/src/execution/select-action.ts)). The parameters must pass the action's Zod schema and its context validator. With `CTX_ALLOW_EXECUTE=true`, approve then runs that action's typed Graph / ARM call and Revert runs its typed inverse ([`execution/typed-actions.ts`](apps/orchestrator/src/execution/typed-actions.ts)). The model-written script stays in the rail for review and is not executed. A bundle with no typed action runs its approved script only with `CTX_ALLOW_EXECUTE=true`, and only as a dedicated **executor identity**: a certificate-based service principal or the host's managed identity (`CTX_EXECUTOR_*` in [`.env.example`](.env.example), [`execution/executor-identity.ts`](apps/orchestrator/src/execution/executor-identity.ts)). The script connects as that identity for its own process and stops unless the Az and Graph contexts are that identity on the lab subscription. With no executor identity configured, execution is refused; `CTX_EXECUTOR_ALLOW_DELEGATED=true` restores the old behaviour of running as the engineer's own sign-in. A built-in scenario's script also needs `CTX_ALLOW_EXECUTE_BUILTIN_SCRIPTS=true`, because its typed lab write is already the executor. Approve does not run `-WhatIf` first. The `-WhatIf` dry run is the first command in the staged `REMEDIATION.md`, for the engineer to run in their own session.
 
+**Two approval modes, optional pull request.** *Break-glass* writes to the lab tenant (under the gates above), then commits the reconciled state to the staged branch so Git does not drift behind the tenant. *Pure GitOps* writes nothing live: the sandbox re-checks the bundle against the state of that moment. In either mode, a built-in scenario's approval can also push the ticket's `fix/<ticket>-<tenant>-remediation` branch and open a pull request (`CTX_GH_PR_ON_APPROVE=true` or the drawer's checkbox, with an authenticated `gh`). [PR #1](https://github.com/dudhasch/contextpane/pull/1) is a real one, opened by the app for `INC-4092` on 2026-10-26 (PowerShell, Graph requests, NSG patch and `REMEDIATION.md`); it is kept as a sample and not meant to be merged.
+
 [`runRepairLoop`](apps/orchestrator/src/tiers/repair-loop.ts#L132) feeds the repairable findings back to the coder, for at most [`MAX_REPAIR_ITERATIONS = 2`](apps/orchestrator/src/tiers/repair-loop.ts#L35) turns. Infrastructure findings (sandbox unavailable, Terraform missing, …) are not sent back. The loop stops early if the coder returns an unchanged script, and it never forces a verdict. The verdict badge then reads "· N iter" and the proof panel lists every round. The run in the screenshot passed on the first attempt, so no repair timeline is drawn; the loop is covered by [`repair-loop.test.ts`](apps/orchestrator/src/tiers/repair-loop.test.ts).
 
 **Invariant checks and f⁻¹.**
@@ -284,12 +286,12 @@ The orchestrator listens on http://127.0.0.1:4000 (`GET /api/health`) and the wo
 
 ```bash
 bun run typecheck   # 6 workspaces, tsc --noEmit
-bun test            # 357 tests across 57 files (2026-11-03): 354 pass and 1 is skipped on a machine without pwsh 7
+bun test            # 357 tests across 57 files: all pass in CI (pwsh 7.6, Terraform 1.9.8); without pwsh, 2 repair-loop tests fail
 bun run smoke       # pwsh smoke test of every tier endpoint and its Zod schema (reads the API token from .contextpane/api-token)
 bun run eval        # coder eval: 24 tickets incl. 8 prompt-injection cases (--live for the Meta API), see apps/orchestrator/evals
 ```
 
-Without PowerShell 7 on the PATH, 2 tests in `apps/orchestrator/src/tiers/repair-loop.test.ts` fail because they run the real local pre-flight: "an unguarded script is repaired server-side in two turns and the drawer opens Verified Safe with iterations: 2" and "when the budget is exhausted the verdict stays Verification Failed with its findings; nothing is forced". Run them on a machine with pwsh 7 to cover that path.
+Without PowerShell 7 on the PATH, the 2 write-then-test cases in `apps/orchestrator/src/tiers/repair-loop.test.ts` fail because they run the real local pre-flight. [CI](.github/workflows/ci.yml) runs them on every push and pull request with pwsh 7 and Terraform 1.9.8 on the deterministic engine (no model, tenant or Modal calls); there the eval also scores pre-flight (24/24 on 2026-11-03).
 
 **Hotkeys** (press `?` in the app): `Ctrl+K` work queue · `h` hover hero entity · `e` run step 1 · `d` diff · `f` open remediation · `x` approve · `u` explore selection · `c` clarifier · `t` router savings · `a` audit · `0` reset drift. The full list is in [`apps/web/README.md`](apps/web/README.md#hotkeys).
 
