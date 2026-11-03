@@ -205,6 +205,8 @@ export const config = {
     remediateMs: envInt("CTX_REMEDIATE_TIMEOUT_MS", 45000),
     voiceMs: envInt("CTX_VOICE_TIMEOUT_MS", 15000),
     visionMs: envInt("CTX_VISION_TIMEOUT_MS", 30000),
+    /** Approve answers 504 "outcome unknown" after this, below Bun's 255 s idle limit; the approval keeps running. */
+    approveMs: envInt("CTX_APPROVE_TIMEOUT_MS", 200_000),
   },
   /** reasoning_effort per tier on the Meta Model API (minimal | low | medium | high). */
   reasoning: {
