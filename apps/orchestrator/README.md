@@ -20,7 +20,7 @@ curl -H "authorization: Bearer $(cat .contextpane/api-token)" http://127.0.0.1:4
 | Folder | Role |
 |---|---|
 | `src/index.ts` · `app.ts` | Bun server + Hono routes (REST, SSE when `Accept: text/event-stream` or `?stream=1`), `GET /ws` telemetry socket |
-| `src/security.ts` | `localApiGuard` (Host check, bearer token, JSON-only writes, local Origin), `publishApiToken`, `operatorIdentity` |
+| `src/security.ts` | `localApiGuard` (Host check, bearer token, workbench-only Origin on every request and the `/ws` upgrade, JSON-only writes), `publishApiToken`, `operatorIdentity` |
 | `src/config.ts` | Env loader (`.env.local` never overrides variables the process already has), model ids, providers, timeouts, `executor` and `visionSendImages` settings |
 | `src/router/` | `chain.ts` (ordered provider chain with per-attempt outcomes), `openai.ts` (the single prompt exit point), `untrusted.ts` (the untrusted-data delimiters and rules), `fallback-cause.ts` (why a sub-agent fell back), `meta-models.ts` (stand-in resolution), `glimmer-payload.ts` (open-weight JSON schema) |
 | `src/tiers/` | Tier 0 recipe, 1A hover, 1B/2 correlate, selection explore, 3 remediate / rollback, write-then-test loop, voice, vision |
@@ -192,7 +192,7 @@ Router savings count only requests a cache hit, a Tier 0 recipe or a compiled sk
 | `Host` is `127.0.0.1`, `localhost` or `[::1]` (with any port); blocks DNS rebinding | 421 |
 | `GET /api/health` passes from here on without a token | (none) |
 | `authorization: Bearer <token>` matches (constant-time compare) | 401 |
-| On POST / PUT / PATCH / DELETE: an `Origin` header, when present, is local | 403 |
+| Any request, the `/ws` upgrade included: an `Origin` header, when present, is the web origin (`CTX_WEB_PORT`) or the orchestrator's own on a loopback name, or listed in `CTX_ALLOWED_ORIGINS`; another localhost port is foreign | 403 |
 | On POST / PUT / PATCH / DELETE: `content-type` is `application/json` | 415 |
 
 **Data mode.** `POST /api/settings/data-mode` (and `data/settings.json` at start-up) can switch to `real-tenant` only when the orchestrator was started with `LIVE_CLOUD_MODE=true`; otherwise the request answers 409 and the persisted value is ignored with a warning. Switching back to `simulated-lab` always works.

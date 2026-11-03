@@ -49,6 +49,23 @@ describe("local API guard (Host, bearer token, JSON-only writes)", () => {
     const local = await call("/api/tickets/close", { method: "POST", headers: { "content-type": "application/json", origin: "http://localhost:5173" }, body: JSON.stringify({ scenarioId: "INC-4092" }) });
     expect(local.status).toBe(409); // reached the route: nothing has converged
   });
+
+  test("a WebSocket upgrade from a foreign Origin is 403 (the Vite proxy would otherwise add the token for it)", async () => {
+    const ws = { upgrade: "websocket", connection: "Upgrade", "sec-websocket-version": "13", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==" };
+    expect((await call("/ws", { headers: { ...ws, origin: "https://attacker.example" } })).status).toBe(403);
+    expect((await call("/ws", { headers: { ...ws, origin: "http://localhost:3000" } })).status).toBe(403);
+    // The workbench's own page passes the guard (the route itself is mounted in index.ts, not in app).
+    expect((await call("/ws", { headers: { ...ws, origin: config.webOrigin } })).status).not.toBe(403);
+  });
+
+  test("another page on localhost (a different port) is a foreign origin, for reads and writes alike", async () => {
+    const write = await call("/api/tickets/close", { method: "POST", headers: { "content-type": "application/json", origin: "http://localhost:8080" }, body: "{}" });
+    expect(write.status).toBe(403);
+    expect((await call("/api/tenants", { headers: { origin: "http://127.0.0.1:8080" } })).status).toBe(403);
+    // The orchestrator's own origin and the web origin on any loopback name pass.
+    expect((await call("/api/tenants", { headers: { origin: `http://127.0.0.1:${config.port}` } })).status).toBe(200);
+    expect((await call("/api/tenants", { headers: { origin: config.webOrigin.replace("localhost", "127.0.0.1") } })).status).toBe(200);
+  });
 });
 
 describe("the recorded operator comes from the server, not the request", () => {

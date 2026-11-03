@@ -8,12 +8,16 @@ import { Pill, type Tone } from "../ui/Pill";
  * (max two lines), then tenant · requester · opened. Domain, role and priority sit in the tooltip.
  */
 export function TicketHeader({ brief }: { brief: ScenarioBrief }) {
-  const resolved = Boolean(useWorkbench(selectConvergence));
+  const convergence = useWorkbench(selectConvergence);
+  const resolved = Boolean(convergence);
+  // "Resolved and verified" only for a change written to the tenant and read back; a simulated or
+  // staged approval says so instead of claiming the tenant was fixed.
+  const live = convergence?.execution === "live-graph";
   const closed = useWorkbench((s) => Boolean(s.resolutionNote?.closed && s.resolutionNote.scenarioId === brief.scenarioId));
   const ticket = brief.kind === "ticket";
   const drop = brief.originKind === "erp-drop";
   const open = drop ? "New" : ticket ? "Open" : "Active drift";
-  const tone: Tone = closed ? "muted" : resolved ? "healthy" : drop ? "primary" : ticket ? "healthy" : "warning";
+  const tone: Tone = closed ? "muted" : resolved ? (live ? "healthy" : "primary") : drop ? "primary" : ticket ? "healthy" : "warning";
   const rationale = brief.extraction?.rationale ? brief.extraction.rationale : undefined;
   const meta = [brief.verifiedDomain, brief.requester ? `${brief.requester.displayName} · ${brief.requester.role}` : null, brief.priority ? `priority ${brief.priority}` : null]
     .filter(Boolean)
@@ -25,7 +29,7 @@ export function TicketHeader({ brief }: { brief: ScenarioBrief }) {
           {brief.displayId ?? `#${brief.scenarioId}`}
         </span>
         <Pill variant="status" tone={tone} mono={false} className="shrink-0 font-semibold" flashKey={resolved ? "resolved" : "open"}>
-          {closed ? "Closed in PSA" : resolved ? "Resolved and verified" : open}
+          {closed ? "Closed in PSA" : resolved ? (live ? "Resolved and verified" : "Approved (simulated, no live write)") : open}
         </Pill>
         <span className="min-w-0 truncate text-11 text-faint" title={rationale ?? brief.origin}>
           {brief.origin}

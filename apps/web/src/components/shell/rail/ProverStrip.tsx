@@ -4,6 +4,9 @@ import { useWorkbench } from "@/store";
 import { Button } from "../../ui/Button";
 import { Pill } from "../../ui/Pill";
 
+/** Where the pre-flight ran, as one short word next to the verdict. */
+const SANDBOX_SHORT: Record<string, string> = { "local-pwsh": "local", "modal-cloud-sandbox": "Modal", none: "not run" };
+
 /** Canary trace stage ids → words; the raw id stays in the tooltip. */
 const CANARY_STAGE_LABEL: Record<string, string> = {
   APPLIED: "Applied",
@@ -13,7 +16,7 @@ const CANARY_STAGE_LABEL: Record<string, string> = {
   AUTO_ROLLED_BACK: "Auto-rolled back",
 };
 import { RAIL_FRAME, RAIL_INSET_X, ScriptCode } from "./ScriptCode";
-import { VERDICT_SHORT, VERDICT_TONE, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, useRevertLabel, type Drawer } from "./shared";
+import { VERDICT_SHORT, VERDICT_TONE, blastRadiusPill, blastSummarySentence, humanizeInvariant, useCopy, usePreflight, useRevertLabel, type Drawer } from "./shared";
 
 /**
  * Always-visible prover strip under the rail tabs, framed as its own module: verdict, proof, blast
@@ -42,7 +45,7 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
   // how many write-then-test turns the sandbox findings cost before this verdict.
   const repair = drawer.verificationStatus.repair;
   const iterations = repair?.iterations ?? 0;
-  const targets = formal?.blastRadius.rows.find((r) => r.cohort === "target")?.entities.length;
+  const blast = blastRadiusPill(formal ?? null);
 
   return (
     <div
@@ -67,10 +70,14 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
           title={
             iterations
               ? `Pre-flight: ${verdict} · ${iterations} repair iteration${iterations === 1 ? "" : "s"} (${drawer.verificationStatus.sandboxProvider})${repair?.exhausted ? " · budget exhausted" : ""}`
-              : `Pre-flight: ${verdict}`
+              : `Pre-flight: ${verdict} (${drawer.verificationStatus.sandboxProvider})`
           }
         >
           {VERDICT_SHORT[verdict]}
+          <span className="font-mono opacity-80" data-testid="verification-sandbox">
+            {" "}
+            · {SANDBOX_SHORT[drawer.verificationStatus.sandboxProvider] ?? drawer.verificationStatus.sandboxProvider}
+          </span>
           {iterations > 0 && (
             <span className="font-mono opacity-80" data-testid="verification-iterations">
               {" "}
@@ -93,15 +100,9 @@ export function ProverStrip({ drawer }: { drawer: Drawer }) {
         >
           {!formal ? "checking…" : notProvable ? "not checkable" : `${proven}/${invariants.length} invariants`}
         </Pill>
-        {formal && (
-          <Pill
-            variant="status"
-            tone="healthy"
-            mono={false}
-            className="shrink-0"
-            title={`Blast radius: ${blastSummarySentence(drawer.ticketId)}`}
-          >
-            {targets !== undefined ? `${targets} target${targets === 1 ? "" : "s"} · 0 collateral` : "0 collateral"}
+        {blast && (
+          <Pill variant="status" tone={blast.tone} mono={false} className="shrink-0" title={blast.title}>
+            {blast.label}
           </Pill>
         )}
         {formal && (
@@ -275,7 +276,11 @@ function ProofDetail({ drawer }: { drawer: Drawer }) {
 
       <section className="border-t border-hairline-2 px-3 pt-2 pb-2.5" data-testid="blast-radius">
         <div className="section-label text-faint">Blast radius</div>
-        <p className="mt-0.5 text-12 text-muted">{blastSummarySentence(drawer.ticketId)}</p>
+        {!notProvable && blastSummarySentence(drawer.ticketId) && (
+          <p className="mt-0.5 text-12 text-muted" data-testid="blast-radius-modelled">
+            Modelled for this scenario: {blastSummarySentence(drawer.ticketId)} ({b.collateralChanges} collateral change{b.collateralChanges === 1 ? "" : "s"} on the fixture model, not measured on the tenant)
+          </p>
+        )}
         <ul className="mt-1.5 text-12">
           {b.rows.map((r) => {
             const label =
