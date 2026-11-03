@@ -4,6 +4,8 @@
 
 **An operator-steered remediation workbench for MSP engineers on Microsoft Entra ID, Intune and Azure.**
 
+<sub>Built on Meta Muse: <b>Glimmer 30B</b> (open weights, on our own GPU) explains whatever you hover · <b>Spark 1.3</b> routes the ticket and lays out the views · <b>Wonder 1.0</b> asks the scoping questions, builds missing views, composes selection lenses and writes the fix · <b>Voice Transcribe 1.0</b> turns spoken steering into commands</sub>
+
 [![Track](https://img.shields.io/badge/Meta_Hackathon-Indie_Developer_Track-6cb4ff?style=flat-square)](HACKATHON_ATTRIBUTION.md)
 [![Models](https://img.shields.io/badge/Meta_Muse-Glimmer_30B_·_Spark_1.3_·_Wonder_1.0_·_Voice_Transcribe-b69cff?style=flat-square)](#3-meta-muse-models-in-execution-order)
 [![Open weights](https://img.shields.io/badge/Open_weights-Muse_Glimmer_30B_on_Modal_L40S-58d39a?style=flat-square)](modal-sandbox/README.md)
@@ -20,6 +22,21 @@
 </p>
 
 <p align="center"><img src="docs/assets/01-flight-deck-3zone.png" alt="The three-zone flight deck at 1440×900: ticket and plan, diagnostic lens canvas, Muse Code rail" width="100%"></p>
+
+---
+
+## Highlight anything: the selection lens
+
+**Select any phrase in the ticket, on a card or in a hover popover, and ContextPane builds a live view of it.** Highlight 3–120 characters, even in an unscripted ticket nobody has seen before, optionally add context ("other apps with the same owner"), press Enter, and `muse-wonder-1.0` composes a lens over the tenant data behind that phrase. No query to write, no dashboard to pick.
+
+<p align="center"><img src="docs/assets/06-universal-selection-lenses.png" alt="A highlighted ticket phrase becomes Selection #1; Muse Wonder composes a Triage lens and the same selection in Blast radius mode" width="100%"></p>
+
+- **Any text.** A user name, an error code, a policy, a half-sentence from a customer's ticket: the selection is the query, and the phrase stays marked in the ticket as `Selection #n`.
+- **Four views of one selection.** The same lens switches between **Triage lens**, **Inspector**, **State diff** and **Blast radius**, so you go from "what is this" to "what else does it hit" without leaving the ticket.
+- **Feels instant.** Selecting a literal UPN or GUID pre-warms the lens before you press Enter; one hit in the capture saved 4.4 s. Other selections take 4.4–4.8 s.
+- **Ends in an action.** Every lens carries a targeted fix to stage in the Muse Code rail, plus the command and the Graph / PowerShell query behind it to copy, and a follow-up box to refine it.
+
+How it works: [§4.5](#45-zero-context-correlation-and-universal-selection-lenses).
 
 ---
 
@@ -41,16 +58,13 @@
 |---|---|
 | **Event** | Meta Global AI Developer Hackathon, 2026-10-26 → 2026-11-04 |
 | **Track** | Indie Developer Track (solo entry: Timur Dudhasch, GitHub `dudhasch`) |
-| **Themes** | *Build for Your World* (the author's own MSP operations work) · *Push the Frontier* (open-weight hover tier, generative UI under a schema, write-then-test agent loop) |
+| **Theme** | *Build for Your World*: the author's own MSP operations work |
 | **Meta models called** | `muse-glimmer-30b` (open weights, Modal L40S) · `muse-spark-1.3` · `muse-wonder-1.0` · `muse-voice-transcribe-1.0`. `muse-code` is configured but not served by the Meta Model API, so the router sends those calls to `muse-wonder-1.0` and reports the swap ([details](#model-stand-ins)) |
 | **Provenance** | Built inside the hackathon window. See [HACKATHON_ATTRIBUTION.md](HACKATHON_ATTRIBUTION.md) |
 | **License** | MIT |
 | **Media** | Animated WebP/GIF loops and annotated PNGs in [`docs/assets/`](docs/assets). No video files in the repository |
 
-### Bonus prize qualifications
-
-| Bonus prize | What qualifies | Where in the code |
-|---|---|---|
+---|---|---|
 | **Best Build on Meta Open Weights** | `Muse-Glimmer-30B` GGUF (Q4_K_M) served by our own llama.cpp deployment on one Modal L40S. Output is constrained by a strict `json_schema` response format, which llama-server compiles to a GBNF grammar. It answers Tier 1A hover diagnostics; every answer is persisted with its real latency | [`modal-sandbox/glimmer_open_weights.py:139`](modal-sandbox/glimmer_open_weights.py#L139) (schema) · [`apps/orchestrator/src/router/glimmer-payload.ts:93`](apps/orchestrator/src/router/glimmer-payload.ts#L93) · [`apps/orchestrator/src/tiers/tier1-hover.ts:54`](apps/orchestrator/src/tiers/tier1-hover.ts#L54) (chain) · [`data/hover-cache.seed.json`](data/hover-cache.seed.json) |
 | **Best Agentic Use-Case** | A 5-stage sub-agent pipeline (clarifier, MCP telemetry scout, Spark→Wonder UI architect, coder, verifier). Steering is two-way: any scope change re-parameterises the staged script. A write-then-test loop feeds sandbox findings back to the coder for up to 2 repair turns. Approval is human, and the inverse is built from a pre-change snapshot | [`local/subagent-orchestrator.ts:784`](apps/orchestrator/src/local/subagent-orchestrator.ts#L784) · [`local/steering.ts:165`](apps/orchestrator/src/local/steering.ts#L165) · [`tiers/repair-loop.ts:132`](apps/orchestrator/src/tiers/repair-loop.ts#L132) · [`tiers/tier3-rollback.ts:101`](apps/orchestrator/src/tiers/tier3-rollback.ts#L101) |
 | **Best Creative Build** | N+k generative UI. When no catalog card fits a ticket, `muse-spark-1.3` names the missing element and `muse-wonder-1.0` fills it from five schema-checked primitives. The card is persisted as a `.tsx` file plus a catalog entry and rendered by the same React runtime as the hand-built cards | [`local/dynamic-catalog.ts:197`](apps/orchestrator/src/local/dynamic-catalog.ts#L197) (gatekeeper) · [`:314`](apps/orchestrator/src/local/dynamic-catalog.ts#L314) (synthesizer) · [`data/synthesized-elements/`](data/synthesized-elements) |
@@ -237,8 +251,6 @@ The synthesizer gets the ticket's tenant context (`tenantFacts`) and must name o
 - **Rollback.** [`rollbackRemediation`](apps/orchestrator/src/tiers/tier3-rollback.ts#L101) executes the inverse through the lab write path, reads the state back and compares it with the snapshot. "Restored" comes only from that read-back. Out-of-band changes are not checked *before* restoring: there is no ETag or hash precondition. An out-of-band edit to a snapshotted entity is written back to its pre-change value without a warning.
 
 ### 4.5 Zero-context correlation and universal selection lenses
-
-<p align="center"><img src="docs/assets/06-universal-selection-lenses.png" alt="A highlighted ticket phrase becomes Selection #1; Muse Wonder composes a Triage lens and the same selection in Blast radius mode" width="100%"></p>
 
 **Correlation from a ticket alone.** A pasted ticket names a user and an error and nothing else, yet the orchestrator assembles the same context a senior engineer would:
 - **Gather.** It probes three MCP servers in parallel:

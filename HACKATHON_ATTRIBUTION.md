@@ -4,8 +4,7 @@
 |---|---|
 | **Project** | ContextPane: an operator-steered remediation workbench for MSP engineers on Microsoft Entra ID, Intune and Azure |
 | **Track** | Indie Developer Track |
-| **Themes** | Build for Your World · Push the Frontier |
-| **Bonus prizes entered** | Best Build on Meta Open Weights · Best Agentic Use-Case · Best Creative Build |
+| **Theme** | Build for Your World |
 | **Hackathon window** | October 26 – November 4, 2026 |
 | **Team** | Solo entry: Timur Dudhasch (GitHub `dudhasch`) |
 | **License** | MIT (see [`LICENSE`](LICENSE)) |
@@ -63,7 +62,9 @@ No code was carried over from a prior project. Third-party dependencies are decl
 
 All three are registered in [`mcp-servers.json`](mcp-servers.json). The orchestrator calls them in-process by default (`CTX_MCP_TRANSPORT=stdio` spawns them).
 
-## Bonus prize alignment
+## Bonus categories
+
+Bonus prizes are chosen by the judges, not entered. This section maps where each category shows up in the build.
 
 **Best Build on Meta Open Weights.**
 - **Deployment.** Muse Glimmer 30B runs from Meta's published GGUF weights on our own Modal deployment ([`modal-sandbox/glimmer_open_weights.py`](modal-sandbox/glimmer_open_weights.py)).
