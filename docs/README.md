@@ -40,7 +40,7 @@ The visual documentation for ContextPane. All media was captured from the runnin
 ## Other documentation
 
 - [`traces/`](traces/README.md): boundary traces captured from the orchestrator's own code (the 3-step MCP vault boundary)
-- [`../apps/orchestrator/evals/README.md`](../apps/orchestrator/evals/README.md): the coder eval set (24 tickets, 8 prompt-injection cases) and `bun run eval`
+- [`../apps/orchestrator/evals/README.md`](../apps/orchestrator/evals/README.md): the coder eval set (28 tickets, 12 prompt-injection cases) and `bun run eval`
 - Hardened pipeline, by topic: [pre-flight rules and the execution surface](../apps/orchestrator/README.md#tier-3-stage-verify-approve-revert) · [typed actions and the executor identity](../apps/orchestrator/README.md#tier-3-stage-verify-approve-revert) · [grounding and card provenance](../apps/orchestrator/README.md#the-five-stage-sub-agent-pipeline) · [local API security](../apps/orchestrator/README.md#local-api-security) · [hover cache](../apps/orchestrator/README.md#hover-cache) · [PII vault API](../packages/catalog/README.md#ptr-data-plane-and-the-pii-vault-srcdataplanets) · [shared rule file](../packages/catalog/README.md#pre-flight-rules-srcpreflight-rulesjson) · [typed action catalog](../packages/catalog/README.md#typed-action-catalog-srctyped-actionsts)
 - [`../README.md`](../README.md): overview, model execution order, deep dives, quickstart
 - [`../HACKATHON_ATTRIBUTION.md`](../HACKATHON_ATTRIBUTION.md): models, endpoints, provenance

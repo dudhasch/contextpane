@@ -10,7 +10,7 @@
 | **License** | MIT (see [`LICENSE`](LICENSE)) |
 | **Repository** | https://github.com/dudhasch/contextpane |
 
-This file and the root [`README.md`](README.md) cite the same model ids, endpoints and `file:line` pointers. Line numbers were verified against the tree at the commit that added this file.
+This file and the root [`README.md`](README.md) cite the same model ids, endpoints and `file:line` pointers. Line numbers are re-checked with a script whenever the code under them moves; the last check was on 2026-11-03.
 
 ## Provenance statement
 
@@ -31,14 +31,14 @@ No code was carried over from a prior project. Third-party dependencies are decl
 | 1 · Goal Clarifier | Scoping questions → typed steering v0 | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/local/subagent-orchestrator.ts:160`](apps/orchestrator/src/local/subagent-orchestrator.ts#L160) |
 | 3 · UI Architect gatekeeper | Names the missing catalog element | `muse-spark-1.3` | `muse-spark-1.3` | Meta Model API | [`apps/orchestrator/src/local/dynamic-catalog.ts:197`](apps/orchestrator/src/local/dynamic-catalog.ts#L197) |
 | 3 · UI Architect synthesizer | Fills a `SynthesizedDynamicCard` from five primitives | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/local/dynamic-catalog.ts:314`](apps/orchestrator/src/local/dynamic-catalog.ts#L314) |
-| 4 · Coder (custom tickets, steering) | PS7 script, Terraform diff, rollback; re-parameterises on steer | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/local/subagent-orchestrator.ts:423`](apps/orchestrator/src/local/subagent-orchestrator.ts#L423) |
-| Tier 3A plan | Remediation plan for built-in scenarios | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/tiers/tier3-remediate.ts:171`](apps/orchestrator/src/tiers/tier3-remediate.ts#L171) |
-| Tier 3B code / repair turns | PowerShell + Terraform synthesis; write-then-test repairs | `muse-code` | **`muse-wonder-1.0`** (stand-in) | Meta Model API | [`apps/orchestrator/src/tiers/tier3-remediate.ts:200`](apps/orchestrator/src/tiers/tier3-remediate.ts#L200), [`apps/orchestrator/src/tiers/repair-loop.ts:112`](apps/orchestrator/src/tiers/repair-loop.ts#L112) |
+| 4 · Coder (custom tickets, steering) | PS7 script, Terraform diff, rollback; re-parameterises on steer | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/local/subagent-orchestrator.ts:444`](apps/orchestrator/src/local/subagent-orchestrator.ts#L444) |
+| Tier 3A plan | Remediation plan for built-in scenarios | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/tiers/tier3-remediate.ts:228`](apps/orchestrator/src/tiers/tier3-remediate.ts#L228) |
+| Tier 3B code / repair turns | PowerShell + Terraform synthesis; write-then-test repairs | `muse-code` | **`muse-wonder-1.0`** (stand-in) | Meta Model API | [`apps/orchestrator/src/tiers/tier3-remediate.ts:257`](apps/orchestrator/src/tiers/tier3-remediate.ts#L257), [`apps/orchestrator/src/tiers/repair-loop.ts:113`](apps/orchestrator/src/tiers/repair-loop.ts#L113) |
 | Tier 1B / 2 correlate | Ticket ↔ Graph ↔ IaC correlation → forced layout | `muse-spark-1.3` | `muse-spark-1.3` | Meta Model API | [`apps/orchestrator/src/tiers/tier2-correlate.ts:65`](apps/orchestrator/src/tiers/tier2-correlate.ts#L65) |
 | Selection lens | Highlight → 4-mode Context Lens | `muse-wonder-1.0`, then `muse-spark-1.3` | as configured | Meta Model API | [`apps/orchestrator/src/tiers/explore.ts:106`](apps/orchestrator/src/tiers/explore.ts#L106) |
 | Vision | Ticket screenshot as an image part; only sent with `CTX_VISION_SEND_IMAGES=true` (off by default, because images bypass the PII vault) | `muse-spark-1.3` | `muse-spark-1.3` | Meta Model API | [`apps/orchestrator/src/config.ts:167`](apps/orchestrator/src/config.ts#L167) |
 | Typed-action selection | Picks the typed catalog action (and its parameters) an approval executes for a non-ABAC custom ticket | `muse-wonder-1.0` | `muse-wonder-1.0` | Meta Model API | [`apps/orchestrator/src/execution/select-action.ts`](apps/orchestrator/src/execution/select-action.ts) |
-| Voice | Hands-free steering (`POST /asr/transcribe`, 16-bit mono WAV) | `muse-voice-transcribe-1.0`, intent via `muse-spark-1.3` | as configured | Meta Model API | [`apps/orchestrator/src/router/openai.ts:256`](apps/orchestrator/src/router/openai.ts#L256), [`apps/orchestrator/src/tiers/voice.ts:54`](apps/orchestrator/src/tiers/voice.ts#L54) |
+| Voice | Hands-free steering (`POST /asr/transcribe`, 16-bit mono WAV) | `muse-voice-transcribe-1.0`, intent via `muse-spark-1.3` | as configured | Meta Model API | [`apps/orchestrator/src/router/openai.ts:273`](apps/orchestrator/src/router/openai.ts#L273), [`apps/orchestrator/src/tiers/voice.ts:54`](apps/orchestrator/src/tiers/voice.ts#L54) |
 
 **Stand-ins (disclosed).** The hackathon brief names two ids the Meta Model API does not serve (checked against `GET /v1/models` on 2026-10-26): `muse-glimmer-30b` exists only as open weights, and `muse-code` is not exposed. At start-up [`apps/orchestrator/src/router/meta-models.ts:11`](apps/orchestrator/src/router/meta-models.ts#L11) swaps any unserved Meta id for its stand-in (`muse-glimmer-30b → muse-spark-1.3` on the Meta API, `muse-code → muse-wonder-1.0`). The startup log prints `<id> is not served → <stand-in>`, and `GET /api/config` reports the swap under `metaModelResolution`. Tier 3B code synthesis therefore runs on `muse-wonder-1.0`, and Glimmer only ever runs as our Modal open-weight deployment.
 
@@ -72,8 +72,8 @@ Bonus prizes are chosen by the judges, not entered. This section maps where each
 - **Persisted answers.** Every hover pill of the seeded scenarios was generated by it and persisted with its real latency and token counts ([`data/hover-cache.seed.json`](data/hover-cache.seed.json)). A refresh (`?refresh=true`) re-runs it live, and the hover popover badge names the provider that actually answered.
 
 **Best Agentic Use-Case.** Custom tickets run a five-stage sub-agent pipeline:
-- **Stages.** A clarifier (`muse-wonder-1.0`), an MCP telemetry scout, a Spark→Wonder UI architect, a coder and a static verifier ([`apps/orchestrator/src/local/subagent-orchestrator.ts:784`](apps/orchestrator/src/local/subagent-orchestrator.ts#L784)).
-- **Two-way steering.** The operator steers through typed `SteeringParams`; `PATCH /api/tickets/:id/steer` makes the coder re-parameterise the staged script ([`apps/orchestrator/src/app.ts:523`](apps/orchestrator/src/app.ts#L523)).
+- **Stages.** A clarifier (`muse-wonder-1.0`), an MCP telemetry scout, a Spark→Wonder UI architect, a coder and a static verifier ([`apps/orchestrator/src/local/subagent-orchestrator.ts:805`](apps/orchestrator/src/local/subagent-orchestrator.ts#L805)).
+- **Two-way steering.** The operator steers through typed `SteeringParams`; `PATCH /api/tickets/:id/steer` makes the coder re-parameterise the staged script ([`apps/orchestrator/src/app.ts:549`](apps/orchestrator/src/app.ts#L549)).
 - **Write-then-test.** Sandbox findings go back to the coder for up to two repair turns ([`apps/orchestrator/src/tiers/repair-loop.ts:35`](apps/orchestrator/src/tiers/repair-loop.ts#L35)).
 - **Human approval and inverse.** Nothing executes against a tenant without an explicit approval. The inverse is derived from a pre-change snapshot ([`apps/orchestrator/src/local/inverse-rollback.ts:205`](apps/orchestrator/src/local/inverse-rollback.ts#L205)).
 

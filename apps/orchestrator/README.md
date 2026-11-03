@@ -29,7 +29,7 @@ curl -H "authorization: Bearer $(cat .contextpane/api-token)" http://127.0.0.1:4
 | `src/mcp/` | MCP clients (in-process by default, `CTX_MCP_TRANSPORT=stdio` spawns the servers) and the correlation context gather |
 | `src/preflight/` | Local pwsh + Terraform pre-flight, `execution-surface.ts` (rules for code that runs without naming a cmdlet), Modal sandbox client, git staging of remediation branches |
 | `src/store/` | Audit ledger, convergence state, remediations, recipes, PSA closure |
-| `evals/` | Coder eval set (24 tickets, 8 prompt-injection cases), scorer and runner; `bun run eval` ([README](evals/README.md)) |
+| `evals/` | Coder eval set (28 tickets, 12 prompt-injection cases), scorer and runner; `bun run eval` ([README](evals/README.md)) |
 
 ## Model routing
 
@@ -38,17 +38,17 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 | Tier | Chain (first answer wins) | Code |
 |---|---|---|
 | 0 · recipe | none: zero-token hydration of a pinned view | [`tiers/tier0-recipe.ts`](src/tiers/tier0-recipe.ts) |
-| 1A · hover | `muse-glimmer-30b` (Modal open weights) → Fireworks / Baseten (optional) → `muse-spark-1.3`, then the deterministic diagnostic | [`tiers/tier1-hover.ts:54`](src/tiers/tier1-hover.ts#L54), `hover()` [`:275`](src/tiers/tier1-hover.ts#L275), warm-up [`:471`](src/tiers/tier1-hover.ts#L471) |
+| 1A · hover | `muse-glimmer-30b` (Modal open weights) → Fireworks / Baseten (optional) → `muse-spark-1.3`, then the deterministic diagnostic | [`tiers/tier1-hover.ts:54`](src/tiers/tier1-hover.ts#L54), `hover()` [`:275`](src/tiers/tier1-hover.ts#L275), warm-up [`:474`](src/tiers/tier1-hover.ts#L474) |
 | 1B / 2 · correlate | open-weight catalog (opt-in) → Baseten Spark (optional) → `muse-spark-1.3` → deterministic AST hydration | [`tiers/tier2-correlate.ts:121`](src/tiers/tier2-correlate.ts#L121) |
 | 1B · selection lens | `muse-wonder-1.0` → `muse-spark-1.3` | [`tiers/explore.ts:117`](src/tiers/explore.ts#L117) |
-| 3A · plan / 3B · code | `muse-wonder-1.0` plan, then `muse-code` → **served as `muse-wonder-1.0`** | [`tiers/tier3-remediate.ts:171`](src/tiers/tier3-remediate.ts#L171), [`:200`](src/tiers/tier3-remediate.ts#L200) |
-| Voice | `muse-voice-transcribe-1.0` (`POST /asr/transcribe`), intent via `muse-spark-1.3` | [`tiers/voice.ts:54`](src/tiers/voice.ts#L54), [`router/openai.ts:256`](src/router/openai.ts#L256) |
+| 3A · plan / 3B · code | `muse-wonder-1.0` plan, then `muse-code` → **served as `muse-wonder-1.0`** | [`tiers/tier3-remediate.ts:228`](src/tiers/tier3-remediate.ts#L228), [`:257`](src/tiers/tier3-remediate.ts#L257) |
+| Voice | `muse-voice-transcribe-1.0` (`POST /asr/transcribe`), intent via `muse-spark-1.3` | [`tiers/voice.ts:54`](src/tiers/voice.ts#L54), [`router/openai.ts:273`](src/router/openai.ts#L273) |
 | Vision | `muse-spark-1.3` with an image part, only with `CTX_VISION_SEND_IMAGES=true`; otherwise no call is made and a `skipped` telemetry entry records why | [`tiers/vision.ts`](src/tiers/vision.ts) |
 | Typed-action selection | `muse-wonder-1.0` through the forced `select_typed_action` tool (custom tickets that are not ABAC, when the context supports an action) | [`execution/select-action.ts`](src/execution/select-action.ts) |
 
-**One exit point for prompts.** [`chatWithForcedTool` (router/openai.ts:160)](src/router/openai.ts#L160) handles every call to every provider:
+**One exit point for prompts.** [`chatWithForcedTool` (router/openai.ts:176)](src/router/openai.ts#L176) handles every call to every provider:
 1. **Refuse images.** A message with an image part throws `ImageBlockedError` unless the caller passes `allowImages` (only the vision tier does, and only with `CTX_VISION_SEND_IMAGES=true`): image pixels bypass the text vault.
-2. **Pseudonymise.** [`vaultMessages`](src/router/openai.ts#L134) replaces e-mail addresses / UPNs, known person names, known user object ids, known device names, phone numbers and public IPv4 addresses in every text part with vault tokens.
+2. **Pseudonymise.** [`vaultMessages`](src/router/openai.ts#L135) replaces e-mail addresses / UPNs, known person names, known user object ids, known device names, phone numbers and public IPv4 addresses in every text part with vault tokens.
 3. **Scan.** `recordPrompt` counts the detector hits left in the prompt. It is a self-check (`metricKind: "self-check"`): the same detectors that did the replacement run again, so it measures only what they can see, not all PII.
 4. **Force the tool.** It forces the named tool schema; the Meta API accepts only `tool_choice: "auto"`, so Meta gets "auto" plus a system nudge.
 5. **Rehydrate, scoped.** The reply's tokens are turned back into real values before it leaves the function, but only tokens the vault itself put into this prompt (captured while pseudonymising it, `vaultMessagesWithExposure`) or that the orchestrator's own pre-vaulted context carried outside any untrusted block, or, when the caller passes `piiScope: { tenantId, ticketId }`, tokens earlier prompts of the same tenant and ticket were given that way. Token-shaped text does not count: any other token stays a token and is counted in the vault's `refusedRehydrations`.
@@ -57,13 +57,13 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 
 **Fallback causes.** When the clarifier, coder, gatekeeper or synthesizer falls back to its deterministic template, [`fallbackCause`](src/router/fallback-cause.ts) logs why (a provider error, a reply that failed validation, or model calls being off) and the reason travels as `fallbackReason` on the sub-agent record to the pipeline badge.
 
-[`metaCallsEnabled()`](src/router/openai.ts#L156) is false without a key, with `CTX_FORCE_LOCAL=true`, or under `NODE_ENV=test`; every tier then uses its deterministic engine.
+[`metaCallsEnabled()`](src/router/openai.ts#L172) is false without a key, with `CTX_FORCE_LOCAL=true`, or under `NODE_ENV=test`; every tier then uses its deterministic engine.
 
 **Stand-ins.** [`resolveMetaModelsNow`](src/router/meta-models.ts) checks `GET /v1/models` at start-up and swaps unserved ids (`muse-glimmer-30b → muse-spark-1.3`, `muse-code → muse-wonder-1.0`). Every `/api/*` request waits for that resolution, and `GET /api/config` exposes it.
 
 ## The five-stage sub-agent pipeline
 
-[`runSubAgentPipeline` (local/subagent-orchestrator.ts:784)](src/local/subagent-orchestrator.ts#L784) runs for custom tickets and ERP drops:
+[`runSubAgentPipeline` (local/subagent-orchestrator.ts:805)](src/local/subagent-orchestrator.ts#L805) runs for custom tickets and ERP drops:
 
 ```text
  Telemetry Scout (MCP probe) ───────────────────────────────┐ starts first, runs throughout
@@ -75,12 +75,12 @@ All Meta ids are configurable through `CTX_MODEL_*` variables ([`config.ts:152-1
 | # | Agent | Model | Output | Line |
 |---|---|---|---|---|
 | 1 | Goal Clarifier | `muse-wonder-1.0` | clarifying questions → answers → `SteeringParams` | [`:160`](src/local/subagent-orchestrator.ts#L160) |
-| 2 | Telemetry Scout | none (mcp-msgraph + cloud status) | `UpstreamCloudStatusCorrelation` | [`:784`](src/local/subagent-orchestrator.ts#L784) |
+| 2 | Telemetry Scout | none (mcp-msgraph + cloud status) | `UpstreamCloudStatusCorrelation` | [`:805`](src/local/subagent-orchestrator.ts#L805) |
 | 3 | UI Architect | gatekeeper `muse-spark-1.3` → synthesizer `muse-wonder-1.0` | `ElementRoutingDecision` + `SynthesizedDynamicCard[]` | [`dynamic-catalog.ts:197`](src/local/dynamic-catalog.ts#L197), [`:314`](src/local/dynamic-catalog.ts#L314) |
-| 4 | IaC & PS7 Coder | `muse-wonder-1.0` | PS7 script, Terraform diff, rollback | [`:423`](src/local/subagent-orchestrator.ts#L423) |
-| 5 | Safety Verifier | none | brace / `ShouldProcess` / wildcard repairs | [`:565`](src/local/subagent-orchestrator.ts#L565) |
+| 4 | IaC & PS7 Coder | `muse-wonder-1.0` | PS7 script, Terraform diff, rollback | [`:444`](src/local/subagent-orchestrator.ts#L444) |
+| 5 | Safety Verifier | none | brace / `ShouldProcess` / wildcard repairs | [`:586`](src/local/subagent-orchestrator.ts#L586) |
 
-Stages 2–4 are joined at [`:931`](src/local/subagent-orchestrator.ts#L931). The real sandbox pre-flight runs when the fix is staged (below). Each stage writes a `SubAgentTaskRecord` with its model, tokens, latency and, after a fallback, its `fallbackReason`; the System & audit drawer shows those records.
+Stages 2–4 are joined at [`:947`](src/local/subagent-orchestrator.ts#L947). The real sandbox pre-flight runs when the fix is staged (below). Each stage writes a `SubAgentTaskRecord` with its model, tokens, latency and, after a fallback, its `fallbackReason`; the System & audit drawer shows those records.
 
 **Grounding.** Triage, refine, steer and repair turns build a [`GroundingIndex`](src/local/grounding.ts) from the gathered tenant context: every resource, user, group, policy and identity name it holds, mapped to the `ptr://` dataset it came from. Its compact `facts` go to the coder and the card synthesizer as `tenantFacts` (through the vault, under `TENANT_DATA_RULE`), for every custom ticket, not only ABAC.
 - **Coder output.** Literal targets in the script or the Terraform diff that are in neither the context nor the ticket text are added to `riskNotes` and become an `Ungrounded target:` pre-flight finding. The finding downgrades "Verified Safe" to "Verified With Warnings"; it does not fail the bundle, because a fix may create a new resource.
@@ -95,9 +95,9 @@ Stages 2–4 are joined at [`:931`](src/local/subagent-orchestrator.ts#L931). Th
 | Schema (`SteeringParams`, `SteeringDelta`, digest, `isSteeringStale`) | [`packages/catalog/src/steering.ts`](../../packages/catalog/src/steering.ts) |
 | Answers → steering (continues the version) | [`local/steering.ts:115`](src/local/steering.ts#L115) `deriveSteeringFromAnswers` |
 | The only writer (version++ on digest change; audit-first ⇒ dryRun) | [`local/steering.ts:165`](src/local/steering.ts#L165) `applySteeringDelta` |
-| Route | `PATCH /api/tickets/:scenarioId/steer`, body `SteeringDelta & { rerun?: "coder" \| "coder+ui" }` ([`app.ts:523`](src/app.ts#L523)) |
+| Route | `PATCH /api/tickets/:scenarioId/steer`, body `SteeringDelta & { rerun?: "coder" \| "coder+ui" }` ([`app.ts:549`](src/app.ts#L549)) |
 | Coder re-parameterisation + script diff | [`local/custom-ticket.ts:706`](src/local/custom-ticket.ts#L706) `steerCustomTicket` |
-| Re-run the pre-flight on the steered bundle | [`tiers/tier3-remediate.ts:1101`](src/tiers/tier3-remediate.ts#L1101) `restageRemediationForSteering` |
+| Re-run the pre-flight on the steered bundle | [`tiers/tier3-remediate.ts:1188`](src/tiers/tier3-remediate.ts#L1188) `restageRemediationForSteering` |
 
 ## Tier 3: stage, verify, approve, revert
 
@@ -106,13 +106,13 @@ Stages 2–4 are joined at [`:931`](src/local/subagent-orchestrator.ts#L931). Th
    - **Built-in scenarios** run a Wonder plan, then `metaCode` code synthesis.
    - **Structural checks.** `bundleIsSound` checks both kinds. A failure falls back to the deterministic bundle.
    - **Context.** A custom ticket whose tenant context cannot be gathered is never bundled from its base demo scenario: the drawer carries no script, verdict "Verification Failed" and the cause.
-2. **Pre-flight.** The Modal sandbox runs if it is configured ([`preflight/modal.ts:68`](src/preflight/modal.ts#L68)); otherwise, or on any error, the local runner runs ([`preflight/local.ts:290`](src/preflight/local.ts#L290)). Both enforce one rule set, [`packages/catalog/src/preflight-rules.json`](../../packages/catalog/src/preflight-rules.json), and every rule in it is a hard failure ("Verification Failed"):
-   - **AST rules** (`evaluatePreflightRules`): pwsh `Parser::ParseFile` / `ParseInput`; a command whose verb is outside `allowedVerbs` and that is not in `allowedCommands`, a `forbiddenCommands` entry, a `destructivePatterns` match, or a missing steered required command.
-   - **Execution surface** ([`preflight/execution-surface.ts`](src/preflight/execution-surface.ts), applied by the orchestrator to the AST report of either sandbox): .NET static calls outside a safe-type list, `New-Object` of types outside a constructible list, COM objects, `& $var` / `& (expr)`, dot-sourcing, `.Invoke()` / `.AddScript()`, aliases outside a small harmless set, the `deniedExecutionCommands` (for example `Invoke-Command`, `Start-Job`, `Add-Type`, PSSession cmdlets, `Set-Alias`, `Set-AzContext`, `Connect-`/`Disconnect-` of Graph and Az), and REST calls outside the allow-list: `Invoke-MgGraphRequest` only to `graph.microsoft.com` paths in `GRAPH_REST_RULES` with their allowed methods (DELETE only on membership or grant references), `Invoke-AzRestMethod` only to `/subscriptions/…` and never a write to `Microsoft.Authorization`. With no AST report (pwsh missing, or an older Modal deployment), `scanExecutionSurfaceText` extracts a best-effort one from the script text, ignoring string literals.
+2. **Pre-flight.** The Modal sandbox runs if it is configured ([`preflight/modal.ts:69`](src/preflight/modal.ts#L69)); otherwise, or on any error, the local runner runs ([`preflight/local.ts:345`](src/preflight/local.ts#L345)). Both enforce one rule set, [`packages/catalog/src/preflight-rules.json`](../../packages/catalog/src/preflight-rules.json), and every rule in it is a hard failure ("Verification Failed"):
+   - **AST rules** (`evaluatePreflightRules`): pwsh `Parser::ParseFile` / `ParseInput`; a command allow-list: read-only verbs in `readOnlyVerbs` pass for any noun; every other cmdlet must be in `allowedCommands`, in the bundle's steered contract (`requiredCommands` + `RemediationPlan.allowedCommands`) or a function the script defines; privileged commands only through the steered contract; commands without a hyphen (native binaries) fail; plus a `forbiddenCommands` entry, a `forbiddenPatterns` match (for example `PasswordProfile`, disabling a policy), a `destructivePatterns` match, or a missing steered required command.
+   - **Execution surface** ([`preflight/execution-surface.ts`](src/preflight/execution-surface.ts), applied by the orchestrator to the AST report of either sandbox): .NET static calls outside a safe-type list, `New-Object` of types outside a constructible list, COM objects, `& $var` / `& (expr)`, dot-sourcing, `.Invoke()` / `.AddScript()`, aliases outside a small harmless set, the `deniedExecutionCommands` (for example `Invoke-Command`, `Start-Job`, `Add-Type`, PSSession cmdlets, `Set-Alias`, `Set-AzContext`, `Connect-`/`Disconnect-` of Graph and Az), and REST calls outside the allow-list: `Invoke-MgGraphRequest` only to `graph.microsoft.com` paths in `GRAPH_REST_RULES` with their allowed methods (DELETE only on membership or grant references), `Invoke-AzRestMethod` only to `/subscriptions/…` and never a write to `Microsoft.Authorization`. With no AST report (pwsh missing, a sandbox timeout, or an older Modal deployment) the verdict is **Verification Failed** ("PowerShell 7 not available …"); `scanExecutionSurfaceText` and a case-insensitive command scan still report what they can see, and only Override with a justification gets past it.
    - **-WhatIf gate** ([`applyWhatIfGate`](src/preflight/local.ts)): a script with mutating cmdlets outside `$PSCmdlet.ShouldProcess` fails; a read-only script without the guard only gets a warning. A missing `#Requires -Version 7` header is a warning.
    - **Grounding**: `Ungrounded target:` findings (above) are warnings; `Ungrounded identity:` findings fail the bundle.
    - `terraform fmt -check` and `terraform validate` when the drift has an HCL baseline.
-3. **Write-then-test.** [`runRepairLoop`](src/tiers/repair-loop.ts#L132) is called at [`tier3-remediate.ts:258`](src/tiers/tier3-remediate.ts#L258):
+3. **Write-then-test.** [`runRepairLoop`](src/tiers/repair-loop.ts#L133) is called at [`tier3-remediate.ts:315`](src/tiers/tier3-remediate.ts#L315):
    - Repairable findings go back to the coder for up to [`MAX_REPAIR_ITERATIONS = 2`](src/tiers/repair-loop.ts#L35) turns.
    - Infrastructure findings are not repairable.
    - The loop stops on an unchanged script and never forces a verdict.
@@ -133,7 +133,7 @@ Stages 2–4 are joined at [`:931`](src/local/subagent-orchestrator.ts#L931). Th
    - **The executor identity.** `runScriptText` prepends [`executorPrelude`](src/execution/executor-identity.ts): the script connects as a least-privilege service principal (`CTX_EXECUTOR_CLIENT_ID`, `CTX_EXECUTOR_TENANT_ID`, `CTX_EXECUTOR_CERT_THUMBPRINT`, certificate in the local store) or the host's managed identity (`CTX_EXECUTOR_MANAGED_IDENTITY=true`) for its own process, and stops unless the connected Az and Graph contexts are that identity on the lab subscription. With neither configured the script is refused; `CTX_EXECUTOR_ALLOW_DELEGATED=true` restores the legacy run as the engineer's own sign-in, pinned to the lab subscription. The prelude is added only at execution time, so the pre-flight never sees it.
    - Cached hover answers for the ticket are cleared (`invalidateHoverCache`).
    - GitOps mode stages a PR.
-8. **Revert.** `POST /api/rollback` ([`app.ts:781`](src/app.ts#L781)), recorded under `operatorIdentity()`:
+8. **Revert.** `POST /api/rollback` ([`app.ts:807`](src/app.ts#L807)), recorded under `operatorIdentity()`:
    - [`buildInverseFromSnapshot`](src/local/inverse-rollback.ts#L205) derives the inverse for the sections that were touched.
    - [`rollbackRemediation`](src/tiers/tier3-rollback.ts#L101) executes it, then reads the state back and compares it with the snapshot.
    - ABAC tickets revert through the typed inverse of the grant (an ARM DELETE of the assignment). When a typed action ran but no snapshot was captured, its own typed inverse runs. Typed bundles skip the rollback inverse script.
@@ -148,24 +148,24 @@ Stages 2–4 are joined at [`:931`](src/local/subagent-orchestrator.ts#L931). Th
 
 | Method · path | Purpose | Line |
 |---|---|---|
-| `GET /api/health` · `/api/config` | health, open-weight info, model stand-ins | [`139`](src/app.ts#L145), [`158`](src/app.ts#L164) |
-| `GET /api/scenarios` · `/api/scenarios/:id/brief` | work queue, left-pane brief | [`198`](src/app.ts#L204), [`296`](src/app.ts#L302) |
-| `POST /api/hover` | Tier 1A | [`892`](src/app.ts#L906) |
-| `POST /api/correlate` | Tier 1B/2 (SSE optional) | [`912`](src/app.ts#L926) |
-| `POST /api/explore-selection` | selection → Context Lens | [`344`](src/app.ts#L350) |
-| `POST /api/tickets/triage-custom` | unscripted ticket → sub-agent pipeline | [`369`](src/app.ts#L375) |
-| `POST /api/tickets/:id/refine-goal` | full re-run with new answers (SSE optional) | [`467`](src/app.ts#L473) |
-| `PATCH /api/tickets/:id/steer` | steering → coder re-parameterise → re-stage; 422 for a row click on a model-authored row with no tenant data behind it | [`517`](src/app.ts#L523) |
-| `GET /api/dynamic-catalog` · `POST …/clear` | N+k registry | [`564`](src/app.ts#L577), [`583`](src/app.ts#L596) |
-| `POST /api/remediate` | Tier 3 (SSE optional) | [`953`](src/app.ts#L967) |
-| `POST /api/remediate/:rid/autofix` · `/override` | guard repair · audited override | [`971`](src/app.ts#L985), [`980`](src/app.ts#L994) |
-| `POST /api/remediate/approve` | HITL approval | [`1126`](src/app.ts#L1142) |
-| `GET /api/formal/:id` | invariants, blast radius, rollback, idempotency | [`754`](src/app.ts#L768) |
-| `POST /api/rollback` | f⁻¹ (or the typed inverse); 422 when the inverse fails its idempotency check | [`767`](src/app.ts#L781) |
-| `GET /api/dataplane?ptr=` | resolve a `ptr://` pointer (409 on fence failure) | [`810`](src/app.ts#L824) |
-| `POST /api/voice-steer` · `/api/vision-extract` | voice / vision tiers | [`1254`](src/app.ts#L1270), [`1233`](src/app.ts#L1249) |
-| `POST /api/lab/reset-drift` | re-assert the seeded drift | [`1178`](src/app.ts#L1194) |
-| `GET /api/telemetry/stream` · `GET /ws` | SSE mirror · WebSocket telemetry | [`1266`](src/app.ts#L1282) |
+| `GET /api/health` · `/api/config` | health, open-weight info, model stand-ins | [`139`](src/app.ts#L148), [`158`](src/app.ts#L167) |
+| `GET /api/scenarios` · `/api/scenarios/:id/brief` | work queue, left-pane brief | [`198`](src/app.ts#L207), [`296`](src/app.ts#L311) |
+| `POST /api/hover` | Tier 1A | [`892`](src/app.ts#L932) |
+| `POST /api/correlate` | Tier 1B/2 (SSE optional) | [`912`](src/app.ts#L952) |
+| `POST /api/explore-selection` | selection → Context Lens | [`344`](src/app.ts#L376) |
+| `POST /api/tickets/triage-custom` | unscripted ticket → sub-agent pipeline | [`369`](src/app.ts#L401) |
+| `POST /api/tickets/:id/refine-goal` | full re-run with new answers (SSE optional) | [`467`](src/app.ts#L499) |
+| `PATCH /api/tickets/:id/steer` | steering → coder re-parameterise → re-stage; 422 for a row click on a model-authored row with no tenant data behind it | [`517`](src/app.ts#L549) |
+| `GET /api/dynamic-catalog` · `POST …/clear` | N+k registry | [`564`](src/app.ts#L603), [`583`](src/app.ts#L622) |
+| `POST /api/remediate` | Tier 3 (SSE optional) | [`953`](src/app.ts#L993) |
+| `POST /api/remediate/:rid/autofix` · `/override` | guard repair · audited override | [`971`](src/app.ts#L1011), [`980`](src/app.ts#L1020) |
+| `POST /api/remediate/approve` | HITL approval | [`1126`](src/app.ts#L1218) |
+| `GET /api/formal/:id` | invariants, blast radius, rollback, idempotency | [`754`](src/app.ts#L794) |
+| `POST /api/rollback` | f⁻¹ (or the typed inverse); 422 when the inverse fails its idempotency check | [`767`](src/app.ts#L807) |
+| `GET /api/dataplane?ptr=` | resolve a `ptr://` pointer (409 on fence failure) | [`810`](src/app.ts#L850) |
+| `POST /api/voice-steer` · `/api/vision-extract` | voice / vision tiers | [`1254`](src/app.ts#L1347), [`1233`](src/app.ts#L1326) |
+| `POST /api/lab/reset-drift` | re-assert the seeded drift | [`1178`](src/app.ts#L1271) |
+| `GET /api/telemetry/stream` · `GET /ws` | SSE mirror · WebSocket telemetry | [`1266`](src/app.ts#L1359) |
 
 `GET /` lists every endpoint.
 

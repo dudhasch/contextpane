@@ -27,9 +27,9 @@ How the orchestrator uses them:
 | Concern | Where |
 |---|---|
 | Glimmer in the hover chain (open weights first, then Meta) | [`apps/orchestrator/src/tiers/tier1-hover.ts:54`](../apps/orchestrator/src/tiers/tier1-hover.ts#L54) |
-| Background warm-up of every pill, persisted | [`tier1-hover.ts:471`](../apps/orchestrator/src/tiers/tier1-hover.ts#L471) → `data/hover-cache.json` (seed: `data/hover-cache.seed.json`) |
+| Background warm-up of every pill, persisted | [`tier1-hover.ts:474`](../apps/orchestrator/src/tiers/tier1-hover.ts#L474) → `data/hover-cache.json` (seed: `data/hover-cache.seed.json`) |
 | Strict response format for open-weight hovers | [`router/glimmer-payload.ts:93`](../apps/orchestrator/src/router/glimmer-payload.ts#L93), attached in `router/openai.ts` |
-| Sandbox call, local fallback on error | [`preflight/modal.ts:68`](../apps/orchestrator/src/preflight/modal.ts#L68), [`tier3-remediate.ts`](../apps/orchestrator/src/tiers/tier3-remediate.ts) |
+| Sandbox call, local fallback on error | [`preflight/modal.ts:69`](../apps/orchestrator/src/preflight/modal.ts#L69), [`tier3-remediate.ts`](../apps/orchestrator/src/tiers/tier3-remediate.ts) |
 | Repair turns driven by sandbox findings (≤ 2) | [`tiers/repair-loop.ts:35`](../apps/orchestrator/src/tiers/repair-loop.ts#L35) |
 
 Measured on the deployed apps: a Glimmer hover takes ~22–25 s warm and the cold boot is 17.7 s. That is why every answer is generated ahead of time and persisted, and the operator reads hovers from the cache in milliseconds. A warm sandbox pre-flight takes ~0.7 s.
@@ -146,7 +146,7 @@ Credit guardrails on the Modal target:
   to opt those tiers in) and persists every answer, with its provider, model, latency and tokens, to
   `data/hover-cache.json`. A restart serves every pill from that file and only calls the GPU for
   entities it does not hold yet, or for `POST /api/hover?refresh=true`. A fresh clone starts from
-  the tracked `data/hover-cache.seed.json` (the 18 answers this deployment generated).
+  the tracked `data/hover-cache.seed.json` (the 21 answers this deployment generated).
 
 The local target needs about 17 GB of VRAM for full offload (`-GpuLayers` lowers it, at a large
 speed cost). Tier 1A hovers then try Glimmer first (`CTX_OPEN_WEIGHT_HOVER_TIMEOUT_MS`, default

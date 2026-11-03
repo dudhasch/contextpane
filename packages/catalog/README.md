@@ -64,7 +64,7 @@ The orchestrator side (`applySteeringDelta`, `deriveSteeringFromAnswers`) lives 
 
 [`verifyPointerFence` (:285)](src/dataplane.ts#L285) returns `valid · stale-epoch · cross-tenant · unregistered-or-invalid · aba-generation-mismatch`, and the orchestrator maps every failure to HTTP 409. Selection lenses use `ptr://<scenario>/selection/<hash>`.
 
-**Vault.** [`PiiVault` (:769)](src/dataplane.ts#L769), with the process singleton `sessionPiiVault` (`:1019`):
+**Vault.** [`PiiVault` (:786)](src/dataplane.ts#L786), with the process singleton `sessionPiiVault` (`:1019`):
 - **Fields.** It covers `upn`, `displayName`, `ipAddress`, `userId`, `deviceName` and `phone`.
 - **Tokens.** Values become `<field>_tok_NN` (for example `upn_tok_03`), assigned in case-folded sorted order within a batch.
 - **Structured data.** `pseudonymize` vaults the PII fields of any object; `depseudonymize` reverses it. `registerPersonsFrom` remembers display names, user object ids and device names from MCP results, so free text naming them can be vaulted too.

@@ -209,7 +209,7 @@ mono with muted labels.
 All deep proof lives off-canvas. Cards never gain verification, vault or compiler controls.
 
 - **Invariant checks (Tier 3C):** the checked invariants (evaluated on the scenario's
-  symbolic model, not machine-proved), the 30-day blast radius and the 1-click `f⁻¹`
+  symbolic model, not machine-proved), the modelled 30-day blast radius and the 1-click `f⁻¹`
   undo script sit in the prover strip under the staged script in the Muse Code rail
   (`apps/web/src/components/shell/rail/ProverStrip.tsx`), never on the canvas.
 - **Time-Travel Scrubber:** one 28px pill bar above the cards (`T-18m · T-14m · T-06m ·
