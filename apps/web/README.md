@@ -74,7 +74,7 @@ Zustand (`useWorkbench`). Key actions:
 
 ## Hotkeys
 
-`src/hooks/useDemoHotkeys.ts`; press `?` in the app for the overlay.
+`src/hooks/useDemoHotkeys.ts`; press `?` in the app for the overlay. `x` uses the same gate as the Approve button (`preflightGate` in `components/shell/rail/shared.ts`): a failed pre-flight or invariant, a regenerating fix or a resolved ticket is refused with a toast. The two keys that write (`0` reset drift, `g` ERP drop) ask through a toast with a confirm button unless Shift is held.
 
 | Key | Action | Key | Action |
 |---|---|---|---|
@@ -82,12 +82,12 @@ Zustand (`useWorkbench`). Key actions:
 | `1`–`6`, `8`, `9` · `j` / `k` | pick / step queue items | `Esc` | close everything |
 | `h` | hover the hero entity | `e` | run plan step 1 |
 | `d` | diff | `f` | open the remediation |
-| `x` | approve (or open the rail) | `p` | pin / unpin the view recipe |
+| `x` | approve when the pre-flight allows it (or open the rail); asks first against a real tenant | `p` | pin / unpin the view recipe |
 | `u` | explore the selection | `c` | toggle custom scope inputs |
-| `n` | ticket composer | `g` | simulate an ERP drop |
+| `n` | ticket composer | `g` · `Shift G` | ERP drop: asks first · drops at once |
 | `v` | voice steer | `7` | vision extract |
 | `t` | router savings | `a` | audit log |
-| `r` | fresh correlate | `0` | reset drift |
+| `r` | fresh correlate | `0` · `Shift 0` | reset drift: asks first · resets at once |
 
 ## Tests
 

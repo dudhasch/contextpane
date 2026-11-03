@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { dispatchDemo } from "@/lib/demo";
 import { useWorkbench } from "@/store";
+import { isReadOnlyBundle, preflightGate } from "../components/shell/rail/shared";
 
 /**
  * Keyboard-driven demo mode. Every beat of the video is reachable without mouse
@@ -26,6 +27,19 @@ export function useDemoHotkeys() {
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const brief = s.brief;
+
+      // Writes to the lab (drift reset) and to input/tickets/ (ERP drop) need Shift: a stray key only asks.
+      // Shift+0 is matched on e.code because its e.key differs per keyboard layout (")" on US, "=" on DE).
+      if (e.shiftKey && e.code === "Digit0") {
+        e.preventDefault();
+        void s.resetDrift();
+        return;
+      }
+      if (e.shiftKey && e.code === "KeyG") {
+        e.preventDefault();
+        void s.simulateDrop();
+        return;
+      }
 
       switch (e.key) {
         case "?":
@@ -79,14 +93,36 @@ export function useDemoHotkeys() {
         case "f":
           s.openRemediation();
           break;
-        case "x":
-          if (s.drawer && s.drawer.approval.state === "pending") {
-            s.setDrawerOpen(true);
-            void s.approve("approve");
-          } else if (s.drawer) {
-            s.setDrawerOpen(true);
+        case "x": {
+          if (!s.drawer) break;
+          s.setDrawerOpen(true);
+          if (s.drawer.approval.state !== "pending") break;
+          // Same gate as the Approve button: a failed pre-flight or invariant, a fix that is still
+          // regenerating, or an already-resolved ticket is never approved from the keyboard.
+          const gate = preflightGate(s.drawer, s.formal, s.remediateStatus);
+          const resolved = Boolean(s.convergence[s.drawer.ticketId]);
+          const regenerating = s.refiningGoal || s.remediateStatus === "loading";
+          if (gate.blocked || regenerating || resolved) {
+            s.toast({
+              tone: "warning",
+              title: "Not approved",
+              detail: regenerating
+                ? "The fix is being regenerated for the new scope."
+                : resolved
+                  ? "This ticket is already resolved; reopen it or reset drift to run the fix again."
+                  : `Fix or override the pre-flight first: ${gate.reasons[0] ?? "verification failed"}`,
+            });
+            break;
           }
+          if (s.dataMode === "real-tenant" && s.executionMode === "break-glass" && !s.simulateCanaryFailure && !isReadOnlyBundle(s.drawer)) {
+            // Against the real tenant a break-glass approval is a live write: confirm it with a click.
+            const approve = s.approve;
+            s.toast({ tone: "warning", title: "Apply this fix now?", detail: "Break-glass writes to the real tenant now. Press Apply to confirm.", action: { label: "Apply", onClick: () => void approve("approve") } });
+            break;
+          }
+          void s.approve("approve");
           break;
+        }
         case "p":
           if (s.activeRecipeId) s.unpinRecipe();
           else void s.pinRecipe();
@@ -110,7 +146,7 @@ export function useDemoHotkeys() {
           dispatchDemo({ kind: "toggle-clarifier" });
           break;
         case "g":
-          void s.simulateDrop();
+          s.toast({ tone: "info", title: "Drop a random ERP ticket?", detail: "Writes a ticket folder to input/tickets/. Shift+G skips this prompt.", action: { label: "Drop ticket", onClick: () => void s.simulateDrop() } });
           break;
         case "u": {
           const hero = brief?.entities.find((x) => x.type === "errorCode") ?? brief?.entities.find((x) => x.type === "resource") ?? brief?.entities[0];
@@ -123,7 +159,7 @@ export function useDemoHotkeys() {
           break;
         }
         case "0":
-          void s.resetDrift();
+          s.toast({ tone: "warning", title: "Reset demo drift?", detail: "Rewrites every scenario's lab objects to their drifted state. Shift+0 skips this prompt.", action: { label: "Reset drift", onClick: () => void s.resetDrift() } });
           break;
         default:
           return;
