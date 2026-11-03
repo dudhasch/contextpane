@@ -291,7 +291,6 @@ export async function exploreSelection(input: ExploreInput): Promise<ExploreResu
     tokensUsed: usage,
     fallbackChain: chain,
     tenantId: ctx.tenantId,
-    ...(provider === "local" ? { estimatedSavings: { tokens: 900, ms: 2500, versus: "muse-spark-1.3 mini-dashboard composition" } } : {}),
   });
   return {
     card,

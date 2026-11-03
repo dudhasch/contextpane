@@ -47,11 +47,24 @@ interface PersistedSettings {
   updatedAt: string;
 }
 
+/** A switch to Real-Tenant mode that the process was not started for (LIVE_CLOUD_MODE=true at boot). */
+export class DataModeRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DataModeRefusedError";
+  }
+}
+
+const REAL_TENANT_NEEDS_BOOT_FLAG = "Real-Tenant mode needs LIVE_CLOUD_MODE=true when the orchestrator starts; a settings file or the UI toggle cannot turn live mode on by itself.";
+
 export function initDataModeOnStartup(): McpDataMode {
   try {
     if (existsSync(SETTINGS_FILE)) {
       const parsed = JSON.parse(readFileSync(SETTINGS_FILE, "utf8")) as Partial<PersistedSettings>;
-      if (parsed.dataMode === "real-tenant" || parsed.dataMode === "simulated-lab") {
+      if (parsed.dataMode === "real-tenant" && !config.liveCloudMode) {
+        // data/settings.json alone never switches live mode on: the env var at boot decides.
+        console.warn(`  [data-mode] data/settings.json asks for real-tenant, ignored: ${REAL_TENANT_NEEDS_BOOT_FLAG}`);
+      } else if (parsed.dataMode === "real-tenant" || parsed.dataMode === "simulated-lab") {
         sources.setDataMode(parsed.dataMode);
         return parsed.dataMode;
       }
@@ -69,6 +82,7 @@ export function getPersistedDataMode(): McpDataMode {
 }
 
 export function setPersistedDataMode(mode: McpDataMode): McpDataMode {
+  if (mode === "real-tenant" && !config.liveCloudMode) throw new DataModeRefusedError(REAL_TENANT_NEEDS_BOOT_FLAG);
   sources.setDataMode(mode);
   invalidateContext();
   try {
@@ -895,16 +909,17 @@ export async function stageFreeRoamRemediation(
     actualHcl: "",
     expectedHcl: "",
   });
-  // Free-Roam has no live HCL to patch, so Terraform findings only warn; the AST rules and the -WhatIf gate fail the action (review items 1-2).
+  // Free-Roam has no live HCL to patch, so Terraform findings only warn; the AST rules and the -WhatIf gate fail the
+  // action, and so does an AST check that never ran (no pwsh): null stays null, it is never reported as a pass.
   const gated = applyWhatIfGate(
     {
       ...localPreflight,
-      verdict: localPreflight.astCheckPassed === false ? "Verification Failed" : localPreflight.astCheckPassed === null || localPreflight.findings.length ? "Verified With Warnings" : "Verified Safe",
+      verdict: localPreflight.astCheckPassed !== true ? "Verification Failed" : localPreflight.findings.length ? "Verified With Warnings" : "Verified Safe",
       findings: [...localPreflight.findings],
     },
     powershellScript,
   );
-  const astCheckPassed = localPreflight.astCheckPassed ?? true;
+  const astCheckPassed = localPreflight.astCheckPassed;
   const whatIfSafe = gated.whatIfSafe === true;
   const allFindings = gated.findings;
 

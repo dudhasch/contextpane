@@ -64,13 +64,14 @@ The orchestrator side (`applySteeringDelta`, `deriveSteeringFromAnswers`) lives 
 
 [`verifyPointerFence` (:285)](src/dataplane.ts#L285) returns `valid · stale-epoch · cross-tenant · unregistered-or-invalid · aba-generation-mismatch`, and the orchestrator maps every failure to HTTP 409. Selection lenses use `ptr://<scenario>/selection/<hash>`.
 
-**Vault.** [`PiiVault` (:769)](src/dataplane.ts#L769), with the process singleton `sessionPiiVault` (`:1019`):
+**Vault.** [`PiiVault` (:786)](src/dataplane.ts#L786), with the process singleton `sessionPiiVault` (`:1019`):
 - **Fields.** It covers `upn`, `displayName`, `ipAddress`, `userId`, `deviceName` and `phone`.
 - **Tokens.** Values become `<field>_tok_NN` (for example `upn_tok_03`), assigned in case-folded sorted order within a batch.
 - **Structured data.** `pseudonymize` vaults the PII fields of any object; `depseudonymize` reverses it. `registerPersonsFrom` remembers display names, user object ids and device names from MCP results, so free text naming them can be vaulted too.
 - **Text.** `pseudonymizeText` (`:915`) handles e-mail addresses / UPNs, known person names, known device names, known user object ids (GUIDs), phone numbers and public IPv4 addresses. `scanForRawPii` reports the same kinds.
-- **Scoped rehydration.** `depseudonymizeJsonText(json, allowed?)` turns tokens back into real values; with an `allowed` set, any token outside it stays a token and is counted in `refusedRehydrations`. `tokensIn(text)` lists the tokens a text carries, and `exposeTo(scope, text)` / `exposedTokens(scope)` track the tokens a tenant + ticket scope (`PiiScope`, keyed by `piiScopeKey`) has been shown. The router passes the prompt's own tokens, or the scope's, as `allowed`.
-- **Metrics.** `metrics()` / `getPiiVaultMetrics()` return `piiFieldsVaulted`, `promptsScanned`, `rawPiiPromptHits`, `refusedRehydrations` and the token map. `recordPrompt` counts detector hits per prompt (`zeroRawPiiInLlmPrompt` is true while the detector found none); it measures what the detector can see, not all PII.
+- **Scoped rehydration.** `depseudonymizeJsonText(json, allowed?)` turns tokens back into real values; with an `allowed` set, any token outside it stays a token and is counted in `refusedRehydrations`. `captureTokens(fn)` records the tokens `vault()` hands out while `fn` runs, and `exposeTokens(scope, tokens)` / `exposedTokens(scope)` track the tokens a tenant + ticket scope (`PiiScope`, keyed by `piiScopeKey`) has been given; `exposeTo(scope, text)` and `tokensIn(text)` remain for text built from vaulted data only. The router passes the tokens the vault itself put into the prompt (plus those the orchestrator's pre-vaulted context carried outside untrusted blocks), or the scope's accumulated set, as `allowed`: token-shaped text a customer wrote never widens it.
+- **Token literals.** `stripTokenLiterals(text)` replaces anything shaped like a vault token (`<prefix>_tok_NN`) with `TOKEN_LITERAL_MARKER` (`[token-literal-removed]`); the orchestrator applies it to all customer-written text.
+- **Metrics.** `metrics()` / `getPiiVaultMetrics()` return `piiFieldsVaulted`, `promptsScanned`, `detectorHits` (also as `rawPiiPromptHits` for older clients), `metricKind: "self-check"`, `refusedRehydrations` and the token map. `recordPrompt` re-runs the same detectors that did the replacement on each outgoing prompt, so `zeroRawPiiInLlmPrompt` is a self-check: it can only turn false if a replacement missed, and PII the detectors do not recognise is never counted.
 - **Helpers.** `createPiiVault`, `pseudonymizeForLlm`, `depseudonymizeForLlm` and `getPiiVaultMetrics` (all default to `sessionPiiVault`). The old aliases (`tokenize`, `devault`, `lookup`, `unvaultValue`, `getMetrics`, `PseudonymVault`, `createPseudonymVault` and the like) are gone.
 
 Each token also gets an epoch- and field-salted 64-bit FNV-style digest (`computeEpochSaltedDigest`, `:748`; read it with `digestForToken`). It is a fingerprint, not a cryptographic MAC, and is no longer named `hmac`.
@@ -81,14 +82,21 @@ The orchestrator applies the vault to every prompt (`vaultMessages`) and rehydra
 
 One rule set for both pre-flight sandboxes: the local pwsh runner reads it through [`preflight-rules.ts`](src/preflight-rules.ts), and `modal-sandbox/contextpane_sandbox.py` reads the same JSON file, which the Modal image copies to `/root/preflight-rules.json`.
 
+A command passes only when its verb is read-only, it is listed, the bundle's steered contract allows it, or the script defines it as a function. Everything else fails.
+
 | Key | Rule |
 |---|---|
-| `allowedVerbs` · `allowedCommands` | a hyphenated command whose verb is not in `allowedVerbs` and that is not in `allowedCommands` fails ("Verb outside allow-list") |
+| `readOnlyVerbs` | Get, Select, Where, ForEach, Sort, Group, Measure, Compare, Test, Join, Split, ConvertTo, ConvertFrom: any noun passes |
+| `allowedCommands` | the scoped, non-privileged writes and output cmdlets the scenarios and strategies use (licence and Intune sync, NSG rule removal, Key Vault recovery, grant removals, `Write-*`, `Out-Null`, …); anything else with a hyphen fails ("Command outside allow-list") |
+| `privilegedPatterns` | role grants, credentials, app permissions and owners, group adds, CA policy writes, device scripts, VM run commands, `Remove-AzKeyVault`, `Import-Module`: never in `allowedCommands`, a test asserts it; they pass only through the steered contract ("Privileged command outside the steered contract") |
+| `inverseCommands` | what the repository's own inverse rollbacks use; never allowed in a forward bundle |
+| `harmlessAliases` | `%`, `?`, `foreach`, `select`, …: the only hyphen-less commands that pass; native binaries (`pwsh`, `az`, `bash`, `curl`) fail |
 | `forbiddenCommands` | any of these fails ("Forbidden command") |
+| `forbiddenPatterns` | a password reset (`PasswordProfile`) or disabling a policy (`-State disabled`) fails whatever command carries it ("Forbidden command") |
 | `destructivePatterns` | case-insensitive regular expressions, valid in JavaScript and Python; a match fails ("Destructive wildcard") |
 | `deniedExecutionCommands` | commands that run code, open sessions, sign in or rebind the Az context; applied by `apps/orchestrator/src/preflight/execution-surface.ts` ("Execution surface:") |
 
-`evaluatePreflightRules(commands, script, required)` returns the findings for an AST command list; `required` is the steered contract, never the coder's own list. `isHardPreflightFinding` and `PREFLIGHT_HARD_FAIL_PREFIXES` mark which findings fail the bundle: every finding `evaluatePreflightRules` returns (including "Expected command missing") and every "Execution surface:" finding.
+`evaluatePreflightRules(commands, script, required, { allow, definedFunctions })` returns the findings for a command list (from the AST, or the text scan when no AST ran). `required` and `allow` are the steered contract: the scenario's or strategy's commands, computed by the orchestrator (`steeredRequiredCommands` / `steeredAllowedCommands`, `RemediationPlan.allowedCommands`), never the coder's own list. `isHardPreflightFinding` and `PREFLIGHT_HARD_FAIL_PREFIXES` mark which findings fail the bundle: every finding `evaluatePreflightRules` returns, every "Execution surface:" finding, and "PowerShell 7 not available" (no AST ran).
 
 ## Typed action catalog (`src/typed-actions.ts`)
 
@@ -105,3 +113,5 @@ The writes an approval may execute without running model-written PowerShell. `Ty
 ## Tests
 
 `catalog.test.ts`, `dataplane.test.ts`, `actions.test.ts`, `labels.test.ts` and `mini-dashboard.test.ts` run in the root `bun test`. The vault's scoping and the pre-flight rules are also covered from the orchestrator side (`router/pii-vault.test.ts`, `preflight/local.test.ts`).
+
+**Audit entries.** `AuditEntrySchema` carries the ledger's hash chain (`prevHash`, `hash`) and `identitySource` (`host-graph-signin` · `configured-default` · `system`); `AuditChainStatus` is what `verify()` returns. Telemetry events (`RouterTelemetrySchema`) carry `savingKind` (`cache-hit` · `recipe` · `compiled-skill`) on the requests that really avoided a model call; only those count as savings.

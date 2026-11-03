@@ -12,6 +12,8 @@ import type { EntitySnapshot, SnapshotInverseSections } from "./snapshot.ts";
  * delegated Connect-MgGraph token; INC-4092's NSG is put back to the Terraform baseline
  * (or the seeded drift) over ARM with the Az token. Anything the tenant cannot take is
  * reported as simulated, with the reason. A Pure GitOps approval writes nothing here.
+ * Every live write is behind one gate in the services (LIVE_CLOUD_MODE + CTX_ALLOW_EXECUTE, and the
+ * token's tenant must be the lab tenant); with the gate closed these writes are simulated and labelled so.
  */
 
 export interface LabWriteOutcome {
@@ -48,13 +50,15 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
       const ok = w.results.filter((r) => r.ok).length;
       const nsgOps = nsg.results.map((r) => r.id).join(", ") || "already at target";
       const caSummary = fixed ? "CA Block AVD → report-only (excludes SG-Contoso-Finance-AVD)" : "CA Block AVD → enabled";
+      // Source and failures over ALL three writes: one live write landing never makes the others count as done.
+      const combined = combineWrites([
+        { label: "licences", live: w.source === "live-graph", fallbackReason: w.fallbackReason, rows: w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })) },
+        { label: "ca", live: ca.source === "live-graph", fallbackReason: ca.fallbackReason, rows: ca.results.map((r) => ({ id: `ca ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })) },
+        { label: "nsg", live: nsg.source === "live-azure", fallbackReason: nsg.fallbackReason, rows: nsg.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })) },
+      ]);
       return {
-        ...pick(w),
-        results: [
-          ...w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
-          ...ca.results.map((r) => ({ id: `ca ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
-          ...nsg.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })),
-        ],
+        ...combined,
+        latencyMs: Math.max(w.latencyMs, ca.latencyMs, nsg.latencyMs),
         summary: `${ok}/${w.results.length} users → ${fixed ? "SPE_E5 / Compliant" : "SPE_E3 / Drift_Missing_E5_SKU"} · ${caSummary} · NSG ${nsg.source === "live-azure" ? `(ARM): ${nsgOps}` : `simulated (${nsg.fallbackReason ?? "no Azure context"})`}`,
         arm: nsg,
       };
@@ -108,15 +112,9 @@ export async function applyScenarioState(scenarioId: ScenarioId, state: LabLicen
 export async function applySnapshotState(snapshot: EntitySnapshot, sections?: SnapshotInverseSections): Promise<LabWriteOutcome> {
   const started = performance.now();
   const want = (s: SnapshotInverseSections[number]) => !sections || sections.includes(s);
-  const results: LabWriteOutcome["results"] = [];
   const summaries: string[] = [];
-  const reasons: string[] = [];
-  let liveWrites = 0;
   let arm: NsgWriteResult | undefined;
-  const note = (source: "live-graph" | "simulated", fallbackReason: string | undefined) => {
-    if (source === "live-graph") liveWrites += 1;
-    else if (fallbackReason) reasons.push(fallbackReason);
-  };
+  const parts: WritePart[] = [];
   if (want("users") && snapshot.users.length) {
     const w = await msgraphService.restoreLicenseExtensions(
       snapshot.tenantId,
@@ -133,45 +131,62 @@ export async function applySnapshotState(snapshot: EntitySnapshot, sections?: Sn
         },
       })),
     );
-    note(w.source, w.fallbackReason);
-    results.push(...w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })));
+    parts.push({ label: "licences", live: w.source === "live-graph", fallbackReason: w.fallbackReason, rows: w.results.map((r) => ({ id: r.upn, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })) });
     summaries.push(`${w.results.filter((r) => r.ok).length}/${w.results.length} users → captured licence state`);
   }
   if (want("conditional-access") && snapshot.caPolicies.length) {
     const w = await msgraphService.restoreConditionalAccessPolicies(snapshot.tenantId, snapshot.caPolicies);
-    note(w.source, w.fallbackReason);
-    results.push(...w.results.map((r) => ({ id: `ca ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })));
+    parts.push({ label: "ca", live: w.source === "live-graph", fallbackReason: w.fallbackReason, rows: w.results.map((r) => ({ id: `ca ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })) });
     summaries.push(`${snapshot.caPolicies.length} CA polic${snapshot.caPolicies.length === 1 ? "y" : "ies"} → captured state`);
   }
   if (want("nsg") && snapshot.nsg) {
     const w = await azureIacService.restoreNsgState(snapshot.tenantId, { rules: snapshot.nsg.rules, tags: snapshot.nsg.tags });
     arm = w;
-    if (w.source === "live-azure") liveWrites += 1;
-    else if (w.fallbackReason) reasons.push(w.fallbackReason);
-    results.push(...w.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })));
+    parts.push({ label: "nsg", live: w.source === "live-azure", fallbackReason: w.fallbackReason, rows: w.results.map((r) => ({ id: `nsg ${r.id}`, ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) })) });
     summaries.push(`NSG ${snapshot.nsg.name} → ${snapshot.nsg.rules.length} captured rules${w.source === "live-azure" ? ` (ARM: ${w.results.map((r) => r.id).join(", ") || "already at target"})` : " (simulated)"}`);
   }
   if (want("intune") && snapshot.intune) {
     const w = await msgraphService.restoreIntuneAssignments(snapshot.intune.key, { policies: snapshot.intune.policies, settings: snapshot.intune.settings });
-    note(w.source, w.fallbackReason);
-    results.push(...w.results);
+    parts.push({ label: "intune", live: w.source === "live-graph", fallbackReason: w.fallbackReason, rows: w.results });
     summaries.push("Intune assignments and settings → captured state");
   }
   if (want("workload-identity") && snapshot.workloadIdentity) {
     // Fixture-only estate: no lab SPN exists to write to (same as the forward write for ANOM-APP-401).
-    reasons.push("workload identity fixture (no lab SPN seeded)");
-    results.push({ id: snapshot.workloadIdentity.displayName, ok: true, status: 0 });
+    parts.push({ label: "workload identity", live: false, fallbackReason: "workload identity fixture (no lab SPN seeded)", rows: [{ id: snapshot.workloadIdentity.displayName, ok: true, status: 0 }] });
     summaries.push(`${snapshot.workloadIdentity.displayName}: owners and app roles → captured state (fixture)`);
   }
-  const source: LabWriteOutcome["source"] = liveWrites > 0 ? "live-graph" : "simulated";
+  const combined = combineWrites(parts);
   return {
-    source,
+    ...combined,
+    ...(combined.source === "simulated" && !combined.fallbackReason ? { fallbackReason: "no section to write" } : {}),
     latencyMs: Math.round(performance.now() - started),
-    results,
     summary: summaries.join(" · ") || "nothing captured to restore",
-    ...(source === "simulated" ? { fallbackReason: [...new Set(reasons)].join("; ") || "no section to write" } : {}),
     ...(arm ? { arm } : {}),
   };
+}
+
+interface WritePart {
+  label: string;
+  live: boolean;
+  fallbackReason?: string;
+  rows: LabWriteOutcome["results"];
+}
+
+/**
+ * One outcome over several writes. All simulated → simulated, with every reason. Any live → live, and
+ * every part that did not go out live (simulated, a missing context) becomes a failed row: approve reports
+ * "executed" and a rollback "landed" only when every write landed live.
+ */
+export function combineWrites(parts: WritePart[]): Pick<LabWriteOutcome, "source" | "fallbackReason" | "results"> {
+  const reasons = [...new Set(parts.map((p) => p.fallbackReason).filter((r): r is string => Boolean(r)))];
+  if (!parts.some((p) => p.live)) {
+    return { source: "simulated", results: parts.flatMap((p) => p.rows), ...(reasons.length ? { fallbackReason: reasons.join("; ") } : {}) };
+  }
+  const results = parts.flatMap((p) =>
+    p.live ? p.rows : [{ id: p.label, ok: false, status: 0, error: `not written live: ${p.fallbackReason ?? "simulated"}` }],
+  );
+  const failedReasons = parts.filter((p) => p.live && p.rows.some((r) => !r.ok) && p.fallbackReason).map((p) => p.fallbackReason!);
+  return { source: "live-graph", results, ...(failedReasons.length ? { fallbackReason: [...new Set(failedReasons)].join("; ") } : {}) };
 }
 
 function pick(w: { source: "live-graph" | "simulated"; fallbackReason?: string; latencyMs: number }) {

@@ -10,6 +10,7 @@ import {
   baseScenarioOf,
   formatIssues,
   getScenarioEntry,
+  getCustomScenario,
   getRemediationBundleToolDefinition,
   isCustomScenarioId,
   isFreeRoamActionId,
@@ -32,7 +33,7 @@ import { buildRemediationPlan, type RemediationPlan } from "../local/remediate.t
 import { contextForModel, gatherContext, invalidateContext, resolveScenarioId, type CorrelationContext } from "../mcp/context.ts";
 import { applyWhatIfGate, runLocalPreflight } from "../preflight/local.ts";
 import { invalidateHoverCache } from "./tier1-hover.ts";
-import { buildGroundingIndex, groundingFindings } from "../local/grounding.ts";
+import { buildGroundingIndex, groundingFindings, isUngroundedIdentityFinding } from "../local/grounding.ts";
 import { modalConfigured, modalWarm, runModalPreflight, warmModalSandbox } from "../preflight/modal.ts";
 import { githubRepoUrl, openPullRequest, reconcileStagedBranch, stageRemediationBranch } from "../preflight/staging.ts";
 import { InvalidSchemaError, runChain, type ChainStep } from "../router/chain.ts";
@@ -124,6 +125,60 @@ function bundleIsSound(bundle: RemediationBundleArgs, plan: RemediationPlan): st
   return issues;
 }
 
+/** An approval the server refuses before anything is written (answered 409). */
+export class ApproveRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApproveRefusedError";
+  }
+}
+
+/** The ticket's tenant context could not be gathered; nothing may be bundled from another scenario in its place. */
+export class ContextUnavailableError extends Error {
+  constructor(
+    public readonly scenarioId: string,
+    cause: unknown,
+  ) {
+    super(`The tenant context for ${scenarioId} could not be gathered: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "ContextUnavailableError";
+  }
+}
+
+/** A drawer that carries no fix: verdict "Verification Failed" with the cause, no script from any other scenario. */
+function contextUnavailableDrawer(scenarioId: string, remediationId: string, requestId: string, started: number, error: ContextUnavailableError): RemediateResult {
+  const tenantId = getCustomScenario(scenarioId)?.tenantId ?? "tenant-contoso-01";
+  const latencyMs = Math.round(performance.now() - started);
+  const drawer = ActionApprovalDrawerSchema.parse({
+    remediationId,
+    ticketId: scenarioId,
+    tenantId,
+    title: `No fix staged: context unavailable for ${scenarioId}`.slice(0, 120),
+    summary: `${error.message}. No script was generated and nothing from another scenario was substituted. Retry once the MCP sources answer.`.slice(0, 600),
+    synthesizedBy: { planner: "deterministic", coder: "deterministic", provider: "local" },
+    powershellScript: `# No remediation generated: ${error.message.replace(/\r?\n/g, " ")}`,
+    terraformDiff: "",
+    graphPatch: "",
+    affectedEntities: [],
+    verificationStatus: preflightNotRunVerification(error),
+    staging: null,
+    approval: { state: "pending", requiredIdentity: config.lab.delegatedIdentity, approvedBy: null, approvedAt: null },
+    providerTelemetry: { tier: "Tier 3B", provider: "local", modelId: "deterministic", latencyMs, tokensUsed: 0 },
+  });
+  remediationStore.save(drawer);
+  const event = telemetry.record({
+    requestId,
+    endpoint: "/api/remediate",
+    tier: "Tier 3B",
+    provider: "local",
+    modelId: "deterministic",
+    latencyMs,
+    tokensUsed: { ...ZERO_USAGE },
+    fallbackChain: [],
+    tenantId,
+  });
+  return { drawer, telemetry: event };
+}
+
 /**
  * Tier 3A + 3B — agentic remediation with a verifiable pre-flight sandbox.
  * Only triggered by an explicit "Generate Fix & Stage PR" click.
@@ -138,9 +193,11 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     // The sandbox container boots while muse-wonder plans and codes, so the pre-flight below starts warm.
     warmModalSandbox("remediate");
     report("mcp:start", "Refreshing MCP context");
-    const ctx = await gatherContext(input.scenarioId, { fresh: input.fresh ?? true }).catch(() =>
-      gatherContext(baseScenarioOf(input.scenarioId) ?? input.scenarioId, { fresh: false }),
-    );
+    const ctx = await gatherContext(input.scenarioId, { fresh: input.fresh ?? true }).catch((error: unknown) => {
+      // A custom ticket is never quietly remediated as its base demo scenario: the drawer says the context is missing.
+      if (isCustomScenarioId(input.scenarioId)) throw new ContextUnavailableError(input.scenarioId, error);
+      return gatherContext(baseScenarioOf(input.scenarioId) ?? input.scenarioId, { fresh: false });
+    });
     report("mcp:done", `Context ready (${ctx.gatherLatencyMs} ms)`, { sources: ctx.sourcesUsed, scenarioId: ctx.scenarioId ?? ctx.ticketId });
 
     const plan = buildRemediationPlan(ctx);
@@ -383,6 +440,7 @@ export async function remediate(input: RemediateInput, sink?: ProgressSink): Pro
     return { drawer, telemetry: event };
   } catch (unexpectedError) {
     console.warn(`[tier3-remediate] Fallback recovery for ${input.scenarioId}:`, unexpectedError);
+    if (unexpectedError instanceof ContextUnavailableError) return contextUnavailableDrawer(input.scenarioId, remediationId, requestId, started, unexpectedError);
     const fallbackCtx = await gatherContext(baseScenarioOf(input.scenarioId) ?? input.scenarioId, { fresh: false });
     const fallbackPlan = buildRemediationPlan(fallbackCtx);
     const fallbackBundle = fallbackPlan.bundle;
@@ -463,6 +521,7 @@ async function preflight(
     actualHcl: ctx.drift?.data.actualHcl ?? "",
     expectedHcl: ctx.drift?.data.expectedHcl ?? "",
     requiredCommands: plan.requiredCommands,
+    ...(plan.allowedCommands?.length ? { allowedCommands: plan.allowedCommands } : {}),
   };
   let verification: VerificationStatus;
   if (modalConfigured()) {
@@ -501,8 +560,10 @@ async function preflight(
 
 /**
  * Review item 8: a custom ticket's script may only target names the tenant context (or the ticket) holds.
- * An invented target is a finding the approver sees; it downgrades "Verified Safe" but does not fail the
- * bundle, because a resource the fix creates or one the context did not load can be legitimate.
+ * An invented resource target is a finding the approver sees; it downgrades "Verified Safe" but does not
+ * fail the bundle, because a resource the fix creates or one the context did not load can be legitimate.
+ * An identity, role or credential target the tenant context does not hold fails the bundle: a ticket
+ * alone may not choose who is granted access.
  */
 function applyGroundingCheck(verification: VerificationStatus, bundle: Pick<RemediationBundleArgs, "powershellScript" | "terraformDiff">, ctx: CorrelationContext): void {
   if (!ctx.custom) return;
@@ -510,7 +571,8 @@ function applyGroundingCheck(verification: VerificationStatus, bundle: Pick<Reme
   const findings = groundingFindings(index, bundle.powershellScript, bundle.terraformDiff);
   if (!findings.length) return;
   verification.findings.push(...findings);
-  if (verification.verdict === "Verified Safe") verification.verdict = "Verified With Warnings";
+  if (findings.some(isUngroundedIdentityFinding)) verification.verdict = "Verification Failed";
+  else if (verification.verdict === "Verified Safe") verification.verdict = "Verified With Warnings";
 }
 
 /** Lines in this repository that declare what the fix converges to (Terraform block, golden-tenant JSON). */
@@ -832,6 +894,10 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   }
 
   // A Free-Roam action has no ticket and no lab scenario behind it: approving it stages it, nothing is written.
+  // Its verdict gates the approval on the server too, as for every other bundle.
+  if (isFreeRoamActionId(drawer.ticketId) && drawer.verificationStatus.verdict === "Verification Failed") {
+    throw new ApproveRefusedError("Cannot approve a Free-Roam action whose pre-flight verification failed");
+  }
   if (isFreeRoamActionId(drawer.ticketId)) {
     const mode: ExecutionMode = input.mode ?? "break-glass";
     const approvedBy = input.approvedBy ?? drawer.approval.requiredIdentity;
@@ -860,7 +926,12 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   // Ad-hoc CUSTOM-/ERP- tickets never open a PR unless the engineer asks for one.
   const wantPullRequest = input.openPullRequest ?? (isCustomScenarioId(drawer.ticketId) ? false : config.github.prOnApprove);
   // The PR body quotes the ticket and the convergence names the users: read both before the Graph write invalidates the context.
-  const before = await gatherContext(scenarioId).catch(() => null);
+  // Fresh, not the cached context (up to 10 min old): the pre-change snapshot and f⁻¹ are derived from it.
+  let contextError: string | null = null;
+  const before = await gatherContext(scenarioId, { fresh: true }).catch((error: unknown) => {
+    contextError = error instanceof Error ? error.message : String(error);
+    return null;
+  });
   const plan = before ? buildRemediationPlan(before) : null;
   const remediatedUpns = plan?.remediatedUpns ?? drawer.affectedEntities.filter((e) => e.type === "upn").map((e) => e.id);
   const reclaimedUpns = plan?.reclaimedUpns ?? [];
@@ -874,7 +945,21 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
   // Drawers staged before typed actions existed still execute their ABAC grant through the catalog.
   const typedAction = drawer.typedAction ?? (before ? clarifierTypedAction(before) : null);
   // An ABAC grant's inverse is the ARM DELETE of the assignment it created; the tenant-wide entity snapshot plays no part in it.
-  const preSnapshot = mode === "break-glass" && before && !abacTicket ? await captureEntitySnapshot(before, remediatedUpns).catch(() => null) : null;
+  let snapshotError: string | null = null;
+  const preSnapshot =
+    mode === "break-glass" && before && !abacTicket
+      ? await captureEntitySnapshot(before, remediatedUpns).catch((error: unknown) => {
+          snapshotError = error instanceof Error ? error.message : String(error);
+          return null;
+        })
+      : null;
+  // A live break-glass write without a pre-change snapshot could not be undone: refuse it before anything is written.
+  // A typed action (ABAC included) carries its own typed inverse, so it does not depend on the snapshot.
+  if (mode === "break-glass" && isLiveCloudMode() && config.allowExecute && !abacTicket && !typedAction && !preSnapshot) {
+    throw new ApproveRefusedError(
+      `Break-glass refused: the pre-change snapshot could not be captured (${snapshotError ?? contextError ?? "no tenant context"}), so the change could not be reverted. Retry, or approve as Pure GitOps.`,
+    );
+  }
 
   if (mode === "break-glass") {
     log.push("⚡ Emergency Break-Glass: direct API write, then an auto-reconcile commit on the fix branch");
@@ -980,6 +1065,8 @@ export async function approve(input: ApproveInput): Promise<ApproveResult> {
         state = "simulated";
       }
       invalidateContext(scenarioId);
+      // Other scenarios on the same tenant read the objects this write changed.
+      invalidateContext(drawer.tenantId);
     } else {
       state = "simulated";
       log.push("Offline mode: approval recorded, execution simulated (no Graph context). Branch stays staged for the PR.");
@@ -1240,30 +1327,37 @@ export async function runScriptText(script: string, name: string): Promise<{ ok:
   try {
     const result = await runProcess("pwsh", ["-NoProfile", "-NonInteractive", "-File", file], 120_000);
     const log = [`Executor identity: ${identity.label}`, ...result.stdout.split("\n").filter(Boolean).slice(-20)];
-    if (result.code !== 0) log.push(`pwsh exited ${result.code}: ${result.stderr.split("\n").slice(-3).join(" | ")}`);
-    return { ok: result.code === 0, log };
+    if (result.timedOut) {
+      // SIGTERM mid-script: nothing rolls back the writes that already went out.
+      log.push("Script killed after 120 s: some of its writes may already have landed. Check the tenant and the read-back before retrying or reverting.");
+    } else if (result.code !== 0) log.push(`pwsh exited ${result.code}: ${result.stderr.split("\n").slice(-3).join(" | ")}`);
+    return { ok: result.code === 0 && !result.timedOut, log };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function runProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function runProcess(command: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolvePromise) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill(), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d: string) => (stdout += d));
     child.stderr.on("data", (d: string) => (stderr += d));
     child.on("error", (err) => {
       clearTimeout(timer);
-      resolvePromise({ code: null, stdout, stderr: stderr + err.message });
+      resolvePromise({ code: null, stdout, stderr: stderr + err.message, timedOut });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolvePromise({ code, stdout, stderr });
+      resolvePromise({ code, stdout, stderr, timedOut });
     });
   });
 }

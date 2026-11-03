@@ -27,8 +27,11 @@ export function ApproveFooter() {
   const confirmAndCloseConsole = useWorkbench((s) => s.confirmAndCloseConsole);
   const revertFromConsole = useWorkbench((s) => s.revertFromConsole);
   const resolved = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]));
+  const resolvedLive = useWorkbench((s) => Boolean(s.drawer && s.convergence[s.drawer.ticketId]?.execution === "live-graph"));
   const closed = useWorkbench((s) => Boolean(s.drawer && s.resolutionNote?.closed && s.resolutionNote.scenarioId === s.drawer.ticketId));
   const preflight = usePreflight();
+  // Against the simulated lab, "Apply fix now" writes nothing to a tenant: the label says so.
+  const simulatedLab = useWorkbench((s) => s.dataMode !== "real-tenant");
   const revert = useRevertLabel();
   // WP6: while a refine or a fix generation streams, the drawer on screen is about to be replaced.
   const regenerating = useWorkbench((s) => s.refiningGoal) || status === "loading";
@@ -83,11 +86,13 @@ export function ApproveFooter() {
   } else if (drawer.approval.state === "pending" && resolved) {
     actions = (
       <Button variant="outline" size="md" icon={<Check />} className={`flex-1 ${ACTION}`} disabled title="Reopen the ticket or reset drift to run this fix again">
-        {closed ? "Already resolved and closed" : "Already resolved and verified"}
+        {closed ? "Already resolved and closed" : resolvedLive ? "Already resolved and verified" : "Already approved (simulated)"}
       </Button>
     );
   } else if (drawer.approval.state === "pending") {
-    // A read-only bundle (a Free-Roam inventory query) runs a query live; it fixes nothing.
+    // A Free-Roam bundle is approved and staged server-side: nothing runs, read-only or not. The
+    // button says that instead of promising a live query.
+    const freeRoam = drawer.ticketId.startsWith("FREE-");
     const liveQuery = mode === "break-glass" && !simulate && isReadOnlyBundle(drawer);
     actions = (
       <Button
@@ -95,19 +100,27 @@ export function ApproveFooter() {
         size="md"
         className={`flex-1 ${ACTION} ${simulate ? "!bg-warning !text-ground hover:!bg-warning/90" : ""}`}
         disabled={preflight.blocked || regenerating}
-        title={regenerating ? "The fix is being regenerated for the new scope" : preflight.blocked ? "Fix or override the pre-flight first" : undefined}
+        title={
+          regenerating
+            ? "The fix is being regenerated for the new scope"
+            : preflight.blocked
+              ? "Fix or override the pre-flight first"
+              : freeRoam
+                ? "Approves and stages this Free-Roam bundle; nothing is executed against the tenant. Run the script yourself from the rail."
+                : undefined
+        }
         onClick={() => void approve("approve")}
         icon={simulate ? <FlaskConical /> : liveQuery ? <Play /> : mode === "break-glass" ? <Zap /> : <GitPullRequest />}
         data-testid="approve-primary"
         data-read-only={liveQuery || undefined}
       >
-        {simulate ? "Run rollback drill" : liveQuery ? "Run live query" : mode === "break-glass" ? "Apply fix now" : "Create pull request"}
+        {simulate ? "Run rollback drill" : freeRoam ? (liveQuery ? "Approve query (staged, not run)" : "Approve and stage (not run)") : mode === "break-glass" ? (simulatedLab ? "Apply fix (simulated lab)" : "Apply fix now") : "Create pull request"}
       </Button>
     );
   } else {
     // Signed off (or moved on to the note): a quiet resolved line; the revert stays one click away.
     const state = drawer.approval.state;
-    const summary = resolved ? (closed ? "Resolved · closed in PSA · undo ready" : "Resolved · undo ready") : state === "staged" ? "Staged for the pipeline" : `Approval ${humanizeStatus(state).toLowerCase()}`;
+    const summary = resolved ? (closed ? "Resolved · closed in PSA · undo ready" : resolvedLive ? "Resolved · undo ready" : "Approved (simulated, no live write) · undo ready") : state === "staged" ? "Staged for the pipeline" : `Approval ${humanizeStatus(state).toLowerCase()}`;
     actions = (
       <div className="flex h-8 min-w-0 flex-1 items-center gap-2" data-testid="approve-footer-resolved">
         <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-12 text-muted">

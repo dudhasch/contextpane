@@ -636,12 +636,19 @@ export const DATASET_PII_FIELDS: Partial<Record<DatasetKey, PiiField[]>> = {
 
 export interface PiiVaultMetrics {
   piiFieldsVaulted: number;
-  /** Computed: no outgoing model prompt scanned by `recordPrompt` carried a raw UPN, known person name or public IP. */
+  /**
+   * True when `detectorHits` is 0. A self-check, not an audit: the scan uses the same detectors that did the
+   * replacement, so it can only fail if a replacement missed; PII the detectors do not recognise is never counted.
+   */
   zeroRawPiiInLlmPrompt: boolean;
   /** Prompts scanned so far; 0 means the claim above is vacuous. */
   promptsScanned: number;
-  /** Prompts in which the scan still found raw PII after pseudonymisation. */
+  /** Prompts in which the scan still found something after pseudonymisation (same as detectorHits; kept for older clients). */
   rawPiiPromptHits: number;
+  /** Prompts in which the vault's own detectors still matched after pseudonymisation. */
+  detectorHits: number;
+  /** What the hit counts measure: the same detectors re-run after replacement, not an independent PII scan. */
+  metricKind: "self-check";
   /** Tokens a model reply used that the calling scope was never shown; they stay tokens and are not rehydrated. */
   refusedRehydrations: number;
   sampleMappings: Record<string, string>;
@@ -695,6 +702,16 @@ const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b(?!\/\d)/g;
 const TOKEN_SOURCE = String.raw`\b(?:upn|displayName|ip|userId|device|phone)_tok_\d+\b`;
 const TOKEN_RE = new RegExp(TOKEN_SOURCE);
 const tokenGlobalRe = () => new RegExp(TOKEN_SOURCE, "g");
+/** Anything shaped like a vault token (`upn_tok_01`, `displayName_tok_03`, `<field>_tok_NN`), whichever prefix minted it. */
+const TOKEN_LITERAL_RE = /\b[A-Za-z][A-Za-z0-9]*_tok_\d+\b/g;
+export const TOKEN_LITERAL_MARKER = "[token-literal-removed]";
+/**
+ * Customer-written text may not carry vault tokens: a ticket that writes `upn_tok_01` would otherwise
+ * ask the model to echo a token that rehydrates into a real identity it never saw. Replaced, not vaulted.
+ */
+export function stripTokenLiterals(text: string): string {
+  return text.replace(TOKEN_LITERAL_RE, TOKEN_LITERAL_MARKER);
+}
 const GUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 /** International numbers (`+49 30 1234567`, `+1 (425) 555-0100`) and the US `(425) 555-0100` form. */
 const PHONE_RE = /(?<![\w+])\+\d{1,3}(?:[\s.-]?\(?\d{1,4}\)?){2,5}(?![\w])|(?<![\w(])\(\d{3}\)\s?\d{3}-\d{4}(?!\w)/g;
@@ -778,6 +795,8 @@ export class PiiVault {
   private knownDeviceNames = new Set<string>();
   /** Scope key -> every token sent to a model for that scope. */
   private exposedByScope = new Map<string, Set<string>>();
+  /** While set, every token vault() hands out is recorded here (see captureTokens). */
+  private capture: Set<string> | null = null;
   private refusedRehydrations = 0;
   private promptsScanned = 0;
   private rawPiiPromptHits = 0;
@@ -791,7 +810,10 @@ export class PiiVault {
     if (!value || isMachineOrNonPersonalPii(String(field), value, row)) return value;
     const key = `${field}:${value}`;
     const hit = this.tokenByReal.get(key);
-    if (hit) return hit;
+    if (hit) {
+      this.capture?.add(hit);
+      return hit;
+    }
     const prefix = isPiiField(field) ? PII_FIELDS[field].tokenPrefix : String(field);
     const n = (this.counters.get(prefix) ?? 0) + 1;
     this.counters.set(prefix, n);
@@ -799,6 +821,7 @@ export class PiiVault {
     this.tokenByReal.set(key, token);
     this.realByToken.set(token, value);
     this.digestByToken.set(token, computeEpochSaltedDigest(this.epoch, String(field), value));
+    this.capture?.add(token);
     return token;
   }
   unvault(token: string): string | null { return this.realByToken.get(token) ?? null; }
@@ -951,7 +974,7 @@ export class PiiVault {
     return [...hits].filter((h) => !TOKEN_RE.test(h));
   }
 
-  /** Scan one outgoing model prompt; feeds the computed `zeroRawPiiInLlmPrompt` metric. */
+  /** Scan one outgoing model prompt with the vault's own detectors (a self-check); feeds `detectorHits`. */
   recordPrompt(text: string): string[] {
     const hits = this.scanForRawPii(text);
     this.promptsScanned += 1;
@@ -985,16 +1008,39 @@ export class PiiVault {
   tokensIn(text: string): Set<string> {
     return new Set([...text.matchAll(tokenGlobalRe())].map((m) => m[0]).filter((t) => this.realByToken.has(t)));
   }
-  /** Record that the tokens in `text` were sent to a model on behalf of `scope`; returns everything that scope has seen. */
-  exposeTo(scope: PiiScope, text: string): Set<string> {
+  /**
+   * Runs `fn` and returns the tokens vault() handed out while it ran (minted or reused), i.e. the tokens
+   * that real values in this text were replaced by, as opposed to token-shaped text that was already there.
+   */
+  captureTokens<T>(fn: () => T): { result: T; tokens: Set<string> } {
+    const outer = this.capture;
+    const tokens = new Set<string>();
+    this.capture = tokens;
+    try {
+      return { result: fn(), tokens };
+    } finally {
+      this.capture = outer;
+      if (outer) for (const t of tokens) outer.add(t);
+    }
+  }
+  /**
+   * Record that `tokens` were sent to a model on behalf of `scope`; returns everything that scope has seen.
+   * Pass the tokens the vault itself put into the prompt (captureTokens), not every token-shaped string in it:
+   * text cannot widen what a reply may rehydrate.
+   */
+  exposeTokens(scope: PiiScope, tokens: Iterable<string>): Set<string> {
     const key = piiScopeKey(scope);
     let seen = this.exposedByScope.get(key);
     if (!seen) {
       seen = new Set<string>();
       this.exposedByScope.set(key, seen);
     }
-    for (const t of this.tokensIn(text)) seen.add(t);
+    for (const t of tokens) if (this.realByToken.has(t)) seen.add(t);
     return new Set(seen);
+  }
+  /** exposeTokens for every vault token occurring in `text` (callers that built `text` from vaulted data only). */
+  exposeTo(scope: PiiScope, text: string): Set<string> {
+    return this.exposeTokens(scope, this.tokensIn(text));
   }
   /** Tokens already sent to a model for `scope` (empty for a scope nothing was sent for). */
   exposedTokens(scope: PiiScope): Set<string> {
@@ -1007,6 +1053,8 @@ export class PiiVault {
       zeroRawPiiInLlmPrompt: this.rawPiiPromptHits === 0,
       promptsScanned: this.promptsScanned,
       rawPiiPromptHits: this.rawPiiPromptHits,
+      detectorHits: this.rawPiiPromptHits,
+      metricKind: "self-check",
       refusedRehydrations: this.refusedRehydrations,
       sampleMappings: { ...tokenMappings },
       tokenMappings,

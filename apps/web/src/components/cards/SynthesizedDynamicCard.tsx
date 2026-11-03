@@ -386,7 +386,7 @@ export function SynthesizedDynamicCard({ props, triggeredBy }: { props: Props; t
       synthesized
       ghost={pending}
       source={meta.source === "fallback" ? "template" : meta.synthesizerModel}
-      footerMeta={meta.reusedFromCatalog ? `verified view ×${meta.reuseCount}` : "synthesized view"}
+      footerMeta={meta.reusedFromCatalog ? `reused from catalog ×${meta.reuseCount}` : "synthesized view"}
       details={
         <div className="space-y-1">
           <p>{props.reason}</p>

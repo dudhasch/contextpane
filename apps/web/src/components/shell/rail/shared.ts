@@ -88,7 +88,12 @@ export function humanizeInvariant(id: string, scenarioId: string, fallback: stri
   }
 }
 
-export function blastSummarySentence(scenarioId: string): string {
+/**
+ * The blast radius modelled for a built-in scenario (its symbolic fixture model), or null for a ticket
+ * without one. These sentences describe the model, not a measurement of the tenant, so callers label
+ * them "modelled" and never show one for an ad-hoc ticket.
+ */
+export function blastSummarySentence(scenarioId: string): string | null {
   switch (scenarioId) {
     case "INC-4092":
       return "3 Finance users unblocked · 0 collateral users · emergency admin accounts untouched · port 3389 closed";
@@ -103,8 +108,22 @@ export function blastSummarySentence(scenarioId: string): string {
     case "ANOM-APP-401":
       return "Contractor app owner removed · Graph permissions right-sized · GitHub Actions switched to OIDC";
     default:
-      return "Affected users unblocked · 0 collateral users · emergency admin accounts untouched";
+      return null;
   }
+}
+
+/** The blast-radius pill: tone and words from the formal result, "modelled" because it is the fixture model. */
+export function blastRadiusPill(formal: { formal: { passed: boolean | null }; blastRadius: { collateralChanges: number; rows: Array<{ cohort: string; entities: string[] }> } } | null): { tone: Tone; label: string; title: string } | null {
+  if (!formal) return null;
+  if (formal.formal.passed === null) return { tone: "muted", label: "blast radius not modelled", title: "No symbolic model exists for this ticket, so no blast radius is claimed" };
+  const targets = formal.blastRadius.rows.find((r) => r.cohort === "target")?.entities.length;
+  const collateral = formal.blastRadius.collateralChanges;
+  const label = `${targets !== undefined ? `${targets} target${targets === 1 ? "" : "s"} · ` : ""}${collateral} collateral (modelled)`;
+  return {
+    tone: collateral === 0 ? "healthy" : "critical",
+    label,
+    title: `Modelled blast radius on the scenario's fixture model: ${collateral} collateral change${collateral === 1 ? "" : "s"}. Not a measurement of the live tenant.`,
+  };
 }
 
 /** Clipboard copy with a toast, as the drawer did it. */
@@ -150,29 +169,89 @@ export interface PreflightState {
   reasons: string[];
 }
 
+/**
+ * The approve gate as a pure function: the Approve button (through usePreflight) and the `x` hotkey
+ * both read it, so a keypress can never approve what the button would refuse.
+ */
+export function preflightGate(drawer: Drawer | null, formal: { formal: { passed: boolean | null; invariants: Array<{ passed: boolean; statement: string }> } } | null | undefined, status: string): PreflightState {
+  const formalPassed = formal?.formal.passed;
+  const overridden = drawer?.verificationStatus.verdict === "Overridden";
+  const failed = Boolean(
+    drawer && (drawer.verificationStatus.verdict === "Verification Failed" || (formalPassed === false && !overridden) || status === "error"),
+  );
+  const blocked = Boolean(drawer && (drawer.verificationStatus.verdict === "Verification Failed" || (formalPassed === false && !overridden)));
+  const reasons: string[] = [];
+  if (drawer) {
+    for (const f of drawer.verificationStatus.findings) if (f && !reasons.includes(f)) reasons.push(f);
+    if (drawer.verificationStatus.astCheckPassed === false) reasons.push("PowerShell AST syntax or command safety check failed.");
+    else if (drawer.verificationStatus.astCheckPassed === null) reasons.push("PowerShell AST check did not run.");
+    if (drawer.verificationStatus.whatIfSafe === false) reasons.push("Mutating PowerShell cmdlet detected outside a ShouldProcess (-WhatIf) guard.");
+  }
+  if (formal && formal.formal.passed === false) {
+    for (const inv of formal.formal.invariants) if (!inv.passed) reasons.push(`Safety invariant failed: ${inv.statement}`);
+  }
+  if (reasons.length === 0 && failed) {
+    reasons.push("Pre-flight safety verification failed: script requires a ShouldProcess (-WhatIf) guard or admin justification.");
+  }
+  return { failed, overridden, blocked, reasons };
+}
+
 export function usePreflight(): PreflightState {
   const drawer = useWorkbench((s) => s.drawer);
   const formal = useWorkbench((s) => s.formal);
   const status = useWorkbench((s) => s.remediateStatus);
-  return useMemo(() => {
-    const formalPassed = formal?.formal.passed;
-    const overridden = drawer?.verificationStatus.verdict === "Overridden";
-    const failed = Boolean(
-      drawer && (drawer.verificationStatus.verdict === "Verification Failed" || (formalPassed === false && !overridden) || status === "error"),
-    );
-    const blocked = Boolean(drawer && (drawer.verificationStatus.verdict === "Verification Failed" || (formalPassed === false && !overridden)));
-    const reasons: string[] = [];
-    if (drawer) {
-      for (const f of drawer.verificationStatus.findings) if (f && !reasons.includes(f)) reasons.push(f);
-      if (!drawer.verificationStatus.astCheckPassed) reasons.push("PowerShell AST syntax or command safety check failed.");
-      if (!drawer.verificationStatus.whatIfSafe) reasons.push("Mutating PowerShell cmdlet detected outside a ShouldProcess (-WhatIf) guard.");
+  return useMemo(() => preflightGate(drawer, formal, status), [drawer, formal, status]);
+}
+
+export type FormalData = NonNullable<ReturnType<typeof useWorkbench.getState>["formal"]>;
+export type CanaryData = NonNullable<ReturnType<typeof useWorkbench.getState>["canary"]>;
+
+/** What the fix assigns in licences, read from the bundle itself; empty when it assigns none. */
+export function licenceAdditions(drawer: Drawer): string[] {
+  const found = new Set<string>();
+  for (const e of drawer.affectedEntities) {
+    // Clause by clause: "assign SPE_E5, remove SPE_E3" assigns E5 only.
+    for (const clause of `${e.change ?? ""}`.split(/[,;·]|\band\b/)) {
+      if (/\b(remove|revoke|reclaim|unassign)\b/i.test(clause)) continue;
+      // "SPE_E3 → SPE_E5" or "CountViolation → Active (SPE_E5)": what is right of the arrow is assigned.
+      const target = clause.includes("→") ? clause.slice(clause.lastIndexOf("→") + 1) : /\b(assign|add|grant)\b|\+/i.test(clause) ? clause : "";
+      for (const m of target.matchAll(/\b(SPE_E[35]|ENTERPRISEPACK|ENTERPRISEPREMIUM|Microsoft_365_Copilot)\b/g)) found.add(m[1]!);
     }
-    if (formal && formal.formal.passed === false) {
-      for (const inv of formal.formal.invariants) if (!inv.passed) reasons.push(`Safety invariant failed: ${inv.statement}`);
-    }
-    if (reasons.length === 0 && failed) {
-      reasons.push("Pre-flight safety verification failed: script requires a ShouldProcess (-WhatIf) guard or admin justification.");
-    }
-    return { failed, overridden, blocked, reasons };
-  }, [drawer, formal, status]);
+  }
+  // Set-MgUserLicense -AddLicenses @{SkuId = …SPE_E5…}: only the SKUs on an -AddLicenses line count.
+  for (const line of drawer.powershellScript.split("\n")) {
+    if (!/-AddLicenses\b/i.test(line)) continue;
+    const added = line.slice(line.search(/-AddLicenses\b/i)).split(/-RemoveLicenses\b/i)[0]!;
+    for (const m of added.matchAll(/\b(SPE_E[35]|ENTERPRISEPACK|ENTERPRISEPREMIUM|Microsoft_365_Copilot)\b/g)) found.add(m[1]!);
+  }
+  return [...found];
+}
+
+/**
+ * The "what we verified" lines of the customer note, each one only when the state behind it is known:
+ * the pre-flight verdict and where it ran, whether the change was written to the tenant or only staged,
+ * the post-change health check (and that it ran on the modelled lab state), the modelled blast radius
+ * and any licences the fix assigns. Nothing is asserted that was not measured.
+ */
+export function verifiedLines(input: { drawer: Drawer; execution: "live-graph" | "simulated" | null; canary: CanaryData | null; formal: FormalData | null }): string[] {
+  const { drawer, execution, canary, formal } = input;
+  const lines: string[] = [];
+  if (execution === "live-graph") lines.push("• The change was applied to your tenant and read back afterwards.");
+  else if (execution === "simulated") lines.push("• The change is approved and staged; it has not been applied to your tenant yet.");
+  const v = drawer.verificationStatus;
+  const where = v.sandboxProvider === "modal-cloud-sandbox" ? " in our isolated sandbox" : v.sandboxProvider === "local-pwsh" ? " on the engineer's workstation" : "";
+  if (v.verdict === "Verified Safe") lines.push(`• Pre-flight safety checks passed${where}.`);
+  else if (v.verdict === "Verified With Warnings") lines.push(`• Pre-flight safety checks passed with ${v.findings.length} warning${v.findings.length === 1 ? "" : "s"}${where}, reviewed by the engineer.`);
+  else if (v.verdict === "Overridden") lines.push("• A pre-flight finding was overridden by the engineer with a recorded justification.");
+  if (canary && canary.scenarioId === drawer.ticketId && canary.probeSource !== "none") {
+    const modelled = canary.probeSource === "symbolic" ? " on the modelled lab state" : "";
+    if (canary.finalState === "CONVERGED") lines.push(`• Post-change health checks passed${modelled}.`);
+    else lines.push(canary.rollbackExecuted ? "• The post-change health check failed, so the change was rolled back automatically." : "• The post-change health check failed; the rollback is staged for the engineer.");
+  }
+  if (formal && formal.formal.passed === true && formal.blastRadius.collateralChanges === 0) {
+    lines.push("• Our safety model of this change shows no other users or emergency admin accounts affected.");
+  }
+  const licences = licenceAdditions(drawer);
+  if (licences.length) lines.push(`• Licences assigned by this fix: ${licences.join(", ")}. Seat counts may change on your next invoice.`);
+  return lines;
 }

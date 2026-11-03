@@ -25,7 +25,13 @@ export interface ExecutionSurface {
   /** `$sb.Invoke()`, `.InvokeReturnAsIs()`, `.AddScript()` on a non-type expression. */
   scriptBlockInvokes: string[];
   aliases: Array<{ name: string; definition: string }>;
-  restCalls: Array<{ command: string; method: string | null; uri: string | null; uriDynamic: boolean }>;
+  restCalls: Array<{ command: string; method: string | null; uri: string | null; uriDynamic: boolean; splatted?: boolean }>;
+  /**
+   * Engine access that runs arbitrary strings or script blocks without naming a cmdlet:
+   * `$ExecutionContext.InvokeCommand.InvokeScript(…)`, `.NewScriptBlock(…)`, `.SessionState`, runspaces,
+   * and `Add-Member -MemberType ScriptMethod/ScriptProperty/CodeMethod`. Optional: older sandbox reports lack it.
+   */
+  engineAccess?: string[];
 }
 
 export const FINDING_PREFIX = "Execution surface:";
@@ -35,14 +41,21 @@ export const FINDING_PREFIX = "Execution surface:";
  * Keep in sync with the copy in modal-sandbox/contextpane_sandbox.py (SURFACE_PS).
  */
 export const SURFACE_PS = String.raw`
-  $surface = [ordered]@{ staticCalls = @(); newObjects = @(); dynamicInvocations = @(); dotSources = @(); scriptBlockInvokes = @(); aliases = @(); restCalls = @() }
+  $surface = [ordered]@{ staticCalls = @(); newObjects = @(); dynamicInvocations = @(); dotSources = @(); scriptBlockInvokes = @(); aliases = @(); restCalls = @(); engineAccess = @() }
   foreach ($m in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
     $member = if ($m.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $m.Member.Value } else { '<dynamic>' }
     if ($m.Static -and $m.Expression -is [System.Management.Automation.Language.TypeExpressionAst]) {
       $surface.staticCalls += [pscustomobject]@{ type = $m.Expression.TypeName.FullName; member = $member }
-    } elseif ($member -in @('Invoke', 'InvokeReturnAsIs', 'InvokeWithContext', 'AddScript', '<dynamic>')) {
+    } elseif ($member -in @('Invoke', 'InvokeReturnAsIs', 'InvokeWithContext', 'AddScript', 'InvokeScript', 'NewScriptBlock', 'InvokeCommand', '<dynamic>')) {
       $surface.scriptBlockInvokes += $m.Extent.Text
     }
+  }
+  foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+    if ($v.VariablePath.UserPath -in @('ExecutionContext')) { $surface.engineAccess += $(if ($v.Parent) { $v.Parent.Extent.Text } else { $v.Extent.Text }) }
+  }
+  foreach ($x in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] }, $true)) {
+    $mn = if ($x.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $x.Member.Value } else { '' }
+    if ($mn -in @('InvokeCommand', 'SessionState', 'Runspace', 'InvokeProvider')) { $surface.engineAccess += $x.Extent.Text }
   }
   foreach ($c in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
     $name = $c.GetCommandName()
@@ -52,6 +65,7 @@ export const SURFACE_PS = String.raw`
     $alias = Get-Alias -Name ([WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($alias) { $surface.aliases += [pscustomobject]@{ name = $name; definition = [string]$alias.Definition } }
     $lower = $name.ToLowerInvariant()
+    if ($lower -eq 'add-member' -and ($c.CommandElements | Where-Object { $_.Extent.Text -match '(Script|Code)(Method|Property)' })) { $surface.engineAccess += $c.Extent.Text }
     if ($lower -eq 'new-object') {
       $typeName = $null; $com = $false
       for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
@@ -64,9 +78,10 @@ export const SURFACE_PS = String.raw`
       $surface.newObjects += [pscustomobject]@{ typeName = $typeName; comObject = $com }
     }
     if ($lower -in @('invoke-mggraphrequest', 'invoke-azrestmethod')) {
-      $method = $null; $uri = $null; $dynamic = $false
+      $method = $null; $uri = $null; $dynamic = $false; $splatted = $false
       for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
         $e = $c.CommandElements[$i]
+        if ($e -is [System.Management.Automation.Language.VariableExpressionAst] -and $e.Splatted) { $splatted = $true; continue }
         if (-not ($e -is [System.Management.Automation.Language.CommandParameterAst])) { continue }
         $arg = if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $c.CommandElements.Count) { $c.CommandElements[$i + 1] } else { $null }
         if (-not $arg) { continue }
@@ -78,7 +93,7 @@ export const SURFACE_PS = String.raw`
           else { $uri = $arg.Extent.Text; $dynamic = $true }
         }
       }
-      $surface.restCalls += [pscustomobject]@{ command = $lower; method = $method; uri = $uri; uriDynamic = $dynamic }
+      $surface.restCalls += [pscustomobject]@{ command = $lower; method = $method; uri = $uri; uriDynamic = $dynamic; splatted = $splatted }
     }
   }
 `;
@@ -115,7 +130,7 @@ export const KNOWN_ALIASES: Record<string, string> = {
   "?": "Where-Object",
 };
 /** Pipeline shorthands that run no code of their own; reported only when pwsh resolves something else. */
-const HARMLESS_ALIASES = new Set(["%", "?", "foreach", "where", "select", "sort", "measure", "group", "ft", "fl", "echo", "write"]);
+const HARMLESS_ALIASES = new Set(PREFLIGHT_RULES.harmlessAliases);
 
 /** .NET types a remediation script may call static members on (case-insensitive, `System.` optional). */
 const SAFE_STATIC_TYPES = new Set([
@@ -156,20 +171,34 @@ type Method = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 interface RestRule {
   prefix: string;
   methods: Method[];
+  /** A write (anything but GET) is allowed only for paths matching this: a membership, an assignment or a named object, never a collection create. */
+  writeWhen?: RegExp;
   /** DELETE is allowed only for paths matching this (a membership or grant, never the object itself). */
   deleteWhen?: RegExp;
 }
 
-/** Microsoft Graph paths after /v1.0 or /beta. Anything else (roleManagement, directoryRoles, $batch, …) is denied. */
+/**
+ * Microsoft Graph paths after /v1.0 or /beta, cut to what the built-in scenarios and the steered
+ * strategies use: reads, Intune assignments and settings, and the removal of grants that the
+ * least-privilege fixes take away. No PATCH /users (passwordProfile), no addPassword, no CA policy
+ * writes, no $ref into groups and no role management through raw REST: those go through typed
+ * cmdlets the steered contract has to name. Anything else ($batch, roleManagement, …) is denied.
+ */
 export const GRAPH_REST_RULES: RestRule[] = [
-  { prefix: "/users", methods: ["GET", "POST", "PATCH"] },
-  { prefix: "/groups", methods: ["GET", "POST", "PATCH", "DELETE"], deleteWhen: /\/(members|owners)\/[^/]+\/\$ref$/i },
-  { prefix: "/identity/conditionalaccess/policies", methods: ["GET", "POST", "PATCH"] },
-  { prefix: "/devicemanagement", methods: ["GET", "POST", "PATCH", "PUT"] },
-  { prefix: "/serviceprincipals", methods: ["GET", "POST", "PATCH", "DELETE"], deleteWhen: /\/(approleassignments|approleassignedto)\/[^/]+$/i },
-  { prefix: "/applications", methods: ["GET", "POST", "PATCH", "DELETE"], deleteWhen: /\/federatedidentitycredentials\/[^/]+$/i },
+  { prefix: "/users", methods: ["GET"] },
+  // Removing a member or owner reference is allowed (the least-privilege direction); adding one ($ref POST) is not.
+  { prefix: "/groups", methods: ["GET", "DELETE"], deleteWhen: /\/(members|owners)\/[^/]+\/\$ref$/i },
+  { prefix: "/identity/conditionalaccess/policies", methods: ["GET"] },
+  {
+    prefix: "/devicemanagement",
+    methods: ["GET", "POST", "PUT"],
+    // Assign a configuration or health script, sync a device, or replace one configuration policy's settings.
+    writeWhen: /^\/devicemanagement\/(deviceconfigurations|devicehealthscripts|configurationpolicies|devicecompliancepolicies)\/[^/]+\/assign$|^\/devicemanagement\/manageddevices\/[^/]+\/syncdevice$|^\/devicemanagement\/configurationpolicies\/[^/]+$/i,
+  },
+  { prefix: "/serviceprincipals", methods: ["GET", "DELETE"], deleteWhen: /\/(approleassignments|approleassignedto)\/[^/]+$/i },
+  { prefix: "/applications", methods: ["GET", "DELETE"], deleteWhen: /\/federatedidentitycredentials\/[^/]+$/i },
   { prefix: "/oauth2permissiongrants", methods: ["GET", "DELETE"], deleteWhen: /^\/oauth2permissiongrants\/[^/]+$/i },
-  { prefix: "/sites", methods: ["GET", "POST"] },
+  { prefix: "/sites", methods: ["GET"] },
   { prefix: "/subscribedskus", methods: ["GET"] },
   { prefix: "/auditlogs", methods: ["GET"] },
   { prefix: "/reports", methods: ["GET"] },
@@ -198,6 +227,8 @@ function splitHost(uri: string, expected: string, label: string): { path: string
 function restCallFinding(call: ExecutionSurface["restCalls"][number]): string | null {
   const graph = call.command.toLowerCase() === "invoke-mggraphrequest";
   const label = graph ? "Invoke-MgGraphRequest" : "Invoke-AzRestMethod";
+  if (call.splatted) return `${FINDING_PREFIX} ${label} with splatted parameters; spell out a literal -Method and -Uri`;
+  // No -Method is the cmdlet's default GET; a computed one cannot be checked.
   const method = (call.method ?? "GET").toUpperCase();
   if (method === "<DYNAMIC>") return `${FINDING_PREFIX} ${label} with a computed -Method; use a literal method`;
   if (!["GET", "POST", "PATCH", "PUT", "DELETE"].includes(method)) return `${FINDING_PREFIX} ${label} -Method ${method} is not allowed`;
@@ -219,6 +250,9 @@ function restCallFinding(call: ExecutionSurface["restCalls"][number]): string | 
       return `${FINDING_PREFIX} Invoke-MgGraphRequest ${method} ${call.uri.slice(0, 80)}: the collection is computed at run time`;
     }
     if (!rule.methods.includes(method as Method)) return `${FINDING_PREFIX} Invoke-MgGraphRequest ${method} on ${rule.prefix} is not allowed`;
+    if (method !== "GET" && method !== "DELETE" && rule.writeWhen && !rule.writeWhen.test(path)) {
+      return `${FINDING_PREFIX} Invoke-MgGraphRequest ${method} ${path}: only assignments, device syncs and named configuration policies may be written`;
+    }
     if (method === "DELETE" && !rule.deleteWhen?.test(path)) {
       return `${FINDING_PREFIX} Invoke-MgGraphRequest DELETE ${path}: only membership or grant references may be deleted`;
     }
@@ -228,6 +262,9 @@ function restCallFinding(call: ExecutionSurface["restCalls"][number]): string | 
   const path = shapedSplit.path;
   if (!/^\/subscriptions\//i.test(path) || !/^\/subscriptions\//i.test(literalSplit.path + (call.uriDynamic ? "/" : ""))) {
     return `${FINDING_PREFIX} Invoke-AzRestMethod ${method} ${path}: only /subscriptions/… paths are allowed`;
+  }
+  if (method !== "GET" && /\/providers\/microsoft\.compute\/virtualmachines(scalesets)?\/[^/]+\/(runcommand|runcommands|extensions)\b/i.test(path)) {
+    return `${FINDING_PREFIX} Invoke-AzRestMethod ${method} runs code on a VM (run command or extension); not allowed`;
   }
   if (method !== "GET" && /\/providers\/microsoft\.authorization\//i.test(path)) {
     return `${FINDING_PREFIX} Invoke-AzRestMethod ${method} on Microsoft.Authorization (role or policy) is not allowed; use the typed cmdlet`;
@@ -267,6 +304,7 @@ export function executionSurfaceFindings(surface: ExecutionSurface, commands: st
   for (const text of surface.dynamicInvocations) findings.add(`${FINDING_PREFIX} computed command invocation '${text.slice(0, 60)}'`);
   for (const text of surface.dotSources) findings.add(`${FINDING_PREFIX} dot-sourcing '${text.slice(0, 60)}'`);
   for (const text of surface.scriptBlockInvokes) findings.add(`${FINDING_PREFIX} script block invocation '${text.slice(0, 60)}'`);
+  for (const text of surface.engineAccess ?? []) findings.add(`${FINDING_PREFIX} engine access '${text.slice(0, 60)}' (runs strings or script blocks without naming a cmdlet)`);
   for (const call of surface.restCalls) {
     const f = restCallFinding(call);
     if (f) findings.add(f);
@@ -295,7 +333,7 @@ const ALIAS_AT_COMMAND = new RegExp(
  */
 export function scanExecutionSurfaceText(script: string): ExecutionSurface {
   const code = stripComments(script);
-  const surface: ExecutionSurface = { staticCalls: [], newObjects: [], dynamicInvocations: [], dotSources: [], scriptBlockInvokes: [], aliases: [], restCalls: [] };
+  const surface: ExecutionSurface = { staticCalls: [], newObjects: [], dynamicInvocations: [], dotSources: [], scriptBlockInvokes: [], aliases: [], restCalls: [], engineAccess: [] };
   for (const m of code.matchAll(/\[([A-Za-z_][\w.`]*(?:\[[^\]]*\])?)\]::(\w+)\s*\(/g)) surface.staticCalls.push({ type: m[1]!, member: m[2]! });
   for (const m of code.matchAll(/\bNew-Object\b([^\n;|]*)/gi)) {
     const args = m[1] ?? "";
@@ -305,39 +343,180 @@ export function scanExecutionSurfaceText(script: string): ExecutionSurface {
   }
   for (const m of code.matchAll(/(?:^|[;|{(=])\s*&\s*(\$[\w:{}]+|\([^)]*\)|\[[^\]]+\])/gm)) surface.dynamicInvocations.push(m[0].trim());
   for (const m of code.matchAll(/(?:^|[;{(|])\s*\.\s+(['"]?[$\w.\\/:~-]+['"]?)/gm)) surface.dotSources.push(m[0].trim());
-  for (const m of code.matchAll(/\.(Invoke|InvokeReturnAsIs|InvokeWithContext|AddScript)\s*\(/g)) surface.scriptBlockInvokes.push(m[0]);
+  for (const m of code.matchAll(/\.(Invoke|InvokeReturnAsIs|InvokeWithContext|AddScript|InvokeScript|NewScriptBlock)\s*\(/gi)) surface.scriptBlockInvokes.push(m[0]);
+  surface.engineAccess = [];
+  for (const m of code.matchAll(/\$ExecutionContext\b[\w.]*|\.(?:InvokeCommand|SessionState|Runspace|InvokeProvider)\b/gi)) surface.engineAccess.push(m[0]);
+  for (const m of code.matchAll(/\bAdd-Member\b[^\n;|]*\b(?:Script|Code)(?:Method|Property)\b/gi)) surface.engineAccess.push(m[0]);
   for (const m of code.matchAll(ALIAS_AT_COMMAND)) surface.aliases.push({ name: m[1]!, definition: KNOWN_ALIASES[m[1]!.toLowerCase()] ?? "alias" });
   for (const m of code.matchAll(/\b(Invoke-MgGraphRequest|Invoke-AzRestMethod)\b([^\n]*)/gi)) {
     const args = m[2] ?? "";
+    const splatted = /(?:^|\s)@[A-Za-z_]\w*/.test(args);
     const method = /-Method\s*:?\s*['"]?([$\w]+)/i.exec(args)?.[1] ?? null;
     const quoted = /-(?:Uri|Path)\s*:?\s*(['"])(.*?)\1/i.exec(args);
     const bare = quoted ? null : /-(?:Uri|Path)\s*:?\s*(\S+)/i.exec(args);
     const uri = quoted ? quoted[2]! : (bare?.[1] ?? null);
     const uriDynamic = quoted ? quoted[1] === '"' && uri!.includes("$") : Boolean(bare);
-    surface.restCalls.push({ command: m[1]!.toLowerCase(), method: method?.startsWith("$") ? "<dynamic>" : method, uri, uriDynamic });
+    surface.restCalls.push({ command: m[1]!.toLowerCase(), method: method?.startsWith("$") || method?.startsWith("(") ? "<dynamic>" : method, uri, uriDynamic, splatted });
   }
   return surface;
 }
 
 /**
  * String literals hold text, not commands: single-quoted strings and here-strings are dropped whole,
- * double-quoted ones keep only their `$( … )` subexpressions, which do run. Approximate (no nesting),
- * which is the most a text fallback can do; the AST report is exact.
+ * double-quoted ones keep only their `$( … )` subexpressions, which do run (nested quotes inside a
+ * subexpression are handled). With `comments`, `<# … #>` blocks and `#` comments outside strings go too
+ * (`#Requires` lines stay). Still a text approximation: the AST report is exact.
  */
-export function stripStringLiterals(code: string): string {
-  // One pass, so whichever literal opens first wins ("can't" does not start a single-quoted string).
-  return code.replace(/@'[\s\S]*?'@|@"[\s\S]*?"@|'(?:[^']|'')*'|"(?:[^"`]|`[\s\S])*"/g, (m) => (m.startsWith("'") || m.startsWith("@'") ? "''" : keepSubexpressions(m)));
+export function stripStringLiterals(code: string, comments = false): string {
+  let out = "";
+  let i = 0;
+  const n = code.length;
+  while (i < n) {
+    const c = code[i]!;
+    if (comments && c === "<" && code[i + 1] === "#") {
+      const end = code.indexOf("#>", i + 2);
+      i = end < 0 ? n : end + 2;
+      continue;
+    }
+    if (comments && c === "#" && (i === 0 || /\s/.test(code[i - 1]!)) && !/^#Requires\b/i.test(code.slice(i, i + 9))) {
+      const end = code.indexOf("\n", i);
+      i = end < 0 ? n : end;
+      continue;
+    }
+    if (c === "@" && (code[i + 1] === "'" || code[i + 1] === '"')) {
+      const quote = code[i + 1]!;
+      const end = code.indexOf(`\n${quote}@`, i + 2);
+      const body = code.slice(i + 2, end < 0 ? n : end);
+      out += quote === "'" ? "''" : subexpressionsOf(body);
+      i = end < 0 ? n : end + 3;
+      continue;
+    }
+    if (c === "'") {
+      i = skipSingle(code, i);
+      out += "''";
+      continue;
+    }
+    if (c === '"') {
+      const { end, subs } = readDouble(code, i);
+      out += subs.length ? `"";${subs.map((sub) => stripStringLiterals(sub, comments)).join(";")}` : '""';
+      i = end;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
-function keepSubexpressions(literal: string): string {
-  const subs = [...literal.matchAll(/\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1]!);
+/** Index after a single-quoted string starting at `i` ('' inside is an escaped quote). */
+function skipSingle(code: string, i: number): number {
+  let j = i + 1;
+  while (j < code.length) {
+    if (code[j] === "'") {
+      if (code[j + 1] === "'") {
+        j += 2;
+        continue;
+      }
+      return j + 1;
+    }
+    j++;
+  }
+  return code.length;
+}
+
+/** A double-quoted string starting at `i`: the index after it and the code of its `$( … )` subexpressions. */
+function readDouble(code: string, i: number): { end: number; subs: string[] } {
+  const subs: string[] = [];
+  let j = i + 1;
+  while (j < code.length) {
+    const ch = code[j]!;
+    if (ch === "`") {
+      j += 2;
+      continue;
+    }
+    if (ch === '"') {
+      if (code[j + 1] === '"') {
+        j += 2;
+        continue;
+      }
+      return { end: j + 1, subs };
+    }
+    if (ch === "$" && code[j + 1] === "(") {
+      const sub = readSubexpression(code, j + 2);
+      subs.push(sub.code);
+      j = sub.end;
+      continue;
+    }
+    j++;
+  }
+  return { end: code.length, subs };
+}
+
+/** The code of a `$( … )` subexpression whose body starts at `start`, and the index after its `)`. */
+function readSubexpression(code: string, start: number): { code: string; end: number } {
+  let depth = 1;
+  let j = start;
+  while (j < code.length) {
+    const ch = code[j]!;
+    if (ch === "'") {
+      j = skipSingle(code, j);
+      continue;
+    }
+    if (ch === '"') {
+      j = readDouble(code, j).end;
+      continue;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth === 0) return { code: code.slice(start, j), end: j + 1 };
+    j++;
+  }
+  return { code: code.slice(start), end: code.length };
+}
+
+/** `"";a;b` for a here-string body: only its `$( … )` subexpressions run. */
+function subexpressionsOf(body: string): string {
+  const subs: string[] = [];
+  for (let j = 0; j < body.length; j++) {
+    if (body[j] === "`") {
+      j++;
+      continue;
+    }
+    if (body[j] === "$" && body[j + 1] === "(") {
+      const sub = readSubexpression(body, j + 2);
+      subs.push(stripStringLiterals(sub.code));
+      j = sub.end - 1;
+    }
+  }
   return subs.length ? `"";${subs.join(";")}` : '""';
 }
 
-/** Command names the text fallback can see (`Verb-Noun` at command position, outside string literals). */
+/**
+ * Command names the text fallback can see, outside string literals and in any letter case: a
+ * `verb-noun` at command position (line start, after `;`, `|`, `{`, `(`, `=` or `&`), plus a bare word at
+ * line start or after `;`/`|`/`&` (native binaries such as `pwsh`, `az`, `bash`). The AST report is exact.
+ */
 export function scanCommandsText(script: string): string[] {
-  const code = stripStringLiterals(stripComments(script));
-  return [...new Set([...code.matchAll(/(?:^|[;|{(=]|\bif\s*\(|\s)([A-Z][a-z]+-[A-Za-z][\w]*)\b/gm)].map((m) => m[1]!))];
+  const code = stripStringLiterals(script, true);
+  const names = new Set<string>();
+  for (const m of code.matchAll(/(?:^|[;|{(=&])\s*([A-Za-z]+-[A-Za-z]\w*)\b/gim)) names.add(m[1]!);
+  for (const m of code.matchAll(/(?:^|[;|&])[ \t]*([A-Za-z][\w.]*)(?=[ \t]+[^=\s]|[ \t]*$)/gim)) {
+    const word = m[1]!;
+    if (!word.includes("-") && !POWERSHELL_KEYWORDS.has(word.toLowerCase())) names.add(word);
+  }
+  return [...names];
+}
+
+/** Keywords and statement words that can open a line without being a command. */
+const POWERSHELL_KEYWORDS = new Set([
+  "if", "else", "elseif", "foreach", "for", "while", "do", "until", "switch", "try", "catch", "finally", "throw", "return", "break",
+  "continue", "function", "filter", "param", "begin", "process", "end", "trap", "exit", "class", "enum", "using", "data", "dynamicparam",
+  "default", "in",
+]);
+
+/** Function names a script defines itself (`function Get-GroupByName { … }`). */
+export function scanDefinedFunctionsText(script: string): string[] {
+  const code = stripStringLiterals(script, true);
+  return [...new Set([...code.matchAll(/\bfunction\s+(?:(?:global|script|local):)?([\w-]+)/gi)].map((m) => m[1]!))];
 }
 
 /** Parses the optional `surface` of an AST report; anything malformed falls back to the text scan. */
@@ -353,5 +532,6 @@ export function surfaceFromReport(value: unknown, script: string): ExecutionSurf
     scriptBlockInvokes: arr(v.scriptBlockInvokes),
     aliases: arr(v.aliases),
     restCalls: arr(v.restCalls),
+    engineAccess: arr(v.engineAccess),
   };
 }

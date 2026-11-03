@@ -54,6 +54,21 @@ export function isLiveCloudMode(): boolean {
   return /^(true|1|yes)$/i.test(process.env.LIVE_CLOUD_MODE ?? "");
 }
 
+/**
+ * The one gate in front of every live tenant write: live mode AND CTX_ALLOW_EXECUTE=true. Null when a
+ * write may go out, otherwise the reason the write is simulated instead. Reads only need live mode.
+ */
+export function liveWriteBlockReason(): string | null {
+  if (!isLiveCloudMode()) return "LIVE_CLOUD_MODE=false";
+  if (!/^(true|1|yes)$/i.test(process.env.CTX_ALLOW_EXECUTE ?? "")) return "CTX_ALLOW_EXECUTE=false: live tenant writes are off";
+  return null;
+}
+
+/** The lab tenant every live write must target (CTX_LAB_TENANT_ID, defaulting to the seeded lab). */
+export function labTenantId(): string {
+  return (process.env.CTX_LAB_TENANT_ID ?? "").trim() || "4cc41c20-8b01-40a3-93c6-b4f1e846f6ea";
+}
+
 export async function isPwshAvailable(): Promise<boolean> {
   if (pwshAvailable !== null) return pwshAvailable;
   try {

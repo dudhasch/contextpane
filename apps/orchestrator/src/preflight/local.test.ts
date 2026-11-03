@@ -22,7 +22,7 @@ const GUARDED = [
 describe("shared pre-flight rules (review item 1)", () => {
   test("a command outside the allow-list, a forbidden command and a destructive wildcard are all hard failures", () => {
     const findings = evaluatePreflightRules(["Get-AzKeyVault", "Stop-AzVM", "Invoke-Expression"], "Remove-AzResource -Force", []);
-    expect(findings).toContain("Verb outside allow-list: Stop-AzVM");
+    expect(findings).toContain("Command outside allow-list: Stop-AzVM");
     expect(findings).toContain("Forbidden command: invoke-expression");
     expect(findings.some((f) => f.startsWith("Destructive wildcard"))).toBe(true);
     expect(findings.every(isHardPreflightFinding)).toBe(true);
@@ -30,7 +30,7 @@ describe("shared pre-flight rules (review item 1)", () => {
     expect(findings.filter((f) => /Invoke-Expression/i.test(f))).toHaveLength(1);
   });
 
-  test("allow-listed verbs and the narrow command exceptions pass, case-insensitively", () => {
+  test("read-only verbs and the listed commands pass, case-insensitively", () => {
     expect(evaluatePreflightRules(["get-azkeyvault", "Remove-MgGroupMemberByRef", "Undo-AzKeyVaultRemoval"], "", ["undo-azkeyvaultremoval"])).toEqual([]);
   });
 
@@ -43,7 +43,8 @@ describe("shared pre-flight rules (review item 1)", () => {
   test("the Modal sandbox reads the same rule file instead of its own lists", () => {
     const sandbox = readFileSync(join(REPO, "modal-sandbox", "contextpane_sandbox.py"), "utf8");
     expect(sandbox).toContain("preflight-rules.json");
-    expect(sandbox).toContain('"Verb outside allow-list"');
+    expect(sandbox).toContain('"Command outside allow-list"');
+    expect(sandbox).toContain('"Privileged command"');
     expect(sandbox).not.toMatch(/FORBIDDEN = \{"invoke-expression"/);
     const json = JSON.parse(readFileSync(join(REPO, "packages", "catalog", "src", "preflight-rules.json"), "utf8")) as typeof PREFLIGHT_RULES;
     expect(json.forbiddenCommands).toEqual(PREFLIGHT_RULES.forbiddenCommands);
@@ -54,10 +55,10 @@ describe("shared pre-flight rules (review item 1)", () => {
   test("the local AST check fails a script that calls a command outside the allow-list", async () => {
     const script = `${GUARDED}\nStop-AzVM -Name vm-01 -ResourceGroupName rg-01 -Force\n`;
     const ast = await checkPowerShellAst(script, 30_000, []);
-    // Without pwsh on the machine the check is skipped (null), never passed.
-    if (ast.passed === null) return;
+    // Without pwsh on the machine the AST does not run (the bundle then fails in runLocalPreflight).
+    if (!ast.ran) return;
     expect(ast.passed).toBe(false);
-    expect(ast.findings).toContain("Verb outside allow-list: Stop-AzVM");
+    expect(ast.findings).toContain("Command outside allow-list: Stop-AzVM");
   }, 40_000);
 });
 

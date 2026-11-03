@@ -34,6 +34,7 @@ Response (JSON):     { VerifiedSafe, astCheckPassed, terraformFmtPassed, terrafo
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import os
 import queue
@@ -95,26 +96,84 @@ def _load_rules() -> dict:
 
 
 RULES = _load_rules()
-ALLOWED_VERBS = {v.lower() for v in RULES["allowedVerbs"]}
+READ_ONLY_VERBS = {v.lower() for v in RULES["readOnlyVerbs"]}
 ALLOWED_COMMANDS = set(RULES["allowedCommands"])
+HARMLESS_ALIASES = set(RULES["harmlessAliases"])
 FORBIDDEN = set(RULES["forbiddenCommands"])
+DENIED_EXECUTION = set(RULES["deniedExecutionCommands"])
 DESTRUCTIVE = [re.compile(p, re.IGNORECASE) for p in RULES["destructivePatterns"]]
+FORBIDDEN_PATTERNS = [re.compile(p, re.IGNORECASE) for p in RULES["forbiddenPatterns"]]
+PRIVILEGED = [re.compile(p, re.IGNORECASE) for p in RULES["privilegedPatterns"]]
 # "Execution surface:" findings (RULES["deniedExecutionCommands"], .NET calls, aliases, REST targets) are added by the
 # orchestrator from this sandbox's AST report; listed here so the two sides share one set of hard-fail prefixes.
-HARD_FAIL_PREFIXES = ("Forbidden command", "Expected command missing", "Destructive wildcard", "Verb outside allow-list", "Execution surface:")
+# Same list as PREFLIGHT_HARD_FAIL_PREFIXES in packages/catalog/src/preflight-rules.ts.
+HARD_FAIL_PREFIXES = (
+    "Forbidden command",
+    "Expected command missing",
+    "Destructive wildcard",
+    "Command outside allow-list",
+    "Privileged command",
+    "PowerShell 7 not available",
+    "Execution surface:",
+)
+
+
+def evaluate_rules(commands: list[str], script: str, required: set[str], allow: set[str], defined: set[str]) -> list[str]:
+    """The shared rule set, finding for finding the same as evaluatePreflightRules (packages/catalog/src/preflight-rules.ts)."""
+    findings: list[str] = []
+    lowered = list(dict.fromkeys(c.lower() for c in commands))
+    allowed = {c.lower() for c in required} | {c.lower() for c in allow}
+    defined_lower = {c.lower() for c in defined}
+    for bad in RULES["forbiddenCommands"]:
+        if bad in lowered:
+            findings.append(f"Forbidden command: {bad}")
+    for req in required:
+        if req.lower() not in lowered:
+            findings.append(f"Expected command missing: {req}")
+    for cmd in dict.fromkeys(commands):
+        c = cmd.lower()
+        if c in FORBIDDEN or c in DENIED_EXECUTION or c in allowed or c in defined_lower:
+            continue
+        if "-" not in c:
+            if c not in HARMLESS_ALIASES:
+                findings.append(f"Command outside allow-list: {cmd} (native command or alias; use an allow-listed cmdlet)")
+            continue
+        if c in ALLOWED_COMMANDS:
+            continue
+        if any(p.search(c) for p in PRIVILEGED):
+            findings.append(f"Privileged command outside the steered contract: {cmd}")
+            continue
+        if c.split("-")[0] in READ_ONLY_VERBS:
+            continue
+        findings.append(f"Command outside allow-list: {cmd}")
+    for p in FORBIDDEN_PATTERNS:
+        if p.search(script):
+            findings.append(f"Forbidden command: password or policy-disable pattern /{p.pattern}/")
+    if any(p.search(script) for p in DESTRUCTIVE):
+        findings.append("Destructive wildcard command detected (e.g. Remove-MgUser -All or unscoped Remove-AzResource -Force)")
+    return findings
+
+
 REQUIRED = {"set-mguserlicense"}
 
 # Execution-surface extraction (.NET calls, dynamic invocations, aliases, REST targets); the orchestrator applies
 # the rules to it (apps/orchestrator/src/preflight/execution-surface.ts). Keep in sync with SURFACE_PS there.
 SURFACE_PS = r"""
-  $surface = [ordered]@{ staticCalls = @(); newObjects = @(); dynamicInvocations = @(); dotSources = @(); scriptBlockInvokes = @(); aliases = @(); restCalls = @() }
+  $surface = [ordered]@{ staticCalls = @(); newObjects = @(); dynamicInvocations = @(); dotSources = @(); scriptBlockInvokes = @(); aliases = @(); restCalls = @(); engineAccess = @() }
   foreach ($m in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true)) {
     $member = if ($m.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $m.Member.Value } else { '<dynamic>' }
     if ($m.Static -and $m.Expression -is [System.Management.Automation.Language.TypeExpressionAst]) {
       $surface.staticCalls += [pscustomobject]@{ type = $m.Expression.TypeName.FullName; member = $member }
-    } elseif ($member -in @('Invoke', 'InvokeReturnAsIs', 'InvokeWithContext', 'AddScript', '<dynamic>')) {
+    } elseif ($member -in @('Invoke', 'InvokeReturnAsIs', 'InvokeWithContext', 'AddScript', 'InvokeScript', 'NewScriptBlock', 'InvokeCommand', '<dynamic>')) {
       $surface.scriptBlockInvokes += $m.Extent.Text
     }
+  }
+  foreach ($v in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+    if ($v.VariablePath.UserPath -in @('ExecutionContext')) { $surface.engineAccess += $(if ($v.Parent) { $v.Parent.Extent.Text } else { $v.Extent.Text }) }
+  }
+  foreach ($x in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.MemberExpressionAst] }, $true)) {
+    $mn = if ($x.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $x.Member.Value } else { '' }
+    if ($mn -in @('InvokeCommand', 'SessionState', 'Runspace', 'InvokeProvider')) { $surface.engineAccess += $x.Extent.Text }
   }
   foreach ($c in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
     $name = $c.GetCommandName()
@@ -124,6 +183,7 @@ SURFACE_PS = r"""
     $alias = Get-Alias -Name ([WildcardPattern]::Escape($name)) -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($alias) { $surface.aliases += [pscustomobject]@{ name = $name; definition = [string]$alias.Definition } }
     $lower = $name.ToLowerInvariant()
+    if ($lower -eq 'add-member' -and ($c.CommandElements | Where-Object { $_.Extent.Text -match '(Script|Code)(Method|Property)' })) { $surface.engineAccess += $c.Extent.Text }
     if ($lower -eq 'new-object') {
       $typeName = $null; $com = $false
       for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
@@ -136,9 +196,10 @@ SURFACE_PS = r"""
       $surface.newObjects += [pscustomobject]@{ typeName = $typeName; comObject = $com }
     }
     if ($lower -in @('invoke-mggraphrequest', 'invoke-azrestmethod')) {
-      $method = $null; $uri = $null; $dynamic = $false
+      $method = $null; $uri = $null; $dynamic = $false; $splatted = $false
       for ($i = 1; $i -lt $c.CommandElements.Count; $i++) {
         $e = $c.CommandElements[$i]
+        if ($e -is [System.Management.Automation.Language.VariableExpressionAst] -and $e.Splatted) { $splatted = $true; continue }
         if (-not ($e -is [System.Management.Automation.Language.CommandParameterAst])) { continue }
         $arg = if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $c.CommandElements.Count) { $c.CommandElements[$i + 1] } else { $null }
         if (-not $arg) { continue }
@@ -150,7 +211,7 @@ SURFACE_PS = r"""
           else { $uri = $arg.Extent.Text; $dynamic = $true }
         }
       }
-      $surface.restCalls += [pscustomobject]@{ command = $lower; method = $method; uri = $uri; uriDynamic = $dynamic }
+      $surface.restCalls += [pscustomobject]@{ command = $lower; method = $method; uri = $uri; uriDynamic = $dynamic; splatted = $splatted }
     }
   }
 """
@@ -167,10 +228,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
     $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Select-Object -Unique)
     $attrs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AttributeAst] }, $true) | ForEach-Object { $_.Extent.Text })
+    $functions = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object { $_.Name } | Select-Object -Unique)
 __SURFACE_PS__
     $report = [pscustomobject]@{
       parseErrors = @($errors | ForEach-Object { "$($_.Extent.StartLineNumber):$($_.Extent.StartColumnNumber) $($_.Message)" })
       commands = @($commands)
+      functions = @($functions)
       supportsShouldProcess = [bool]($attrs | Where-Object { $_ -match 'SupportsShouldProcess' })
       surface = $surface
     }
@@ -245,34 +308,26 @@ def timed(fn, *args):
     return result, int((time.time() - started) * 1000)
 
 
-def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None) -> tuple[bool | None, list[str], dict | None]:
+def check_powershell(ast_server: PwshAstServer, script: str, required: set[str] | None = None, allow: set[str] | None = None) -> tuple[bool | None, list[str], dict | None]:
     """Parse verdict, findings and the raw AST report (its commands and surface go back to the orchestrator)."""
     report = ast_server.parse(script)
     if report is None:
+        # No verdict: the orchestrator fails the bundle (PowerShell 7 not available / AST did not run).
         return None, ["PowerShell AST check timed out"], None
     findings: list[str] = []
     for err in report.get("parseErrors", []):
         findings.append(f"AST parse error: {err}")
-    commands = report.get("commands", [])
-    lowered = [c.lower() for c in commands]
-    for bad in sorted(FORBIDDEN):
-        if bad in lowered:
-            findings.append(f"Forbidden command: {bad}")
-    for req in required if required is not None else REQUIRED:
-        if req not in lowered:
-            findings.append(f"Expected command missing: {req}")
-    for cmd in commands:
-        if "-" not in cmd:
-            continue
-        lower = cmd.lower()
-        if lower.split("-")[0] not in ALLOWED_VERBS and lower not in ALLOWED_COMMANDS and lower not in FORBIDDEN:
-            findings.append(f"Verb outside allow-list: {cmd}")
-    if any(p.search(script) for p in DESTRUCTIVE):
-        findings.append("Destructive wildcard command detected (e.g. Remove-MgUser -All or unscoped Remove-AzResource -Force)")
+    commands = report.get("commands", []) or []
+    if isinstance(commands, str):
+        commands = [commands]
+    functions = report.get("functions", []) or []
+    if isinstance(functions, str):
+        functions = [functions]
+    findings.extend(evaluate_rules(commands, script, required if required is not None else REQUIRED, allow or set(), set(functions)))
     if not report.get("supportsShouldProcess"):
         findings.append("Script does not declare SupportsShouldProcess (-WhatIf unsupported)")
-    # Same hard failures as the local pre-flight: allow-list, forbidden, steered commands, destructive wildcards.
-    # The execution-surface rules run on the returned report in the orchestrator (preflight/execution-surface.ts).
+    # Same hard failures as the local pre-flight: allow-list, privileged commands, forbidden, steered commands, destructive
+    # wildcards. The execution-surface rules (and the shared rules once more) run on the returned report in the orchestrator.
     passed = not report.get("parseErrors") and not any(f.startswith(HARD_FAIL_PREFIXES) for f in findings)
     return passed, findings, report
 
@@ -369,6 +424,15 @@ def terraform_validate(hcl: str, provider: ReattachedProvider | None = None) -> 
         return proc.returncode == 0, (proc.stderr or proc.stdout).strip()
 
 
+def authorized(header: str, env: dict | None = None) -> bool:
+    """Bearer check for the web endpoint: required by default, compared in constant time."""
+    env = os.environ if env is None else env
+    expected = env.get("CTX_MODAL_SANDBOX_TOKEN", "")
+    if not expected:
+        return str(env.get("CTX_MODAL_SANDBOX_ALLOW_UNAUTHENTICATED", "")).lower() == "true"
+    return hmac.compare_digest(header.encode("utf-8"), f"Bearer {expected}".encode("utf-8"))
+
+
 @app.cls(cpu=4.0, memory=2048, scaledown_window=300, timeout=300, secrets=[modal.Secret.from_name("contextpane-sandbox")])
 class Sandbox:
     @modal.enter()
@@ -399,7 +463,8 @@ class Sandbox:
         findings: list[str] = []
         timings: dict[str, int] = {}
         required = {c.lower() for c in payload["requiredCommands"]} if isinstance(payload.get("requiredCommands"), list) else None
-        ast_future = self.pool.submit(timed, check_powershell, self.ast, payload.get("powershellScript", ""), required)
+        allow = {c.lower() for c in payload["allowedCommands"]} if isinstance(payload.get("allowedCommands"), list) else set()
+        ast_future = self.pool.submit(timed, check_powershell, self.ast, payload.get("powershellScript", ""), required, allow)
 
         fmt_passed: bool | None = None
         validate_passed: bool | None = None
@@ -436,16 +501,19 @@ class Sandbox:
             "validationLatencyMs": int((time.time() - started) * 1000),
             "findings": ast_findings + findings,
             # The orchestrator applies the execution-surface rules to these (preflight/modal.ts).
-            **({"commands": ast_report.get("commands", []), "surface": ast_report.get("surface")} if ast_report else {}),
+            **({"commands": ast_report.get("commands", []), "functions": ast_report.get("functions", []), "surface": ast_report.get("surface")} if ast_report else {}),
             "checkLatencyMs": timings,
             "terraformVersion": TERRAFORM_VERSION,
         }
 
     @modal.fastapi_endpoint(method="POST", label="contextpane-sandbox-validate-remediation")
     def validate_remediation(self, payload: dict, request: Request) -> dict:
-        """Tier 3B pre-flight. Bearer token must match CTX_MODAL_SANDBOX_TOKEN when the secret sets one."""
-        expected_token = os.environ.get("CTX_MODAL_SANDBOX_TOKEN", "")
-        if expected_token and request.headers.get("authorization", "") != f"Bearer {expected_token}":
+        """Tier 3B pre-flight. The bearer token must match CTX_MODAL_SANDBOX_TOKEN (constant-time compare).
+
+        With no token in the secret the endpoint refuses every request, unless the secret also sets
+        CTX_MODAL_SANDBOX_ALLOW_UNAUTHENTICATED=true (a throwaway test deployment only).
+        """
+        if not authorized(request.headers.get("authorization", "")):
             raise HTTPException(status_code=401, detail="invalid sandbox token")
         if payload.get("warmup"):
             return {"ok": True, "warmed": True, "bootMs": self.boot_ms, "sandboxProvider": SANDBOX_PROVIDER}

@@ -70,6 +70,7 @@ export async function hydrateRecipe(recipeId: string, scenarioId: string, option
     tokensUsed: ZERO_USAGE,
     fallbackChain: [],
     tenantId: ctx.tenantId,
+    savingKind: "recipe",
     estimatedSavings: {
       tokens: Math.max(promptTokens + completionTokens, baseline.tokens),
       ms: Math.max(0, baseline.ms - latencyMs),

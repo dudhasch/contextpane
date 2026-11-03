@@ -175,7 +175,19 @@ export function isGrounded(index: GroundingIndex, value: string, allowTicket = t
 
 /** Parameters whose literal value names an existing resource, user, group or identity. */
 const TARGET_PARAMS =
-  "Name|ResourceGroupName|VaultName|KeyVaultName|StorageAccountName|AccountName|ResourceName|NetworkSecurityGroupName|VMName|VirtualNetworkName|HostPoolName|UserId|GroupId|ServicePrincipalId|ApplicationId|ObjectId|SignInName|UserPrincipalName|PolicyAssignmentName|ContainerName";
+  "Name|ResourceGroupName|VaultName|KeyVaultName|StorageAccountName|AccountName|ResourceName|NetworkSecurityGroupName|VMName|VirtualNetworkName|HostPoolName|UserId|GroupId|ServicePrincipalId|ApplicationId|AppId|ObjectId|DirectoryObjectId|PrincipalId|MemberId|DirectoryRoleId|RoleDefinitionId|RoleDefinitionName|OdataId|SignInName|UserPrincipalName|PolicyAssignmentName|ContainerName";
+
+/**
+ * Identity, role and credential parameters: who gets access, as whom, with which role. Their literal
+ * values must come from the tenant context; a value only the ticket supplies is not enough, because
+ * a ticket is customer-written and could name an attacker's account or a privileged role.
+ */
+const IDENTITY_PARAMS = new Set(
+  ["UserId", "GroupId", "ServicePrincipalId", "ApplicationId", "AppId", "ObjectId", "DirectoryObjectId", "PrincipalId", "MemberId", "DirectoryRoleId", "RoleDefinitionId", "RoleDefinitionName", "OdataId", "SignInName", "UserPrincipalName"].map((p) => p.toLowerCase()),
+);
+
+/** Hard-fail prefix: an identity / role / credential target the tenant context does not hold. */
+export const UNGROUNDED_IDENTITY_PREFIX = "Ungrounded identity:";
 const PARAM_RE = new RegExp(String.raw`-(${TARGET_PARAMS})\s*:?\s+(?:'([^']+)'|"([^"$]+)"|([^\s$'"(@)\`|;][^\s;|)\`]*))`, "gi");
 /** Creating cmdlets name what they create: their -Name / -DisplayName is new by design. */
 const CREATING_LINE = /^\s*(?:if\s*\(.*\)\s*\{\s*)?(?:\$\w+\s*=\s*)?(New|Add)-\w+/i;
@@ -187,6 +199,20 @@ const TF_REF_RE = /^\+\s*(resource_group_name|storage_account_name|network_secur
  */
 export function ungroundedTargets(index: GroundingIndex, script: string, terraformDiff = ""): string[] {
   const missing = new Set<string>();
+  for (const { param, value } of literalTargets(script)) {
+    if (IDENTITY_PARAMS.has(param)) continue;
+    if (!isGrounded(index, value)) missing.add(value);
+  }
+  for (const m of terraformDiff.matchAll(TF_REF_RE)) {
+    const value = m[2]!.trim();
+    if (value && !isGrounded(index, value)) missing.add(value);
+  }
+  return [...missing];
+}
+
+/** Every literal `-Param value` a script passes to a target parameter, outside comments and help blocks. */
+function literalTargets(script: string): Array<{ param: string; value: string }> {
+  const out: Array<{ param: string; value: string }> = [];
   const code = script.replace(/<#[\s\S]*?#>/g, "");
   for (const line of code.split("\n")) {
     if (/^\s*#/.test(line)) continue;
@@ -196,21 +222,45 @@ export function ungroundedTargets(index: GroundingIndex, script: string, terrafo
       const value = (m[2] ?? m[3] ?? m[4] ?? "").trim();
       if (!value || /^[<{[]|^\$|^-|^(true|false|null)$/i.test(value) || /^\d+$/.test(value)) continue;
       if (creating && (param === "name" || param === "displayname")) continue;
-      if (!isGrounded(index, value)) missing.add(value);
+      out.push({ param, value });
     }
   }
-  for (const m of terraformDiff.matchAll(TF_REF_RE)) {
-    const value = m[2]!.trim();
-    if (value && !isGrounded(index, value)) missing.add(value);
+  return out;
+}
+
+/**
+ * Identity, role and credential targets (`-UserId`, `-PrincipalId`, `-RoleDefinitionName`, `-OdataId`, …) whose
+ * literal value the tenant context does not hold. Names the ticket mentions do not count here: a customer-written
+ * ticket must not be able to choose who is granted what.
+ */
+export function ungroundedIdentities(index: GroundingIndex, script: string): Array<{ param: string; value: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ param: string; value: string }> = [];
+  for (const t of literalTargets(script)) {
+    if (!IDENTITY_PARAMS.has(t.param) || isGrounded(index, t.value, false)) continue;
+    const key = `${t.param}:${t.value.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
   }
-  return [...missing];
+  return out;
 }
 
 export function groundingFindings(index: GroundingIndex | null, script: string, terraformDiff = ""): string[] {
   if (!index) return [];
-  return ungroundedTargets(index, script, terraformDiff).map(
+  const identities = ungroundedIdentities(index, script).map(
+    ({ param, value }) =>
+      `${UNGROUNDED_IDENTITY_PREFIX} '${value}' (-${param}) is not in the tenant context (${index.contextId}); an identity, role or credential target only the ticket names cannot be approved`,
+  );
+  const targets = ungroundedTargets(index, script, terraformDiff).map(
     (name) => `Ungrounded target: '${name}' is not in the tenant context (${index.contextId}) or the ticket; confirm it exists before approving`,
   );
+  return [...identities, ...targets];
+}
+
+/** True when a finding is an ungrounded identity / role / credential target, which fails the pre-flight. */
+export function isUngroundedIdentityFinding(finding: string): boolean {
+  return finding.startsWith(UNGROUNDED_IDENTITY_PREFIX);
 }
 
 /* ------------------------------ synthesized cards ------------------------------ */

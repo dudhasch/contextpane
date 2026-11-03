@@ -22,7 +22,8 @@ class TelemetryBus {
   private listeners = new Set<TelemetryListener>();
   private history: RouterTelemetry[] = [];
   private tiers = new Map<RouterTier, TierStats>();
-  private savings = { tokens: 0, ms: 0, zeroTokenRequests: 0 };
+  /** zeroTokenRequests counts requests a cache, recipe or compiled skill served; fallbackZeroTokenRequests the ones a failed or disabled model left to the deterministic engine. */
+  private savings = { tokens: 0, ms: 0, zeroTokenRequests: 0, fallbackZeroTokenRequests: 0 };
   private tier2Baseline = { ...DEFAULT_TIER2_BASELINE };
   private counter = 0;
 
@@ -55,12 +56,16 @@ class TelemetryBus {
     if (event.tier === "Tier 2" && event.provider !== "local" && event.tokensUsed.total > 0) {
       this.tier2Baseline = { tokens: event.tokensUsed.total, ms: event.latencyMs };
     }
-    if (event.estimatedSavings) {
-      this.savings.tokens += event.estimatedSavings.tokens;
-      this.savings.ms += event.estimatedSavings.ms;
+    // A saving is only a request a cache, recipe or compiled skill answered (savingKind). A zero-token event
+    // without it is a model failure or the offline engine: counted separately, never as money saved.
+    if (event.savingKind) {
       this.savings.zeroTokenRequests += 1;
-    } else if (event.tokensUsed.total === 0 || event.tier === "Tier 0") {
-      this.savings.zeroTokenRequests += 1;
+      if (event.estimatedSavings) {
+        this.savings.tokens += event.estimatedSavings.tokens;
+        this.savings.ms += event.estimatedSavings.ms;
+      }
+    } else if (event.tokensUsed.total === 0) {
+      this.savings.fallbackZeroTokenRequests += 1;
     }
 
     for (const listener of this.listeners) {
@@ -99,6 +104,7 @@ class TelemetryBus {
       totalRequests,
       totalTokens,
       zeroTokenRequests: this.savings.zeroTokenRequests,
+      fallbackZeroTokenRequests: this.savings.fallbackZeroTokenRequests,
       estimatedSavings: {
         tokens: this.savings.tokens,
         ms: this.savings.ms,

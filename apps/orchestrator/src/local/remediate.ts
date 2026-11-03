@@ -1,7 +1,7 @@
 import type { RemediationBundleArgs } from "@contextpane/catalog";
 import { CA_POSTURE, INTUNE_SCENARIOS, WORKLOAD_IDENTITY, demoName, getManifestTenant } from "@contextpane/mcp-msgraph";
 import type { CorrelationContext } from "../mcp/context.ts";
-import { buildCustomTicketRemediationSync, steeredRequiredCommands } from "./subagent-orchestrator.ts";
+import { buildCustomTicketRemediationSync, steeredAllowedCommands, steeredRequiredCommands } from "./subagent-orchestrator.ts";
 
 /**
  * Deterministic remediation templates, one per scenario. These are what Tier 3
@@ -14,6 +14,8 @@ export interface RemediationPlan {
   bundle: RemediationBundleArgs;
   /** Cmdlets the pre-flight requires in the script (lower-case). */
   requiredCommands: string[];
+  /** The steered contract beyond requiredCommands (custom tickets): what the strategy may use (lower-case). */
+  allowedCommands?: string[];
   /** Users whose license assignment the fix activates (canvas convergence). */
   remediatedUpns: string[];
   /** Disabled accounts whose seats the fix reclaims. */
@@ -343,6 +345,8 @@ function contosoTicket(ctx: CorrelationContext): RemediationPlan {
         .slice(0, 6),
     },
     requiredCommands: ["remove-mggroupmemberbyref", "new-mggroupmemberbyref", "invoke-mglicenseuser", ...(blocking ? ["update-mgidentityconditionalaccesspolicy"] : [])],
+    // Update-MgUser sets UsageLocation only (licensing needs it); a password change is refused by the forbidden patterns.
+    allowedCommands: ["update-mguser"],
     remediatedUpns: drifted.map((u) => u.upn),
     reclaimedUpns: [],
   };
@@ -894,6 +898,12 @@ export function buildRemediationPlan(ctx: CorrelationContext): RemediationPlan {
       },
       // Recomputed from the steering, never read from the bundle or derived from its own script (review item 3).
       requiredCommands: steeredRequiredCommands({
+        ticketTitle: ctx.custom?.ticket.title ?? ctx.ticketId,
+        ticketBody: ctx.custom?.ticket.body ?? "",
+        ...(ctx.custom?.clarifiedAnswers ? { clarifiedAnswers: ctx.custom.clarifiedAnswers } : {}),
+        ...(ctx.custom?.steering ? { steering: ctx.custom.steering } : {}),
+      }),
+      allowedCommands: steeredAllowedCommands({
         ticketTitle: ctx.custom?.ticket.title ?? ctx.ticketId,
         ticketBody: ctx.custom?.ticket.body ?? "",
         ...(ctx.custom?.clarifiedAnswers ? { clarifiedAnswers: ctx.custom.clarifiedAnswers } : {}),

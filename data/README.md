@@ -27,7 +27,7 @@ All of them were composed by `muse-spark-1.3` (gatekeeper) and `muse-wonder-1.0`
 | Path | Contents |
 |---|---|
 | `hover-cache.json` | live hover answers (seeded from the file above); each generated entry stores a `contextDigest` and is served only while the entity's context still hashes to it, and a ticket's entries are dropped on approve and after an executed revert |
-| `audit-log.json` | the approval / rollback / closure audit ledger |
+| `audit-log.jsonl` | the approval / rollback / closure audit ledger: append-only, one hash-chained entry per line (`audit-log.json.migrated` is a pre-chain ledger after its one-time migration) |
 | `remediations/` | stored remediation bundles |
 | `custom-scenarios.json` | triaged custom tickets (capped at 12) |
 | `recipes.json` · `settings.json` | pinned View Recipes; data-mode setting |

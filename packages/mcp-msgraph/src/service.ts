@@ -27,7 +27,6 @@ import {
 import { caBaselineDiff, caDriftSourceRef, caPolicySourceRef, intuneBaselineDiff, intuneSettingSourceRef } from "./golden.ts";
 import {
   GraphHttpError,
-  assignDeviceConfigurationLive,
   fetchAllConditionalAccessPoliciesLive,
   fetchAllSignInEventsLive,
   fetchCaPostureLive,
@@ -48,9 +47,11 @@ import {
   setAsrRuleLive,
   type ExtensionPatchResult,
   type LiveIntuneState,
+  setDeviceConfigurationGroupAssignmentLive,
+  fetchApplicationOwnersAndFicsLive,
 } from "./live.ts";
 import { getManifestTenant, type ManifestCaPolicy, type ManifestSignIn, type ManifestTenant, type ManifestUser } from "./manifest.ts";
-import { getMcpDataMode, isLiveCloudMode, isStrictRealTenantMode, setMcpDataMode, type McpDataMode } from "./pwsh.ts";
+import { getMcpDataMode, isLiveCloudMode, isStrictRealTenantMode, liveWriteBlockReason, setMcpDataMode, type McpDataMode } from "./pwsh.ts";
 import { WORKLOAD_IDENTITY, type WorkloadIdentityFixture } from "./workload-identity.ts";
 
 /* -------------------------------------------------------------------------- */
@@ -85,6 +86,22 @@ export const KNOWN_GROUP_NAMES_BY_ID: Record<string, string> = {
 };
 
 const inMemoryTenantCaState = new Map<string, LabLicenseState>();
+/**
+ * When a live CA PATCH last returned 2xx, per tenant. A live read applies the lab override only inside
+ * this window (Graph read-after-write lag); a failed or simulated write never moves what a live read shows.
+ */
+const liveCaConfirmedAt = new Map<string, number>();
+const LIVE_CA_CONFIRM_WINDOW_MS = 60_000;
+
+function confirmLiveCaWrite(tenantId: string, state: LabLicenseState): void {
+  inMemoryTenantCaState.set(tenantId, state);
+  liveCaConfirmedAt.set(tenantId, Date.now());
+}
+
+function liveCaWriteConfirmed(tenantId: string): boolean {
+  const at = liveCaConfirmedAt.get(tenantId);
+  return at !== undefined && Date.now() - at < LIVE_CA_CONFIRM_WINDOW_MS;
+}
 /**
  * auditLogs/signIns filtered by UPN takes 40-60 s on a tenant with a large sign-in log,
  * and the lab users never sign in, so it never runs on a request path: it is probed in
@@ -273,6 +290,23 @@ function simulatedWrite(ids: string[], fallbackReason: string, started: number):
   return { source: "simulated", fallbackReason, latencyMs: Math.round(performance.now() - started), results: ids.map((id) => ({ id, ok: true, status: 0 })) };
 }
 
+function errorStatus(error: unknown): number {
+  return error instanceof GraphHttpError ? error.status : 0;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A live write that was attempted and did not land: every row is ok:false with the real status and the
+ * error. Never reported as a simulated success, so approve and the rollback read-back cannot call it done.
+ */
+function failedWrite(ids: string[], error: unknown, started: number): LabWriteResult {
+  const message = errorText(error);
+  return { source: "live-graph", fallbackReason: message, latencyMs: Math.round(performance.now() - started), results: ids.map((id) => ({ id, ok: false, status: errorStatus(error), error: message })) };
+}
+
 async function writeExtensions(tenantId: string, upns: string[], fields: (upn: string) => Record<string, string>): Promise<LicenseWriteResult> {
   const started = performance.now();
   const simulated = (fallbackReason: string): LicenseWriteResult => ({
@@ -281,15 +315,22 @@ async function writeExtensions(tenantId: string, upns: string[], fields: (upn: s
     latencyMs: Math.round(performance.now() - started),
     results: upns.map((upn) => ({ upn, ok: true, status: 0 })),
   });
-  if (!isLiveCloudMode()) return simulated("LIVE_CLOUD_MODE=false");
+  const failed = (error: unknown): LicenseWriteResult => ({
+    source: "live-graph",
+    fallbackReason: errorText(error),
+    latencyMs: Math.round(performance.now() - started),
+    results: upns.map((upn) => ({ upn, ok: false, status: errorStatus(error), error: errorText(error) })),
+  });
+  const blocked = liveWriteBlockReason();
+  if (blocked) return simulated(blocked);
   if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulated(`${tenantId} is manifest-only`);
   try {
     const stamp = new Date().toISOString();
     const results = await patchLicenseExtensionsLive(upns, (upn) => ({ ...fields(upn), lastSyncedAt: stamp }), LIVE_TIMEOUT_MS);
-    if (results.length && results.every((r) => r.status === 404)) return simulated("lab users not found in the live tenant (seed the lab first)");
+    if (results.length && results.every((r) => r.status === 404)) return failed(new GraphHttpError(404, "lab users not found in the live tenant (seed the lab first)"));
     return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
   } catch (error) {
-    return simulated(error instanceof Error ? error.message : String(error));
+    return failed(error);
   }
 }
 
@@ -772,7 +813,8 @@ export const msgraphService = {
         const { policies, groupNamesById } = await fetchAllConditionalAccessPoliciesLive(LIVE_TIMEOUT_MS);
         const resolveName = (id: string) => groupNamesById.get(id) ?? KNOWN_GROUP_NAMES_BY_ID[id.toLowerCase()] ?? id;
         const mapped: CaPolicySummary[] = policies.map((p) => {
-          const builtInControls = p.builtInControls.length > 0 ? p.builtInControls : ["Require MFA"];
+          // What Graph returned, nothing more: a policy with no built-in control shows none (no defaulted "Require MFA").
+          const builtInControls = p.builtInControls;
           return {
             id: p.id,
             displayName: p.displayName,
@@ -820,12 +862,8 @@ export const msgraphService = {
       const policies = await fetchConditionalAccessPoliciesLive(primaryGroup(tenant).objectId, DEMO_POLICY_PREFIX, LIVE_TIMEOUT_MS);
       if (policies.length === 0) throw new Error("no [ContextPane-Demo] policies found in live tenant (seed the lab first)");
       const mapped = policies.map((p) => {
-        const builtInControls =
-          p.builtInControls.length > 0
-            ? p.builtInControls
-            : /CA-001|PhishingResistant/i.test(p.displayName)
-              ? ["Require Phishing-Resistant MFA (FIDO2 / Windows Hello)"]
-              : ["Require MFA"];
+        // Graph's grant controls as returned (an authentication strength is mapped in live.ts); no invented default.
+        const builtInControls = p.builtInControls;
         return {
           id: p.id,
           displayName: p.displayName,
@@ -840,7 +878,8 @@ export const msgraphService = {
           modifiedDateTime: p.modifiedDateTime,
         };
       });
-      return applyInMemoryOverride(mapped);
+      // The live tenant is the truth; the override only bridges Graph's lag right after a confirmed write.
+      return liveCaWriteConfirmed(tenantId) ? applyInMemoryOverride(mapped) : mapped;
     };
     return withSource(tenantId, live, fallback);
   },
@@ -904,7 +943,9 @@ export const msgraphService = {
     const blockingPolicies = policies.data.filter((p) => p.includeGroupNames.some((g) => groups.includes(g)));
     const failures = signIns.data.filter((e) => e.status === "failure");
     const lastFailure = failures.at(-1) ?? null;
-    const source: GraphSource = [license, policies, signIns].every((r) => r.source !== "seeded-manifest") ? "live-graph" : "seeded-manifest";
+    // Live only when every input is a real Graph read: re-keyed seeded sign-ins ("live-synthesized") are not live.
+    const sources = [license, policies, signIns].map((r) => r.source);
+    const source: GraphSource = sources.every((x) => x === "live-graph") ? "live-graph" : sources.includes("seeded-manifest") ? "seeded-manifest" : "live-synthesized";
     const fallbackReason = [license, policies, signIns].map((r) => r.fallbackReason).filter(Boolean).join("; ");
     return {
       source,
@@ -935,13 +976,14 @@ export const msgraphService = {
       latencyMs: Math.round(performance.now() - started),
       results: upns.map((upn) => ({ upn, ok: true, status: 0 })),
     });
-    if (!isLiveCloudMode()) return simulated("LIVE_CLOUD_MODE=false");
+    const blocked = liveWriteBlockReason();
+    if (blocked) return simulated(blocked);
     if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulated(`${tenantId} is manifest-only`);
     try {
       const results = await patchLicenseExtensionsLive(upns, { ...LAB_LICENSE_STATES[state], lastSyncedAt: new Date().toISOString() }, LIVE_TIMEOUT_MS);
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
     } catch (error) {
-      return simulated(error instanceof Error ? error.message : String(error));
+      return { source: "live-graph", fallbackReason: errorText(error), latencyMs: Math.round(performance.now() - started), results: upns.map((upn) => ({ upn, ok: false, status: errorStatus(error), error: errorText(error) })) };
     }
   },
 
@@ -1239,17 +1281,22 @@ export const msgraphService = {
   /** Patches the tenant's blocking Conditional Access policy (e.g. INC-4092 '[ContextPane-Demo] Block AVD - Contoso Finance Legacy') to exclude the AVD group and switch to report-only, or revert on reset. */
   async setConditionalAccessState(tenantId: string, state: LabLicenseState): Promise<LabWriteResult> {
     const started = performance.now();
-    inMemoryTenantCaState.set(tenantId, state);
     const tenant = getManifestTenant(tenantId);
     const group = primaryGroup(tenant);
     const manifestPolicy = tenant.conditionalAccessPolicies.find((p) => p.grantControls.builtInControls.includes("block") || p.displayName.includes("Block AVD")) ?? tenant.conditionalAccessPolicies[0];
     const policyId = manifestPolicy?.id ?? "ca-policy-block-avd-legacy";
-    if (!isLiveCloudMode()) return simulatedWrite([policyId], "LIVE_CLOUD_MODE=false", started);
-    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulatedWrite([policyId], `${tenantId} is manifest-only`, started);
+    // Simulated writes move the in-memory lab state the manifest view reads; a live write moves it only after a 2xx.
+    const simulate = (reason: string) => {
+      inMemoryTenantCaState.set(tenantId, state);
+      return simulatedWrite([policyId], reason, started);
+    };
+    const blocked = liveWriteBlockReason();
+    if (blocked) return simulate(blocked);
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulate(`${tenantId} is manifest-only`);
     try {
       const policies = await fetchConditionalAccessPoliciesLive(group.objectId, DEMO_POLICY_PREFIX, LIVE_TIMEOUT_MS);
       const target = policies.find((p) => p.displayName.includes("Block AVD") || p.builtInControls.map((c) => c.toLowerCase()).includes("block"));
-      if (!target) return simulatedWrite([policyId], "blocking AVD policy not found in live tenant", started);
+      if (!target) return failedWrite([policyId], new GraphHttpError(404, "blocking AVD policy not found in the live tenant (seed the lab first)"), started);
       const excludeGroups =
         state === "remediated"
           ? [...new Set([...target.excludeGroups, group.objectId])]
@@ -1270,9 +1317,10 @@ export const msgraphService = {
         },
         LIVE_TIMEOUT_MS,
       );
+      confirmLiveCaWrite(tenantId, state);
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results: [{ id: target.id, ok: true, status: 204 }] };
     } catch (error) {
-      return simulatedWrite([policyId], error instanceof Error ? error.message : String(error), started);
+      return failedWrite([policyId], error, started);
     }
   },
 
@@ -1297,13 +1345,19 @@ export const msgraphService = {
     const tenant = getManifestTenant(tenantId);
     const avd = primaryGroup(tenant);
     const blocking = policies.find((p) => p.displayName.includes("Block AVD"));
-    if (blocking) {
-      // The lab override mirrors the captured policy: enabled without the AVD exclusion is the drifted state.
-      const excluded = blocking.excludeGroups.includes(avd.displayName) || blocking.excludeGroupIds.includes(avd.objectId);
-      inMemoryTenantCaState.set(tenantId, blocking.state === "enabled" && !excluded ? "drifted" : "remediated");
-    }
-    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
-    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulatedWrite(ids, `${tenantId} is manifest-only`, started);
+    // The lab override mirrors the captured policy: enabled without the AVD exclusion is the drifted state.
+    const capturedState: LabLicenseState | null = blocking
+      ? blocking.state === "enabled" && !(blocking.excludeGroups.includes(avd.displayName) || blocking.excludeGroupIds.includes(avd.objectId))
+        ? "drifted"
+        : "remediated"
+      : null;
+    const simulate = (reason: string) => {
+      if (capturedState) inMemoryTenantCaState.set(tenantId, capturedState);
+      return simulatedWrite(ids, reason, started);
+    };
+    const blocked = liveWriteBlockReason();
+    if (blocked) return simulate(blocked);
+    if (!LIVE_CAPABLE_TENANTS.has(tenantId)) return simulate(`${tenantId} is manifest-only`);
     try {
       const names = [...new Set(policies.flatMap((p) => [...p.includeGroups, ...p.excludeGroups]))];
       const posture = await fetchCaPostureLive(names, LIVE_TIMEOUT_MS);
@@ -1341,9 +1395,10 @@ export const msgraphService = {
           results.push({ id: live.id, ok: false, status: error instanceof GraphHttpError ? error.status : 0, error: error instanceof Error ? error.message : String(error) });
         }
       }
+      if (capturedState && results.length && results.every((r) => r.ok)) confirmLiveCaWrite(tenantId, capturedState);
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
     } catch (error) {
-      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
+      return failedWrite(ids, error, started);
     }
   },
 
@@ -1356,7 +1411,8 @@ export const msgraphService = {
     const started = performance.now();
     const probe = INTUNE_SCENARIOS[key].live;
     const ids = [...(probe.asrPolicy ? [probe.asrPolicy] : []), probe.conflictingProfile];
-    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    const blocked = liveWriteBlockReason();
+    if (blocked) return simulatedWrite(ids, blocked, started);
     try {
       const live = await fetchIntuneStateLive(probe, LIVE_TIMEOUT_MS);
       const results: LabWriteResult["results"] = [];
@@ -1379,12 +1435,14 @@ export const msgraphService = {
       if (live.conflictingProfileId && profile) {
         const profileId = live.conflictingProfileId;
         const wantsGroup = profile.assignedTo.includes(probe.assignmentGroup);
-        if (wantsGroup && !live.assignmentGroupId) results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: `group ${probe.assignmentGroup} not found` });
-        else await attempt(probe.conflictingProfile, () => assignDeviceConfigurationLive(profileId, wantsGroup ? live.assignmentGroupId : null, LIVE_TIMEOUT_MS));
+        const groupId = live.assignmentGroupId;
+        if (!groupId) results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: `group ${probe.assignmentGroup} not found` });
+        // Only the named group's assignment is restored; every other assignment of the profile is left alone.
+        else await attempt(probe.conflictingProfile, () => setDeviceConfigurationGroupAssignmentLive(profileId, groupId, wantsGroup, LIVE_TIMEOUT_MS));
       }
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
     } catch (error) {
-      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
+      return failedWrite(ids, error, started);
     }
   },
 
@@ -1402,7 +1460,8 @@ export const msgraphService = {
   async setCaPostureState(state: LabLicenseState): Promise<LabWriteResult> {
     const started = performance.now();
     const ids = CA_POSTURE.policies.map((p) => p.key);
-    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    const blocked = liveWriteBlockReason();
+    if (blocked) return simulatedWrite(ids, blocked, started);
     try {
       const posture = await fetchCaPostureLive([CA_POSTURE.breakGlassGroup], LIVE_TIMEOUT_MS);
       const results: LabWriteResult["results"] = [];
@@ -1435,7 +1494,7 @@ export const msgraphService = {
       }
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
     } catch (error) {
-      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
+      return failedWrite(ids, error, started);
     }
   },
 
@@ -1444,7 +1503,8 @@ export const msgraphService = {
     const started = performance.now();
     const probe = INTUNE_SCENARIOS[key].live;
     const ids = [...(probe.asrPolicy ? [probe.asrPolicy] : []), probe.conflictingProfile];
-    if (!isLiveCloudMode()) return simulatedWrite(ids, "LIVE_CLOUD_MODE=false", started);
+    const blocked = liveWriteBlockReason();
+    if (blocked) return simulatedWrite(ids, blocked, started);
     try {
       const live = await fetchIntuneStateLive(probe, LIVE_TIMEOUT_MS);
       const results: LabWriteResult["results"] = [];
@@ -1464,15 +1524,16 @@ export const msgraphService = {
       }
       const profileId = live.conflictingProfileId;
       if (profileId) {
-        const groupId = state === "remediated" ? null : live.assignmentGroupId;
-        if (state === "drifted" && !groupId) results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: `group ${probe.assignmentGroup} not found` });
-        else await attempt(probe.conflictingProfile, () => assignDeviceConfigurationLive(profileId, groupId, LIVE_TIMEOUT_MS));
+        const groupId = live.assignmentGroupId;
+        if (!groupId) results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: `group ${probe.assignmentGroup} not found` });
+        // The fix unassigns the named group only (the drift re-assigns it); other assignments of the profile stay.
+        else await attempt(probe.conflictingProfile, () => setDeviceConfigurationGroupAssignmentLive(profileId, groupId, state !== "remediated", LIVE_TIMEOUT_MS));
       } else {
         results.push({ id: probe.conflictingProfile, ok: false, status: 404, error: "profile not found (seed the lab first)" });
       }
       return { source: "live-graph", latencyMs: Math.round(performance.now() - started), results };
     } catch (error) {
-      return simulatedWrite(ids, error instanceof Error ? error.message : String(error), started);
+      return failedWrite(ids, error, started);
     }
   },
 
@@ -1570,6 +1631,16 @@ export const msgraphService = {
             stateLabel: exp ? "Expired Secret" : c ? "Client Secret Active" : "Certificate / OIDC",
           };
         });
+        let owner: { objectId: string; upn: string; displayName: string } | undefined;
+        let fic: { name: string; issuer: string; subject: string; audiences: string[] } | undefined;
+        let ownersError: string | null = null;
+        try {
+          const extra = await fetchApplicationOwnersAndFicsLive(primary.objectId, LIVE_TIMEOUT_MS);
+          owner = extra.owners[0];
+          fic = extra.federatedCredentials[0];
+        } catch (error) {
+          ownersError = error instanceof Error ? error.message : String(error);
+        }
         const liveFixture: WorkloadIdentityFixture = {
           scenarioId: "ANOM-APP-401",
           goldenSource: "Microsoft Graph Live App Registrations (/v1.0/applications)",
@@ -1580,12 +1651,10 @@ export const msgraphService = {
             servicePrincipalId: primary.objectId,
             signInAudience: primary.signInAudience,
           },
-          owner: {
-            upn: "tenant-admin@live",
-            displayName: "Live Tenant Application Owner",
-            objectId: primary.objectId,
-            directoryRoles: [],
-          },
+          // The real first owner, or an explicit "no owner" / "not readable": never an invented account.
+          owner: owner
+            ? { upn: owner.upn, displayName: owner.displayName, objectId: owner.objectId, directoryRoles: [] }
+            : { upn: ownersError ? "(owners not readable)" : "(no owner)", displayName: ownersError ? `Owners not readable: ${ownersError}` : "No owner on this app registration", objectId: "", directoryRoles: [] },
           passwordCredential: {
             displayName: cred?.displayName ?? "None",
             keyId: cred?.keyId ?? "none",
@@ -1608,12 +1677,10 @@ export const msgraphService = {
             calls: [],
           },
           requiredPermissions: [],
-          federatedCredential: {
-            name: "federated-identity",
-            issuer: "https://token.actions.githubusercontent.com",
-            subject: `app:${primary.displayName}`,
-            audiences: ["api://AzureADTokenExchange"],
-          },
+          // The app's real first federated credential; none (or unreadable) is reported as such, never a made-up GitHub OIDC one.
+          federatedCredential: fic
+            ? { ...fic }
+            : { name: "(none)", issuer: "", subject: "", audiences: [], driftState: ownersError ? "unavailable" : "absent", driftDetail: ownersError ? `Federated credentials not readable: ${ownersError}` : "No federated identity credential on this app registration" },
           peerApps,
         };
         return done(liveFixture, "live-graph");

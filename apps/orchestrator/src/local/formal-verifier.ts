@@ -1025,7 +1025,12 @@ export interface BlastRadiusMatrix {
   totalEntities: number;
 }
 
-/** 30-day counterfactual replay: replay each cohort daily under P_pre vs P_post and count transitions. */
+/**
+ * Modelled 30-day blast radius. The target cohort comes from the scenario's symbolic model; the
+ * break-glass and collateral cohorts are fixed lists, and their before/after states are declared by
+ * the model, not evaluated against tenant policy. collateralChanges is therefore a modelled 0, not a
+ * measurement: the UI and docs label it "modelled".
+ */
 export function counterfactualReplay(scenarioId: ScenarioId | string | null, options?: FormalVerifyOptions): BlastRadiusMatrix {
   const effectiveId = effectiveScenarioId(scenarioId);
   const state = resolveOptions(effectiveId, options);
