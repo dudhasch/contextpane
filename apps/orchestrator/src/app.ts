@@ -29,7 +29,7 @@ import {
   type WorkbenchScenarioId,
 } from "@contextpane/catalog";
 import { config, describeConfig, isLiveCloudMode, providers } from "./config.ts";
-import { localApiGuard, operatorIdentity } from "./security.ts";
+import { localApiGuard, operatorIdentity, originAllowed } from "./security.ts";
 import { rowClickGrounded } from "./local/grounding.ts";
 import { buildScenarioBrief } from "./local/brief.ts";
 import { publishDataPlane, resolveDataPtr } from "./local/dataplane.ts";
@@ -91,7 +91,8 @@ export const app = new Hono();
 app.use(
   "*",
   cors({
-    origin: (origin) => (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : config.webOrigin),
+    // The same exact origin set the API guard enforces (security.ts), so CORS never advertises a page the guard refuses.
+    origin: (origin) => (origin && originAllowed(origin) ? origin : config.webOrigin),
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowHeaders: ["content-type", "accept", "authorization"],
   }),
